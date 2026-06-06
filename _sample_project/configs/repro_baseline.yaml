@@ -1,0 +1,16 @@
+# 再現実験のベースライン設定
+exp_name: repro_baseline
+seed: 42
+
+model:
+  name: dummy          # 実モデルを使うなら例: "gpt2"（uv sync --extra llm が必要）
+
+dataset:
+  name: toy            # datasets/<name> を参照。toy は run.py 内のサンプルを使う
+
+typo:
+  rate: 0.1
+  type: swap           # swap / insert / delete / substitute / keyboard
+
+tracking:
+  use_wandb: true      # W&B 未設定なら自動で offline/no-op

@@ -1,0 +1,20 @@
+# 提案手法の設定（ベースラインからの差分を中心に書く）
+exp_name: proposed_method
+seed: 42
+
+model:
+  name: dummy
+
+dataset:
+  name: toy
+
+typo:
+  rate: 0.1
+  type: keyboard
+
+method:
+  name: proposed_v1
+  # ここに提案手法のハイパーパラメータを追加
+
+tracking:
+  use_wandb: true
