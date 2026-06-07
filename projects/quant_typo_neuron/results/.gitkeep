@@ -1,0 +1,1 @@
+# 実験出力（gitignore）。run ごとに results/<exp>/<run_id>/ が作られる。

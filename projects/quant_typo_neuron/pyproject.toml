@@ -1,0 +1,25 @@
+[project]
+name = "quant-typo-neuron"
+version = "0.1.0"
+description = "量子化 × typoニューロン研究 (M0-M2)"
+requires-python = ">=3.12"
+dependencies = ["typo-utils"]
+
+[project.optional-dependencies]
+llm = ["typo-utils[llm]"]
+tracking = ["typo-utils[tracking]"]
+quant = ["typo-utils[quant]"]
+mech = ["typo-utils[mech]"]
+
+[dependency-groups]
+dev = ["pytest>=8", "ipykernel>=6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/quant_typo_neuron"]
+
+[tool.uv.sources]
+typo-utils = { workspace = true }

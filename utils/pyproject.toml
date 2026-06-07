@@ -16,6 +16,10 @@ dependencies = [
 llm = ["torch", "transformers>=4.44", "datasets>=2.20"]
 # W&B でトラッキングするとき
 tracking = ["wandb>=0.17"]
+# 量子化（M1）: GPTQ/AWQ + NF4/INT8
+quant = ["gptqmodel>=1.0", "bitsandbytes>=0.43"]
+# 機構解析（M4以降）: 量子化モデルへのフック
+mech = ["nnsight>=0.3"]
 
 [build-system]
 requires = ["hatchling"]

@@ -1,0 +1,7 @@
+_base_: base.yaml
+exp_name: m2_eval
+model: meta-llama/Llama-3.2-1B-Instruct
+variants: [fp16, gptq_w4, gptq_w8, nf4, int8, rtn_w4]
+datasets: [gsm8k, bbh, mmlu, longgen, wordnet_id]
+conditions: [clean, typo]      # × {fp16, quantized} は variants 側で表現
+seed: 42

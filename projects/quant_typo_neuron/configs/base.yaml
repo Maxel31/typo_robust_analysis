@@ -1,0 +1,22 @@
+# 共通定義（M0-M2 が参照）。各 m*.yaml は `_base_: base.yaml` で merge する想定。
+models:
+  core:
+    - meta-llama/Llama-3.1-8B-Instruct
+    - Qwen/Qwen2.5-7B-Instruct
+    - google/gemma-2-9b
+  scale:
+    - meta-llama/Llama-3.2-1B-Instruct
+    - meta-llama/Llama-3.2-3B-Instruct
+    - Qwen/Qwen2.5-14B-Instruct
+  smoke: meta-llama/Llama-3.2-1B-Instruct   # 最小E2E用
+typo:
+  types: [sub_keyboard, insert, delete, transpose]   # 本物のtypoのみ
+  eps: [1, 0.05, 0.10, 0.20]                          # 1=1文字 / それ以外=比率
+  seeds: [0, 1, 2, 3, 4]                              # typo生成 seed × 5
+quant:
+  methods: [fp16, gptq, awq, nf4, int8, rtn]
+  bits: [4, 8]
+  group_size: 128
+  kv_cache_dtype: fp16   # 全条件で固定（交絡排除）
+tracking:
+  use_wandb: true
