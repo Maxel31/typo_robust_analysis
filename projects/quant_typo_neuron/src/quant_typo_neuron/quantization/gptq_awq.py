@@ -32,6 +32,21 @@ from __future__ import annotations
 
 from typing import Any
 
+
+def _ensure_transformers_hub_compat() -> None:
+    """gptqmodel 7.x は ``transformers.utils.hub.create_repo`` /
+    ``list_repo_tree`` を要求するが transformers 5.10+ で削除された。
+    huggingface_hub から補完してから gptqmodel を import する（CLI実行でも必須）。
+    """
+    import transformers.utils.hub as _thub
+    import huggingface_hub as _hhub
+
+    if not hasattr(_thub, "create_repo"):
+        _thub.create_repo = _hhub.create_repo  # type: ignore[attr-defined]
+    if not hasattr(_thub, "list_repo_tree"):
+        _thub.list_repo_tree = _hhub.list_repo_tree  # type: ignore[attr-defined]
+
+
 # ---------------------------------------------------------------------------
 # Default calibration sentences (used when calib=None, real model with tokenizer)
 # ---------------------------------------------------------------------------
@@ -120,6 +135,7 @@ def quantize_gptq(
     import json
     import os
 
+    _ensure_transformers_hub_compat()
     from gptqmodel import GPTQModel, QuantizeConfig  # type: ignore[import]
 
     # Build quantization configuration
@@ -203,6 +219,7 @@ def gptq_handler(
         )
 
     # Heavy imports deferred so the module stays importable without GPU.
+    _ensure_transformers_hub_compat()
     from gptqmodel import GPTQModel  # type: ignore[import]
 
     # Respect device from variant.extra or caller kwargs; default to cuda:0.

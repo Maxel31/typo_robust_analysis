@@ -8,7 +8,7 @@ dependencies = ["typo-utils"]
 [project.optional-dependencies]
 llm = ["typo-utils[llm]"]
 tracking = ["typo-utils[tracking]"]
-quant = ["typo-utils[quant]"]
+quant = ["typo-utils[quant]", "torchvision"]   # torchvision: gptqmodel(7.x) が import 時に要求
 mech = ["typo-utils[mech]"]
 
 [dependency-groups]
