@@ -1,0 +1,5 @@
+# 共有データ本体は git 管理しない（.gitkeep / README / この .gitignore は残す）
+*
+!.gitignore
+!.gitkeep
+!README.md

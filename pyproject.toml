@@ -1,0 +1,23 @@
+[project]
+name = "typo-robust-analysis"
+version = "0.0.0"
+description = "Monorepo for analyzing LLM robustness to typos"
+requires-python = ">=3.12"
+dependencies = ["typo-utils"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+typo-utils = { workspace = true }
+
+[tool.uv.workspace]
+members = ["utils", "projects/*"]
+exclude = ["_sample_project"]
+
+[dependency-groups]
+dev = ["ruff>=0.6", "pytest>=8", "ipykernel>=6"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
