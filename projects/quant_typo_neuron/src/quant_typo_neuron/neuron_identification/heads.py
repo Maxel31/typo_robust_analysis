@@ -43,7 +43,11 @@ class AttentionInspector:
         self.featureHandle = targetLayer.register_forward_hook(self.feature)
 
     def feature(self, model, input, output) -> None:
-        self.attention_weights.append(output[1].detach().cpu())
+        # SDPA attention returns output[1]=None (no weights). Guard so the
+        # forward pass does not crash; get_attn then falls back to
+        # model_output.attentions (populated when output_attentions=True).
+        attn = output[1] if isinstance(output, (tuple, list)) and len(output) > 1 else None
+        self.attention_weights.append(attn.detach().cpu() if attn is not None else None)
 
     def release(self) -> None:
         self.featureHandle.remove()
