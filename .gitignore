@@ -22,6 +22,13 @@ projects/*/analysis/figures/*
 wandb/
 **/wandb/
 
+# logs
+*.log
+**/*.log
+logs/
+**/logs/
+nohup.out
+
 # env / secrets
 .env
 
