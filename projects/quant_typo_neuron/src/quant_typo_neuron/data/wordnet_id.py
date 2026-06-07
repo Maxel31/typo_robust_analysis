@@ -406,7 +406,9 @@ def rank_list(lst: list) -> list:
 # create_dataset — faithful port of create_dataset.py
 # ---------------------------------------------------------------------------
 
-def create_dataset(llm, original_data: list, threshold: float = 0) -> list:
+def create_dataset(
+    llm, original_data: list, threshold: float = 0, progress: bool = True
+) -> list:
     """Build the word-identification dataset using an LLM.
 
     Faithful port of ``create_dataset`` from Tsuji et al. create_dataset.py.
@@ -431,12 +433,26 @@ def create_dataset(llm, original_data: list, threshold: float = 0) -> list:
     threshold:
         Minimum probability to include an entry (default 0, i.e. keep all
         correctly-generated words).
+    progress:
+        If True (default), show a tqdm progress bar over ``original_data``
+        with the running count of correctly-generated (kept) entries as a
+        postfix. Falls back to a plain loop if tqdm is unavailable.
 
     Returns
     -------
     List of dataset entries.
     """
     import torch
+
+    # Optional progress bar (tqdm ships with transformers/datasets under
+    # the [llm] extra; fall back to a no-op iterator if unavailable).
+    if progress:
+        try:
+            from tqdm.auto import tqdm as _tqdm
+        except ImportError:
+            _tqdm = None
+    else:
+        _tqdm = None
 
     tokenizer = llm.tokenizer
 
@@ -446,7 +462,12 @@ def create_dataset(llm, original_data: list, threshold: float = 0) -> list:
     )["input_ids"][0]
 
     dataset: list = []
-    for original_entry in original_data:
+    iterator = (
+        _tqdm(original_data, desc="build meaning_dataset", unit="entry")
+        if _tqdm is not None
+        else original_data
+    )
+    for original_entry in iterator:
         word = original_entry["word"]
         meaning = original_entry["meaning"]
 
@@ -488,6 +509,9 @@ def create_dataset(llm, original_data: list, threshold: float = 0) -> list:
                     "importance_rank": importance_rank,
                 }
                 dataset.append(data)
+
+        if _tqdm is not None:
+            iterator.set_postfix(correct=len(dataset))
 
     return dataset
 

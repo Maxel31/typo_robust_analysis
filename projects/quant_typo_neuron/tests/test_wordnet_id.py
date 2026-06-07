@@ -590,6 +590,70 @@ class TestCreateDataset:
         assert result[0]["word"] == "cat"
 
 
+class _SequentialLLM:
+    """Context-free stub: returns canned responses in original_data order.
+
+    Unlike StubLLM (which needs ``_set_context``), this works with the *real*
+    ``create_dataset`` because ``create_dataset`` iterates ``original_data``
+    sequentially and calls ``generate_word`` exactly once per entry, in order.
+    Used to exercise the real loop (and its tqdm progress path).
+    """
+
+    def __init__(self, tokenizer, words):
+        self.tokenizer = tokenizer
+        self._words = list(words)
+        self._gi = 0
+
+    def generate_word(self, input_ids) -> str:
+        w = self._words[self._gi]
+        self._gi += 1
+        return w
+
+    def get_prob(self, input_ids, output_ids) -> float:
+        return 0.9
+
+    def get_importance(self, input_ids, output_ids) -> list:
+        try:
+            n = input_ids.size(1)
+        except AttributeError:
+            n = len(input_ids[0])
+        return [float(i) for i in range(n)]
+
+
+class TestCreateDatasetProgress:
+    """Exercise the real create_dataset loop and the tqdm progress option."""
+
+    def setup_method(self):
+        self.tok = StubTokenizer()
+        self.original_data = [
+            {"word": "cat", "meaning": "animal"},
+            {"word": "dog", "meaning": "canine"},
+        ]
+
+    def test_progress_true_and_false_give_identical_results(self):
+        """The progress flag must not affect the produced dataset."""
+        from quant_typo_neuron.data.wordnet_id import create_dataset
+
+        with_bar = create_dataset(
+            _SequentialLLM(self.tok, ["cat", "dog"]), self.original_data, progress=True
+        )
+        without_bar = create_dataset(
+            _SequentialLLM(self.tok, ["cat", "dog"]), self.original_data, progress=False
+        )
+        assert with_bar == without_bar
+        assert [e["word"] for e in with_bar] == ["cat", "dog"]
+        assert [e["id"] for e in with_bar] == [0, 1]
+
+    def test_progress_default_is_on_and_runs(self):
+        """Default call (progress omitted) must run and keep correct entries."""
+        from quant_typo_neuron.data.wordnet_id import create_dataset
+
+        result = create_dataset(
+            _SequentialLLM(self.tok, ["cat", "dog"]), self.original_data
+        )
+        assert len(result) == 2
+
+
 # ===========================================================================
 # Tests: vendored data file
 # ===========================================================================
