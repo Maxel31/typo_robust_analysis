@@ -108,7 +108,8 @@ def main() -> None:
     else:
         print(f"Dataset not found at {dataset_path} -- building on the fly.")
         original_data = load_original_data()
-        tokenizer, model = load_model(model_name)
+        # eager attention so head responsibility (attention weights) can be captured
+        tokenizer, model = load_model(model_name, attn_implementation="eager")
         model.eval()
         model_loaded = True
         llm = LLM(model, tokenizer)
@@ -124,7 +125,8 @@ def main() -> None:
 
     # --- load model (if not already loaded above) ---
     if not model_loaded:
-        tokenizer, model = load_model(model_name)
+        # eager attention so head responsibility (attention weights) can be captured
+        tokenizer, model = load_model(model_name, attn_implementation="eager")
         model.eval()
 
     # --- run find_neurons ---
