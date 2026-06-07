@@ -25,10 +25,25 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+
+def apply_gpu_ids(gpu_ids: str | None) -> None:
+    """Set CUDA_VISIBLE_DEVICES if gpu_ids is truthy.
+
+    Must be called before torch is imported so that CUDA device
+    visibility is established before the CUDA runtime initialises.
+
+    Args:
+        gpu_ids: Comma-separated GPU ids, e.g. ``"2,3"``.  When *None*
+            or an empty string the environment is left unchanged.
+    """
+    if gpu_ids:
+        os.environ["CUDA_VISIBLE_DEVICES"] = gpu_ids
 
 
 def _load_yaml(path: str) -> dict[str, Any]:
@@ -114,7 +129,19 @@ def main() -> None:
         default=None,
         help="Override group_size from config.",
     )
+    p.add_argument(
+        "--gpu-ids",
+        default=None,
+        help=(
+            "Comma-separated GPU ids, e.g. '2,3'. "
+            "Sets CUDA_VISIBLE_DEVICES before importing torch."
+        ),
+    )
     args, _overrides = p.parse_known_args()
+
+    # Apply GPU selection BEFORE any torch / model-loading imports so that
+    # CUDA_VISIBLE_DEVICES is honoured by the CUDA runtime on initialisation.
+    apply_gpu_ids(args.gpu_ids)
 
     cfg = _load_yaml(args.config)
 
