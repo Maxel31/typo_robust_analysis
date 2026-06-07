@@ -18,7 +18,7 @@ precision:
 # WordNet 単語同定タスク（Greco et al. 2024 準拠）
 dataset:
   source: wordnet
-  n_pairs: 62643          # word-definition ペア
+  n_samples: 62643        # word-definition ペア数（Tsuji準拠の全量。スモークは CLI override 例 dataset.n_samples=50）
   importance_clean_n: 5000   # 重要度スコア算出のクリーン件数（Llama系のみ 1000）
   neuron_top_frac: 0.005     # typoニューロン 上位0.5%
   head_top_frac: 0.015       # typoヘッド 上位1.5%
