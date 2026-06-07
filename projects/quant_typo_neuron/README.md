@@ -53,19 +53,19 @@ projects/quant_typo_neuron/
 ├── pyproject.toml             # typo-utils[llm,quant] に依存
 ├── configs/
 │   ├── base.yaml              # 対象モデル群・typo種別・eps・seed の共通定義
-│   ├── m0.yaml                # 同定設定（dataset版・top-k率・responsibility定義）
-│   ├── m1.yaml                # 量子化設定（method×bit・group_size・較正データ）
-│   └── m2.yaml                # 評価設定（タスク・条件・seed×5）
+│   ├── neuron_identification.yaml                # 同定設定（dataset版・top-k率・responsibility定義）
+│   ├── quantization.yaml                # 量子化設定（method×bit・group_size・較正データ）
+│   └── robustness_evaluation.yaml                # 評価設定（タスク・条件・seed×5）
 ├── experiments/
-│   ├── m0/                    # データ構築・同定・再現ゲート
-│   ├── m1/                    # 量子化・重み差分抽出
-│   └── m2/                    # 評価ドライバ
+│   ├── neuron_identification/                    # データ構築・同定・再現ゲート
+│   ├── quantization/                    # 量子化・重み差分抽出
+│   └── robustness_evaluation/                    # 評価ドライバ
 ├── src/quant_typo_neuron/
 │   ├── contracts.py           # ★ 全Mが依拠する共有契約（後述）
 │   ├── data/                  # wordnet_id 構築・タスクローダ
-│   ├── m0/                    # responsibility 集計・スコアリング
-│   ├── m1/                    # gptq/awq・bnb・weight_diff
-│   └── m2/                    # 結果スキーマ実装・long形式変換
+│   ├── neuron_identification/                    # responsibility 集計・スコアリング
+│   ├── quantization/                    # gptq/awq・bnb・weight_diff
+│   └── robustness_evaluation/                    # 結果スキーマ実装・long形式変換
 ├── data/                      # 中間データ（gitignore、.gitkeep のみ追跡）
 └── results/                   # 実験出力（gitignore、.gitkeep のみ追跡）
 ```
@@ -127,18 +127,18 @@ def load_variant(name: str) -> tuple[Model, QuantVariant]: ...
 
 ```bash
 # 1) WordNet単語同定データ 3版（clean / typo(t=1) / split=tokenization長を揃える分割）を生成
-uv run python experiments/m0/build_dataset.py --config configs/m0.yaml
+uv run python experiments/neuron_identification/build_dataset.py --config configs/neuron_identification.yaml
 #   → data/wordnet_id/{clean,typo,split}.jsonl
 
 # 2) responsibility 集計 → Δ_n → typoニューロン mask M_n（上位0.5%）/ typoヘッド M_h（上位1.5%）
-uv run python experiments/m0/identify.py --config configs/m0.yaml
-#   → results/m0_identify/<run>/{delta.npz, neuron_mask.json, head_mask.json}
+uv run python experiments/neuron_identification/identify.py --config configs/neuron_identification.yaml
+#   → results/neuron_identification/<run>/{delta.npz, neuron_mask.json, head_mask.json}
 
 # 3) 再現ゲート①: ablation 検証（M_n を 0/mean 置換 → typo精度↓ & clean保持、random同数では↓しない）
-uv run python experiments/m0/ablation_gate.py --config configs/m0.yaml --mask results/m0_identify/<run>/neuron_mask.json
+uv run python experiments/neuron_identification/ablation_gate.py --config configs/neuron_identification.yaml --mask results/neuron_identification/<run>/neuron_mask.json
 
 # 4) 再現ゲート②: seed/定義間の安定性（top-0.5% の Jaccard・層分布の順位相関）
-uv run python experiments/m0/stability_gate.py --config configs/m0.yaml
+uv run python experiments/neuron_identification/stability_gate.py --config configs/neuron_identification.yaml
 ```
 
 **ゲート判定**: ① ② を通過 → M1/M2 へ。不通過 → M4/M5 を撤回し診断＋tokenization分析に縮小（仕様書どおり）。
@@ -147,12 +147,12 @@ uv run python experiments/m0/stability_gate.py --config configs/m0.yaml
 
 ```bash
 # AWQ/GPTQ (GPTQModel, W4/W8, group_size=128, C4 128×2048較正) / NF4・INT8 (bitsandbytes) / 自前RTN
-uv run python experiments/m1/quantize.py --config configs/m1.yaml
+uv run python experiments/quantization/quantize.py --config configs/quantization.yaml
 #   → 量子化モデル群（variant registry に登録）
 
 # 重み差分 ΔW = W_fp16 − dequant(W_q) を layer/row/col 単位で抽出（M4 再構成誤差用）
-uv run python experiments/m1/weight_diff.py --config configs/m1.yaml
-#   → results/m1_weight_diff/<run>/delta_w/...
+uv run python experiments/quantization/weight_diff.py --config configs/quantization.yaml
+#   → results/quantization_weight_diff/<run>/delta_w/...
 ```
 
 - 第一候補: GPTQModel + bitsandbytes。AutoAWQ/AutoGPTQ は非推奨のため不使用。
@@ -162,8 +162,8 @@ uv run python experiments/m1/weight_diff.py --config configs/m1.yaml
 
 ```bash
 # 4条件（clean-FP16 / typo-FP16 / clean-Q / typo-Q）で精度・ECE を測定、項目単位0/1を保存
-uv run python experiments/m2/evaluate.py --config configs/m2.yaml
-#   → results/m2_eval/<run>/items.jsonl  （4.3 のスキーマ）
+uv run python experiments/robustness_evaluation/evaluate.py --config configs/robustness_evaluation.yaml
+#   → results/robustness_evaluation/<run>/items.jsonl  （4.3 のスキーマ）
 ```
 
 - **typo は本物のみ**: sub_keyboard / insert / delete / transpose。大文字化・emoji・leetspeak・slang は除外。
@@ -177,9 +177,9 @@ uv run python experiments/m2/evaluate.py --config configs/m2.yaml
 
 ```
 results/
-├── m0_identify/<run>/{delta.npz, neuron_mask.json, head_mask.json, config.json}
-├── m1_weight_diff/<run>/delta_w/...
-└── m2_eval/<run>/{items.jsonl, metrics.json, config.json}
+├── neuron_identification/<run>/{delta.npz, neuron_mask.json, head_mask.json, config.json}
+├── quantization_weight_diff/<run>/delta_w/...
+└── robustness_evaluation/<run>/{items.jsonl, metrics.json, config.json}
 ```
 
 `analysis/` は **ローカル results/ を正** として読む（W&B 非依存で図が描ける）。
@@ -188,29 +188,29 @@ results/
 
 ## 7. 開発ワークフロー（stacked PR）
 
-**1ブランチ=1機能**（M より細かい単位）で並行実装。**各PRは「1つ前のPR」を base とする線形スタック**（依存関係が見えるように topological order で1本に並べる）。マージは番号順（ボトムアップ）。
+**1ブランチ=1機能**（M より細かい単位）で並行実装。**各PRは実依存ブランチを base とする DAG スタック**：独立機能（#2–#9）は `scaffold` を base に並列実装でき、依存機能はその実依存ブランチを base にする。マージはボトムアップ。
 
 | # | ブランチ `feature/quant_typo_neuron/<name>` | base | 主な内容 |
 |---|---|---|---|
 | 0 | `readme` | `main` | 本README（実行方法の仕様） |
 | 1 | `scaffold` | readme | プロジェクト雛形 + 契約(contracts) + utilsスタブ + 依存/lock |
-| 2 | `m0-ffn-hooks` | scaffold | FFN中間活性化 hook（utils） |
-| 3 | `m0-wordnet-dataset` | m0-ffn-hooks | WordNet 3版データ生成 |
-| 4 | `m1-quant-interface` | m0-wordnet-dataset | 統一量子化ローダ（utils） |
-| 5 | `m1-rtn` | m1-quant-interface | 自前RTN（utils, M5共有） |
-| 6 | `m2-typo-generators` | m1-rtn | 実typo生成（utils typo.py 拡張） |
-| 7 | `m2-dataset-loaders` | m2-typo-generators | タスクデータ読込 |
-| 8 | `m2-ece-calibration` | m2-dataset-loaders | ECE 自前実装（utils） |
-| 9 | `m2-result-schema` | m2-ece-calibration | ItemResult 実装 + long形式変換 |
-| 10 | `m0-responsibility-scoring` | m2-result-schema | Δ_n・mask 算出 |
-| 11 | `m1-gptq-awq` | m0-responsibility-scoring | GPTQ/AWQ 量子化 |
-| 12 | `m1-bnb-nf4-int8` | m1-gptq-awq | NF4/INT8 量子化 |
-| 13 | `m1-weight-diff` | m1-bnb-nf4-int8 | ΔW 抽出 |
-| 14 | `m0-ablation-gate` | m1-weight-diff | 再現ゲート① |
-| 15 | `m0-stability-gate` | m0-ablation-gate | 再現ゲート② |
-| 16 | `m2-eval-runner` | m0-stability-gate | 4条件評価ドライバ（統合点） |
+| 2 | `neuron_identification-ffn-hooks` | scaffold | FFN中間活性化 hook（utils） |
+| 3 | `neuron_identification-wordnet-dataset` | scaffold | WordNet 3版データ生成 |
+| 4 | `quantization-interface` | scaffold | 統一量子化ローダ（utils） |
+| 5 | `quantization-rtn` | scaffold | 自前RTN（utils, M5共有） |
+| 6 | `robustness_evaluation-typo-generators` | scaffold | 実typo生成（utils typo.py 拡張） |
+| 7 | `robustness_evaluation-dataset-loaders` | scaffold | タスクデータ読込 |
+| 8 | `robustness_evaluation-ece-calibration` | scaffold | ECE 自前実装（utils） |
+| 9 | `robustness_evaluation-result-schema` | scaffold | ItemResult 実装 + long形式変換 |
+| 10 | `neuron_identification-responsibility-scoring` | neuron_identification-ffn-hooks | Δ_n・mask 算出（+ wordnet-dataset 取り込み） |
+| 11 | `quantization-gptq-awq` | quantization-interface | GPTQ/AWQ 量子化 |
+| 12 | `quantization-bnb-nf4-int8` | quantization-interface | NF4/INT8 量子化 |
+| 13 | `quantization-weight-diff` | quantization-interface | ΔW 抽出（+ rtn 取り込み） |
+| 14 | `neuron_identification-ablation-gate` | neuron_identification-responsibility-scoring | 再現ゲート① |
+| 15 | `neuron_identification-stability-gate` | neuron_identification-responsibility-scoring | 再現ゲート② |
+| 16 | `robustness_evaluation-runner` | robustness_evaluation-result-schema | 4条件評価ドライバ（統合点） |
 
-> base は「1つ前の1本」だが topological order ゆえ各機能の実依存は必ず base 連鎖に含まれる。`pyproject.toml`/`uv.lock` は `#1 scaffold` で確定し、以後の feature では触らない（lock競合回避）。実装作業は各エージェントが各ブランチ（必要なら `git worktree`）で並行可能。
+> 独立8機能（#2–#9）は `scaffold` を base に並列実装可能。依存機能は実依存ブランチを base にし、複数依存があるものは主依存を base にして残りを PR 本文へ明記する。`pyproject.toml`/`uv.lock` は `#1 scaffold` で確定し、以後の feature では触らない（lock競合回避）。実装は各エージェントが各 `git worktree` で並行。
 
 ---
 
