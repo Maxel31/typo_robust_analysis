@@ -43,6 +43,26 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# GPU selection helper
+# ---------------------------------------------------------------------------
+
+
+def apply_gpu_ids(gpu_ids: str | None) -> None:
+    """Set CUDA_VISIBLE_DEVICES if *gpu_ids* is truthy.
+
+    Must be called **before** torch/gptqmodel/transformers are imported, as
+    those libraries read CUDA_VISIBLE_DEVICES at init time.
+
+    Args:
+        gpu_ids: Comma-separated GPU ids, e.g. ``"2,3"``.  ``None`` means
+                 leave the environment unchanged.
+    """
+    if gpu_ids:
+        import os as _os
+        _os.environ["CUDA_VISIBLE_DEVICES"] = gpu_ids
+
+
+# ---------------------------------------------------------------------------
 # Calibration data helpers
 # ---------------------------------------------------------------------------
 
@@ -178,7 +198,18 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Override bits from config (e.g. --bits 4)",
     )
+    parser.add_argument(
+        "--gpu-ids",
+        default=None,
+        help=(
+            "Comma-separated GPU ids, e.g. '2,3'. "
+            "Sets CUDA_VISIBLE_DEVICES before importing torch/gptqmodel."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    # Apply GPU selection BEFORE any torch/gptqmodel/transformers import.
+    apply_gpu_ids(args.gpu_ids)
 
     # Load config via OmegaConf
     try:
