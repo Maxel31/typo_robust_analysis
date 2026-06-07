@@ -1,22 +1,118 @@
-# 共通定義（M0-M2 が参照）。各 m*.yaml は `_base_: base.yaml` で merge する想定。
-models:
-  core:
-    - meta-llama/Llama-3.1-8B-Instruct
-    - Qwen/Qwen2.5-7B-Instruct
-    - google/gemma-2-9b
-  scale:
-    - meta-llama/Llama-3.2-1B-Instruct
-    - meta-llama/Llama-3.2-3B-Instruct
-    - Qwen/Qwen2.5-14B-Instruct
-  smoke: meta-llama/Llama-3.2-1B-Instruct   # 最小E2E用
+# 共通定義（M0-M2 が参照）。各 stage config は `_base_: base.yaml` で merge する想定。
+# モデル選定根拠: Tsuji et al. (arXiv:2502.19669 / EMNLP2025) 再現 + 新世代 dense(Qwen3) 一般化。
+#   - 前段型(Gemma2: Detokenization) vs 後段型(Llama3/Qwen2.5: Retokenization) の対照を必ず保持。
+#   - 中間層(層深0.2-0.8)は全モデル共通で大域文脈のtypo修正を担う。
+#   - MoE(Llama4 / Qwen3-MoE / Mixtral 等)は FFN がルーティング分割されるため本手法に不適 → dense のみ。
+
+generation:
+  mode: greedy            # Tsuji 全実験 greedy
+
+# 精度ルール（Tsuji 準拠）: 既定 fp32、メモリ都合で大型のみ bf16。
+precision:
+  default: float32
+  bfloat16_models:
+    - google/gemma-2-27b
+    - Qwen/Qwen2.5-32B
+    - Qwen/Qwen3-32B
+
+# WordNet 単語同定タスク（Greco et al. 2024 準拠）
+dataset:
+  source: wordnet
+  n_pairs: 62643          # word-definition ペア
+  importance_clean_n: 5000   # 重要度スコア算出のクリーン件数（Llama系のみ 1000）
+  neuron_top_frac: 0.005     # typoニューロン 上位0.5%
+  head_top_frac: 0.015       # typoヘッド 上位1.5%
+
+# ============================================================
+# 段階1: 再現（最優先・関門）— Tsuji の3ファミリを完全踏襲
+#   判定: Gemma2=前段集中 / Llama・Qwen=後段集中 / 中間層=共通 が再現できれば次段へ。
+#   importance_model = 同一 tokenizer の最小モデル（重要度スコア供給用）。
+# ============================================================
+reproduction:
+  gemma2:
+    activation: geglu
+    importance_model: google/gemma-2-2b
+    models:
+      - google/gemma-2-2b
+      - google/gemma-2-9b
+      - google/gemma-2-27b      # bf16
+  qwen2_5:
+    activation: swiglu
+    importance_model: Qwen/Qwen2.5-3B
+    models:
+      - Qwen/Qwen2.5-3B
+      - Qwen/Qwen2.5-7B
+      - Qwen/Qwen2.5-14B
+      - Qwen/Qwen2.5-32B        # bf16
+  llama:
+    activation: swiglu
+    importance_model: meta-llama/Llama-3.2-1B
+    importance_clean_n: 1000     # 1B は性能低くクリーン5,000件を抽出できないため1,000件
+    models:
+      - meta-llama/Llama-3.2-1B
+      - meta-llama/Llama-3.2-3B
+      - meta-llama/Llama-3.1-8B
+
+# ============================================================
+# 段階2: 新世代一般化 — dense 一択の Qwen3 を追加
+#   Qwen2.5→Qwen3 は同系 BBPE tokenizer のため tokenization 統制した世代間A/B。
+#   0.6B/1.7B は重要度スコア供給用（本実験は 4B 以上）。
+# ============================================================
+generalization:
+  qwen3:
+    activation: swiglu          # + QK-Norm / QKV-bias 除去
+    importance_model: Qwen/Qwen3-0.6B
+    importance_candidates:
+      - Qwen/Qwen3-0.6B
+      - Qwen/Qwen3-1.7B
+    models:
+      - Qwen/Qwen3-4B
+      - Qwen/Qwen3-8B
+      - Qwen/Qwen3-14B
+      - Qwen/Qwen3-32B          # bf16
+
+# ============================================================
+# 段階3: 任意・多様性最大化 — Gemma 3（GeGLU・SentencePiece262k・tie）
+#   Gemma2→Gemma3 で「前段集中という Gemma 系固有パターンの世代持続」を検証。
+#   注意: 4B+ は Gemma3ForConditionalGeneration（マルチモーダルラッパ）で GPTQ/4bit に
+#   既知の不具合報告 → まず 1B(text-only) で量子化パイプラインを通す。
+# ============================================================
+optional:
+  gemma3:
+    activation: geglu
+    enabled: false              # 段階2まで通ってから有効化
+    importance_model: google/gemma-3-1b-pt
+    models:
+      - google/gemma-3-1b-pt
+      - google/gemma-3-4b-it
+      - google/gemma-3-12b-it
+      - google/gemma-3-27b-it
+
+# 既定で動かすファミリ（sweep ドライバが参照）。段階2まで通ったら generalization を追加。
+active_families: [gemma2, qwen2_5, llama]
+
+# 最小E2E用（gated 回避したい場合は open 小型へ: 例 Qwen/Qwen2.5-0.5B / Qwen/Qwen3-0.6B）
+smoke: meta-llama/Llama-3.2-1B
+
+# ============================================================
+# typo / 量子化
+# ============================================================
 typo:
   types: [sub_keyboard, insert, delete, transpose]   # 本物のtypoのみ
   eps: [1, 0.05, 0.10, 0.20]                          # 1=1文字 / それ以外=比率
   seeds: [0, 1, 2, 3, 4]                              # typo生成 seed × 5
+
 quant:
   methods: [fp16, gptq, awq, nf4, int8, rtn]
   bits: [4, 8]
   group_size: 128
   kv_cache_dtype: fp16   # 全条件で固定（交絡排除）
+  # ツール: GPTQ/AWQ=GPTQModel(後継) または llm-compressor、NF4/INT8=bitsandbytes、RTN=自前。
+  #         AutoGPTQ(2025-04 アーカイブ)/AutoAWQ(非推奨) は不使用。
+  # Qwen3 公式チェックポイント: AWQ=4/8/14/32B、FP8=全dense、GPTQ-Int8=0.6/1.7B のみ。
+  #   dense の公式 GPTQ-Int4 は無い → W4-GPTQ/W4-RTN は自前量子化前提。
+  notes:
+    qwen3_official_awq: [Qwen/Qwen3-4B-AWQ, Qwen/Qwen3-8B-AWQ, Qwen/Qwen3-14B-AWQ, Qwen/Qwen3-32B-AWQ]
+
 tracking:
   use_wandb: true
