@@ -3,10 +3,23 @@
 Shared by M0 (typo-neuron identification) and M4 (activation shift).
 """
 from typo_utils.neurons.hooks import (
-    FFNActivationHook,
+    Activator,
+    Deactivator,
+    HeadDeactivator,
     NeuronIndex,
     NeuronMask,
-    collect_ffn_activations,
+    convertNeuronsToDict,
+    get_acts,
+    get_rank,
 )
 
-__all__ = ["NeuronIndex", "NeuronMask", "FFNActivationHook", "collect_ffn_activations"]
+__all__ = [
+    "NeuronIndex",
+    "NeuronMask",
+    "get_acts",
+    "Deactivator",
+    "Activator",
+    "HeadDeactivator",
+    "convertNeuronsToDict",
+    "get_rank",
+]
