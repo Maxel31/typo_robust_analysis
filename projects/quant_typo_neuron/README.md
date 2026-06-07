@@ -123,6 +123,8 @@ def load_variant(name: str) -> tuple[Model, QuantVariant]: ...
 
 ## 5. 実行方法
 
+> **GPU 指定**: モデルを動かすスクリプト（`identify` / `ablation_gate` / `quantize` / `weight_diff` / `evaluate`）は `--gpu-ids` 引数で使用GPUを選べます（例 `--gpu-ids 2,3`）。内部で torch import 前に `CUDA_VISIBLE_DEVICES` を設定します。`build_dataset` / `stability_gate` は CPU のみで `--gpu-ids` は持ちません。実行時は extras を有効化（`uv run --extra llm --extra quant python ...`）。
+
 ### M0 — typoニューロン同定（最優先・関門）
 
 ```bash
@@ -131,11 +133,11 @@ uv run python experiments/neuron_identification/build_dataset.py --config config
 #   → data/wordnet_id/{clean,typo,split}.jsonl
 
 # 2) responsibility 集計 → Δ_n → typoニューロン mask M_n（上位0.5%）/ typoヘッド M_h（上位1.5%）
-uv run python experiments/neuron_identification/identify.py --config configs/neuron_identification.yaml
+uv run python experiments/neuron_identification/identify.py --config configs/neuron_identification.yaml --gpu-ids 2,3
 #   → results/neuron_identification/<run>/{delta.npz, neuron_mask.json, head_mask.json}
 
 # 3) 再現ゲート①: ablation 検証（M_n を 0/mean 置換 → typo精度↓ & clean保持、random同数では↓しない）
-uv run python experiments/neuron_identification/ablation_gate.py --config configs/neuron_identification.yaml --mask results/neuron_identification/<run>/neuron_mask.json
+uv run python experiments/neuron_identification/ablation_gate.py --config configs/neuron_identification.yaml --mask results/neuron_identification/<run>/neuron_mask.json --gpu-ids 2,3
 
 # 4) 再現ゲート②: seed/定義間の安定性（top-0.5% の Jaccard・層分布の順位相関）
 uv run python experiments/neuron_identification/stability_gate.py --config configs/neuron_identification.yaml
@@ -147,11 +149,11 @@ uv run python experiments/neuron_identification/stability_gate.py --config confi
 
 ```bash
 # AWQ/GPTQ (GPTQModel, W4/W8, group_size=128, C4 128×2048較正) / NF4・INT8 (bitsandbytes) / 自前RTN
-uv run python experiments/quantization/quantize.py --config configs/quantization.yaml
+uv run python experiments/quantization/quantize.py --config configs/quantization.yaml --gpu-ids 2,3
 #   → 量子化モデル群（variant registry に登録）
 
 # 重み差分 ΔW = W_fp16 − dequant(W_q) を layer/row/col 単位で抽出（M4 再構成誤差用）
-uv run python experiments/quantization/weight_diff.py --config configs/quantization.yaml
+uv run python experiments/quantization/weight_diff.py --config configs/quantization.yaml --gpu-ids 2,3
 #   → results/quantization_weight_diff/<run>/delta_w/...
 ```
 
@@ -162,7 +164,7 @@ uv run python experiments/quantization/weight_diff.py --config configs/quantizat
 
 ```bash
 # 4条件（clean-FP16 / typo-FP16 / clean-Q / typo-Q）で精度・ECE を測定、項目単位0/1を保存
-uv run python experiments/robustness_evaluation/evaluate.py --config configs/robustness_evaluation.yaml
+uv run python experiments/robustness_evaluation/evaluate.py --config configs/robustness_evaluation.yaml --gpu-ids 2,3
 #   → results/robustness_evaluation/<run>/items.jsonl  （4.3 のスキーマ）
 ```
 
@@ -170,6 +172,63 @@ uv run python experiments/robustness_evaluation/evaluate.py --config configs/rob
 - eps = `1`（1文字）または比率 `0.05 / 0.10 / 0.20`。**typo生成 seed × 5**。
 - ECE は reliability diagram から自前計算（`typo_utils.eval.calibration`）。
 - データ: gsm8k / bbh / mmlu / longgen / wordnet_id。reasoning系の既製 typo は R2ATA を利用可。
+
+### フル実行（全機能を通しで）
+
+> **前提**: 全機能を一度に動かすには、全 feature PR をマージした **統合状態**（`main`、または全 feature を統合したブランチ）で実行する。個々の feature ブランチには自分の依存しか無いため、M0→M1→M2 を通すには統合済みコードが必要。
+
+```bash
+# 0) 統合コードを取得（全PRを main にマージ済みの場合）
+cd /diskthalys/ssd14tc/sfukuhata/dev/kanolab/typo_robust_analysis
+git switch main && git pull
+uv sync --extra llm --extra quant
+cd projects/quant_typo_neuron
+
+# モデル: gated(Llama/Gemma) は `huggingface-cli login`。
+#   gated を避けるなら open 小型へ差し替え:
+#   for f in neuron_identification quantization robustness_evaluation; do
+#     sed -i 's#^model:.*#model: Qwen/Qwen3-0.6B#' configs/$f.yaml
+#   done
+
+# ============ M0: typoニューロン同定 ============
+# (1) WordNet 3版データ生成（CPU）
+uv run --extra llm python experiments/neuron_identification/build_dataset.py \
+  --config configs/neuron_identification.yaml
+# (2) typoニューロン/ヘッド同定 → mask（GPU）。出力 results/neuron_identification/<run>/
+uv run --extra llm python experiments/neuron_identification/identify.py \
+  --config configs/neuron_identification.yaml --gpu-ids 2,3
+#     ※ 安定性ゲート用に seed を変えて複数回実行し mask を複数用意（configs の seed を変更）
+# (3) 再現ゲート①: ablation（GPU）。<run> は (2) の実出力ディレクトリ名に置換
+uv run --extra llm python experiments/neuron_identification/ablation_gate.py \
+  --config configs/neuron_identification.yaml \
+  --mask results/neuron_identification/<run>/neuron_mask.json --gpu-ids 2,3
+# (4) 再現ゲート②: 安定性（CPU）。複数 seed の mask を --mask で並べる
+uv run --extra llm python experiments/neuron_identification/stability_gate.py \
+  --config configs/neuron_identification.yaml \
+  --mask results/neuron_identification/<run_seed0>/neuron_mask.json \
+  --mask results/neuron_identification/<run_seed1>/neuron_mask.json \
+  --min-jaccard 0.5 --min-rank-corr 0.7
+
+# ============ M1: 量子化 ============
+# (5) 量子化バリアント生成（GPU）。methods/bits はカンマ区切り
+uv run --extra llm --extra quant python experiments/quantization/quantize.py \
+  --config configs/quantization.yaml --methods gptq,nf4,int8 --bits 4,8 --gpu-ids 2,3
+# (6) 重み差分 ΔW 抽出（GPU）。--model-id で対象モデルを直接指定も可
+uv run --extra llm --extra quant python experiments/quantization/weight_diff.py \
+  --config configs/quantization.yaml --variant rtn_w4 --gpu-ids 2,3
+
+# ============ M2: 評価ハーネス ============
+# (7) 4条件評価 → 項目単位0/1（GPU）。データ(datasets/<task>/<split>.jsonl or HF)が必要
+uv run --extra llm --extra quant python experiments/robustness_evaluation/evaluate.py \
+  --config configs/robustness_evaluation.yaml --gpu-ids 2,3
+#   → results/robustness_evaluation/<run>/items.jsonl
+```
+
+補足:
+- **GPU 指定は引数 `--gpu-ids 2,3`**（実スクリプト内で torch import 前に `CUDA_VISIBLE_DEVICES` を設定）。`build_dataset` と `stability_gate` は CPU のみで `--gpu-ids` を持たない。
+- `<run>` は各スクリプトが作る `results/.../<タイムスタンプ>/` 実ディレクトリ名に置換する（前段の出力を後段の `--mask` に渡す）。
+- **`quantize.py`（実GPTQ）** は `gptqmodel 7.0.0` × `transformers 5.10.2` の非互換に注意（§Caveats）。NF4/INT8/RTN は影響なし。
+- 各スクリプトの全フラグは `--help` で確認可（例 `... quantize.py --help`）。
 
 ---
 
