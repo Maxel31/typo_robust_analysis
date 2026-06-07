@@ -123,6 +123,8 @@ def load_variant(name: str) -> tuple[Model, QuantVariant]: ...
 
 ## 5. 実行方法
 
+> **GPU 指定**: モデルを動かすスクリプト（`identify` / `ablation_gate` / `quantize` / `weight_diff` / `evaluate`）は `--gpu-ids` 引数で使用GPUを選べます（例 `--gpu-ids 2,3`）。内部で torch import 前に `CUDA_VISIBLE_DEVICES` を設定します。`build_dataset` / `stability_gate` は CPU のみで `--gpu-ids` は持ちません。実行時は extras を有効化（`uv run --extra llm --extra quant python ...`）。
+
 ### M0 — typoニューロン同定（最優先・関門）
 
 ```bash
@@ -131,11 +133,11 @@ uv run python experiments/neuron_identification/build_dataset.py --config config
 #   → data/wordnet_id/{clean,typo,split}.jsonl
 
 # 2) responsibility 集計 → Δ_n → typoニューロン mask M_n（上位0.5%）/ typoヘッド M_h（上位1.5%）
-uv run python experiments/neuron_identification/identify.py --config configs/neuron_identification.yaml
+uv run python experiments/neuron_identification/identify.py --config configs/neuron_identification.yaml --gpu-ids 2,3
 #   → results/neuron_identification/<run>/{delta.npz, neuron_mask.json, head_mask.json}
 
 # 3) 再現ゲート①: ablation 検証（M_n を 0/mean 置換 → typo精度↓ & clean保持、random同数では↓しない）
-uv run python experiments/neuron_identification/ablation_gate.py --config configs/neuron_identification.yaml --mask results/neuron_identification/<run>/neuron_mask.json
+uv run python experiments/neuron_identification/ablation_gate.py --config configs/neuron_identification.yaml --mask results/neuron_identification/<run>/neuron_mask.json --gpu-ids 2,3
 
 # 4) 再現ゲート②: seed/定義間の安定性（top-0.5% の Jaccard・層分布の順位相関）
 uv run python experiments/neuron_identification/stability_gate.py --config configs/neuron_identification.yaml
@@ -147,11 +149,11 @@ uv run python experiments/neuron_identification/stability_gate.py --config confi
 
 ```bash
 # AWQ/GPTQ (GPTQModel, W4/W8, group_size=128, C4 128×2048較正) / NF4・INT8 (bitsandbytes) / 自前RTN
-uv run python experiments/quantization/quantize.py --config configs/quantization.yaml
+uv run python experiments/quantization/quantize.py --config configs/quantization.yaml --gpu-ids 2,3
 #   → 量子化モデル群（variant registry に登録）
 
 # 重み差分 ΔW = W_fp16 − dequant(W_q) を layer/row/col 単位で抽出（M4 再構成誤差用）
-uv run python experiments/quantization/weight_diff.py --config configs/quantization.yaml
+uv run python experiments/quantization/weight_diff.py --config configs/quantization.yaml --gpu-ids 2,3
 #   → results/quantization_weight_diff/<run>/delta_w/...
 ```
 
@@ -162,7 +164,7 @@ uv run python experiments/quantization/weight_diff.py --config configs/quantizat
 
 ```bash
 # 4条件（clean-FP16 / typo-FP16 / clean-Q / typo-Q）で精度・ECE を測定、項目単位0/1を保存
-uv run python experiments/robustness_evaluation/evaluate.py --config configs/robustness_evaluation.yaml
+uv run python experiments/robustness_evaluation/evaluate.py --config configs/robustness_evaluation.yaml --gpu-ids 2,3
 #   → results/robustness_evaluation/<run>/items.jsonl  （4.3 のスキーマ）
 ```
 
