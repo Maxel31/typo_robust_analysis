@@ -28,6 +28,22 @@ import sys
 from pathlib import Path
 
 
+def apply_gpu_ids(gpu_ids: str | None) -> None:
+    """Set CUDA_VISIBLE_DEVICES if gpu_ids is truthy.
+
+    Must be called before any torch / transformers / CUDA-aware import.
+
+    Parameters
+    ----------
+    gpu_ids:
+        Comma-separated GPU id string, e.g. ``"2,3"``.  ``None`` / empty
+        string leaves the environment unchanged.
+    """
+    if gpu_ids:
+        import os
+        os.environ["CUDA_VISIBLE_DEVICES"] = gpu_ids
+
+
 def _load_config(path: str) -> dict:
     """Load a YAML or JSON config file into a plain dict."""
     p = Path(path)
@@ -48,7 +64,18 @@ def main(argv: list[str] | None = None) -> None:
         description="M2 robustness evaluation driver: produce items.jsonl"
     )
     parser.add_argument("--config", required=True, help="path to configs/*.yaml")
+    parser.add_argument(
+        "--gpu-ids",
+        default=None,
+        help=(
+            "comma-separated GPU ids, e.g. '2,3'. "
+            "Sets CUDA_VISIBLE_DEVICES before importing torch."
+        ),
+    )
     args, overrides = parser.parse_known_args(argv)
+
+    # Apply GPU selection BEFORE any torch/transformers/CUDA-aware import.
+    apply_gpu_ids(args.gpu_ids)
 
     cfg = _load_config(args.config)
 
