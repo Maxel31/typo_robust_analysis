@@ -1,5 +1,5 @@
 _base_: base.yaml
-exp_name: m2_eval
+exp_name: robustness_evaluation
 model: meta-llama/Llama-3.2-1B-Instruct
 variants: [fp16, gptq_w4, gptq_w8, nf4, int8, rtn_w4]
 datasets: [gsm8k, bbh, mmlu, longgen, wordnet_id]

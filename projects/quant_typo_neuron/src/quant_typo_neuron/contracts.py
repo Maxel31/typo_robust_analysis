@@ -3,7 +3,7 @@
 Single import surface: re-exports the cross-module type conventions defined in
 ``typo_utils`` and defines the project-specific :class:`ItemResult` evaluation
 record. Full JSONL I/O + long-form conversion live in
-``quant_typo_neuron.m2.schema`` (feature/quant_typo_neuron/m2-result-schema).
+``quant_typo_neuron.robustness_evaluation.schema`` (feature/quant_typo_neuron/robustness_evaluation-result-schema).
 """
 from __future__ import annotations
 

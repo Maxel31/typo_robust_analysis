@@ -1,6 +1,6 @@
-"""M1: ΔW = W_fp16 - dequant(W_q) を layer/row/col 単位で抽出。
+"""M2: 4条件(clean/typo × fp16/Q)評価。項目単位0/1を items.jsonl に保存。
 
-STATUS: stub — 実装は feature/quant_typo_neuron/m1-weight-diff。
+STATUS: stub — 実装は feature/quant_typo_neuron/robustness_evaluation-runner。
 README §5 の I/F に従うこと。
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ def main() -> None:
     p.add_argument("--config", required=True, help="path to configs/*.yaml")
     args, overrides = p.parse_known_args()
     raise NotImplementedError(
-        "feature/quant_typo_neuron/m1-weight-diff で実装予定 (config=%s, overrides=%s)"
+        "feature/quant_typo_neuron/robustness_evaluation-runner で実装予定 (config=%s, overrides=%s)"
         % (args.config, overrides)
     )
 
