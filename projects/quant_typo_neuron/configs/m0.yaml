@@ -1,0 +1,12 @@
+_base_: base.yaml
+exp_name: m0_identify
+model: meta-llama/Llama-3.2-1B-Instruct   # 既定は小型。本番は CLI override
+dataset:
+  name: wordnet_id
+  versions: [clean, typo, split]
+  typo_t: 1
+responsibility:
+  definition: activation_mean   # or act_grad
+neuron_top_frac: 0.005          # typoニューロン 上位0.5%
+head_top_frac: 0.015            # typoヘッド 上位1.5%
+seed: 42

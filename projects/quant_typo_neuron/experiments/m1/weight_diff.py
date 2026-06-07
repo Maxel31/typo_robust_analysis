@@ -1,0 +1,22 @@
+"""M1: ΔW = W_fp16 - dequant(W_q) を layer/row/col 単位で抽出。
+
+STATUS: stub — 実装は feature/quant_typo_neuron/m1-weight-diff。
+README §5 の I/F に従うこと。
+"""
+from __future__ import annotations
+
+import argparse
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--config", required=True, help="path to configs/*.yaml")
+    args, overrides = p.parse_known_args()
+    raise NotImplementedError(
+        "feature/quant_typo_neuron/m1-weight-diff で実装予定 (config=%s, overrides=%s)"
+        % (args.config, overrides)
+    )
+
+
+if __name__ == "__main__":
+    main()
