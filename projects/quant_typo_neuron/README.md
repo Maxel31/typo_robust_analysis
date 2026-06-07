@@ -123,24 +123,35 @@ def load_variant(name: str) -> tuple[Model, QuantVariant]: ...
 
 ## 5. 実行方法
 
-> **GPU 指定**: モデルを動かすスクリプト（`identify` / `ablation_gate` / `quantize` / `weight_diff` / `evaluate`）は `--gpu-ids` 引数で使用GPUを選べます（例 `--gpu-ids 2,3`）。内部で torch import 前に `CUDA_VISIBLE_DEVICES` を設定します。`build_dataset` / `stability_gate` は CPU のみで `--gpu-ids` は持ちません。実行時は extras を有効化（`uv run --extra llm --extra quant python ...`）。
+> **GPU 指定**: モデルを動かすスクリプト（`build_dataset` / `identify` / `ablation_gate` / `quantize` / `weight_diff` / `evaluate`）は `--gpu-ids` 引数で使用GPUを選べます（例 `--gpu-ids 2,3`、torch import 前に `CUDA_VISIBLE_DEVICES` を設定）。`stability_gate` は mask のみ扱う CPU 処理。実行時は extras 有効化（`uv run --extra llm --extra quant python ...`）。
+> **モデル選定**: M0 は「定義文→単語を生成」できる必要があるため **capable モデル推奨**（Tsuji コア: `google/gemma-2-9b` / `Qwen/Qwen2.5-7B` / `meta-llama/Llama-3.1-8B`）。0.5B〜1B 級は正答数が少なく検証に不向き。`<model_slug>` = モデル名末尾（例 `Qwen2.5-7B`）。
 
-### M0 — typoニューロン同定（最優先・関門）
+### M0 — typoニューロン同定（最優先・関門, Tsuji 完全準拠）
 
 ```bash
-# 1) WordNet単語同定データ 3版（clean / typo(t=1) / split=tokenization長を揃える分割）を生成
-uv run python experiments/neuron_identification/build_dataset.py --config configs/neuron_identification.yaml
-#   → data/wordnet_id/{clean,typo,split}.jsonl
+# 1) 単語同定データ構築（GPU・モデル使用）: original_data.json(62643) を走査し、
+#    モデルが generate で正答した項目のみ収集（+ 勾配 importance で最重要トークンを特定）
+uv run --extra llm python experiments/neuron_identification/build_dataset.py \
+  --config configs/neuron_identification.yaml model=Qwen/Qwen2.5-7B dataset.n_samples=20000 --gpu-ids 2,3
+#   → data/<model_slug>/meaning_dataset.json （gitignore）
 
-# 2) responsibility 集計 → Δ_n → typoニューロン mask M_n（上位0.5%）/ typoヘッド M_h（上位1.5%）
-uv run python experiments/neuron_identification/identify.py --config configs/neuron_identification.yaml --gpu-ids 2,3
-#   → results/neuron_identification/<run>/{delta.npz, neuron_mask.json, head_mask.json}
+# 2) typoニューロン/ヘッド同定（GPU）: act_fn 活性の Δ=typo−max(clean,split)、ヘッドは attention entropy の Δ
+uv run --extra llm python experiments/neuron_identification/identify.py \
+  --config configs/neuron_identification.yaml model=Qwen/Qwen2.5-7B dataset.data_size=2000 --gpu-ids 2,3
+#   → results/<model_slug>/{sorted_neurons.pkl, sorted_heads.pkl, neuron_mask.json, head_mask.json, delta.npz}
 
-# 3) 再現ゲート①: ablation 検証（M_n を 0/mean 置換 → typo精度↓ & clean保持、random同数では↓しない）
-uv run python experiments/neuron_identification/ablation_gate.py --config configs/neuron_identification.yaml --mask results/neuron_identification/<run>/neuron_mask.json --gpu-ids 2,3
+# 3) 再現ゲート①: invert test（GPU）: top-k typoニューロンを deactivate→単語生成 acc/prob を
+#    original/typo/split × top/random で測定。typo に特異的な低下 & clean 保持を判定
+uv run --extra llm python experiments/neuron_identification/ablation_gate.py \
+  --config configs/neuron_identification.yaml model=Qwen/Qwen2.5-7B dataset.data_size=2000 \
+  --neurons results/<model_slug>/sorted_neurons.pkl --heads results/<model_slug>/sorted_heads.pkl --gpu-ids 2,3
+#   → results/<model_slug>/ablation_gate.json （orig/typo/split × top/random の絶対 acc/prob + 判定）
 
-# 4) 再現ゲート②: seed/定義間の安定性（top-0.5% の Jaccard・層分布の順位相関）
-uv run python experiments/neuron_identification/stability_gate.py --config configs/neuron_identification.yaml
+# 4) 再現ゲート②: seed/定義間の安定性（CPU）: 複数 seed の neuron_mask の Jaccard・層分布 Spearman
+uv run --extra llm python experiments/neuron_identification/stability_gate.py \
+  --config configs/neuron_identification.yaml \
+  --mask results/<model_slugA>/neuron_mask.json --mask results/<model_slugB>/neuron_mask.json \
+  --min-jaccard 0.5 --min-rank-corr 0.7
 ```
 
 **ゲート判定**: ① ② を通過 → M1/M2 へ。不通過 → M4/M5 を撤回し診断＋tokenization分析に縮小（仕様書どおり）。
@@ -190,23 +201,22 @@ cd projects/quant_typo_neuron
 #     sed -i 's#^model:.*#model: Qwen/Qwen3-0.6B#' configs/$f.yaml
 #   done
 
-# ============ M0: typoニューロン同定 ============
-# (1) WordNet 3版データ生成（CPU）
+# ============ M0: typoニューロン同定（Tsuji 完全準拠。capable モデル推奨）============
+M=Qwen/Qwen2.5-7B    # 例。Gemma-2-9B / Llama-3.1-8B など。出力先 results/<model_slug>/
+# (1) 単語同定データ構築（GPU・モデル使用）: 正答項目のみ収集
 uv run --extra llm python experiments/neuron_identification/build_dataset.py \
-  --config configs/neuron_identification.yaml
-# (2) typoニューロン/ヘッド同定 → mask（GPU）。出力 results/neuron_identification/<run>/
+  --config configs/neuron_identification.yaml model=$M dataset.n_samples=20000 --gpu-ids 2,3
+# (2) typoニューロン/ヘッド同定（GPU）→ sorted_neurons.pkl / sorted_heads.pkl / masks / delta.npz
 uv run --extra llm python experiments/neuron_identification/identify.py \
-  --config configs/neuron_identification.yaml --gpu-ids 2,3
-#     ※ 安定性ゲート用に seed を変えて複数回実行し mask を複数用意（configs の seed を変更）
-# (3) 再現ゲート①: ablation（GPU）。<run> は (2) の実出力ディレクトリ名に置換
+  --config configs/neuron_identification.yaml model=$M dataset.data_size=2000 --gpu-ids 2,3
+# (3) 再現ゲート①: invert test（GPU）。top-k typoニューロンを deactivate→生成acc/prob を top/random比較
 uv run --extra llm python experiments/neuron_identification/ablation_gate.py \
-  --config configs/neuron_identification.yaml \
-  --mask results/neuron_identification/<run>/neuron_mask.json --gpu-ids 2,3
-# (4) 再現ゲート②: 安定性（CPU）。複数 seed の mask を --mask で並べる
+  --config configs/neuron_identification.yaml model=$M dataset.data_size=2000 \
+  --neurons results/Qwen2.5-7B/sorted_neurons.pkl --heads results/Qwen2.5-7B/sorted_heads.pkl --gpu-ids 2,3
+# (4) 再現ゲート②: 安定性（CPU）。複数モデル/seed の neuron_mask を --mask で並べる
 uv run --extra llm python experiments/neuron_identification/stability_gate.py \
   --config configs/neuron_identification.yaml \
-  --mask results/neuron_identification/<run_seed0>/neuron_mask.json \
-  --mask results/neuron_identification/<run_seed1>/neuron_mask.json \
+  --mask results/Qwen2.5-7B/neuron_mask.json --mask results/<別model_slug>/neuron_mask.json \
   --min-jaccard 0.5 --min-rank-corr 0.7
 
 # ============ M1: 量子化 ============
@@ -225,8 +235,8 @@ uv run --extra llm --extra quant python experiments/robustness_evaluation/evalua
 ```
 
 補足:
-- **GPU 指定は引数 `--gpu-ids 2,3`**（実スクリプト内で torch import 前に `CUDA_VISIBLE_DEVICES` を設定）。`build_dataset` と `stability_gate` は CPU のみで `--gpu-ids` を持たない。
-- `<run>` は各スクリプトが作る `results/.../<タイムスタンプ>/` 実ディレクトリ名に置換する（前段の出力を後段の `--mask` に渡す）。
+- **GPU 指定は引数 `--gpu-ids 2,3`**（実スクリプト内で torch import 前に `CUDA_VISIBLE_DEVICES` を設定）。M0 の `build_dataset`/`identify`/`ablation_gate` はモデルを使うため GPU 必須。`stability_gate` は mask 同士の集合比較のみで CPU（`--gpu-ids` を持たない）。
+- M0 の出力先は `<model_slug>`（= `model=` で渡したモデル名の末尾。例 `Qwen/Qwen2.5-7B` → `Qwen2.5-7B`）で決まる。前段 `identify` の `results/<model_slug>/sorted_neurons.pkl`・`sorted_heads.pkl` を後段 `ablation_gate` の `--neurons`/`--heads` に、`neuron_mask.json` を `stability_gate` の `--mask` に渡す。
 - **`quantize.py`（実GPTQ）** は `gptqmodel 7.0.0` × `transformers 5.10.2` の非互換に注意（§Caveats）。NF4/INT8/RTN は影響なし。
 - 各スクリプトの全フラグは `--help` で確認可（例 `... quantize.py --help`）。
 
@@ -236,7 +246,13 @@ uv run --extra llm --extra quant python experiments/robustness_evaluation/evalua
 
 ```
 results/
-├── neuron_identification/<run>/{delta.npz, neuron_mask.json, head_mask.json, config.json}
+├── <model_slug>/                       # M0（Tsuji 準拠）: モデル名末尾でディレクトリが決まる
+│   ├── meaning_dataset.json            #   build_dataset の正答データ
+│   ├── sorted_neurons.pkl              #   identify: Δ降順の typoニューロン
+│   ├── sorted_heads.pkl                #   identify: Δ(entropy)降順の typoヘッド
+│   ├── neuron_mask.json / head_mask.json
+│   ├── delta.npz                       #   identify: 各ニューロン/ヘッドの Δ
+│   └── ablation_gate.json              #   ablation_gate: invert test の acc/prob
 ├── quantization_weight_diff/<run>/delta_w/...
 └── robustness_evaluation/<run>/{items.jsonl, metrics.json, config.json}
 ```
@@ -277,4 +293,5 @@ results/
 
 - `uv sync --extra llm --extra quant` 成功、`uv run python -c "import typo_utils.neurons.hooks, typo_utils.quant.rtn, typo_utils.quant.loader, typo_utils.eval.calibration"` が通る
 - 最小E2E（小型モデル Llama-3.2-1B）: M1 量子化1種 → M2 評価1セル → `items.jsonl` に **項目単位 0/1** が出力される
-- M0: `ablation_gate` で M_n の ablation が random を有意に上回って typo精度を落とす（再現ゲート通過）
+- M0（Tsuji 準拠・再現ゲート①）: `ablation_gate` の invert test で、top typoニューロンを deactivate すると **typo/split 入力での生成精度・確率が落ち、かつ同数の random ニューロン deactivate では落ちない**（top ≫ random）。`results/<model_slug>/ablation_gate.json` で確認。※効果検証には capable モデル（Qwen2.5-7B / Gemma-2-9B / Llama-3.1-8B 等）が必要。0.5B 級では clean 自体が脆く判定不能。
+- M0（再現ゲート②）: `stability_gate` で複数モデル/seed の `neuron_mask` 間の Jaccard ≥ 0.5・層分布順位相関 ≥ 0.7
