@@ -265,13 +265,28 @@ class HeadDeactivator:
 
     def deactivate(self, model, args, kwargs, output):
         import torch
+        # transformers >=5 no longer exposes num_key_value_heads / head_dim as
+        # direct attention-module attributes; read them from the module config
+        # (with robust fallbacks) so the hook works across versions/families.
+        cfg = model.config
+        num_kv_heads = getattr(model, "num_key_value_heads", None)
+        if num_kv_heads is None:
+            num_kv_heads = cfg.num_key_value_heads
+        num_attn_heads = getattr(cfg, "num_attention_heads")
+        head_dim = getattr(model, "head_dim", None)
+        if head_dim is None:
+            head_dim = getattr(cfg, "head_dim", None) or (cfg.hidden_size // num_attn_heads)
+        num_kv_groups = getattr(model, "num_key_value_groups", None)
+        if num_kv_groups is None:
+            num_kv_groups = num_attn_heads // num_kv_heads
+
         hidden_states = kwargs["hidden_states"]
         bsz, q_len, _ = hidden_states.size()
         value_states = model.v_proj(hidden_states)
         value_states = value_states.view(
-            bsz, q_len, model.num_key_value_heads, model.head_dim
+            bsz, q_len, num_kv_heads, head_dim
         ).transpose(1, 2)
-        value_states = _repeat_kv(value_states, model.num_key_value_groups)
+        value_states = _repeat_kv(value_states, num_kv_groups)
 
         attn_weight = output[1]
         n = attn_weight.size(2)
@@ -293,7 +308,10 @@ class HeadDeactivator:
         attn_output = attn_output.reshape(bsz, q_len, -1).contiguous()
         attn_output = model.o_proj(attn_output)
 
-        output = attn_output, output[1], output[2]
+        # Preserve the original output arity: transformers>=5 attention returns
+        # a 2-tuple (attn_output, attn_weights); older versions returned a
+        # 3-tuple (.., .., past_key_value). Replace only the attn_output slot.
+        output = (attn_output,) + tuple(output[1:])
         return output
 
     def release(self) -> None:

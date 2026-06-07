@@ -10,6 +10,7 @@ import torch.nn as nn
 
 from typo_utils.neurons.hooks import (
     Deactivator,
+    HeadDeactivator,
     NeuronIndex,
     NeuronMask,
     convertNeuronsToDict,
@@ -303,3 +304,108 @@ def test_type_aliases_importable():
     """NeuronIndex and NeuronMask can be imported from typo_utils.neurons.hooks."""
     assert NeuronIndex is not None
     assert NeuronMask is not None
+
+
+# ---------------------------------------------------------------------------
+# Tests: HeadDeactivator
+#
+# Regression for transformers>=5: Qwen2Attention (and peers) no longer expose
+# ``num_key_value_heads`` / ``head_dim`` as module attributes (only on config).
+# The synthetic attention below mimics that: it sets ONLY ``self.config`` and
+# ``self.num_key_value_groups`` (like transformers>=5) and deliberately omits
+# ``num_key_value_heads`` / ``head_dim`` from the module, so the hook must read
+# them from config. GQA (num_kv_heads < num_attention_heads) exercises _repeat_kv.
+# ---------------------------------------------------------------------------
+
+
+class _AttnConfig:
+    def __init__(self, hidden_size, num_attention_heads, num_key_value_heads, head_dim=None):
+        self.hidden_size = hidden_size
+        self.num_attention_heads = num_attention_heads
+        self.num_key_value_heads = num_key_value_heads
+        if head_dim is not None:
+            self.head_dim = head_dim
+
+
+class _SelfAttn(nn.Module):
+    """Minimal GQA self-attention mirroring the transformers>=5 module surface.
+
+    Returns ``(attn_output, attn_weights)`` and accepts ``hidden_states`` as a
+    keyword (as HF decoder layers call it), so HeadDeactivator's with_kwargs hook
+    can read ``kwargs['hidden_states']``.
+    """
+
+    def __init__(self, cfg: "_AttnConfig") -> None:
+        super().__init__()
+        self.config = cfg
+        self.num_key_value_groups = cfg.num_attention_heads // cfg.num_key_value_heads
+        hd = getattr(cfg, "head_dim", cfg.hidden_size // cfg.num_attention_heads)
+        self._hd = hd
+        self.q_proj = nn.Linear(cfg.hidden_size, cfg.num_attention_heads * hd, bias=False)
+        self.k_proj = nn.Linear(cfg.hidden_size, cfg.num_key_value_heads * hd, bias=False)
+        self.v_proj = nn.Linear(cfg.hidden_size, cfg.num_key_value_heads * hd, bias=False)
+        self.o_proj = nn.Linear(cfg.num_attention_heads * hd, cfg.hidden_size, bias=False)
+        # NOTE: deliberately NOT setting self.num_key_value_heads / self.head_dim
+
+    def forward(self, hidden_states: torch.Tensor, output_attentions: bool = False, **kw):
+        bsz, q_len, _ = hidden_states.size()
+        nH, hd, nKV = (
+            self.config.num_attention_heads,
+            self._hd,
+            self.config.num_key_value_heads,
+        )
+        q = self.q_proj(hidden_states).view(bsz, q_len, nH, hd).transpose(1, 2)
+        k = self.k_proj(hidden_states).view(bsz, q_len, nKV, hd).transpose(1, 2)
+        from typo_utils.neurons.hooks import _repeat_kv
+
+        k = _repeat_kv(k, self.num_key_value_groups)
+        attn = torch.softmax(torch.matmul(q, k.transpose(-1, -2)) / (hd ** 0.5), dim=-1)
+        v = self.v_proj(hidden_states).view(bsz, q_len, nKV, hd).transpose(1, 2)
+        v = _repeat_kv(v, self.num_key_value_groups)
+        ctx = torch.matmul(attn, v).transpose(1, 2).reshape(bsz, q_len, nH * hd)
+        return self.o_proj(ctx), attn
+
+
+def _make_attn():
+    torch.manual_seed(0)
+    # GQA: 4 query heads, 2 kv heads, head_dim = 8 (=hidden/heads)
+    cfg = _AttnConfig(hidden_size=32, num_attention_heads=4, num_key_value_heads=2)
+    attn = _SelfAttn(cfg).eval()
+    return attn, cfg
+
+
+def test_head_deactivator_runs_without_module_attrs():
+    """Regression: HeadDeactivator reads head dims from config (transformers>=5)."""
+    attn, cfg = _make_attn()
+    x = torch.randn(1, 5, cfg.hidden_size)
+    hook = HeadDeactivator(attn, head_ids=[0], mode="all", lastN=0)
+    try:
+        out = attn(hidden_states=x, output_attentions=True)
+    finally:
+        hook.release()
+    assert torch.isfinite(out[0]).all()
+    assert out[0].shape == (1, 5, cfg.hidden_size)
+
+
+def test_head_deactivator_zeroes_all_heads():
+    """mode='all' with every head selected → recomputed attn_output is all zeros."""
+    attn, cfg = _make_attn()
+    x = torch.randn(1, 4, cfg.hidden_size)
+    all_heads = list(range(cfg.num_attention_heads))
+    hook = HeadDeactivator(attn, head_ids=all_heads, mode="all", lastN=0)
+    try:
+        out = attn(hidden_states=x, output_attentions=True)
+    finally:
+        hook.release()
+    # o_proj has no bias, so zeroing every head's context → exact zeros.
+    assert torch.allclose(out[0], torch.zeros_like(out[0]), atol=1e-6)
+
+
+def test_head_deactivator_release_removes_hook():
+    """release() removes the forward hook."""
+    attn, _ = _make_attn()
+    before = len(attn._forward_hooks)
+    hook = HeadDeactivator(attn, head_ids=[0], mode="all")
+    assert len(attn._forward_hooks) == before + 1
+    hook.release()
+    assert len(attn._forward_hooks) == before
