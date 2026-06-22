@@ -147,6 +147,14 @@ _QUANTIZERS: dict[str, type[Quantizer]] = {
 }
 
 
+def _register_qep() -> None:
+    from typo_utils.quant.onecompression import QEPQuantizer
+    _QUANTIZERS["qep"] = QEPQuantizer
+
+
+_register_qep()
+
+
 def create_quantizer(method: str) -> Quantizer:
     if method not in _QUANTIZERS:
         raise ValueError(f"Unknown quantization method: {method}. Available: {list(_QUANTIZERS)}")
