@@ -78,3 +78,35 @@ def test_inject_typos_by_count_short_words_skipped():
     text = "I a the"
     modified, annotations = inject_typos_by_count(text, num_typos=3, typo_type="swap", seed=0)
     assert len(annotations) <= 1
+
+
+def test_inject_typos_by_count_word_indices_consistent_across_types():
+    text = "the quick brown fox jumps over the lazy dog"
+    seed = 42
+    num_typos = 3
+    types: list[str] = ["swap", "insert", "delete", "replace", "random"]
+    index_sets = []
+    for typo_type in types:
+        _, annotations = inject_typos_by_count(
+            text, num_typos=num_typos, typo_type=typo_type, seed=seed
+        )
+        index_sets.append({a.word_index for a in annotations})
+    for i in range(1, len(index_sets)):
+        assert index_sets[0] == index_sets[i], (
+            f"typo_type={types[i]}: indices {index_sets[i]} != {types[0]}: {index_sets[0]}"
+        )
+
+
+def test_inject_typos_by_count_monotonic_inclusion():
+    text = "the quick brown fox jumps over the lazy dog"
+    seed = 42
+    prev_indices: set[int] = set()
+    for n in range(1, 5):
+        _, annotations = inject_typos_by_count(
+            text, num_typos=n, typo_type="swap", seed=seed
+        )
+        current_indices = {a.word_index for a in annotations}
+        assert prev_indices <= current_indices, (
+            f"num_typos={n}: {prev_indices} is not a subset of {current_indices}"
+        )
+        prev_indices = current_indices
