@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 try:
@@ -99,12 +99,6 @@ class VLLMRunner:
         outputs = self._llm.generate(flat_prompts, params)
 
         flat_scores: list[float] = []
-        for i, (out, (prompt, conts)) in enumerate(
-            zip(outputs, ((p, c) for p, cs in zip(prompts, continuations) for c in cs))
-        ):
-            pass
-
-        flat_scores = []
         idx = 0
         for prompt, conts in zip(prompts, continuations):
             for cont in conts:
