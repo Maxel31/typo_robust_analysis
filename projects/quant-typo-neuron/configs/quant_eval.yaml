@@ -16,6 +16,5 @@ typo:
 seed: 42
 batch_size: 32
 max_tokens: 256
-gpu_ids: [2, 3]
 results_root: ./results
 few_shot_dir: ./data/few_shot

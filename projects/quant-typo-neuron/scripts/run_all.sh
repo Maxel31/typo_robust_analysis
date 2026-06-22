@@ -1,10 +1,21 @@
 #!/usr/bin/env bash
 # 全実験の一括実行スクリプト
+#
+# Usage: bash scripts/run_all.sh --gpu-ids 2,3
 set -euo pipefail
 
-CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-2,3}"
-export CUDA_VISIBLE_DEVICES
-GPU_IDS="${GPU_IDS:-2,3}"
+GPU_IDS=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --gpu-ids) GPU_IDS="$2"; shift 2 ;;
+        *) echo "Unknown option: $1"; exit 1 ;;
+    esac
+done
+
+if [ -z "$GPU_IDS" ]; then
+    echo "Error: --gpu-ids is required (e.g., --gpu-ids 2,3)"
+    exit 1
+fi
 
 MODELS=(
     "meta-llama/Llama-3.2-1B"
@@ -74,15 +85,15 @@ for model in "${MODELS[@]}"; do
                 num_typos="${typo_spec##*:}"
 
                 echo "=== $model_short | $method w$bits | $benchmark | $typo_type n$num_typos ==="
-                python experiments/run_eval.py \
+                uv run python experiments/run_eval.py \
                     --config configs/base_eval.yaml \
+                    --gpu-ids "$GPU_IDS" \
                     "model.name=$model_path" \
                     "model.quant_method=$method" \
                     "model.bits=$bits" \
                     "benchmark.name=$benchmark" \
                     "typo.type=$typo_type" \
                     "typo.num_typos=$num_typos" \
-                    "gpu_ids=[$GPU_IDS]" \
                 || echo "FAILED: $model_short $method w$bits $benchmark $typo_type n$num_typos"
             done
         done
