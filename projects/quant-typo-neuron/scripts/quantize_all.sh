@@ -1,10 +1,23 @@
 #!/usr/bin/env bash
 # 全モデル x 全量子化手法の一括量子化スクリプト
+#
+# Usage: bash scripts/quantize_all.sh --gpu-ids 2,3
 set -euo pipefail
 
-CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-2,3}"
-export CUDA_VISIBLE_DEVICES
-GPU_IDS="${GPU_IDS:-$CUDA_VISIBLE_DEVICES}"
+GPU_IDS=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --gpu-ids) GPU_IDS="$2"; shift 2 ;;
+        *) echo "Unknown option: $1"; exit 1 ;;
+    esac
+done
+
+if [ -z "$GPU_IDS" ]; then
+    echo "Error: --gpu-ids is required (e.g., --gpu-ids 2,3)"
+    exit 1
+fi
+
+export CUDA_VISIBLE_DEVICES="$GPU_IDS"
 
 CALIBRATION_SAMPLES="${CALIBRATION_SAMPLES:-512}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-./data/quantized}"
@@ -36,7 +49,7 @@ METHODS_AND_BITS=(
 # Prepare calibration data if not exists
 if [ ! -f "$CALIBRATION_DATA" ]; then
     echo "Preparing calibration data..."
-    python scripts/prepare_calibration_data.py \
+    uv run python scripts/prepare_calibration_data.py \
         --dataset wikitext \
         --num-samples "$CALIBRATION_SAMPLES" \
         --output "$CALIBRATION_DATA"
@@ -55,7 +68,7 @@ for model in "${MODELS[@]}"; do
         fi
 
         echo "=== Quantizing: $model | method=$method bits=$bits ==="
-        python scripts/quantize_model.py \
+        uv run python scripts/quantize_model.py \
             --model "$model" \
             --method "$method" \
             --bits "$bits" \
