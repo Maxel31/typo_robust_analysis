@@ -11,7 +11,11 @@ import string
 from dataclasses import dataclass
 from typing import Literal
 
-TypoType = Literal["swap", "insert", "delete", "substitute", "keyboard"]
+TypoType = Literal[
+    "swap", "insert", "delete", "substitute", "keyboard", "replace", "random"
+]
+
+_RANDOM_POOL: list[TypoType] = ["swap", "insert", "delete", "substitute"]
 
 # 近接キー（QWERTY）— keyboard typo 用の簡易マップ
 _KEYBOARD_NEIGHBORS: dict[str, str] = {
@@ -21,6 +25,16 @@ _KEYBOARD_NEIGHBORS: dict[str, str] = {
     "p": "ol", "q": "wa", "r": "edft", "s": "awedxz", "t": "rfgy",
     "u": "yhji", "v": "cfgb", "w": "qase", "x": "zsdc", "y": "tghu", "z": "asx",
 }
+
+
+@dataclass
+class TypoAnnotation:
+    """1 箇所の typo 適用記録。"""
+
+    word_index: int
+    original_word: str
+    typo_word: str
+    typo_type: TypoType
 
 
 @dataclass
@@ -63,3 +77,52 @@ def inject_typos(text: str, config: TypoConfig | None = None) -> str:
         for w in words
     ]
     return " ".join(out)
+
+
+def inject_typos_by_count(
+    text: str,
+    num_typos: int,
+    typo_type: TypoType,
+    seed: int = 42,
+    exclude_indices: set[int] | None = None,
+) -> tuple[str, list[TypoAnnotation]]:
+    """指定個数の単語に typo を注入し、変更履歴を返す。"""
+    rng = random.Random(seed)
+    words = text.split(" ")
+    exclude = exclude_indices or set()
+
+    candidates = [
+        i for i, w in enumerate(words) if len(w) >= 2 and i not in exclude
+    ]
+    rng.shuffle(candidates)
+    targets = candidates[:num_typos]
+    targets.sort()
+
+    annotations: list[TypoAnnotation] = []
+    for idx in targets:
+        original = words[idx]
+        if typo_type == "random":
+            chosen: TypoType = rng.choice(_RANDOM_POOL)
+        elif typo_type == "replace":
+            chosen = "substitute"
+        else:
+            chosen = typo_type
+        modified = _apply_one(original, chosen, rng)
+        for _ in range(5):
+            if modified != original:
+                break
+            modified = _apply_one(original, chosen, rng)
+        if modified == original:
+            continue
+        words[idx] = modified
+        ann_type: TypoType = "replace" if typo_type == "replace" else chosen
+        annotations.append(
+            TypoAnnotation(
+                word_index=idx,
+                original_word=original,
+                typo_word=modified,
+                typo_type=ann_type,
+            )
+        )
+
+    return " ".join(words), annotations
