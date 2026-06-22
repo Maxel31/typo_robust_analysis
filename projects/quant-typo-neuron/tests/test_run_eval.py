@@ -13,7 +13,7 @@ def test_base_eval_config_loads():
     assert "model" in cfg
     assert "benchmark" in cfg
     assert "seed" in cfg
-    assert "gpu_ids" in cfg
+    assert "gpu_ids" not in cfg
 
 
 def test_typo_eval_config_loads():
