@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 
@@ -23,3 +24,17 @@ def relative_robustness(clean_acc: float, typo_acc: float) -> float:
     if clean_acc == 0.0:
         return 0.0
     return typo_acc / clean_acc
+
+
+def mean_logprob(logprobs: Sequence[float]) -> float:
+    """トークン log-probability の平均。空なら 0.0。"""
+    if not logprobs:
+        return 0.0
+    return sum(logprobs) / len(logprobs)
+
+
+def perplexity(logprobs: Sequence[float]) -> float:
+    """トークン log-probability 列から perplexity を計算。空なら inf。"""
+    if not logprobs:
+        return float("inf")
+    return math.exp(-mean_logprob(logprobs))
