@@ -1,3 +1,8 @@
-from typo_utils.data.typo import TypoConfig, inject_typos
+from typo_utils.data.typo import (
+    TypoAnnotation,
+    TypoConfig,
+    inject_typos,
+    inject_typos_by_count,
+)
 
-__all__ = ["TypoConfig", "inject_typos"]
+__all__ = ["TypoAnnotation", "TypoConfig", "inject_typos", "inject_typos_by_count"]
