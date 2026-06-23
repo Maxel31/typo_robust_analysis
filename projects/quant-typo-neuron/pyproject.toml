@@ -1,0 +1,35 @@
+[project]
+name = "quant-typo-neuron"
+version = "0.1.0"
+description = "Measuring the impact of LLM quantization on typo robustness"
+requires-python = ">=3.12"
+dependencies = ["typo-utils"]
+
+[project.optional-dependencies]
+llm = ["typo-utils[llm]"]
+vllm = ["typo-utils[llm]", "vllm>=0.23"]
+quant = ["typo-utils[llm]", "llmcompressor>=0.5.0", "onecomp", "torchvision"]
+tracking = ["typo-utils[tracking]"]
+analysis = ["marimo>=0.10", "plotly>=6", "altair>=5", "nltk>=3.9", "pandas>=2"]
+
+[dependency-groups]
+dev = ["pytest>=8", "ipykernel>=6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/quant_typo_neuron"]
+
+[tool.uv]
+conflicts = [
+    [
+        { package = "quant-typo-neuron", extra = "vllm" },
+        { package = "quant-typo-neuron", extra = "quant" },
+    ],
+]
+
+[tool.uv.sources]
+typo-utils = { workspace = true }
+onecomp = { git = "https://github.com/FujitsuResearch/OneCompression.git" }
