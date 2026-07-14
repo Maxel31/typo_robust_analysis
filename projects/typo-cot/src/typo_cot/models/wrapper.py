@@ -25,7 +25,13 @@ def setup_device(gpu_id: str = "0") -> tuple[torch.device, bool]:
         (torch.device, use_multi_gpu): デバイスと複数GPU使用フラグのタプル
     """
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
+    # 外部 (run_with_gpu.sh 等の GPU 排他ヘルパー) が既に CUDA_VISIBLE_DEVICES を
+    # 設定している場合はそちらを優先し、上書きしない
+    if "CUDA_VISIBLE_DEVICES" in os.environ:
+        gpu_id = os.environ["CUDA_VISIBLE_DEVICES"]
+        logger.info(f"外部設定の CUDA_VISIBLE_DEVICES={gpu_id} を優先します")
+    else:
+        os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
 
     # 複数GPUかどうかを判定
     gpu_ids = [g.strip() for g in gpu_id.split(",")]
