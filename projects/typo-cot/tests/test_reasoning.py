@@ -181,6 +181,15 @@ class TestExtractReasoningAnswer:
         result = extract_reasoning_answer(extractor, split)
         assert result.extracted_answer == "\\frac{1}{2}"
 
+    def test_gsm8k_dollar_sign_fallback(self) -> None:
+        # R1系は "The answer is $65,000." のように通貨記号を付けることがある
+        extractor = create_extractor("gsm8k")
+        split = split_reasoning_output(
+            "<think>\ncompute...\n</think>\n\nThe answer is $65,000."
+        )
+        result = extract_reasoning_answer(extractor, split)
+        assert result.extracted_answer == "65000"
+
     def test_truncated_falls_back_to_cot_tail(self) -> None:
         # </think> が無い場合は全文から抽出を試みる(答えが CoT 内に出ている場合の救済)
         extractor = create_extractor("gsm8k")

@@ -248,6 +248,17 @@ def extract_reasoning_answer(
         if result.extracted_answer:
             return result
 
+        # 通貨記号フォールバック: "The answer is $65,000." 等(R1系の癖)
+        if "$" in split.answer_text:
+            retry = extractor.extract(split.answer_text.replace("$", ""))
+            if retry.extracted_answer:
+                return ExtractionResult(
+                    extracted_answer=retry.extracted_answer,
+                    raw_text=split.answer_text,
+                    confidence=retry.confidence,
+                    extraction_method=f"dollar_{retry.extraction_method}",
+                )
+
         # boxed フォールバック(MATH 抽出器は既に boxed を試している)
         if not isinstance(extractor, MATHAnswerExtractor):
             boxed = MATHAnswerExtractor._extract_boxed_content(split.answer_text)
