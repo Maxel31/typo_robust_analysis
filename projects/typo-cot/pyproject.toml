@@ -10,6 +10,9 @@ dependencies = [
     "scipy>=1.13",
     "pingouin>=0.5.5",
     "tqdm>=4.65",
+    # 実験9 (inner lexicon 修復スコア): 回帰 (GLM cluster-robust SE) と Zipf 頻度
+    "statsmodels>=0.14",
+    "wordfreq>=3.1",
 ]
 
 [project.optional-dependencies]
