@@ -67,6 +67,39 @@ class TestPySpellCorrector:
         text = "speling\n  test"
         assert corrector.correct(text) == "spelling\n  test"
 
+    def test_deterministic_tie_break(self):
+        """頻度同点の候補は辞書順で決定的に選ぶ.
+
+        pyspellchecker の correction() は同点候補を set の反復順
+        (PYTHONHASHSEED 依存) で返すため再現不能。実験7 では
+        (最高頻度, 辞書順最小) で決定的に選ぶ。
+        """
+
+        class FakeSpell:
+            _freq = {"zza": 5, "zzb": 5, "zzc": 3}
+
+            def __contains__(self, word):
+                return word in self._freq
+
+            def __getitem__(self, word):
+                return self._freq[word]
+
+            def candidates(self, word):
+                return {"zzb", "zza", "zzc"}
+
+            def correction(self, word):
+                # 非決定的実装のシミュレーション (同点の別候補を返す)
+                return "zzb"
+
+        corrector = PySpellCorrector.__new__(PySpellCorrector)
+        corrector._spell = FakeSpell()
+        assert corrector.correct("zzq") == "zza"
+
+    def test_real_dictionary_tie_is_stable(self, corrector):
+        # 'mph' の候補 eph/kph/ph は 0.9.0 辞書で全て頻度 50 の同点。
+        # 決定的実装では常に辞書順最小の 'eph' が選ばれる。
+        assert corrector.correct("mph") == "eph"
+
 
 class TestSeq2SeqCorrector:
     def test_corrects_line_by_line(self):
