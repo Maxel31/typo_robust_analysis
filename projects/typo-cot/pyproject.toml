@@ -17,6 +17,9 @@ dependencies = [
 lrp = [
     "typo-utils[llm]",
     "lxt>=2.1",
+    # lxt 2.1 は transformers 5.x で削除された API
+    # (pytorch_utils.find_pruneable_heads_and_indices 等) に依存するため上限を固定
+    "transformers>=4.52,<5",
     "accelerate>=0.20",
     "sentencepiece>=0.2.1",
     "protobuf>=4",
