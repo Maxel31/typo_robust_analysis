@@ -72,6 +72,32 @@ uv run python scripts/exp5/analyze_matched_control.py \
   ユーザー判断 (open question)。
 - GLMM (誤答 ~ 条件 + (1|item) + (1|設定)) は全設定の生成完了後に別途実装する。
 
+## GPU スモーク結果 (2026-07-14, 合格)
+
+環境修正を exp/04-fixed-target から cherry-pick 済み: e8e2139 (transformers<5 pin) /
+9500b0d+b37f59d (setup_device が外部 CUDA_VISIBLE_DEVICES を尊重) / 1adaaaf
+(torch==2.9.1 pin; uv.lock は取り込み側で再解決)。torch 2.9.1+cu128 /
+transformers 4.57.6、既存テスト 43 passed / 6 skipped。
+
+Gemma-3-4B-it × Matched-Rnd-4 (`--limit 24`, batch_size 4, run_with_gpu.sh 経由):
+
+| bench | n | accuracy | 出力 |
+|---|---|---|---|
+| GSM8K | 24 | 0.667 (16/24) | `results/smoke/exp5_perturbed/gemma-3-4b-it_gsm8k_k4_matched_rnd/` |
+| MMLU  | 24 | 0.458 (11/24) | `results/smoke/exp5_perturbed/gemma-3-4b-it_mmlu_k4_matched_rnd/` |
+
+- 双方とも 1 分未満で完走 (モデルロード込み ~80s)。ヘルパーが GPU 3/4 を別々に取得し、
+  wrapper は「外部設定の CUDA_VISIBLE_DEVICES=3 を優先します」をログ出力 (修正が有効)。
+- スキーマ互換: results.json のエントリキー・perturbed_tokens キーがアーカイブの
+  `outputs/perturbed/gemma-3-4b-it_gsm8k_k4_importance/results.json` と完全一致。
+- 目視 10 件 (GSM8K 5 + MMLU 5): 摂動注入トークンは厳密 top-4 重要度標的と全件
+  非重複 (`results/smoke/exp5_visual_check_strict_top4.json`)。なおアーカイブの
+  LXT-4 perturbed_tokens は perturb() 失敗フォールバックで厳密 top-4 から
+  ずれることがあり、その比較では 2/10 が見かけ上重複する
+  (`results/smoke/exp5_visual_check_targets.json`) が、サンプラの標的定義
+  (厳密 top-k) とは非重複であり rebuttal 手続きと整合。
+- 総合判定 PASS: `results/smoke/exp5_gpu_smoke_summary.json`
+
 ## Step 0 (master table) との接続
 
 データアクセスは `load_correct_map()` (results.json -> sample_id -> is_correct) と
