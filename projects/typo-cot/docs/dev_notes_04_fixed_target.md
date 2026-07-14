@@ -83,6 +83,31 @@
   のみ 0.818 (同因)。
 - all_cot_range_match = true (両設定)、n_tokens_match 全 true、errors 0。
 
+## 本番ラン (2026-07-14 開始, 25設定)
+
+- 対象: v1 manifest の 5モデル×5ベンチ (LXT-4)。Qwen/MATH は実験10の基盤生成待ち。
+- 計画パス (CPU, `results/prod/plan_all_settings.py` → `settings_plan.json`):
+  全25設定で flip 合計 13,953 / processed 合計 39,073 (再計算は flip のみ ≈ 36%)。
+  最大シャード = gemma-3-1b-it×mmlu (flip 1,244)。
+- `--flip_only` の出力を analyzer 直結の完全な run にするため、非flip の
+  materialize (default `_cot.pt`/`.pt` の冪等 symlink + results.json エントリ合流)
+  を追加 (run_io.link_reused_scores / fixed_target.fixed_target_entry,
+  RED→GREEN コミット済み)。default _cot.pt 欠損の非flip は skipped_ids に
+  `nonflip_default_cot_pt_missing` で記録され解析から除外される。
+- キュー: `results/prod/run_queue.py` (nohup)。1シャード=1設定で
+  (1) GPU: run_with_gpu.sh 経由 `run_fixed_target.py --flip_only`
+  (2) CPU: `run_rebuttal_analysis.py` (union 除外 + fixed skipped_ids 追加除外) で
+  default/fixed 両条件 → `results/prod/analysis/{bench}/{model}/k4_*/full_results.json`。
+  シャード間でロック解放 (実験10 と交互)。進捗 `results/prod/progress.json`、
+  再開 = 同コマンド再実行 (完了ステップは成果物存在でスキップ)、停止 =
+  `results/prod/STOP` 作成。
+- 検証設計: rebuttal 済み4設定を再計算してキュー先頭に配置し、`--compare_dir` で
+  全 flip の rebuttal 参照 `_cot.pt` と比較 (comparison.json)。Δρ 表には
+  provenance 統一のため 25設定とも自前の再計算・再分析を用いる
+  (アーカイブ analysis_exp1 は突合参照として使用)。
+- Δρ 表: キュー完了後 `bash results/prod/run_delta_table.sh`
+  → `results/prod/delta_rho/delta_rho_table.{json,csv}` (B=10,000, Holm)。
+
 ## 未実装 / 別途判断が必要
 
 - GLMM 再推定 (R lme4 / glmmTMB): R 環境が必要。未着手。
