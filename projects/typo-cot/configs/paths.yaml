@@ -1,0 +1,30 @@
+# アーカイブ済み JSAI2026 実験データへの読み取り専用参照
+# （96GB の生成・帰属ログ / 1.1GB の摂動データセットはモノレポにコピーしない）
+#
+# 使い方: 各スクリプトの --*_dir 引数にここのパスを渡す。
+#   例: uv run python scripts/run_analysis.py \
+#         --outputs_dir /home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs \
+#         --output_dir ./results/analysis
+# 注意: アーカイブは別ファイルシステム (/home) 上にある。書き込み先には絶対に指定しないこと。
+# typo_utils.config.load_config(path) で OmegaConf として読める。
+
+# 旧リポジトリのルート
+jsai2026_root: /home/sfukuhata/dev/kanolab/archive/2025/JSAI2026
+
+# 実験出力（読み取り専用）
+archive_outputs: /home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs
+archive_baseline: /home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/baseline        # 90 dirs: {model}_{benchmark}/ 生成 + relevance ログ
+archive_perturbed_outputs: /home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/perturbed  # 322 dirs: 摂動後の生成 + relevance ログ
+archive_analysis: /home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/analysis       # ベンチマークごとの analysis_results.json
+archive_rebuttal_outputs: /home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/rebuttal
+archive_figures: /home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/figures         # 論文最終 figure2a/2b/3 + table3/5/6
+
+# 摂動データセット（読み取り専用、Phase 2 で再生成可能）
+archive_perturbed_datasets: /home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/datasets/perturbed  # 360 dirs: config.json + perturbed_dataset.json
+archive_rebuttal_datasets: /home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/datasets/rebuttal    # spellfix / matched_random 統制データ
+
+# 25 設定の run manifest（どのモデル×ベンチマーク×摂動条件を回したかの正典）
+run_manifest: docs/v1_run_manifest.md
+
+# 新規実行の書き込み先（プロジェクト内、gitignore 済み）
+results_root: ./results
