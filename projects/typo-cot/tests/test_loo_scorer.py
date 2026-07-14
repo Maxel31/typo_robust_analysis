@@ -385,3 +385,37 @@ class TestNormalizeWord:
     def test_keeps_inner_punctuation(self):
         assert normalize_word("3.5") == "3.5"
         assert normalize_word("1,000") == "1,000"
+
+
+# ============================================================
+# clean vs perturbed の LOO 版 Jaccard@k ペアリング
+# ============================================================
+
+
+class TestComputeLooJaccardPairs:
+    def _entry(self, sid, words):
+        return {
+            "sample_id": sid,
+            "loo_word_scores": [
+                {"word": w, "score": float(len(words) - i)} for i, w in enumerate(words)
+            ],
+        }
+
+    def test_pairs_by_sample_id(self):
+        from typo_cot.intervention.loo_scorer import compute_loo_jaccard_pairs
+
+        clean = [self._entry("s1", ["a", "b", "c"]), self._entry("s2", ["x", "y"])]
+        pert = [self._entry("s2", ["x", "z"]), self._entry("s1", ["a", "b", "c"])]
+        pairs = compute_loo_jaccard_pairs(clean, pert, k=3)
+        by_id = {p["sample_id"]: p for p in pairs}
+        assert by_id["s1"]["loo_jaccard"] == pytest.approx(1.0)
+        # {x,y} vs {x,z} -> 1/3
+        assert by_id["s2"]["loo_jaccard"] == pytest.approx(1 / 3)
+
+    def test_skips_unmatched_samples(self):
+        from typo_cot.intervention.loo_scorer import compute_loo_jaccard_pairs
+
+        clean = [self._entry("s1", ["a"]), self._entry("only_clean", ["b"])]
+        pert = [self._entry("s1", ["a"]), self._entry("only_pert", ["c"])]
+        pairs = compute_loo_jaccard_pairs(clean, pert, k=10)
+        assert [p["sample_id"] for p in pairs] == ["s1"]
