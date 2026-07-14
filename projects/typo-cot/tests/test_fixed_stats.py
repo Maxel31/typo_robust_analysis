@@ -141,3 +141,59 @@ class TestCotJaccardFromScores:
     def test_empty_returns_zero(self):
         out = cot_jaccard_from_scores([], [("a", 1.0)], ks=(5,))
         assert out["top5"] == 0.0
+
+
+class TestJoinFixedDefaultRecords:
+    """full_results.json の sample_results (default/fixed) を結合して配列化する."""
+
+    def _rec(self, sid, flip, j10, rouge):
+        return {
+            "sample_id": sid,
+            "answer_changed": flip,
+            "cot_metrics": {
+                "jaccard": {"top5": j10, "top10": j10, "top20": j10},
+                "rouge_l": {"f1": rouge},
+            },
+        }
+
+    def test_join_aligned(self):
+        from typo_cot.analysis.fixed_stats import join_fixed_default_records
+
+        default = [self._rec("a", True, 0.2, 0.5), self._rec("b", False, 0.9, 0.8)]
+        fixed = [self._rec("b", False, 0.95, 0.81), self._rec("a", True, 0.6, 0.5)]
+        out = join_fixed_default_records(default, fixed, k="top10")
+        assert out["sample_ids"] == ["a", "b"]
+        assert list(out["j_default"]) == [0.2, 0.9]
+        assert list(out["j_fixed"]) == [0.6, 0.95]
+        assert list(out["flip"]) == [1.0, 0.0]
+        assert list(out["rouge_default"]) == [0.5, 0.8]
+        assert list(out["rouge_fixed"]) == [0.5, 0.81]
+
+    def test_missing_ids_dropped(self):
+        from typo_cot.analysis.fixed_stats import join_fixed_default_records
+
+        default = [self._rec("a", True, 0.2, 0.5), self._rec("c", False, 0.7, 0.6)]
+        fixed = [self._rec("a", True, 0.6, 0.5)]
+        out = join_fixed_default_records(default, fixed, k="top10")
+        assert out["sample_ids"] == ["a"]
+        assert out["n"] == 1
+
+
+class TestDeltaRhoOwnRouge:
+    def test_rouge_fixed_used_for_fixed_side(self):
+        """rouge_fixed を渡すと fixed 側の偏相関はそれで統制される."""
+        from typo_cot.analysis.fixed_stats import (
+            paired_bootstrap_delta_rho,
+            partial_corr_flip,
+        )
+
+        j, flip, rouge = _synthetic(n=200, seed=2)
+        rng = np.random.default_rng(4)
+        rouge_fixed = rng.uniform(0, 1, 200)
+        res = paired_bootstrap_delta_rho(
+            j, j, flip, rouge, rouge_fixed=rouge_fixed, n_boot=50, seed=1
+        )
+        r_def, _, _ = partial_corr_flip(j, flip, rouge)
+        r_fix, _, _ = partial_corr_flip(j, flip, rouge_fixed)
+        assert res["rho_default"] == pytest.approx(r_def, abs=1e-12)
+        assert res["rho_fixed"] == pytest.approx(r_fix, abs=1e-12)
