@@ -40,6 +40,33 @@ class TestSetupDevice:
 
         assert device.type == "cpu"
 
+    @patch("torch.cuda.is_available")
+    def test_setup_device_respects_existing_cuda_visible_devices(
+        self, mock_cuda_available: MagicMock
+    ) -> None:
+        """外部 (run_with_gpu.sh 等) が設定した CUDA_VISIBLE_DEVICES を上書きしない."""
+        import os
+
+        mock_cuda_available.return_value = False
+
+        with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "3"}):
+            setup_device("0")
+            assert os.environ["CUDA_VISIBLE_DEVICES"] == "3"
+
+    @patch("torch.cuda.is_available")
+    def test_setup_device_sets_cuda_visible_devices_when_unset(
+        self, mock_cuda_available: MagicMock
+    ) -> None:
+        """CUDA_VISIBLE_DEVICES 未設定なら gpu_id を設定する (従来動作)."""
+        import os
+
+        mock_cuda_available.return_value = False
+
+        env = {k: v for k, v in os.environ.items() if k != "CUDA_VISIBLE_DEVICES"}
+        with patch.dict(os.environ, env, clear=True):
+            setup_device("2")
+            assert os.environ["CUDA_VISIBLE_DEVICES"] == "2"
+
 
 class TestGenerationResult:
     """GenerationResultデータクラスのテスト."""
