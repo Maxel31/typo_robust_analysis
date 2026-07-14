@@ -197,3 +197,54 @@ class TestDeltaRhoOwnRouge:
         r_fix, _, _ = partial_corr_flip(j, flip, rouge_fixed)
         assert res["rho_default"] == pytest.approx(r_def, abs=1e-12)
         assert res["rho_fixed"] == pytest.approx(r_fix, abs=1e-12)
+
+
+class TestFormatMetaComparison:
+    """自由記述 vs 多肢選択の Δρ メタ比較 (設定レベル permutation 検定)."""
+
+    def _rows(self, free_vals, mc_vals, k="top10"):
+        rows = []
+        for i, v in enumerate(free_vals):
+            rows.append({"setting": f"free{i}", "k": k, "delta_rho": v})
+        for i, v in enumerate(mc_vals):
+            rows.append({"setting": f"mc{i}", "k": k, "delta_rho": v})
+        fmt = {f"free{i}": "free" for i in range(len(free_vals))}
+        fmt |= {f"mc{i}": "mc" for i in range(len(mc_vals))}
+        return rows, fmt
+
+    def test_group_means_and_diff(self):
+        from typo_cot.analysis.fixed_stats import format_meta_comparison
+
+        rows, fmt = self._rows([0.0, 0.02], [0.3, 0.5], k="top10")
+        res = format_meta_comparison(rows, fmt, k="top10", n_perm=200, seed=0)
+        assert res["mean_delta_free"] == pytest.approx(0.01)
+        assert res["mean_delta_mc"] == pytest.approx(0.4)
+        assert res["diff_mc_minus_free"] == pytest.approx(0.39)
+        assert res["n_free"] == 2
+        assert res["n_mc"] == 2
+
+    def test_separated_groups_low_p(self):
+        from typo_cot.analysis.fixed_stats import format_meta_comparison
+
+        rows, fmt = self._rows(
+            [0.0, 0.01, -0.01, 0.02, 0.0, 0.01],
+            [0.3, 0.4, 0.35, 0.5, 0.45, 0.38],
+        )
+        res = format_meta_comparison(rows, fmt, k="top10", n_perm=2000, seed=1)
+        assert res["p_value"] < 0.05
+
+    def test_deterministic(self):
+        from typo_cot.analysis.fixed_stats import format_meta_comparison
+
+        rows, fmt = self._rows([0.0, 0.1], [0.2, 0.3])
+        r1 = format_meta_comparison(rows, fmt, k="top10", n_perm=100, seed=5)
+        r2 = format_meta_comparison(rows, fmt, k="top10", n_perm=100, seed=5)
+        assert r1 == r2
+
+    def test_unmapped_settings_ignored(self):
+        from typo_cot.analysis.fixed_stats import format_meta_comparison
+
+        rows, fmt = self._rows([0.0], [0.2])
+        rows.append({"setting": "unknown", "k": "top10", "delta_rho": 9.9})
+        res = format_meta_comparison(rows, fmt, k="top10", n_perm=50, seed=2)
+        assert res["n_free"] == 1 and res["n_mc"] == 1
