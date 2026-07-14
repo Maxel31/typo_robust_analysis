@@ -1,9 +1,15 @@
 """実験6-(iv): leave-one-out (LOO) 重要度スコアラ.
 
 帰属（attribution）という枠組みを使わない削除ベースの語重要度:
-clean CoT の各語タイプについて全出現を削除した変種 CoT を作り、
-(質問プロンプト + 変種 CoT + 答えトリガー) を teacher-forcing して
-「元の答えトークン列の log-prob 合計」の低下量をその語の重要度とする。
+CoT 中の語を削除した変種 CoT を作り、(質問プロンプト + 変種 CoT + 答えトリガー)
+を teacher-forcing して「元の答えトークン列の log-prob 合計」の低下量を
+その語の重要度とする。
+
+削除単位（deletion_mode、ユーザー決定 2026-07-14）:
+- "occurrence"（主定義・デフォルト、案B）: 出現1つを削除して1変種。
+  語タイプの重要度 = 出現スコアの平均（Li et al. 2016 準拠。max も副次保存）。
+- "type"（感度分析、案A）: 同一タイプの全出現を一括削除して1変種
+  （type-level erasure。冗長な再言及を遮断する反実仮想）。
 
 - 1変種 = 1 forward（生成なし）。元の答えで測るため構成上 fixed-target。
 - 出力ランキングは results.json の `cot_top_k_words` / `_cot.pt` の
@@ -113,23 +119,48 @@ def extract_word_types(cot_text: str) -> list[WordType]:
     return list(types.values())
 
 
-def delete_word_type(cot_text: str, word_type: WordType) -> str:
-    """語タイプの全出現を削除した変種 CoT を作る.
+def delete_spans(cot_text: str, spans: list[tuple[int, int]]) -> str:
+    """指定スパン群を削除した変種 CoT を作る.
 
     出現スパン（チャンク単位で記録済み）のみを削除するため、
     他の語の部分文字列を壊すことはない。削除後の多重スペースは1つに詰める。
     """
     text = cot_text
-    for s, e in sorted(word_type.spans, reverse=True):
+    for s, e in sorted(spans, reverse=True):
         text = text[:s] + text[e:]
     return re.sub(r"[ \t]{2,}", " ", text)
 
 
+def delete_word_type(cot_text: str, word_type: WordType) -> str:
+    """語タイプの全出現を一括削除した変種 CoT を作る（案A: type-level erasure）."""
+    return delete_spans(cot_text, word_type.spans)
+
+
 def build_loo_variants(cot_text: str) -> tuple[list[WordType], list[str]]:
-    """全語タイプの LOO 変種を作る（変種数 = 語タイプ数）."""
+    """全語タイプの一括削除 LOO 変種を作る（案A、変種数 = 語タイプ数）."""
     word_types = extract_word_types(cot_text)
     variants = [delete_word_type(cot_text, wt) for wt in word_types]
     return word_types, variants
+
+
+def build_loo_variants_occurrence(
+    cot_text: str,
+) -> tuple[list[WordType], list[int], list[str]]:
+    """出現ごとの LOO 変種を作る（案B、変種数 = 出現数合計）.
+
+    Returns:
+        (word_types, occ_type_idx, variants)
+        occ_type_idx[i] = variants[i] が属する word_types のインデックス。
+        タイプ内の変種順は出現スパン順。
+    """
+    word_types = extract_word_types(cot_text)
+    occ_type_idx: list[int] = []
+    variants: list[str] = []
+    for ti, wt in enumerate(word_types):
+        for span in wt.spans:
+            occ_type_idx.append(ti)
+            variants.append(delete_spans(cot_text, [span]))
+    return word_types, occ_type_idx, variants
 
 
 # ============================================================
@@ -246,24 +277,44 @@ def score_sample_loo(
     generated_text: str,
     batch_size: int = 8,
     device: torch.device | None = None,
+    deletion_mode: str = "occurrence",
 ) -> dict | None:
     """1サンプルの全語タイプ LOO スコアリング.
+
+    Args:
+        deletion_mode: "occurrence"（案B・デフォルト。出現ごと削除→タイプ平均、
+            max は score_max に併記）または "type"（案A。全出現一括削除）。
 
     Returns:
         {
           "word_scores": [{"word", "score"}, ...]  # 降順・R_C ランキング互換,
-          "word_types": [{"word", "score", "n_occurrences", "variant_logprob"}, ...],
+          "word_types": [{"word", "score", "score_max", "n_occurrences",
+                          "occurrence_scores", "variant_logprobs"}, ...],
           "base_logprob": float,
           "answer_text" / "trigger_text" / "pattern_type": str,
           "n_word_types": int,
+          "n_variants": int,          # occurrence: 出現数合計 / type: タイプ数
+          "deletion_mode": str,
+          "aggregation": "mean" | "whole_type",
         }
         回答パターンが無い場合は None。
     """
+    if deletion_mode not in ("occurrence", "type"):
+        raise ValueError(f"unknown deletion_mode: {deletion_mode!r}")
     split = split_generated_text(generated_text)
     if split is None:
         return None
 
-    word_types, variants = build_loo_variants(split.cot_text)
+    if deletion_mode == "occurrence":
+        word_types, occ_type_idx, variants = build_loo_variants_occurrence(
+            split.cot_text
+        )
+        aggregation = "mean"
+    else:
+        word_types, variants = build_loo_variants(split.cot_text)
+        occ_type_idx = list(range(len(word_types)))
+        aggregation = "whole_type"
+
     base_context = prompt + split.cot_text + split.trigger_text
     contexts = [base_context] + [prompt + v + split.trigger_text for v in variants]
     logprobs = batched_answer_logprobs(
@@ -271,14 +322,25 @@ def score_sample_loo(
     )
     base_logprob, variant_logprobs = logprobs[0], logprobs[1:]
 
+    # タイプごとに変種スコアを集約（type モードでは1タイプ=1変種）
+    per_type_scores: list[list[float]] = [[] for _ in word_types]
+    per_type_logprobs: list[list[float]] = [[] for _ in word_types]
+    for ti, lp in zip(occ_type_idx, variant_logprobs, strict=True):
+        per_type_scores[ti].append(float(base_logprob - lp))
+        per_type_logprobs[ti].append(float(lp))
+
     details = [
         {
             "word": wt.word,
-            "score": float(base_logprob - lp),
+            "score": sum(scores) / len(scores),  # occurrence: 出現平均 / type: 単一値
+            "score_max": max(scores),
             "n_occurrences": len(wt.spans),
-            "variant_logprob": float(lp),
+            "occurrence_scores": scores,
+            "variant_logprobs": lps,
         }
-        for wt, lp in zip(word_types, variant_logprobs, strict=True)
+        for wt, scores, lps in zip(
+            word_types, per_type_scores, per_type_logprobs, strict=True
+        )
     ]
     details_sorted = sorted(details, key=lambda d: d["score"], reverse=True)
     return {
@@ -291,6 +353,9 @@ def score_sample_loo(
         "trigger_text": split.trigger_text,
         "pattern_type": split.pattern_type,
         "n_word_types": len(word_types),
+        "n_variants": len(variants),
+        "deletion_mode": deletion_mode,
+        "aggregation": aggregation,
     }
 
 
@@ -322,6 +387,24 @@ def rc_word_ranking_from_cot_pt(data: dict) -> list[dict]:
     return ranking
 
 
+def expand_multiword_entries(ranking: list[dict]) -> list[dict]:
+    """空白（改行含む）を内包する結合語エントリを構成語に分解する.
+
+    R_C 側 `word_scores` は `tokens_to_words` の仕様で改行をまたいで語が
+    結合されることがある（例: "dollars.\\nThe"）。LOO 側の空白区切り語タイプ
+    とは単位が合わず Jaccard の偽不一致になるため、比較前に空白で分解し、
+    各構成語に親エントリのスコアを引き継がせる。単一語エントリはそのまま。
+    """
+    out: list[dict] = []
+    for d in ranking:
+        parts = str(d["word"]).split()
+        if len(parts) <= 1:
+            out.append(d)
+        else:
+            out.extend({"word": p, "score": d["score"]} for p in parts)
+    return out
+
+
 def loo_jaccard_topk(
     ranking1: list[dict],
     ranking2: list[dict],
@@ -331,10 +414,14 @@ def loo_jaccard_topk(
 
     LOO vs R_C、または clean-LOO vs perturbed-LOO（LOO版 Jaccard@10）の
     どちらの比較にも使える。既存 metrics.top_k_jaccard_by_token と同一規約
-    （タイプ dedup は最大スコア採用）。
+    （タイプ dedup は最大スコア採用）。比較前に両側とも
+    `expand_multiword_entries`（改行またぎ結合語の分解）と
+    `normalize_word`（端句読点剥がし）で正規化する。
     """
     from typo_cot.analysis.metrics import top_k_jaccard_by_token
 
+    ranking1 = expand_multiword_entries(ranking1)
+    ranking2 = expand_multiword_entries(ranking2)
     if not ranking1 or not ranking2:
         return 0.0
     tokens1 = [normalize_word(d["word"]) for d in ranking1]

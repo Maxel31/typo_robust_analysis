@@ -490,8 +490,14 @@ class TestBuildLooVariantsOccurrence:
 
         cot = "cat catalog cat"
         word_types, occ_type_idx, variants = build_loo_variants_occurrence(cot)
-        for var in variants:
-            assert "catalog" in var
+        cat_idx = next(i for i, wt in enumerate(word_types) if wt.word == "cat")
+        cat_variants = [
+            v for ti, v in zip(occ_type_idx, variants, strict=True) if ti == cat_idx
+        ]
+        assert len(cat_variants) == 2
+        for var in cat_variants:
+            assert "catalog" in var.split()  # 部分文字列削除で壊れない
+            assert var.split().count("cat") == 1
 
 
 class TestScoreSampleLooOccurrenceMode:

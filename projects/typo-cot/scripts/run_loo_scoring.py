@@ -96,6 +96,10 @@ def main() -> None:
     parser.add_argument("--gpu_id", type=str, default="0")
     parser.add_argument("--output_dir", type=str, default="results/loo")
     parser.add_argument("--jaccard_k", type=int, default=10)
+    parser.add_argument("--deletion-mode", dest="deletion_mode", type=str,
+                        default="occurrence", choices=["occurrence", "type"],
+                        help="occurrence=案B(出現ごと削除→タイプ平均、主定義) / "
+                             "type=案A(全出現一括削除、感度分析)")
     parser.add_argument("--run_label", type=str, default="loo",
                         help="出力ディレクトリ名の接尾辞 (clean/perturbed の区別などに使う)")
     args = parser.parse_args()
@@ -116,6 +120,8 @@ def main() -> None:
         "batch_size": args.batch_size,
         "jaccard_k": args.jaccard_k,
         "method": "loo",
+        "deletion_mode": args.deletion_mode,
+        "aggregation": "mean" if args.deletion_mode == "occurrence" else "whole_type",
         "timestamp": datetime.now().isoformat(),
     }
     with open(out_dir / "config.json", "w", encoding="utf-8") as f:
@@ -156,6 +162,7 @@ def main() -> None:
             loo = score_sample_loo(
                 model, tokenizer, prompt, entry["generated_text"],
                 batch_size=args.batch_size,
+                deletion_mode=args.deletion_mode,
             )
         except Exception as exc:  # noqa: BLE001
             stats["errors"] += 1
@@ -186,6 +193,9 @@ def main() -> None:
                 "pattern_type": loo["pattern_type"],
                 "base_logprob": loo["base_logprob"],
                 "n_word_types": loo["n_word_types"],
+                "n_variants": loo["n_variants"],
+                "deletion_mode": loo["deletion_mode"],
+                "aggregation": loo["aggregation"],
                 # R_C ランキング (cot_top_k_words) と同一スキーマの完全ランキング
                 "loo_word_scores": loo["word_scores"],
                 # 付帯情報 (出現回数・変種 log-prob)
@@ -213,6 +223,7 @@ def main() -> None:
     jkey = f"loo_vs_rc_jaccard_top{args.jaccard_k}"
     jaccards = [r[jkey] for r in out_results if r[jkey] is not None]
     n_types = [r["n_word_types"] for r in out_results]
+    n_variants = [r["n_variants"] for r in out_results]
     top1_scores = [
         r["loo_word_scores"][0]["score"] for r in out_results if r["loo_word_scores"]
     ]
@@ -221,6 +232,7 @@ def main() -> None:
             "model": args.model,
             "benchmark": args.benchmark,
             "method": "loo",
+            "deletion_mode": args.deletion_mode,
             "run_dir": str(run_dir),
             "timestamp": datetime.now().isoformat(),
         },
@@ -231,6 +243,8 @@ def main() -> None:
             "mean_n_word_types": statistics.mean(n_types) if n_types else None,
             "min_n_word_types": min(n_types) if n_types else None,
             "max_n_word_types": max(n_types) if n_types else None,
+            "mean_n_variants": statistics.mean(n_variants) if n_variants else None,
+            "total_n_variants": sum(n_variants) if n_variants else None,
             "mean_top1_loo_score": statistics.mean(top1_scores) if top1_scores else None,
             "mean_top10_numeric_or_operator": (
                 statistics.mean(r["top10_numeric_or_operator"] for r in out_results)
