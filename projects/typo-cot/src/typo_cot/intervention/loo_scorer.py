@@ -342,3 +342,37 @@ def loo_jaccard_topk(
     tokens2 = [normalize_word(d["word"]) for d in ranking2]
     scores2 = [float(d["score"]) for d in ranking2]
     return top_k_jaccard_by_token(tokens1, scores1, tokens2, scores2, k=k)
+
+
+def compute_loo_jaccard_pairs(
+    clean_entries: list[dict],
+    perturbed_entries: list[dict],
+    k: int = 10,
+) -> list[dict]:
+    """clean / perturbed の LOO ランキングを sample_id で対応付けて Jaccard@k を計算する.
+
+    LOO 版 CoT:Jaccard@k（内的軸の帰属フリー再構成）の本体。
+    run_loo_scoring.py の results.json エントリ
+    （sample_id / loo_word_scores）をそのまま受け取れる。
+
+    Returns:
+        [{"sample_id": str, "loo_jaccard": float}, ...]（clean 側の順序、
+        片側にしか無いサンプルはスキップ）
+    """
+    perturbed_by_id = {e["sample_id"]: e for e in perturbed_entries}
+    pairs: list[dict] = []
+    for clean in clean_entries:
+        pert = perturbed_by_id.get(clean["sample_id"])
+        if pert is None:
+            continue
+        pairs.append(
+            {
+                "sample_id": clean["sample_id"],
+                "loo_jaccard": loo_jaccard_topk(
+                    clean.get("loo_word_scores", []),
+                    pert.get("loo_word_scores", []),
+                    k=k,
+                ),
+            }
+        )
+    return pairs
