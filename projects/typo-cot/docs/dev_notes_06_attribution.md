@@ -133,3 +133,64 @@ LOO 版 Jaccard@10 は `compute_loo_jaccard_pairs(clean_results, perturbed_resul
 Gemma-3-4B-it × GSM8K clean（アーカイブ baseline）n=16。
 結果は `results/smoke/gemma-3-4b-it_gsm8k_loo_clean_smoke/` 参照
 （results/ は gitignore 対象）。主要数値は最終報告と summary.json を参照。
+
+## LOO 定義の変更（2026-07-14, wave 2: 案B を主定義に）
+
+### 経緯とユーザー決定
+
+wave 1 の LOO は「語タイプの全出現を一括削除して1変種」（案A）だった。
+先行研究調査（調査メモ: scratchpad/loo_definition_survey.md、セッション限りの
+一時ファイル。要旨は下記）の結果、1テキスト内の全出現一括削除には直接の先例が
+確認できず、位置（出現）単位の削除が標準（Li et al. 2016; Jain & Wallace 2019;
+ERASER; Atanasova et al. 2020）で、語タイプの重要度は「出現ごとの消去効果の平均」
+として定義する先例が Li, Monroe & Jurafsky (2016, arXiv:1612.08220) にある。
+
+**ユーザー決定（2026-07-14）**: 案B（出現ごと削除 → タイプへ集約）を主定義、
+現行の案A（全出現一括削除）は type-level erasure（冗長な再言及を遮断する
+反実仮想）として感度分析に併記する。
+
+### 実装（`deletion_mode` 引数）
+
+- `score_sample_loo(..., deletion_mode="occurrence")`（デフォルト）:
+  1出現 = 1変種。タイプ重要度 = 出現スコアの**平均**（`aggregation: "mean"`）。
+  max は `word_types[].score_max` に副次保存（集約関数の感度分析用）。
+- `deletion_mode="type"`: 従来の全出現一括削除（`aggregation: "whole_type"`）。
+- ランキング本体 `loo_word_scores` は R_C 互換の `{word, score}` のまま。
+  `n_occurrences` / `n_variants` / `deletion_mode` / `aggregation` /
+  `occurrence_scores` / `variant_logprobs` はメタデータ側に記録。
+- CLI: `run_loo_scoring.py --deletion-mode {occurrence,type}`（デフォルト occurrence）。
+
+### R_C 側改行またぎ結合語の修正（Jaccard 計算パス）
+
+R_C の `word_scores` は改行をまたいで語が結合される（例 "dollars.\nThe"）。
+`expand_multiword_entries` を `loo_jaccard_topk` に組み込み、空白を内包する
+エントリを構成語に分解（各構成語は親スコアを引き継ぐ）してから比較する。
+
+修正前後（type モード smoke n=16、Gemma-3-4B-it × GSM8K clean）:
+- mean LOO vs R_C Jaccard@10: **0.3483 → 0.4551（+0.107）**、16サンプル中12で変化。
+- R_C 上位ランキング中の結合語エントリは計113件。偽不一致の除去として有意な差。
+
+### 検証（2026-07-14, GPU 3/4, n=16, 両モード）
+
+`results/smoke/gemma-3-4b-it_gsm8k_loo_clean_{occ,type}_smoke/`:
+- (a) 案B の変種数 = 出現数合計: 16/16 サンプルで `n_variants == Σ n_occurrences` を確認。
+- (b) 案B vs 案A の Top-10 Jaccard: mean 0.755 / median 0.818（min 0.538, max 1.000）
+  → 定義変更でランキングは概ね保たれるが同一ではない（感度分析の価値あり）。
+- (c) 案B vs R_C Jaccard@10（改行修正後）: mean **0.4599** / median 0.4286。
+  参考: 案A vs R_C（改行修正後）は mean 0.4492 / median 0.4286（案B がわずかに高い）。
+- 案B の mean_top1_loo_score は 0.17（案A は 1.14）: 平均集約は反復言及される
+  数値のスコアを希釈する（調査メモの「冗長性バイアス」がそのまま観測される）。
+  論文では案A 併記でこの差自体を分析対象にできる。
+
+### コスト再見積り（本番 M3×B2, n≈200〜300）
+
+事前想定「出現ごと削除で forward 数が最大2〜3割増」は**実測で否定**:
+- 変種数: mean 36.3（タイプ数）→ mean 87.9（出現数合計）= **x2.42**。
+  GSM8K CoT は機能語・数値の反復が多く、想定よりはるかに多出現。
+- 実行時間（n=16, Gemma-3-4B-it, batch_size=8）: type 31.8s → occurrence 75.9s
+  = x2.39（変種数比とほぼ一致。約 4.7s/sample）。
+- 本番見積り（occurrence モード）: Gemma-4B 級で n=300 ≈ 24分/run。
+  M3×B2 × 3条件（clean / LXT-4 / Random-4）= 18 run。Mistral-7B は ~2x として
+  合計 **約 8〜10 GPU 時間**（2 GPU 並行で実時間 4〜5 時間）。
+  案A 感度分析を全条件で併走すると +40%（案A は x1 なので安価）。
+  シャード分割（--n/--sample_offset で 100 サンプル単位）で実行する。
