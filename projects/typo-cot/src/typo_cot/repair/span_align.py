@@ -117,13 +117,16 @@ def align_typo_spans(
             continue
         word_pairs.append((c1, c2, t1, t2))
 
-    # 4. perturbed_tokens と出現順で突合 (語文字列の包含で検証)
-    spans: list[AlignedSpan] = []
+    # 4. perturbed_tokens と突合。
+    #    第1パス: 語文字列の包含で照合 (出現順)。
+    #    第2パス: 残った差分領域と残ったトークンを出現順で対応づける
+    #    (アーカイブには offset ずれで perturbed_token が壊れたエントリがあるため)。
+    clean_words = [clean_text[c1:c2] for c1, c2, _, _ in word_pairs]
+    typo_words = [typo_text[t1:t2] for _, _, t1, t2 in word_pairs]
+
+    assigned: list[dict | None] = [None] * len(word_pairs)
     unused = list(perturbed_tokens)
-    for c1, c2, t1, t2 in word_pairs:
-        clean_word = clean_text[c1:c2]
-        typo_word = typo_text[t1:t2]
-        meta: dict | None = None
+    for i, (clean_word, typo_word) in enumerate(zip(clean_words, typo_words)):
         for tok in unused:
             orig = str(tok.get("original_token", "")).strip()
             pert = str(tok.get("perturbed_token", "")).strip()
@@ -131,16 +134,24 @@ def align_typo_spans(
             orig_ok = not orig or orig in clean_word or clean_word in orig
             pert_ok = not pert or pert in typo_word or typo_word in pert
             if orig_ok and pert_ok:
-                meta = tok
+                assigned[i] = tok
+                unused.remove(tok)
                 break
+
+    # 第2パス (順序フォールバック): 未突合の領域とトークンを出現順で zip
+    leftover_idx = [i for i, m in enumerate(assigned) if m is None]
+    for i, tok in zip(leftover_idx, unused):
+        assigned[i] = tok
+
+    spans: list[AlignedSpan] = []
+    for i, meta in enumerate(assigned):
         if meta is None:
-            # テキスト差分はあるが perturbed_tokens に対応が無い → 落とす
             continue
-        unused.remove(meta)
+        c1, c2, t1, t2 = word_pairs[i]
         spans.append(
             AlignedSpan(
-                clean_word=clean_word,
-                typo_word=typo_word,
+                clean_word=clean_words[i],
+                typo_word=typo_words[i],
                 clean_start=c1,
                 clean_end=c2,
                 typo_start=t1,

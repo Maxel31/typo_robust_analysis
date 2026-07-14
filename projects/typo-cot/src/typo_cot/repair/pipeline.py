@@ -42,10 +42,13 @@ def build_prompt_pair(record: RepairInputRecord) -> tuple[str, str]:
         choices=record.choices,
         subject=record.subset,
     )
-    typo_choices = record.perturbed_choices or record.choices
+    # 生成時 (scripts/run_inference.py) と同じ扱い:
+    # 選択肢つきベンチマークの perturbed_question は選択肢行を埋め込み済み
+    # (include_choices=True) で perturbed_choices は None のため、
+    # typo 側には clean 選択肢を再付加しない。
     typo_result = template.generate(
         question=record.perturbed_question,
-        choices=typo_choices,
+        choices=record.perturbed_choices,
         subject=record.subset,
     )
     return clean_result.get_full_prompt(), typo_result.get_full_prompt()
