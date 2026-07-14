@@ -63,13 +63,17 @@ class TestBuildPromptPair:
         # 質問以外の部分 (few-shot 文脈) は完全一致
         assert clean_prompt.replace("ducks", "") == typo_prompt.replace("dicks", "")
 
-    def test_mmlu_prompts_include_choices(self) -> None:
+    def test_mmlu_typo_question_embeds_choices(self) -> None:
+        # アーカイブの MMLU perturbed_question は選択肢行 "(A) ..." を
+        # 埋め込み済みで perturbed_choices は None (include_choices=True の仕様)。
+        # 生成時 (run_inference.py) と同様、typo 側は choices を渡さず
+        # clean 側はテンプレートが同一形式で選択肢を付加する。
         rec = _record(
             benchmark="mmlu",
             original_question="Which animal quacks?",
-            perturbed_question="Which animal qacks?",
+            perturbed_question="Which animal qacks?\n(A) dukc (B) cat (C) dog (D) cow",
             choices=["duck", "cat", "dog", "cow"],
-            perturbed_choices=["duck", "cat", "dog", "cow"],
+            perturbed_choices=None,
             subset="zoology",
             perturbed_tokens=[
                 {
@@ -78,13 +82,24 @@ class TestBuildPromptPair:
                     "perturbed_token": "qacks",
                     "importance_score": 1.2,
                     "perturbation_type": "omission",
-                }
+                },
+                {
+                    "token_index": 9,
+                    "original_token": " duck",
+                    "perturbed_token": "dukc",
+                    "importance_score": 0.4,
+                    "perturbation_type": "proximity",
+                },
             ],
         )
         clean_prompt, typo_prompt = build_prompt_pair(rec)
         assert "Which animal quacks?" in clean_prompt
         assert "Which animal qacks?" in typo_prompt
-        assert "duck" in clean_prompt and "duck" in typo_prompt
+        # 選択肢行は両プロンプトに 1 回だけ現れ、同一形式
+        assert clean_prompt.count("(A) duck (B) cat (C) dog (D) cow") == 1
+        assert typo_prompt.count("(A) dukc (B) cat (C) dog (D) cow") == 1
+        # clean 側の選択肢行が typo 側に重複して付加されない
+        assert "(A) duck" not in typo_prompt
 
 
 class TestBuildWordRows:

@@ -98,6 +98,32 @@ class TestAlignTypoSpans:
         spans = align_typo_spans(clean, typo, [_tok(" cat", "cta")])
         assert spans == []
 
+    def test_order_fallback_for_garbled_token_metadata(self) -> None:
+        # アーカイブには offset ずれで perturbed_token が壊れたエントリがある
+        # (例: ' field' -> 'n fi')。包含照合が失敗しても、
+        # 差分領域と摂動トークンを出現順で対応づけて救済する。
+        clean = "The field of corn is large."
+        typo = "The ield of corn is large."
+        spans = align_typo_spans(clean, typo, [_tok(" field", "n fi", 2.0)])
+        assert len(spans) == 1
+        assert spans[0].clean_word == "field"
+        assert spans[0].typo_word == "ield"
+        assert spans[0].importance_score == 2.0
+
+    def test_order_fallback_multiple_garbled(self) -> None:
+        clean = "Every free group of rank two has bases."
+        typo = "Every free grup of rnk two has bases."
+        toks = [
+            _tok(" group", "v gro", 1.0),  # 壊れたメタデータ
+            _tok(" rank", "rnk", 0.5),  # 正常
+        ]
+        spans = align_typo_spans(clean, typo, toks)
+        assert len(spans) == 2
+        assert spans[0].clean_word == "group"
+        assert spans[0].importance_score == 1.0
+        assert spans[1].clean_word == "rank"
+        assert spans[1].importance_score == 0.5
+
     def test_apostrophe_word(self) -> None:
         clean = "She sells the farmers' market eggs."
         typo = "She sells the farmres' market eggs."
