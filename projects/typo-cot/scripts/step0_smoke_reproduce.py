@@ -190,7 +190,9 @@ def check_span_exclusion(master: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]
 
     - union 除外 = clean またはいずれかの摂動条件で strict span 未検出
     - analysis の集計対象数 (flip 非 NA の行数) は
-      total - excluded と一致するはず (lxt4 で確認)
+      |clean ∩ lxt4 の共通サンプル| - |そのうちの union 除外| と一致するはず
+      (旧 analyzer は before/after の共通 sample_id のみを対象にするため、
+      摂動データセット生成時に skip されたサンプルは分母に入らない)
     """
     failures: list[dict] = []
     records: list[dict] = []
@@ -211,6 +213,7 @@ def check_span_exclusion(master: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]
         total = len(clean)
         lxt4 = group[group["condition"] == "lxt4"]
         n_analysis = int(lxt4["flip"].notna().sum()) if not lxt4.empty else None
+        common_lxt4 = set(clean["sample_id"]) & set(lxt4["sample_id"])
         span_fail_by_cond = {
             cond: int(
                 (~group[group["condition"] == cond]["span_extract_ok"].astype("boolean")).sum()
@@ -225,7 +228,7 @@ def check_span_exclusion(master: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]
             "union_excluded": len(excluded),
             "union_excluded_pct": 100.0 * len(excluded) / total if total else np.nan,
             "n_analysis_lxt4": n_analysis,
-            "expected_n_analysis": total - len(excluded),
+            "expected_n_analysis": len(common_lxt4 - excluded),
             **{f"span_fail_{c}": v for c, v in span_fail_by_cond.items()},
         }
         rec["match"] = n_analysis is None or n_analysis == rec["expected_n_analysis"]
