@@ -56,6 +56,33 @@
 ドライバ (`results/smoke/run_smoke.sh`) は準備済み。再開手順と完了判定は
 `results/smoke/SMOKE_PENDING.md` 参照。
 
+## GPU スモーク: 実施済み (2026-07-14, GPU 3 via run_with_gpu.sh)
+
+実行前に 2 つの環境バグを修正 (各 RED→GREEN コミット済み):
+
+1. `transformers<5` を lrp extra に固定 — uv.lock が transformers 5.10.2 に
+   解決されており lxt 2.1 が import 不能 (find_pruneable_heads_and_indices
+   削除) だった。archive/JSAI2026 の lock と同じ 4.57.6 に解決。
+2. `setup_device` が run_with_gpu.sh の設定した CUDA_VISIBLE_DEVICES を
+   `--gpu_id` で無条件上書き → 占有中の物理 GPU 0 で OOM。環境変数が
+   既にある場合は優先するよう修正。
+3. `torch==2.9.1` に固定 (archive lock と同一)。torch 2.12 では bf16
+   カーネル差で vs_reference の top10 Jaccard が 4/32 サンプルで <1.0 だった。
+
+結果 (`results/smoke/fixed_target/.../comparison.json`, 各 n=32, 実行 ~30 秒/設定):
+
+- GSM8K: vs_reference min top10_jaccard = **1.0 (32/32) PASS**。
+  vs_default は 7/8 が 1.0、`gsm8k_00010` (非flip) のみ 0.818 — ただし
+  archive の rebuttal 参照 .pt と default .pt 自体がこのサンプルで不一致
+  (top10_j=0.818, max_abs_diff=0.11)。我々の出力は rebuttal 参照と完全一致
+  (max_abs_diff=0.002) なので、archive 側 2 参照間の非整合が原因。
+- MMLU: vs_reference 31/32 = 1.0、`mmlu_abstract_algebra_0069` (非flip) のみ
+  0.818。dedup 後 top10 境界のタイ ('The' vs ')"'、スコア差 ~0.004) が数値
+  ノイズで反転したもの。rebuttal 本番は gpu_id='5,6' (マルチGPU) で実行されて
+  おり、単一 GPU 3 では完全なビット一致は再現不能。vs_default も同サンプル
+  のみ 0.818 (同因)。
+- all_cot_range_match = true (両設定)、n_tokens_match 全 true、errors 0。
+
 ## 未実装 / 別途判断が必要
 
 - GLMM 再推定 (R lme4 / glmmTMB): R 環境が必要。未着手。
