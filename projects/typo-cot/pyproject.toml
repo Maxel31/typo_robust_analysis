@@ -10,6 +10,9 @@ dependencies = [
     "scipy>=1.13",
     "pingouin>=0.5.5",
     "tqdm>=4.65",
+    # 実験7 校正器ラダー: rebuttal と同一バージョンに固定 (辞書同梱のため
+    # バージョンが変わると訂正結果が変わる。archive .venv は 0.9.0)
+    "pyspellchecker==0.9.0",
 ]
 
 [project.optional-dependencies]
