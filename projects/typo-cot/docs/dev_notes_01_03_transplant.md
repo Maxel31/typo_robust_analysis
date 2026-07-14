@@ -64,6 +64,27 @@ bash /diskthalys/ssd14tc/sfukuhata/dev/kanolab/typo_robust_analysis/tmp/gpu-lock
 
 Random-4 は `--perturbed-dir ..._k4_random`。全 25 設定は docs/v1_run_manifest.md 参照。
 
+## 事前登録: 分岐別の結論文 (実行前に固定, 2026-07-14)
+
+- **パターンX (CoT 媒介優位)**: IE が TE の大部分 (目安 7 割以上) を占め、
+  DE 条件で clean CoT を強制すると大半の flip が元の答えに復帰する場合 —
+  「Transplanting the clean CoT under the perturbed question restores the
+  original answer in the majority of flipped cases (headline restore rate),
+  while transplanting the perturbed CoT under the clean question reproduces
+  most flips. Typo-induced errors are therefore causally mediated by the
+  CoT text itself, not merely correlated with it: the pathway
+  typo → CoT change → answer change carries the effect.」
+- **パターンY (直接経路優位)**: DE が TE の大きな割合 (目安 4 割以上) を占め、
+  clean CoT を強制しても flip が残る場合 —
+  「Even when the clean CoT is forced verbatim, a substantial fraction of
+  flips persists (DE), revealing a direct pathway from the perturbed input
+  to the answer that bypasses the generated reasoning text. This motivates
+  the internal-state analysis of Experiment 8, and implies that
+  CoT-level defenses alone cannot fully recover accuracy.」
+
+どちらの結果でも執筆可能。GLMM の交互作用項が大きい場合は
+「質問 typo と CoT typo の効果は加法的でない」ことを明記する。
+
 ## 残タスク / 注意
 
 - DeepSeek-R1-Distill-Qwen-7B はアーカイブに生成ログがないため、
