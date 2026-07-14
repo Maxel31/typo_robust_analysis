@@ -454,3 +454,180 @@ class TestResolveGpuId:
     def test_empty_env_cvd_falls_back_to_cli(self):
         mod = _load_run_loo_scoring_module()
         assert mod.resolve_gpu_id("0", {"CUDA_VISIBLE_DEVICES": ""}) == "0"
+
+
+# ============================================================
+# 案B: 出現ごと削除 → タイプへ集約（deletion_mode="occurrence"）
+# ============================================================
+
+
+class TestBuildLooVariantsOccurrence:
+    def test_one_variant_per_occurrence(self):
+        from typo_cot.intervention.loo_scorer import build_loo_variants_occurrence
+
+        cot = "x y x z"
+        word_types, occ_type_idx, variants = build_loo_variants_occurrence(cot)
+        # 変種数 = 出現数合計（4）、タイプ数は3
+        assert len(word_types) == 3
+        assert len(variants) == 4
+        assert len(occ_type_idx) == 4
+        total_occ = sum(len(wt.spans) for wt in word_types)
+        assert len(variants) == total_occ
+
+    def test_each_variant_deletes_exactly_one_occurrence(self):
+        from typo_cot.intervention.loo_scorer import build_loo_variants_occurrence
+
+        cot = "x y x z"
+        word_types, occ_type_idx, variants = build_loo_variants_occurrence(cot)
+        for ti, var in zip(occ_type_idx, variants, strict=True):
+            wt = word_types[ti]
+            n_before = cot.split().count(wt.word)
+            n_after = var.split().count(wt.word)
+            assert n_after == n_before - 1  # ちょうど1出現だけ消える
+
+    def test_other_words_untouched(self):
+        from typo_cot.intervention.loo_scorer import build_loo_variants_occurrence
+
+        cot = "cat catalog cat"
+        word_types, occ_type_idx, variants = build_loo_variants_occurrence(cot)
+        for var in variants:
+            assert "catalog" in var
+
+
+class TestScoreSampleLooOccurrenceMode:
+    PROMPT = "Problem: p1 p2\n\nSolution:"
+    GENERATED = " x y x z\nThe answer is 18."
+
+    def test_default_mode_is_occurrence(self, mock_lm):
+        model, tok = mock_lm
+        result = score_sample_loo(model, tok, self.PROMPT, self.GENERATED)
+        assert result["deletion_mode"] == "occurrence"
+        assert result["aggregation"] == "mean"
+
+    def test_n_variants_equals_total_occurrences(self, mock_lm):
+        model, tok = mock_lm
+        result = score_sample_loo(
+            model, tok, self.PROMPT, self.GENERATED, deletion_mode="occurrence"
+        )
+        # x が2出現、y/z が各1出現 → 変種4
+        assert result["n_variants"] == 4
+        assert result["n_word_types"] == 3
+        assert len(result["word_scores"]) == 3  # ランキングはタイプ単位のまま
+
+    def test_type_score_is_mean_of_occurrence_scores(self, mock_lm):
+        """タイプ重要度 = 出現スコアの平均（Li et al. 2016 準拠）."""
+        model, tok = mock_lm
+        result = score_sample_loo(
+            model, tok, self.PROMPT, self.GENERATED, deletion_mode="occurrence"
+        )
+        by_word = {d["word"]: d for d in result["word_types"]}
+        x = by_word["x"]
+        assert x["n_occurrences"] == 2
+        assert len(x["occurrence_scores"]) == 2
+        assert x["score"] == pytest.approx(
+            sum(x["occurrence_scores"]) / 2, rel=1e-6
+        )
+        assert x["score_max"] == pytest.approx(max(x["occurrence_scores"]), rel=1e-6)
+
+    def test_occurrence_score_matches_manual_single_deletion(self, mock_lm):
+        """各出現スコア = base - (その出現だけ削除した変種の log-prob)."""
+        model, tok = mock_lm
+        result = score_sample_loo(
+            model, tok, self.PROMPT, self.GENERATED, deletion_mode="occurrence"
+        )
+        split = split_generated_text(self.GENERATED)
+        wts = {wt.word: wt for wt in extract_word_types(split.cot_text)}
+        x = wts["x"]
+        base = sequence_logprob(
+            model, tok, self.PROMPT + split.cot_text + split.trigger_text, split.answer_text
+        )
+        expected = []
+        for s, e in x.spans:
+            var = split.cot_text[:s] + split.cot_text[e:]
+            import re as _re
+
+            var = _re.sub(r"[ \t]{2,}", " ", var)
+            lp = sequence_logprob(
+                model, tok, self.PROMPT + var + split.trigger_text, split.answer_text
+            )
+            expected.append(base - lp)
+        by_word = {d["word"]: d for d in result["word_types"]}
+        for got, exp in zip(by_word["x"]["occurrence_scores"], expected, strict=True):
+            assert got == pytest.approx(exp, rel=1e-4)
+
+    def test_single_occurrence_words_match_type_mode(self, mock_lm):
+        """1出現しかない語は案A/案Bでスコアが一致する."""
+        model, tok = mock_lm
+        r_occ = score_sample_loo(
+            model, tok, self.PROMPT, self.GENERATED, deletion_mode="occurrence"
+        )
+        r_type = score_sample_loo(
+            model, tok, self.PROMPT, self.GENERATED, deletion_mode="type"
+        )
+        occ = {d["word"]: d for d in r_occ["word_types"]}
+        typ = {d["word"]: d for d in r_type["word_types"]}
+        for w in ("y", "z"):
+            assert occ[w]["score"] == pytest.approx(typ[w]["score"], rel=1e-4)
+
+    def test_type_mode_metadata(self, mock_lm):
+        model, tok = mock_lm
+        result = score_sample_loo(
+            model, tok, self.PROMPT, self.GENERATED, deletion_mode="type"
+        )
+        assert result["deletion_mode"] == "type"
+        assert result["n_variants"] == result["n_word_types"] == 3
+
+    def test_ranking_schema_unchanged_in_occurrence_mode(self, mock_lm):
+        model, tok = mock_lm
+        result = score_sample_loo(
+            model, tok, self.PROMPT, self.GENERATED, deletion_mode="occurrence"
+        )
+        scores = [ws["score"] for ws in result["word_scores"]]
+        assert scores == sorted(scores, reverse=True)
+        for ws in result["word_scores"]:
+            assert set(ws.keys()) == {"word", "score"}
+
+    def test_invalid_mode_raises(self, mock_lm):
+        model, tok = mock_lm
+        with pytest.raises(ValueError):
+            score_sample_loo(
+                model, tok, self.PROMPT, self.GENERATED, deletion_mode="bogus"
+            )
+
+
+# ============================================================
+# R_C 側の改行またぎ結合語の分解（Jaccard 計算パスの正規化）
+# ============================================================
+
+
+class TestExpandMultiwordEntries:
+    def test_splits_newline_joined_word(self):
+        from typo_cot.intervention.loo_scorer import expand_multiword_entries
+
+        ranking = [{"word": "dollars.\nThe", "score": 3.0}, {"word": "eggs", "score": 1.0}]
+        out = expand_multiword_entries(ranking)
+        words = [d["word"] for d in out]
+        assert "dollars." in words and "The" in words and "eggs" in words
+        assert "dollars.\nThe" not in words
+        # 分解された各語は親スコアを引き継ぐ
+        by_word = {d["word"]: d["score"] for d in out}
+        assert by_word["dollars."] == 3.0
+        assert by_word["The"] == 3.0
+
+    def test_noop_for_plain_words(self):
+        from typo_cot.intervention.loo_scorer import expand_multiword_entries
+
+        ranking = [{"word": "eggs", "score": 2.0}]
+        assert expand_multiword_entries(ranking) == ranking
+
+
+class TestLooJaccardMultiwordFix:
+    def test_newline_joined_rc_word_matches_loo(self):
+        """R_C 側 "dollars.\\nThe" が LOO 側 "dollars" / "The" と一致するようになる."""
+        loo = [
+            {"word": "dollars", "score": 3.0},
+            {"word": "The", "score": 2.0},
+        ]
+        rc = [{"word": "dollars.\nThe", "score": 9.0}]
+        # 分解 + 端句読点正規化後: {dollars, The} vs {dollars, The} → 1.0
+        assert loo_jaccard_topk(loo, rc, k=10) == pytest.approx(1.0)
