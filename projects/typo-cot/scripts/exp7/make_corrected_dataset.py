@@ -48,7 +48,15 @@ def main() -> None:
                         help="校正モデルのデバイス (cuda/cpu、None=自動)")
     parser.add_argument("--limit", type=int, default=None,
                         help="先頭 N サンプルのみ処理 (スモーク用)")
+    parser.add_argument("--start", type=int, default=0,
+                        help="処理開始サンプル位置 (シャード実行用)")
+    parser.add_argument("--shard", action="store_true",
+                        help="シャードモード: 出力を out_dir/shards/ に書き、"
+                             "merge_corrected_shards.py で結合する")
     args = parser.parse_args()
+
+    if args.shard and args.limit is None:
+        parser.error("--shard には --limit (シャードサイズ) が必要です")
 
     if args.corrector == "pyspell":
         corrector = create_corrector("pyspell")
@@ -71,8 +79,12 @@ def main() -> None:
 
     metadata = data["metadata"]
     samples = data["samples"]
+    shard_start = args.start
     if args.limit is not None:
-        samples = samples[: args.limit]
+        shard_end = min(shard_start + args.limit, len(samples))
+    else:
+        shard_end = len(samples)
+    samples = samples[shard_start:shard_end]
 
     model_short = metadata.get("source_model", "unknown").split("/")[-1]
     benchmark = metadata.get("benchmark", "unknown")
@@ -139,6 +151,29 @@ def main() -> None:
         if (i + 1) % 50 == 0:
             rate = agg["word_restored"] / agg["word_total"] if agg["word_total"] else 0
             print(f"{i + 1}/{len(samples)} 処理済み (語復元率 {rate:.3f})", flush=True)
+
+    if args.shard:
+        # シャードモード: 部分結果のみ書き出し (merge_corrected_shards.py で結合)
+        shard_dir = out_dir / "shards"
+        shard_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "start": shard_start,
+            "end": shard_end,
+            "corrector": args.corrector,
+            "corrector_model": corrector_model,
+            "source": str(input_path),
+            "created_at": datetime.now().isoformat(),
+            "samples": new_samples,
+            "per_sample": per_sample_stats,
+            "aggregate": agg,
+        }
+        shard_path = shard_dir / f"{shard_start:05d}_{shard_end:05d}.json"
+        tmp = shard_path.with_suffix(".json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        tmp.replace(shard_path)
+        print(f"シャード出力: {shard_path} ({agg['n_samples']} サンプル)")
+        return
 
     new_metadata = dict(metadata)
     new_metadata["perturbation_mode"] = mode
