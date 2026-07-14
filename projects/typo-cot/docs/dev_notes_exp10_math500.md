@@ -68,6 +68,16 @@ touch scripts/exp10_math500/VERIFY_OK
 - アーカイブ精度(参考): gemma-1b 26.8% / gemma-4b 44.4% / Llama-1B 22.2% /
   Llama-3B 30.0% / Mistral-7B 12.8% / Qwen-7B 49.8%。
 
+### スモーク結果 (2026-07-14 20:20)
+
+- gemma-3-1b clean シャード [0,4): 4/4 成功、5.8s/sample(生成+AttnLRP、GPU4)。
+  **4件全てアーカイブと生成文が byte-identical**、抽出答え・is_correct・R_Q top-4 語も一致。
+- merge / LXT-4 / Random-4 データセット作成も正常(outputs/smoke/exp10_* に隔離)。
+- **摂動データセットの注意**: 標的4語はアーカイブと完全一致するが、typo の文字操作の実現値は
+  不一致。原因はアーカイブ生成時に PYTHONHASHSEED が未固定だったこと
+  (perturbation/dataset.py の乱択が salted hash() でシードされるため再現不能)。
+  新規再生成では PYTHONHASHSEED=42 で固定し、以後は再現可能。
+
 ### 検証結果
 
 (完了時に追記)
