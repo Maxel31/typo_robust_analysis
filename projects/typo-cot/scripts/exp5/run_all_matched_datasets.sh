@@ -35,7 +35,7 @@ for model in "${MODELS[@]}"; do
       continue
     fi
     echo "[run] $out_name"
-    PYTHONHASHSEED=42 uv run python scripts/exp5/make_matched_twin_dataset.py \
+    PYTHONHASHSEED=42 uv run --no-sync python scripts/exp5/make_matched_twin_dataset.py \
       --baseline_dir "$baseline" -k 4 --output_dir "$OUTPUT_DIR" \
       > "$LOG_DIR/make_${model}_${bench}.log" 2>&1
   done
