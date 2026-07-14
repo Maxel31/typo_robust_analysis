@@ -125,6 +125,7 @@ def paired_bootstrap_delta_rho(
     jaccard_fixed: Sequence[float],
     flip: Sequence[float],
     rouge: Sequence[float],
+    rouge_fixed: Sequence[float] | None = None,
     n_boot: int = 10_000,
     seed: int = 42,
     alpha: float = 0.05,
@@ -134,6 +135,10 @@ def paired_bootstrap_delta_rho(
     同一サンプルのリサンプルごとに両条件の偏相関を計算し、差の分布から
     percentile CI と両側 p 値 ((count+1)/(B+1) 規約) を得る。
 
+    Args:
+        rouge_fixed: fixed 側の統制変数。None なら default 側と同じ rouge を使う
+            (splice は CoT 部分を変えないため通常ほぼ同値)。
+
     Returns:
         {rho_default, rho_fixed, delta_rho, ci95, p_value, n, n_boot}
     """
@@ -141,28 +146,30 @@ def paired_bootstrap_delta_rho(
     jf = np.asarray(jaccard_fixed, dtype=np.float64)
     y = np.asarray(flip, dtype=np.float64)
     z = np.asarray(rouge, dtype=np.float64)
-    mask = _finite_mask(jd, jf, y, z)
-    jd, jf, y, z = jd[mask], jf[mask], y[mask], z[mask]
+    zf = z if rouge_fixed is None else np.asarray(rouge_fixed, dtype=np.float64)
+    mask = _finite_mask(jd, jf, y, z, zf)
+    jd, jf, y, z, zf = jd[mask], jf[mask], y[mask], z[mask], zf[mask]
     n = len(jd)
 
     rho_default = _residual_pearson_r(jd, y, z)
-    rho_fixed = _residual_pearson_r(jf, y, z)
+    rho_fixed = _residual_pearson_r(jf, y, zf)
     delta = rho_fixed - rho_default
 
     rng = np.random.default_rng(seed)
     deltas = []
     for _ in range(n_boot):
         idx = rng.integers(0, n, size=n)
-        yb, zb = y[idx], z[idx]
+        yb, zb, zfb = y[idx], z[idx], zf[idx]
         jdb, jfb = jd[idx], jf[idx]
         if (
             np.ptp(yb) == 0
             or np.ptp(zb) == 0
+            or np.ptp(zfb) == 0
             or np.ptp(jdb) == 0
             or np.ptp(jfb) == 0
         ):
             continue
-        d = _residual_pearson_r(jfb, yb, zb) - _residual_pearson_r(jdb, yb, zb)
+        d = _residual_pearson_r(jfb, yb, zfb) - _residual_pearson_r(jdb, yb, zb)
         if np.isfinite(d):
             deltas.append(d)
     deltas_arr = np.asarray(deltas)
@@ -183,6 +190,49 @@ def paired_bootstrap_delta_rho(
         "p_value": p_value,
         "n": int(n),
         "n_boot": int(b),
+    }
+
+
+def join_fixed_default_records(
+    default_sample_results: Sequence[dict],
+    fixed_sample_results: Sequence[dict],
+    k: str = "top10",
+) -> dict[str, Any]:
+    """default/fixed の full_results.json sample_results を sample_id で結合する.
+
+    Args:
+        default_sample_results: default 条件の sample_results
+            (analyzer が出力する {sample_id, answer_changed, cot_metrics: {jaccard,
+            rouge_l}} 形式)
+        fixed_sample_results: fixed_target 条件の sample_results (同形式)
+        k: 使用する Jaccard キー ("top5"/"top10"/"top20")
+
+    Returns:
+        {sample_ids, j_default, j_fixed, flip, rouge_default, rouge_fixed, n}
+        (共通 sample_id のみ, sample_id ソート順)
+    """
+    fixed_by_id = {r["sample_id"]: r for r in fixed_sample_results}
+    sample_ids: list[str] = []
+    j_default, j_fixed, flip, rouge_default, rouge_fixed = [], [], [], [], []
+    for rec in sorted(default_sample_results, key=lambda r: r["sample_id"]):
+        sid = rec["sample_id"]
+        frec = fixed_by_id.get(sid)
+        if frec is None:
+            continue
+        sample_ids.append(sid)
+        j_default.append(float(rec["cot_metrics"]["jaccard"][k]))
+        j_fixed.append(float(frec["cot_metrics"]["jaccard"][k]))
+        flip.append(1.0 if rec["answer_changed"] else 0.0)
+        rouge_default.append(float(rec["cot_metrics"]["rouge_l"]["f1"]))
+        rouge_fixed.append(float(frec["cot_metrics"]["rouge_l"]["f1"]))
+    return {
+        "sample_ids": sample_ids,
+        "j_default": np.asarray(j_default),
+        "j_fixed": np.asarray(j_fixed),
+        "flip": np.asarray(flip),
+        "rouge_default": np.asarray(rouge_default),
+        "rouge_fixed": np.asarray(rouge_fixed),
+        "n": len(sample_ids),
     }
 
 
