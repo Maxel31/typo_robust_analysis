@@ -49,6 +49,13 @@
    で fixed_target ディレクトリを分析 → full_results.json。
 4. `scripts/analyze_fixed_target_delta.py` で Δρ 全設定表 (B=10,000, Holm)。
 
+## GPU スモーク: pending (2026-07-14)
+
+ユーザー指示 (tmp/gpu-locks/SMOKE_PAUSED, GPU 3/4 他ユーザー占有中) により未実施。
+入力 (`results/smoke/sample_ids_{gsm8k,mmlu}.json`: flip 24 + 非flip 8 each) と
+ドライバ (`results/smoke/run_smoke.sh`) は準備済み。再開手順と完了判定は
+`results/smoke/SMOKE_PENDING.md` 参照。
+
 ## 未実装 / 別途判断が必要
 
 - GLMM 再推定 (R lme4 / glmmTMB): R 環境が必要。未着手。
