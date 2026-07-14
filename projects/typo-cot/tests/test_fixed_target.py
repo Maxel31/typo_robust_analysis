@@ -242,3 +242,50 @@ class TestRunIO:
         loaded = load_cot_scores(run_dir, "x1")
         assert loaded["cot_token_start"] == 3
         assert loaded["token_scores"] == [("a", 1.0)]
+
+
+class TestComparePayloads:
+    """_cot.pt ペイロード同士の一致検証 (スモークで rebuttal 参照と比較するのに使用)."""
+
+    def _payload(self, scores, start=3, end=7):
+        return {
+            "token_scores": scores,
+            "cot_token_start": start,
+            "cot_token_end": end,
+        }
+
+    def test_identical_payloads(self):
+        from typo_cot.attribution.fixed_target import compare_cot_payloads
+
+        p = self._payload([("a", 1.0), ("b", 0.5), ("c", 0.1)])
+        rep = compare_cot_payloads(p, p, ks=(2,))
+        assert rep["top2_jaccard"] == 1.0
+        assert rep["cot_range_match"] is True
+        assert rep["n_tokens_match"] is True
+        assert rep["max_abs_score_diff"] == 0.0
+
+    def test_score_diff_reported(self):
+        from typo_cot.attribution.fixed_target import compare_cot_payloads
+
+        p1 = self._payload([("a", 1.0), ("b", 0.5)])
+        p2 = self._payload([("a", 1.0), ("b", 0.4)])
+        rep = compare_cot_payloads(p1, p2, ks=(1,))
+        assert rep["max_abs_score_diff"] == pytest.approx(0.1)
+        assert rep["top1_jaccard"] == 1.0
+
+    def test_range_mismatch(self):
+        from typo_cot.attribution.fixed_target import compare_cot_payloads
+
+        p1 = self._payload([("a", 1.0)], start=3, end=7)
+        p2 = self._payload([("a", 1.0)], start=3, end=8)
+        rep = compare_cot_payloads(p1, p2, ks=(1,))
+        assert rep["cot_range_match"] is False
+
+    def test_token_length_mismatch(self):
+        from typo_cot.attribution.fixed_target import compare_cot_payloads
+
+        p1 = self._payload([("a", 1.0), ("b", 0.5)])
+        p2 = self._payload([("a", 1.0)])
+        rep = compare_cot_payloads(p1, p2, ks=(1,))
+        assert rep["n_tokens_match"] is False
+        assert rep["max_abs_score_diff"] is None
