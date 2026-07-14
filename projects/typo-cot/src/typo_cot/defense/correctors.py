@@ -78,12 +78,27 @@ class PySpellCorrector(Corrector):
         corrected, _ = self.correct_with_changes(text)
         return corrected
 
+    def _correction(self, word: str) -> str | None:
+        """決定的な訂正候補選択.
+
+        pyspellchecker の correction() は同点候補を set の反復順
+        (PYTHONHASHSEED 依存) で返し再現不能なため、
+        (最高頻度, 辞書順最小) で決定的に選ぶ。同点が無い場合の結果は
+        correction() と同一。
+        """
+        cands = self._spell.candidates(word)
+        if not cands:
+            return None
+        max_freq = max(self._spell[c] for c in cands)
+        return min(c for c in cands if self._spell[c] == max_freq)
+
     def correct_with_changes(self, text: str) -> tuple[str, list[dict]]:
         """テキストを単語単位でスペル訂正する.
 
         アルファベット語のみ対象 (数値・記号・選択肢ラベルはそのまま)。
         辞書に存在する語・1文字語は変更しない。訂正候補が無い語もそのまま。
         rebuttal の make_spellfix_dataset.py:correct_text と同一の動作。
+        ただし頻度同点候補の選択のみ決定的 (_correction 参照)。
 
         Returns:
             (訂正後テキスト, 変更ログ [{original, corrected, start}])
@@ -102,7 +117,7 @@ class PySpellCorrector(Corrector):
             if len(word) <= 1 or lower in spell:
                 out.append(word)
                 continue
-            cand = spell.correction(lower)
+            cand = self._correction(lower)
             if cand is None or cand == lower:
                 out.append(word)
                 continue
