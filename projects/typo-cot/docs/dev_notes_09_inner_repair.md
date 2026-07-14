@@ -76,6 +76,24 @@ uv run python scripts/exp9/analyze_inner_repair.py \
 CPU 側は検証済み: dry-run (整列率上記) と、合成 word_rows での
 analyze_inner_repair.py の end-to-end 動作 (負の repair 係数を回収)。
 
+## スモーク結果 (2026-07-14, GPU 4, 計 ~2 分)
+
+`results/smoke/exp9/` (summary/word_rows) と `results/smoke/exp9/analysis/`。
+n_skipped_no_span=0、語レベル行 381 (126+64+127+64)。
+
+- (a) **PASS**: 全4設定で `sanity_clean_pair.pass=true` (min_cos >= 0.999999)。
+- (b) **PASS**: `lens_hit_rate_clean_self` = 0.968 / 0.984 / 0.953 / 0.969
+  (gsm8k-lxt4 / mmlu-lxt4 / gsm8k-random4 / mmlu-random4)。
+  first-hit はほぼ全て層0 (埋め込み -> unembed の恒等経路) で、
+  スパン位置整列と lens 機構のサニティとして成立。層1以降の
+  `clean_self_min_rank` は大きい (次トークン予測へ回るため想定内)。
+- (c) **PASS (方向のみ、n=32 で検出力不足)**: repair_coef は
+  gsm8k-random4 -0.293、mmlu-lxt4 -0.088、mmlu-random4 -0.231、
+  pooled -0.168 (p=0.18) と 4 設定中 3 + pooled が負。
+  gsm8k-lxt4 のみ +0.099 (p=0.65) で mean_repair_flip > noflip
+  (差 1.3e-4)。repair_score が 0.998 近傍に集中するため
+  スモーク規模では符号が揺れる — 本番 (全サンプル) で再判定。
+
 ## 本番実行の見積り
 
 M5+Qwen (6モデル) x B5 (5ベンチ) x 2条件、全サンプル。forward 2 回/サンプル
