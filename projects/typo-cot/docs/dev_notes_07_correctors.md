@@ -55,11 +55,34 @@
 rebuttal 生成時の正確な pyspellchecker バージョンは特定不能
 (archive .venv は現在 0.9.0 だが生成後に更新された形跡; 0.8.4 が最も近い挙動)。
 
-### ② neural 段 / ③ LLM 段 (GPU)
+### ①' pyspell 段: 復元統計の再現 (CPU、GSM8K 全 1319 件)
 
-スモーク実行結果は `results/smoke/smoke_cycle_{neural,llm}.json` を参照
-(校正→復元判定→ Gemma-3-4B-it で clean/校正後の両方を greedy 生成→
-byte-identical 集合の flip 0% 検算)。
+`make_corrected_dataset.py --corrector pyspell` の restoration_stats が
+rebuttal のアーカイブ値を再現: word_restored 3135/5195 (60.3%; archive 3134
+=同点1語差)、**fully_restored 185/1319 (14.0%) は完全一致** (論文の
+byte-identical n=185 に対応)。collateral_changes のみ 395 vs 900 と異なるが、
+これは archive 側 make_spellfix_dataset.py の変更ログベース集計が
+regex語 vs 空白トークンの不整合で過大計上していたため。本実装は
+analyze_spellfix.py と同じ位置ベース定義 (論文の誤修正率 15.6%/34.1% の出所)
+に統一した。
+
+### ② neural 段 / ③ LLM 段 (GPU, n=16, GSM8K, 評価=Gemma-3-4B-it)
+
+`results/smoke/smoke_cycle_{neural,llm}.json` (校正→復元判定→ clean/校正後の
+両方を同一ランで greedy 生成→ byte-identical 集合の flip 0% 検算):
+
+| 指標 | ② neural (T5-large-spell) | ③ LLM (Qwen2.5-7B-Instruct) |
+|---|---|---|
+| 語復元率 | 0.871 | 0.710 |
+| byte-identical 率 | 9/16 (0.563) | 5/16 (0.313) |
+| 誤修正サンプル率 | 0.125 | 0.125 |
+| LLM パース失敗 | — | 0 |
+| accuracy clean / corrected | 0.75 / 0.75 | 0.75 / 0.75 |
+| flip 率 (対 clean・同一ラン) | 0.063 (1/16) | 0.125 (2/16) |
+| **byte-identical 集合の flip** | **0/9 (PASS)** | **0/5 (PASS)** |
+
+n=16 の予備値であり傾向の解釈には使わない (スモークは配管の検証が目的)。
+byte-identical → flip 0 は両段で成立 (greedy の理論通り)。
 
 ## 本番実行の手順 (参考)
 
