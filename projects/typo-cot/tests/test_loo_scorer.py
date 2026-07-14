@@ -419,3 +419,38 @@ class TestComputeLooJaccardPairs:
         pert = [self._entry("s1", ["a"]), self._entry("only_pert", ["c"])]
         pairs = compute_loo_jaccard_pairs(clean, pert, k=10)
         assert [p["sample_id"] for p in pairs] == ["s1"]
+
+
+# ============================================================
+# run_loo_scoring.py: GPU ID 解決 (run_with_gpu.sh 互換)
+# ============================================================
+
+
+def _load_run_loo_scoring_module():
+    import importlib.util
+    from pathlib import Path
+
+    script = (
+        Path(__file__).resolve().parents[1] / "scripts" / "run_loo_scoring.py"
+    )
+    spec = importlib.util.spec_from_file_location("run_loo_scoring", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestResolveGpuId:
+    """setup_device が CUDA_VISIBLE_DEVICES を gpu_id で上書きするため、
+    run_with_gpu.sh が設定した CUDA_VISIBLE_DEVICES を優先する必要がある。"""
+
+    def test_env_cvd_takes_precedence_over_cli_default(self):
+        mod = _load_run_loo_scoring_module()
+        assert mod.resolve_gpu_id("0", {"CUDA_VISIBLE_DEVICES": "3"}) == "3"
+
+    def test_cli_used_when_env_unset(self):
+        mod = _load_run_loo_scoring_module()
+        assert mod.resolve_gpu_id("1", {}) == "1"
+
+    def test_empty_env_cvd_falls_back_to_cli(self):
+        mod = _load_run_loo_scoring_module()
+        assert mod.resolve_gpu_id("0", {"CUDA_VISIBLE_DEVICES": ""}) == "0"

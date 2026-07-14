@@ -66,6 +66,18 @@ def build_prompt(template, benchmark: str, entry: dict) -> str:
     return prompt_result.get_full_prompt()
 
 
+def resolve_gpu_id(cli_gpu_id: str, env: dict) -> str:
+    """使用する GPU ID を解決する.
+
+    create_model_wrapper -> setup_device は CUDA_VISIBLE_DEVICES を gpu_id で
+    無条件に上書きするため、run_with_gpu.sh などの外部ランチャーが設定した
+    CUDA_VISIBLE_DEVICES があればそれを優先する（既存値と同じ値を再設定する
+    だけになり、マスクが壊れない）。未設定なら CLI の --gpu_id を使う。
+    """
+    env_cvd = env.get("CUDA_VISIBLE_DEVICES", "").strip()
+    return env_cvd if env_cvd else cli_gpu_id
+
+
 def is_numeric_or_operator(word: str) -> bool:
     """数値・演算語の判定（スモーク基準(b)の集計用）."""
     return word in OPERATOR_WORDS or any(c in NUMERIC_CHARS for c in word)
@@ -119,9 +131,12 @@ def main() -> None:
     from typo_cot.models.prompts import create_prompt_template
     from typo_cot.models.wrapper import create_model_wrapper
 
-    logger.info(f"モデルをロード: {args.model} (GPU {args.gpu_id})")
+    import os
+
+    gpu_id = resolve_gpu_id(args.gpu_id, os.environ)
+    logger.info(f"モデルをロード: {args.model} (GPU {gpu_id})")
     wrapper = create_model_wrapper(
-        model_name=args.model, gpu_id=args.gpu_id, wrap_for_lxt=False
+        model_name=args.model, gpu_id=gpu_id, wrap_for_lxt=False
     )
     model, tokenizer = wrapper.model, wrapper.tokenizer
     template = create_prompt_template(args.benchmark)
