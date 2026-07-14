@@ -200,6 +200,45 @@ def top_k_token_set(token_scores: list, k: int = 10) -> set:
     return {t for t, _ in ranked[: min(k, len(ranked))]}
 
 
+def compare_cot_payloads(
+    new: dict[str, Any], ref: dict[str, Any], ks: tuple[int, ...] = (5, 10, 20)
+) -> dict[str, Any]:
+    """_cot.pt ペイロード同士の一致度レポートを作る.
+
+    スモーク検証で (a) rebuttal 参照との一致、(b) 非flip事例の default 版との
+    一致を数値化する。
+
+    Returns:
+        {"top{k}_jaccard": float, "cot_range_match": bool,
+         "n_tokens_match": bool, "max_abs_score_diff": float | None}
+    """
+    new_scores = list(new.get("token_scores", []))
+    ref_scores = list(ref.get("token_scores", []))
+
+    report: dict[str, Any] = {}
+    for k in ks:
+        s1 = top_k_token_set(new_scores, k)
+        s2 = top_k_token_set(ref_scores, k)
+        union = s1 | s2
+        report[f"top{k}_jaccard"] = (
+            len(s1 & s2) / len(union) if union else 1.0
+        )
+
+    report["cot_range_match"] = bool(
+        new.get("cot_token_start") == ref.get("cot_token_start")
+        and new.get("cot_token_end") == ref.get("cot_token_end")
+    )
+    report["n_tokens_match"] = len(new_scores) == len(ref_scores)
+    if report["n_tokens_match"]:
+        report["max_abs_score_diff"] = max(
+            (abs(float(a[1]) - float(b[1])) for a, b in zip(new_scores, ref_scores, strict=True)),
+            default=0.0,
+        )
+    else:
+        report["max_abs_score_diff"] = None
+    return report
+
+
 # ---------------------------------------------------------------------------
 # GPU 依存部 (AttnLRP backward)。ユニットテスト対象外・スクリプトから使用。
 # ---------------------------------------------------------------------------
