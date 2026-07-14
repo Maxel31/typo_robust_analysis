@@ -1,0 +1,397 @@
+<mxfile host="app.diagrams.net" modified="2026-02-11" type="device">
+  <diagram name="Architecture" id="architecture">
+    <mxGraphModel dx="2000" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1500" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="LRP-Keyword-Perturbation-Analysis  Architecture" style="text;html=1;fontSize=22;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#333;align=center;" vertex="1" parent="1">
+          <mxGeometry x="550" y="15" width="600" height="35" as="geometry" />
+        </mxCell>
+
+        <!-- ============================================ -->
+        <!-- Scripts Layer -->
+        <!-- ============================================ -->
+        <mxCell id="scripts_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#fafafa;strokeColor=#616161;strokeWidth=2;arcSize=4;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="70" width="1620" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="scripts_label" value="scripts/" style="text;html=1;fontSize=16;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#616161;" vertex="1" parent="1">
+          <mxGeometry x="55" y="75" width="100" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="scripts_desc" value="CLI エントリポイント（各Phaseに対応）" style="text;html=1;fontSize=10;fillColor=none;strokeColor=none;fontColor=#999;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="155" y="78" width="280" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- run_inference.py -->
+        <mxCell id="s_inf" value="&lt;b&gt;run_inference.py&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#888&quot; style=&quot;font-size:9px&quot;&gt;Phase 1 &amp; 3&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;推論 + AttnLRP重要度計算&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#e3f2fd;strokeColor=#1565c0;strokeWidth=2;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="110" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- run_perturbation.py -->
+        <mxCell id="s_pert" value="&lt;b&gt;run_perturbation.py&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#888&quot; style=&quot;font-size:9px&quot;&gt;Phase 2&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;摂動データセット作成&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#fff3e0;strokeColor=#e65100;strokeWidth=2;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="310" y="110" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- run_analysis.py -->
+        <mxCell id="s_anal" value="&lt;b&gt;run_analysis.py&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#888&quot; style=&quot;font-size:9px&quot;&gt;Phase 4&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;摂動前後の比較分析&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#fce4ec;strokeColor=#c62828;strokeWidth=2;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="560" y="110" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- run_appendix_analysis.py -->
+        <mxCell id="s_appx" value="&lt;b&gt;run_appendix_analysis.py&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#888&quot; style=&quot;font-size:9px&quot;&gt;Appendix&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;トークン特性可視化&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#f3e5f5;strokeColor=#6a1b9a;strokeWidth=2;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="810" y="110" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- generate_example_heatmaps.py -->
+        <mxCell id="s_heat" value="&lt;b&gt;generate_example_heatmaps.py&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;摂動前後のヒートマップ生成&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#e8f5e9;strokeColor=#2e7d32;strokeWidth=2;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1060" y="110" width="220" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- upload_to_wandb.py -->
+        <mxCell id="s_wandb" value="&lt;b&gt;upload_to_wandb.py&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;W&amp;B連携&lt;br&gt;テーブル・グラフ自動生成&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#e0e0e0;strokeColor=#757575;strokeWidth=2;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1330" y="110" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Phase flow arrows -->
+        <mxCell id="flow1" value="Phase 1→2" style="endArrow=block;endFill=1;strokeColor=#999;strokeWidth=1;fontSize=9;fontColor=#999;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="260" y="170" as="sourcePoint" /><mxPoint x="310" y="170" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="flow2" value="" style="endArrow=block;endFill=1;strokeColor=#999;strokeWidth=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="260" y="195" as="sourcePoint" /><mxPoint x="560" y="195" as="targetPoint" /><Array as="points"><mxPoint x="280" y="210" /><mxPoint x="540" y="210" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="flow2_label" value="Phase 1→4 (before)" style="text;html=1;fontSize=8;fillColor=none;strokeColor=none;fontColor=#999;" vertex="1" parent="1">
+          <mxGeometry x="330" y="210" width="120" height="15" as="geometry" />
+        </mxCell>
+
+        <!-- ============================================ -->
+        <!-- Core Library Layer -->
+        <!-- ============================================ -->
+        <mxCell id="lib_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#fff;strokeColor=#333;strokeWidth=2;arcSize=3;" vertex="1" parent="1">
+          <mxGeometry x="40" y="280" width="1620" height="700" as="geometry" />
+        </mxCell>
+        <mxCell id="lib_label" value="src/attn_perturbation/" style="text;html=1;fontSize=16;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="55" y="285" width="220" height="25" as="geometry" />
+        </mxCell>
+
+        <!-- ===== models/ ===== -->
+        <mxCell id="models_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#e3f2fd;strokeColor=#1565c0;strokeWidth=1.5;arcSize=8;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="60" y="330" width="350" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="models_label" value="models/" style="text;html=1;fontSize=14;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#1565c0;" vertex="1" parent="1">
+          <mxGeometry x="70" y="335" width="80" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="models_desc" value="モデル管理・プロンプト生成" style="text;html=1;fontSize=9;fillColor=none;strokeColor=none;fontColor=#1565c0;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="150" y="337" width="180" height="18" as="geometry" />
+        </mxCell>
+
+        <mxCell id="wrapper" value="&lt;b&gt;wrapper.py&lt;/b&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:9px&quot;&gt;ModelWrapper&lt;br&gt;GenerationResult&lt;br&gt;setup_device()&lt;br&gt;create_model_wrapper()&lt;/font&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:8px&quot; color=&quot;#888&quot;&gt;HF Transformers + lxt&lt;br&gt;monkey_patch / wrap_for_lxt&lt;br&gt;ALLOWED_MODELS管理&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#bbdefb;strokeColor=#1565c0;fontSize=10;align=center;" vertex="1" parent="1">
+          <mxGeometry x="75" y="365" width="155" height="150" as="geometry" />
+        </mxCell>
+
+        <mxCell id="prompts" value="&lt;b&gt;prompts.py&lt;/b&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:9px&quot;&gt;BasePromptTemplate&lt;br&gt;├ MMLUPromptTemplate&lt;br&gt;├ MMLUProPromptTemplate&lt;br&gt;├ GSM8KPromptTemplate&lt;br&gt;├ SQuADV2PromptTemplate&lt;br&gt;├ ArcPromptTemplate&lt;br&gt;└ CommonsenseQAPromptTemplate&lt;br&gt;&lt;br&gt;create_prompt_template()&lt;/font&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:8px&quot; color=&quot;#888&quot;&gt;Few-Shot例示 + 質問文の&lt;br&gt;フォーマット / 文字位置追跡&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#bbdefb;strokeColor=#1565c0;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="245" y="365" width="155" height="250" as="geometry" />
+        </mxCell>
+
+        <!-- ===== data/ ===== -->
+        <mxCell id="data_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#e3f2fd;strokeColor=#1565c0;strokeWidth=1.5;arcSize=8;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="60" y="650" width="175" height="310" as="geometry" />
+        </mxCell>
+        <mxCell id="data_label" value="data/" style="text;html=1;fontSize=14;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#1565c0;" vertex="1" parent="1">
+          <mxGeometry x="70" y="655" width="50" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="data_desc" value="データローダー" style="text;html=1;fontSize=9;fillColor=none;strokeColor=none;fontColor=#1565c0;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="120" y="657" width="100" height="18" as="geometry" />
+        </mxCell>
+
+        <mxCell id="loader" value="&lt;b&gt;loader.py&lt;/b&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:9px&quot;&gt;Sample&lt;br&gt;BaseBenchmarkLoader&lt;br&gt;├ MMLULoader&lt;br&gt;├ MMLUProLoader&lt;br&gt;├ GSM8KLoader&lt;br&gt;├ SQuADV2Loader&lt;br&gt;├ ArcLoader&lt;br&gt;└ CommonsenseQALoader&lt;br&gt;&lt;br&gt;create_loader()&lt;/font&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:8px&quot; color=&quot;#888&quot;&gt;HuggingFace datasets&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#bbdefb;strokeColor=#1565c0;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="70" y="685" width="155" height="260" as="geometry" />
+        </mxCell>
+
+        <!-- ===== lrp/ ===== -->
+        <mxCell id="lrp_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#e8f5e9;strokeColor=#2e7d32;strokeWidth=1.5;arcSize=8;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="430" y="330" width="260" height="310" as="geometry" />
+        </mxCell>
+        <mxCell id="lrp_label" value="lrp/" style="text;html=1;fontSize=14;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#2e7d32;" vertex="1" parent="1">
+          <mxGeometry x="440" y="335" width="40" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="lrp_desc" value="AttnLRP重要度分析" style="text;html=1;fontSize=9;fillColor=none;strokeColor=none;fontColor=#2e7d32;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="480" y="337" width="140" height="18" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lrp_anal" value="&lt;b&gt;analyzer.py&lt;/b&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:9px&quot;&gt;WordScore&lt;br&gt;ImportanceResult&lt;br&gt;CombinedImportanceResult&lt;br&gt;AttnLRPAnalyzer&lt;br&gt;  ├ compute_relevance()&lt;br&gt;  ├ analyze_combined()&lt;br&gt;  ├ analyze_squad()&lt;br&gt;  └ get_top_k_tokens()&lt;br&gt;&lt;br&gt;create_analyzer()&lt;/font&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:8px&quot; color=&quot;#888&quot;&gt;lxt (LRP eXplains Transformers)&lt;br&gt;bfloat16 / 逆伝播計算&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#c8e6c9;strokeColor=#2e7d32;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="445" y="365" width="230" height="260" as="geometry" />
+        </mxCell>
+
+        <!-- ===== perturbation/ ===== -->
+        <mxCell id="pert_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#fff3e0;strokeColor=#e65100;strokeWidth=1.5;arcSize=8;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="710" y="330" width="350" height="310" as="geometry" />
+        </mxCell>
+        <mxCell id="pert_label" value="perturbation/" style="text;html=1;fontSize=14;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#e65100;" vertex="1" parent="1">
+          <mxGeometry x="720" y="335" width="120" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="pert_desc" value="摂動生成" style="text;html=1;fontSize=9;fillColor=none;strokeColor=none;fontColor=#e65100;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="840" y="337" width="80" height="18" as="geometry" />
+        </mxCell>
+
+        <mxCell id="dataset" value="&lt;b&gt;dataset.py&lt;/b&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:9px&quot;&gt;PerturbedToken&lt;br&gt;PerturbedSample&lt;br&gt;PerturbedDataset&lt;br&gt;&lt;br&gt;create_perturbed_dataset()&lt;/font&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:8px&quot; color=&quot;#888&quot;&gt;importance_scores/*.pt読込&lt;br&gt;importance / random / bottom_k&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#ffe0b2;strokeColor=#e65100;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="725" y="365" width="165" height="175" as="geometry" />
+        </mxCell>
+
+        <mxCell id="generator" value="&lt;b&gt;generator.py&lt;/b&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:9px&quot;&gt;PerturbationType (Enum)&lt;br&gt;PerturbationResult&lt;br&gt;CharacterPerturbation&lt;br&gt;Generator&lt;/font&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:8px&quot; color=&quot;#888&quot;&gt;削除 / 置換 / 挿入&lt;br&gt;キーボード隣接文字&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#ffe0b2;strokeColor=#e65100;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="905" y="365" width="140" height="160" as="geometry" />
+        </mxCell>
+
+        <!-- dataset → generator -->
+        <mxCell id="dep_ds_gen" value="" style="endArrow=open;endFill=0;strokeColor=#e65100;strokeWidth=1.5;dashed=1;" edge="1" source="dataset" target="generator" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ===== evaluation/ ===== -->
+        <mxCell id="eval_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#e8eaf6;strokeColor=#283593;strokeWidth=1.5;arcSize=8;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="255" y="650" width="205" height="310" as="geometry" />
+        </mxCell>
+        <mxCell id="eval_label" value="evaluation/" style="text;html=1;fontSize=14;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#283593;" vertex="1" parent="1">
+          <mxGeometry x="265" y="655" width="100" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="eval_desc" value="回答抽出・正誤判定" style="text;html=1;fontSize=9;fillColor=none;strokeColor=none;fontColor=#283593;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="365" y="657" width="120" height="18" as="geometry" />
+        </mxCell>
+
+        <mxCell id="extractor" value="&lt;b&gt;extractor.py&lt;/b&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:9px&quot;&gt;ExtractionResult&lt;br&gt;BaseAnswerExtractor&lt;br&gt;├ GSM8KAnswerExtractor&lt;br&gt;├ MMLUAnswerExtractor&lt;br&gt;├ MMLUProAnswerExtractor&lt;br&gt;├ SQuADV2AnswerExtractor&lt;br&gt;├ ArcAnswerExtractor&lt;br&gt;└ CommonsenseQA&lt;br&gt;　AnswerExtractor&lt;br&gt;&lt;br&gt;create_extractor()&lt;/font&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:8px&quot; color=&quot;#888&quot;&gt;正規表現パターンマッチ&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#c5cae9;strokeColor=#283593;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="265" y="685" width="185" height="260" as="geometry" />
+        </mxCell>
+
+        <!-- ===== analysis/ ===== -->
+        <mxCell id="analysis_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#fce4ec;strokeColor=#c62828;strokeWidth=1.5;arcSize=8;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="710" y="660" width="540" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="analysis_label" value="analysis/" style="text;html=1;fontSize=14;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#c62828;" vertex="1" parent="1">
+          <mxGeometry x="720" y="665" width="80" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="analysis_desc" value="摂動前後の比較分析" style="text;html=1;fontSize=9;fillColor=none;strokeColor=none;fontColor=#c62828;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="800" y="667" width="140" height="18" as="geometry" />
+        </mxCell>
+
+        <mxCell id="analyzer" value="&lt;b&gt;analyzer.py&lt;/b&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:9px&quot;&gt;MetricStats / SamplePairResult&lt;br&gt;AnalysisResult&lt;br&gt;run_analysis()&lt;br&gt;&lt;br&gt;_analyze_cot_relevance() (分析1)&lt;br&gt;_classify_cot_tokens() (分析2)&lt;br&gt;_analyze_jaccard_by_category() (分析3)&lt;br&gt;_get_question_token_range()&lt;/font&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:8px&quot; color=&quot;#888&quot;&gt;Exp2-a/b, Exp3, Exp4-a/b&lt;br&gt;CoT分析1-3&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#ffcdd2;strokeColor=#c62828;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="725" y="695" width="220" height="200" as="geometry" />
+        </mxCell>
+
+        <mxCell id="metrics" value="&lt;b&gt;metrics.py&lt;/b&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:9px&quot;&gt;top_k_jaccard()&lt;br&gt;top_k_jaccard_by_token()&lt;br&gt;rouge_l_score()&lt;br&gt;spearman_correlation()&lt;br&gt;mann_whitney_u_test()&lt;br&gt;cohens_d()&lt;br&gt;js_divergence()&lt;br&gt;shannon_entropy()&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#ffcdd2;strokeColor=#c62828;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="960" y="695" width="155" height="165" as="geometry" />
+        </mxCell>
+
+        <mxCell id="appx_anal" value="&lt;b&gt;appendix_analyzer.py&lt;/b&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:9px&quot;&gt;AppendixAnalyzer&lt;br&gt;run_appendix_analysis()&lt;br&gt;merge_subwords()&lt;br&gt;compute_idf()&lt;/font&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:8px&quot; color=&quot;#888&quot;&gt;トークン特性可視化&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#f8bbd0;strokeColor=#c62828;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="1130" y="695" width="105" height="165" as="geometry" />
+        </mxCell>
+
+        <!-- analyzer → metrics -->
+        <mxCell id="dep_anal_met" value="" style="endArrow=open;endFill=0;strokeColor=#c62828;strokeWidth=1.5;dashed=1;" edge="1" source="analyzer" target="metrics" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- analyzer → dataset (PerturbedDataset) -->
+        <mxCell id="dep_anal_ds" value="PerturbedDataset" style="endArrow=open;endFill=0;strokeColor=#e65100;strokeWidth=1.5;dashed=1;fontSize=9;fontColor=#e65100;" edge="1" source="analyzer" target="dataset" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ===== visualization/ ===== -->
+        <mxCell id="vis_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#e8f5e9;strokeColor=#2e7d32;strokeWidth=1.5;arcSize=8;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="480" y="660" width="210" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="vis_label" value="visualization/" style="text;html=1;fontSize=14;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#2e7d32;" vertex="1" parent="1">
+          <mxGeometry x="490" y="665" width="120" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="vis_desc" value="可視化" style="text;html=1;fontSize=9;fillColor=none;strokeColor=none;fontColor=#2e7d32;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="610" y="667" width="60" height="18" as="geometry" />
+        </mxCell>
+
+        <mxCell id="heatmap" value="&lt;b&gt;heatmap.py&lt;/b&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:9px&quot;&gt;generate_question_heatmap()&lt;br&gt;generate_cot_heatmap()&lt;br&gt;_clean_tokens_for_latex()&lt;/font&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:8px&quot; color=&quot;#888&quot;&gt;pdfLaTeX ヒートマップ&lt;br&gt;PDF形式出力&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#c8e6c9;strokeColor=#2e7d32;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="490" y="695" width="190" height="145" as="geometry" />
+        </mxCell>
+
+        <!-- ===== config.py ===== -->
+        <mxCell id="config_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#eceff1;strokeColor=#455a64;strokeWidth=1.5;arcSize=8;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="330" width="360" height="310" as="geometry" />
+        </mxCell>
+        <mxCell id="config_label" value="config.py" style="text;html=1;fontSize=14;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#455a64;" vertex="1" parent="1">
+          <mxGeometry x="1290" y="335" width="100" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="config_desc" value="設定管理（Pydantic）" style="text;html=1;fontSize=9;fillColor=none;strokeColor=none;fontColor=#455a64;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="1390" y="337" width="140" height="18" as="geometry" />
+        </mxCell>
+
+        <mxCell id="config" value="&lt;b&gt;ExperimentConfig&lt;/b&gt;&lt;br&gt;&lt;hr size=&quot;1&quot;&gt;&lt;font style=&quot;font-size:9px&quot;&gt;ModelConfig&lt;br&gt;BenchmarkConfig&lt;br&gt;PerturbationConfig&lt;br&gt;LRPConfig&lt;br&gt;OutputConfig&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#cfd8dc;strokeColor=#455a64;fontSize=10;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="1295" y="365" width="155" height="120" as="geometry" />
+        </mxCell>
+
+        <!-- ===== External Dependencies ===== -->
+        <mxCell id="ext_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#fff8e1;strokeColor=#f57f17;strokeWidth=1.5;arcSize=8;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="660" width="360" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="ext_label" value="外部依存ライブラリ" style="text;html=1;fontSize=14;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#f57f17;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="665" width="180" height="22" as="geometry" />
+        </mxCell>
+
+        <mxCell id="ext_lxt" value="&lt;b&gt;lxt&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;LRP eXplains Transformers&lt;br&gt;AttnLRP逆伝播計算&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#fff9c4;strokeColor=#f57f17;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1295" y="695" width="160" height="55" as="geometry" />
+        </mxCell>
+
+        <mxCell id="ext_hf" value="&lt;b&gt;transformers&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;HuggingFace Transformers&lt;br&gt;モデルロード・推論&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#fff9c4;strokeColor=#f57f17;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1465" y="695" width="160" height="55" as="geometry" />
+        </mxCell>
+
+        <mxCell id="ext_ds" value="&lt;b&gt;datasets&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;HuggingFace Datasets&lt;br&gt;ベンチマーク読込&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#fff9c4;strokeColor=#f57f17;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1295" y="760" width="160" height="55" as="geometry" />
+        </mxCell>
+
+        <mxCell id="ext_torch" value="&lt;b&gt;PyTorch&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;テンソル計算 / GPU管理&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#fff9c4;strokeColor=#f57f17;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1465" y="760" width="160" height="55" as="geometry" />
+        </mxCell>
+
+        <mxCell id="ext_scipy" value="&lt;b&gt;scipy / numpy&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;統計検定・数値計算&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#fff9c4;strokeColor=#f57f17;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1295" y="825" width="160" height="45" as="geometry" />
+        </mxCell>
+
+        <mxCell id="ext_wandb" value="&lt;b&gt;wandb&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;Weights &amp; Biases連携&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#fff9c4;strokeColor=#f57f17;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1465" y="825" width="160" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- ============================================ -->
+        <!-- Dependencies: scripts → modules -->
+        <!-- ============================================ -->
+
+        <!-- run_inference → multiple modules -->
+        <mxCell id="d_inf_wrap" value="" style="endArrow=block;endFill=1;strokeColor=#1565c0;strokeWidth=1.5;" edge="1" source="s_inf" target="wrapper" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_inf_prom" value="" style="endArrow=block;endFill=1;strokeColor=#1565c0;strokeWidth=1.5;" edge="1" source="s_inf" target="prompts" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_inf_load" value="" style="endArrow=block;endFill=1;strokeColor=#1565c0;strokeWidth=1.5;" edge="1" source="s_inf" target="loader" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_inf_lrp" value="" style="endArrow=block;endFill=1;strokeColor=#2e7d32;strokeWidth=1.5;" edge="1" source="s_inf" target="lrp_anal" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="d_inf_ext" value="" style="endArrow=block;endFill=1;strokeColor=#283593;strokeWidth=1.5;" edge="1" source="s_inf" target="extractor" parent="1">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="160" y="250" /><mxPoint x="357" y="250" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="d_inf_ds" value="" style="endArrow=block;endFill=1;strokeColor=#e65100;strokeWidth=1.5;" edge="1" source="s_inf" target="dataset" parent="1">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="160" y="260" /><mxPoint x="808" y="260" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="d_inf_heat" value="" style="endArrow=block;endFill=1;strokeColor=#2e7d32;strokeWidth=1.5;" edge="1" source="s_inf" target="heatmap" parent="1">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="120" y="270" /><mxPoint x="585" y="270" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- run_perturbation → dataset -->
+        <mxCell id="d_pert_ds" value="" style="endArrow=block;endFill=1;strokeColor=#e65100;strokeWidth=1.5;" edge="1" source="s_pert" target="dataset" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- run_analysis → analyzer -->
+        <mxCell id="d_anal_anal" value="" style="endArrow=block;endFill=1;strokeColor=#c62828;strokeWidth=1.5;" edge="1" source="s_anal" target="analyzer" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- run_appendix → appx_anal -->
+        <mxCell id="d_appx_appx" value="" style="endArrow=block;endFill=1;strokeColor=#6a1b9a;strokeWidth=1.5;" edge="1" source="s_appx" target="appx_anal" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- generate_example_heatmaps → heatmap -->
+        <mxCell id="d_heat_heat" value="" style="endArrow=block;endFill=1;strokeColor=#2e7d32;strokeWidth=1.5;" edge="1" source="s_heat" target="heatmap" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ============================================ -->
+        <!-- Outputs Layer (right side) -->
+        <!-- ============================================ -->
+        <mxCell id="out_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#fafafa;strokeColor=#616161;strokeWidth=2;arcSize=4;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="1700" y="70" width="200" height="890" as="geometry" />
+        </mxCell>
+        <mxCell id="out_label" value="outputs/" style="text;html=1;fontSize=16;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#616161;" vertex="1" parent="1">
+          <mxGeometry x="1710" y="75" width="80" height="25" as="geometry" />
+        </mxCell>
+
+        <mxCell id="out_base" value="&lt;b&gt;baseline/&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;results.json&lt;br&gt;importance_scores/*.pt&lt;br&gt;heatmaps/*.pdf&lt;br&gt;summary.json&lt;/font&gt;" style="shape=document;whiteSpace=wrap;fillColor=#e3f2fd;strokeColor=#1565c0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1720" y="110" width="160" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="out_ds" value="&lt;b&gt;datasets/perturbed/&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;perturbed_dataset.json&lt;/font&gt;" style="shape=document;whiteSpace=wrap;fillColor=#fff3e0;strokeColor=#e65100;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1720" y="220" width="160" height="55" as="geometry" />
+        </mxCell>
+
+        <mxCell id="out_pert" value="&lt;b&gt;perturbed/&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;results.json&lt;br&gt;importance_scores/*.pt&lt;/font&gt;" style="shape=document;whiteSpace=wrap;fillColor=#e8f5e9;strokeColor=#2e7d32;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1720" y="300" width="160" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="out_anal" value="&lt;b&gt;analysis/&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;exp2-a/b.json&lt;br&gt;exp3.json&lt;br&gt;exp4-a/b.json&lt;br&gt;cot_analysis_1-3.json&lt;br&gt;example_samples.json&lt;/font&gt;" style="shape=document;whiteSpace=wrap;fillColor=#fce4ec;strokeColor=#c62828;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1720" y="385" width="160" height="105" as="geometry" />
+        </mxCell>
+
+        <mxCell id="out_appx" value="&lt;b&gt;appendix/&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;scatter_*.png&lt;br&gt;bar_*.png&lt;br&gt;sample_tokens_*.json&lt;/font&gt;" style="shape=document;whiteSpace=wrap;fillColor=#f3e5f5;strokeColor=#6a1b9a;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1720" y="515" width="160" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="out_heat" value="&lt;b&gt;example_heatmaps/&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;*.pdf (before/after)&lt;/font&gt;" style="shape=document;whiteSpace=wrap;fillColor=#e8f5e9;strokeColor=#2e7d32;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1720" y="610" width="160" height="55" as="geometry" />
+        </mxCell>
+
+        <mxCell id="out_wandb" value="&lt;b&gt;W&amp;B Dashboard&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:9px&quot;&gt;Tables &amp; Charts&lt;/font&gt;" style="shape=cloud;whiteSpace=wrap;fillColor=#e1bee7;strokeColor=#6a1b9a;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1710" y="690" width="180" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- Output arrows -->
+        <mxCell id="o1" value="" style="endArrow=block;endFill=1;strokeColor=#1565c0;strokeWidth=1;" edge="1" source="s_inf" target="out_base" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="o2" value="" style="endArrow=block;endFill=1;strokeColor=#e65100;strokeWidth=1;" edge="1" source="s_pert" target="out_ds" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="o4" value="" style="endArrow=block;endFill=1;strokeColor=#c62828;strokeWidth=1;" edge="1" source="s_anal" target="out_anal" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="o5" value="" style="endArrow=block;endFill=1;strokeColor=#6a1b9a;strokeWidth=1;" edge="1" source="s_appx" target="out_appx" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="o6" value="" style="endArrow=block;endFill=1;strokeColor=#2e7d32;strokeWidth=1;" edge="1" source="s_heat" target="out_heat" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="o7" value="" style="endArrow=block;endFill=1;strokeColor=#6a1b9a;strokeWidth=1;" edge="1" source="s_wandb" target="out_wandb" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Legend -->
+        <mxCell id="legend_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#fff;strokeColor=#999;strokeWidth=1;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1470" y="335" width="170" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_title" value="凡例" style="text;html=1;fontSize=11;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="1530" y="338" width="40" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="leg1" value="" style="endArrow=block;endFill=1;strokeColor=#333;strokeWidth=1.5;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="1485" y="370" as="sourcePoint" /><mxPoint x="1530" y="370" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="leg1_t" value="スクリプト→モジュール" style="text;html=1;fontSize=9;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1535" y="362" width="130" height="15" as="geometry" />
+        </mxCell>
+        <mxCell id="leg2" value="" style="endArrow=open;endFill=0;strokeColor=#333;strokeWidth=1.5;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="1485" y="395" as="sourcePoint" /><mxPoint x="1530" y="395" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="leg2_t" value="モジュール内依存" style="text;html=1;fontSize=9;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1535" y="387" width="110" height="15" as="geometry" />
+        </mxCell>
+        <mxCell id="leg3" value="" style="endArrow=block;endFill=1;strokeColor=#333;strokeWidth=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="1485" y="420" as="sourcePoint" /><mxPoint x="1530" y="420" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="leg3_t" value="スクリプト→出力" style="text;html=1;fontSize=9;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1535" y="412" width="110" height="15" as="geometry" />
+        </mxCell>
+        <mxCell id="leg4_t" value="&lt;font color=&quot;#1565c0&quot;&gt;■&lt;/font&gt; 入力系 &lt;font color=&quot;#2e7d32&quot;&gt;■&lt;/font&gt; LRP/可視化&lt;br&gt;&lt;font color=&quot;#e65100&quot;&gt;■&lt;/font&gt; 摂動  &lt;font color=&quot;#c62828&quot;&gt;■&lt;/font&gt; 分析" style="text;html=1;fontSize=9;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1480" y="435" width="150" height="28" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

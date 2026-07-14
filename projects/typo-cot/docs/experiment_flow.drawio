@@ -1,0 +1,249 @@
+<mxfile host="app.diagrams.net" modified="2026-02-11" type="device">
+  <diagram name="Experiment Flow" id="experiment-flow">
+    <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Phase 1: ベースライン推論 -->
+        <mxCell id="phase1_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#e3f2fd;strokeColor=#1565c0;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="30" width="480" height="520" as="geometry" />
+        </mxCell>
+        <mxCell id="phase1_label" value="Phase 1: ベースライン推論" style="text;html=1;fontSize=16;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#1565c0;" vertex="1" parent="1">
+          <mxGeometry x="120" y="40" width="320" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="input" value="質問文&#xa;(MMLU / MMLU-Pro / GSM8K&#xa;SQuAD v2 / ARC / CommonsenseQA)" style="rounded=1;whiteSpace=wrap;fillColor=#bbdefb;strokeColor=#1565c0;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="120" y="80" width="280" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="model1" value="LLM推論&#xa;(Llama 3.2/3.1 | Gemma 3 | Qwen 2.5 | Mistral)" style="rounded=1;whiteSpace=wrap;fillColor=#90caf9;strokeColor=#1565c0;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="120" y="170" width="280" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="cot1" value="CoT推論 + 回答生成" style="rounded=1;whiteSpace=wrap;fillColor=#90caf9;strokeColor=#1565c0;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="150" y="250" width="220" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lrp1" value="AttnLRP 重要度計算" style="rhombus;whiteSpace=wrap;fillColor=#64b5f6;strokeColor=#1565c0;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="160" y="310" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="q2c" value="Question→CoT寄与&#xa;(質問文トークンの&#xa;CoT開始への寄与)" style="rounded=1;whiteSpace=wrap;fillColor=#bbdefb;strokeColor=#1565c0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="60" y="400" width="180" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="c2a" value="CoT→Answer寄与&#xa;(CoTトークンの&#xa;最終回答への寄与)" style="rounded=1;whiteSpace=wrap;fillColor=#bbdefb;strokeColor=#1565c0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="280" y="400" width="180" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="out1" value="importance_scores/*.pt&#xa;results.json&#xa;heatmaps/" style="shape=document;whiteSpace=wrap;fillColor=#e3f2fd;strokeColor=#1565c0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="160" y="490" width="200" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Phase 1 arrows -->
+        <mxCell id="e1" edge="1" source="input" target="model1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" source="model1" target="cot1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" source="cot1" target="lrp1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" edge="1" source="lrp1" target="q2c" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" source="lrp1" target="c2a" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" edge="1" source="q2c" target="out1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" edge="1" source="c2a" target="out1" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Phase 2: 摂動データセット作成 -->
+        <mxCell id="phase2_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#fff3e0;strokeColor=#e65100;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="580" y="30" width="440" height="370" as="geometry" />
+        </mxCell>
+        <mxCell id="phase2_label" value="Phase 2: 摂動データセット作成" style="text;html=1;fontSize=16;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#e65100;" vertex="1" parent="1">
+          <mxGeometry x="640" y="40" width="320" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="imp" value="重要度ベース摂動&#xa;(importance)&#xa;上位k個に摂動適用" style="rounded=1;whiteSpace=wrap;fillColor=#ffe0b2;strokeColor=#e65100;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="600" y="90" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="rnd" value="ランダム摂動&#xa;(random)&#xa;ランダムk個に摂動" style="rounded=1;whiteSpace=wrap;fillColor=#ffe0b2;strokeColor=#e65100;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="600" y="170" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="btm" value="Anti-LXP摂動&#xa;(bottom_k)&#xa;下位k個に摂動" style="rounded=1;whiteSpace=wrap;fillColor=#ffe0b2;strokeColor=#e65100;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="600" y="250" width="160" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pert" value="摂動操作&#xa;文字の削除 / 置換 / 挿入" style="rhombus;whiteSpace=wrap;fillColor=#ffb74d;strokeColor=#e65100;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="810" y="150" width="190" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="out2" value="perturbed_dataset.json" style="shape=document;whiteSpace=wrap;fillColor=#fff3e0;strokeColor=#e65100;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="830" y="280" width="160" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Phase 2 arrows -->
+        <mxCell id="e8" edge="1" source="imp" target="pert" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" edge="1" source="rnd" target="pert" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" edge="1" source="btm" target="pert" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" edge="1" source="pert" target="out2" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Phase 3: 摂動後推論 -->
+        <mxCell id="phase3_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#e8f5e9;strokeColor=#2e7d32;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="580" y="440" width="440" height="260" as="geometry" />
+        </mxCell>
+        <mxCell id="phase3_label" value="Phase 3: 摂動後推論" style="text;html=1;fontSize=16;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#2e7d32;" vertex="1" parent="1">
+          <mxGeometry x="700" y="450" width="200" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pq" value="摂動版質問文" style="rounded=1;whiteSpace=wrap;fillColor=#c8e6c9;strokeColor=#2e7d32;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="710" y="490" width="180" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="model2" value="LLM推論 + AttnLRP" style="rounded=1;whiteSpace=wrap;fillColor=#a5d6a7;strokeColor=#2e7d32;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="710" y="560" width="180" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="out3" value="importance_scores/*.pt&#xa;results.json" style="shape=document;whiteSpace=wrap;fillColor=#e8f5e9;strokeColor=#2e7d32;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="720" y="630" width="170" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- Phase 3 arrows -->
+        <mxCell id="e12" edge="1" source="pq" target="model2" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e13" edge="1" source="model2" target="out3" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Phase 4: 評価・分析 -->
+        <mxCell id="phase4_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#fce4ec;strokeColor=#c62828;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="30" width="480" height="520" as="geometry" />
+        </mxCell>
+        <mxCell id="phase4_label" value="Phase 4: 評価・分析" style="text;html=1;fontSize=16;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#c62828;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="40" width="200" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="comp" value="摂動前後の比較" style="rounded=1;whiteSpace=wrap;fillColor=#ef9a9a;strokeColor=#c62828;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="80" width="200" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="exp2" value="Exp2: Q指標・CoT指標&#xa;Jaccard@k / Spearman-ρ&#xa;ROUGE-L" style="rounded=1;whiteSpace=wrap;fillColor=#ffcdd2;strokeColor=#c62828;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="150" width="180" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="exp3" value="Exp3: Q×CoT相関行列&#xa;Spearman ρ" style="rounded=1;whiteSpace=wrap;fillColor=#ffcdd2;strokeColor=#c62828;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="150" width="180" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="exp4" value="Exp4: 偏相関分析&#xa;(a) CoT指標 vs 回答変化&#xa;(b) CoT指標 vs 不正解転落" style="rounded=1;whiteSpace=wrap;fillColor=#ffcdd2;strokeColor=#c62828;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="240" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="cot_a" value="追加分析 (分析1-3)&#xa;CoT寄与度の詳細分析&#xa;共通/CoT固有トークン分類" style="rounded=1;whiteSpace=wrap;fillColor=#ffcdd2;strokeColor=#c62828;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="240" width="200" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="patterns" value="分析パターン&#xa;C→C / C→I / I→C / I→I&#xa;answer_changed / unchanged" style="rounded=1;whiteSpace=wrap;fillColor=#f8bbd0;strokeColor=#c62828;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1180" y="340" width="260" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="out4" value="exp2-a/b.json | exp3.json&#xa;exp4-a/b.json&#xa;cot_analysis_1-3.json&#xa;example_samples.json" style="shape=document;whiteSpace=wrap;fillColor=#fce4ec;strokeColor=#c62828;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1180" y="440" width="260" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Phase 4 arrows -->
+        <mxCell id="e14" edge="1" source="comp" target="exp2" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e15" edge="1" source="comp" target="exp3" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e16" edge="1" source="comp" target="exp4" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e17" edge="1" source="comp" target="cot_a" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e18" edge="1" source="exp2" target="patterns" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e19" edge="1" source="exp4" target="patterns" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e20" edge="1" source="patterns" target="out4" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e20b" edge="1" source="cot_a" target="out4" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- W&B -->
+        <mxCell id="wandb" value="Weights &amp; Biases&#xa;ダッシュボード" style="shape=cloud;whiteSpace=wrap;fillColor=#e1bee7;strokeColor=#6a1b9a;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="600" width="200" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- Cross-phase arrows -->
+        <mxCell id="e21" value="重要度スコア参照" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#e65100;strokeWidth=2;fontColor=#e65100;fontSize=10;" edge="1" source="out1" target="imp" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="260" y="570" />
+              <mxPoint x="560" y="570" />
+              <mxPoint x="560" y="120" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e22" value="摂動データ" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#2e7d32;strokeWidth=2;fontColor=#2e7d32;fontSize=10;" edge="1" source="out2" target="pq" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="910" y="420" />
+              <mxPoint x="910" y="420" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e23" value="before" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#1565c0;strokeWidth=2;dashed=1;fontColor=#1565c0;fontSize=10;" edge="1" source="out1" target="comp" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="260" y="580" />
+              <mxPoint x="1070" y="580" />
+              <mxPoint x="1070" y="100" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e24" value="after" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#2e7d32;strokeWidth=2;dashed=1;fontColor=#2e7d32;fontSize=10;" edge="1" source="out3" target="comp" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="805" y="720" />
+              <mxPoint x="1060" y="720" />
+              <mxPoint x="1060" y="100" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e25" style="strokeColor=#6a1b9a;strokeWidth=2;" edge="1" source="out4" target="wandb" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

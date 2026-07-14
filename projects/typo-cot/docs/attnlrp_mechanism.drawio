@@ -1,0 +1,343 @@
+<mxfile host="app.diagrams.net" modified="2026-02-11" type="device">
+  <diagram name="AttnLRP Mechanism" id="attnlrp-mechanism">
+    <mxGraphModel dx="1800" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1400" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="AttnLRP による寄与トークン特定メカニズム" style="text;html=1;fontSize=20;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#333333;align=center;" vertex="1" parent="1">
+          <mxGeometry x="350" y="10" width="500" height="35" as="geometry" />
+        </mxCell>
+
+        <!-- ============================================ -->
+        <!-- Token Sequence (4 Segments) -->
+        <!-- ============================================ -->
+        <mxCell id="seq_label" value="入力トークン列（LLM生成後の完全な系列）" style="text;html=1;fontSize=14;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#555;" vertex="1" parent="1">
+          <mxGeometry x="40" y="55" width="400" height="25" as="geometry" />
+        </mxCell>
+
+        <!-- Segment 1: Few-shot -->
+        <mxCell id="seg_fs" value="&lt;b&gt;Few-Shot 例示&lt;/b&gt;&lt;br&gt;（システムプロンプト含む）&lt;br&gt;&lt;font color=&quot;#888&quot;&gt;例: 5問の解答例&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;fillColor=#f5f5f5;strokeColor=#9e9e9e;strokeWidth=2;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="90" width="280" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Segment 2: Question -->
+        <mxCell id="seg_q" value="&lt;b&gt;質問文&lt;/b&gt;&lt;br&gt;（+選択肢）&lt;br&gt;&lt;font color=&quot;#1565c0&quot;&gt;question_char_start ~ question_char_end&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;fillColor=#bbdefb;strokeColor=#1565c0;strokeWidth=2;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="320" y="90" width="300" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Segment 3: CoT -->
+        <mxCell id="seg_cot" value="&lt;b&gt;CoT推論過程&lt;/b&gt;&lt;br&gt;（モデル生成テキスト）&lt;br&gt;&lt;font color=&quot;#2e7d32&quot;&gt;cot_token_start ~ cot_token_end&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;fillColor=#c8e6c9;strokeColor=#2e7d32;strokeWidth=2;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="620" y="90" width="300" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Segment 4: Answer -->
+        <mxCell id="seg_ans" value="&lt;b&gt;回答部分&lt;/b&gt;&lt;br&gt;&quot;The answer is (B)&quot;&lt;br&gt;&lt;font color=&quot;#c62828&quot;&gt;answer_token_start ~ end&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;fillColor=#ffcdd2;strokeColor=#c62828;strokeWidth=2;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="920" y="90" width="250" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Prompt boundary -->
+        <mxCell id="prompt_boundary" value="" style="shape=curlyBracket;whiteSpace=wrap;rounded=1;flipH=1;size=0.5;strokeColor=#666;direction=south;" vertex="1" parent="1">
+          <mxGeometry x="40" y="150" width="580" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="prompt_label" value="プロンプト（prompt_token_count トークン）" style="text;html=1;fontSize=10;fillColor=none;strokeColor=none;fontColor=#666;align=center;" vertex="1" parent="1">
+          <mxGeometry x="140" y="170" width="320" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="gen_boundary" value="" style="shape=curlyBracket;whiteSpace=wrap;rounded=1;flipH=1;size=0.5;strokeColor=#666;direction=south;" vertex="1" parent="1">
+          <mxGeometry x="620" y="150" width="550" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="gen_label" value="モデル生成テキスト" style="text;html=1;fontSize=10;fillColor=none;strokeColor=none;fontColor=#666;align=center;" vertex="1" parent="1">
+          <mxGeometry x="780" y="170" width="200" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- ============================================ -->
+        <!-- LRP Computation 1: Question → CoT -->
+        <!-- ============================================ -->
+        <mxCell id="lrp1_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#e3f2fd;strokeColor=#1565c0;strokeWidth=2;arcSize=6;opacity=80;" vertex="1" parent="1">
+          <mxGeometry x="40" y="210" width="1130" height="340" as="geometry" />
+        </mxCell>
+        <mxCell id="lrp1_title" value="LRP計算 1: Question → CoT 寄与度" style="text;html=1;fontSize=16;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#1565c0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="220" width="400" height="25" as="geometry" />
+        </mxCell>
+
+        <!-- Target -->
+        <mxCell id="lrp1_target_label" value="ターゲット位置" style="text;html=1;fontSize=11;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#1565c0;" vertex="1" parent="1">
+          <mxGeometry x="60" y="255" width="120" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lrp1_target" value="target_position = cot_token_start&lt;br&gt;（CoT推論の最初のトークン）" style="rounded=1;whiteSpace=wrap;fillColor=#64b5f6;strokeColor=#1565c0;fontSize=11;fontStyle=1;fontColor=#fff;" vertex="1" parent="1">
+          <mxGeometry x="190" y="250" width="280" height="35" as="geometry" />
+        </mxCell>
+
+        <!-- Arrow showing backpropagation direction -->
+        <mxCell id="lrp1_backprop" value="LRP逆伝播: CoT開始 → 全入力トークンへ" style="text;html=1;fontSize=11;fillColor=none;strokeColor=none;fontColor=#1565c0;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="540" y="255" width="320" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Raw relevance for all tokens -->
+        <mxCell id="lrp1_raw_label" value="compute_relevance() の出力（全トークンのスコア）" style="text;html=1;fontSize=11;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="60" y="300" width="380" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lrp1_raw_fs" value="Few-Shot&#xa;スコアあり&#xa;（低〜中）" style="rounded=0;whiteSpace=wrap;fillColor=#e0e0e0;strokeColor=#9e9e9e;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="60" y="325" width="200" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="lrp1_raw_q" value="質問文&#xa;スコアあり&#xa;（高い）" style="rounded=0;whiteSpace=wrap;fillColor=#90caf9;strokeColor=#1565c0;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="260" y="325" width="220" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="lrp1_raw_cot" value="CoT&#xa;（ターゲット以降&#xa;=ほぼ0）" style="rounded=0;whiteSpace=wrap;fillColor=#e8f5e9;strokeColor=#a5d6a7;fontSize=10;fontColor=#999;" vertex="1" parent="1">
+          <mxGeometry x="480" y="325" width="220" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="lrp1_raw_ans" value="回答&#xa;（0）" style="rounded=0;whiteSpace=wrap;fillColor=#ffebee;strokeColor=#ef9a9a;fontSize=10;fontColor=#999;" vertex="1" parent="1">
+          <mxGeometry x="700" y="325" width="160" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- Filter step -->
+        <mxCell id="lrp1_filter_arrow" value="" style="endArrow=block;endFill=1;strokeColor=#c62828;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="460" y="385" as="sourcePoint" />
+            <mxPoint x="460" y="415" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lrp1_filter_label" value="フィルタリング: 質問文範囲のみ残す" style="text;html=1;fontSize=11;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#c62828;" vertex="1" parent="1">
+          <mxGeometry x="490" y="388" width="280" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Filtered result -->
+        <mxCell id="lrp1_filt_label" value="フィルタリング後（question_filtered_relevance）" style="text;html=1;fontSize=11;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="60" y="415" width="380" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lrp1_filt_fs" value="Few-Shot&#xa;→ 0 に設定" style="rounded=0;whiteSpace=wrap;fillColor=#fafafa;strokeColor=#e0e0e0;fontSize=10;fontColor=#bbb;strokeDasharray=4;" vertex="1" parent="1">
+          <mxGeometry x="60" y="440" width="200" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="lrp1_filt_q" value="質問文のスコアのみ残る&#xa;（非ゼロ値）" style="rounded=0;whiteSpace=wrap;fillColor=#42a5f5;strokeColor=#1565c0;fontSize=11;fontStyle=1;fontColor=#fff;" vertex="1" parent="1">
+          <mxGeometry x="260" y="440" width="220" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="lrp1_filt_rest" value="CoT + 回答 → 0" style="rounded=0;whiteSpace=wrap;fillColor=#fafafa;strokeColor=#e0e0e0;fontSize=10;fontColor=#bbb;strokeDasharray=4;" vertex="1" parent="1">
+          <mxGeometry x="480" y="440" width="380" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Output -->
+        <mxCell id="lrp1_output_arrow" value="" style="endArrow=block;endFill=1;strokeColor=#1565c0;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="370" y="490" as="sourcePoint" />
+            <mxPoint x="370" y="510" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lrp1_output" value="&lt;b&gt;出力: {sample_id}.pt&lt;/b&gt;&lt;br&gt;token_scores: 質問文トークンのスコア&lt;br&gt;raw_relevance: フィルタ済みrelevance&lt;br&gt;offset_mapping / question_char_start / question_char_end" style="shape=document;whiteSpace=wrap;fillColor=#e3f2fd;strokeColor=#1565c0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="160" y="510" width="380" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- X marks on filtered segments -->
+        <mxCell id="x1" value="✕" style="text;html=1;fontSize=20;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#c62828;align=center;" vertex="1" parent="1">
+          <mxGeometry x="130" y="435" width="40" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="x2" value="✕" style="text;html=1;fontSize=20;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#c62828;align=center;" vertex="1" parent="1">
+          <mxGeometry x="640" y="435" width="40" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- ============================================ -->
+        <!-- LRP Computation 2: CoT → Answer -->
+        <!-- ============================================ -->
+        <mxCell id="lrp2_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#e8f5e9;strokeColor=#2e7d32;strokeWidth=2;arcSize=6;opacity=80;" vertex="1" parent="1">
+          <mxGeometry x="40" y="590" width="1130" height="370" as="geometry" />
+        </mxCell>
+        <mxCell id="lrp2_title" value="LRP計算 2: CoT → Answer 寄与度" style="text;html=1;fontSize=16;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#2e7d32;" vertex="1" parent="1">
+          <mxGeometry x="60" y="600" width="400" height="25" as="geometry" />
+        </mxCell>
+
+        <!-- Target -->
+        <mxCell id="lrp2_target_label" value="ターゲット位置" style="text;html=1;fontSize=11;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#2e7d32;" vertex="1" parent="1">
+          <mxGeometry x="60" y="635" width="120" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lrp2_target" value="target_position = answer_choice_position&lt;br&gt;（回答選択肢 &quot;(B)&quot; のトークン位置）" style="rounded=1;whiteSpace=wrap;fillColor=#66bb6a;strokeColor=#2e7d32;fontSize=11;fontStyle=1;fontColor=#fff;" vertex="1" parent="1">
+          <mxGeometry x="190" y="630" width="310" height="35" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lrp2_backprop" value="LRP逆伝播: 回答選択肢 → 全入力トークンへ" style="text;html=1;fontSize=11;fillColor=none;strokeColor=none;fontColor=#2e7d32;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="560" y="635" width="340" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Raw relevance -->
+        <mxCell id="lrp2_raw_label" value="compute_relevance() の出力（全トークンのスコア）" style="text;html=1;fontSize=11;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="60" y="680" width="380" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lrp2_raw_fs" value="Few-Shot&#xa;スコアあり&#xa;（低〜中）" style="rounded=0;whiteSpace=wrap;fillColor=#e0e0e0;strokeColor=#9e9e9e;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="60" y="705" width="200" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="lrp2_raw_q" value="質問文&#xa;スコアあり&#xa;（中程度）" style="rounded=0;whiteSpace=wrap;fillColor=#bbdefb;strokeColor=#90caf9;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="260" y="705" width="220" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="lrp2_raw_cot" value="CoT推論&#xa;スコアあり&#xa;（高い）" style="rounded=0;whiteSpace=wrap;fillColor=#66bb6a;strokeColor=#2e7d32;fontSize=10;fontStyle=1;fontColor=#fff;" vertex="1" parent="1">
+          <mxGeometry x="480" y="705" width="220" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="lrp2_raw_ans" value="回答&#xa;スコアあり&#xa;（高い）" style="rounded=0;whiteSpace=wrap;fillColor=#ef9a9a;strokeColor=#c62828;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="700" y="705" width="160" height="45" as="geometry" />
+        </mxCell>
+
+        <!-- token_scores: unfiltered, saved for analysis -->
+        <mxCell id="lrp2_ts_note" value="※ token_scores にはフィルタ前の全スコアを保存（分析1-3で使用）" style="text;html=1;fontSize=10;fillColor=none;strokeColor=none;fontColor=#888;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="60" y="755" width="500" height="15" as="geometry" />
+        </mxCell>
+
+        <!-- Filter step -->
+        <mxCell id="lrp2_filter_arrow" value="" style="endArrow=block;endFill=1;strokeColor=#c62828;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="460" y="780" as="sourcePoint" />
+            <mxPoint x="460" y="810" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lrp2_filter_label" value="フィルタリング: CoT範囲のみ残す" style="text;html=1;fontSize=11;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#c62828;" vertex="1" parent="1">
+          <mxGeometry x="490" y="783" width="280" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Filtered result -->
+        <mxCell id="lrp2_filt_label" value="フィルタリング後（cot_filtered_relevance）" style="text;html=1;fontSize=11;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#333;" vertex="1" parent="1">
+          <mxGeometry x="60" y="810" width="380" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lrp2_filt_prompt" value="Few-Shot + 質問文&#xa;→ 0 に設定" style="rounded=0;whiteSpace=wrap;fillColor=#fafafa;strokeColor=#e0e0e0;fontSize=10;fontColor=#bbb;strokeDasharray=4;" vertex="1" parent="1">
+          <mxGeometry x="60" y="835" width="420" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="lrp2_filt_cot" value="CoT推論のスコアのみ残る&#xa;（非ゼロ値）" style="rounded=0;whiteSpace=wrap;fillColor=#43a047;strokeColor=#2e7d32;fontSize=11;fontStyle=1;fontColor=#fff;" vertex="1" parent="1">
+          <mxGeometry x="480" y="835" width="220" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="lrp2_filt_ans" value="回答部分&#xa;→ 0 に設定" style="rounded=0;whiteSpace=wrap;fillColor=#fafafa;strokeColor=#e0e0e0;fontSize=10;fontColor=#bbb;strokeDasharray=4;" vertex="1" parent="1">
+          <mxGeometry x="700" y="835" width="160" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- X marks -->
+        <mxCell id="x3" value="✕" style="text;html=1;fontSize=20;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#c62828;align=center;" vertex="1" parent="1">
+          <mxGeometry x="240" y="830" width="40" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="x4" value="✕" style="text;html=1;fontSize=20;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#c62828;align=center;" vertex="1" parent="1">
+          <mxGeometry x="755" y="830" width="40" height="40" as="geometry" />
+        </mxCell>
+
+        <!-- Output -->
+        <mxCell id="lrp2_output_arrow" value="" style="endArrow=block;endFill=1;strokeColor=#2e7d32;strokeWidth=2;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="590" y="885" as="sourcePoint" />
+            <mxPoint x="590" y="905" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lrp2_output" value="&lt;b&gt;出力: {sample_id}_cot.pt&lt;/b&gt;&lt;br&gt;token_scores: フィルタ前の全トークンスコア（分析1-3用）&lt;br&gt;raw_relevance: CoT部分のみ非ゼロのフィルタ済みrelevance&lt;br&gt;cot_token_start / cot_token_end" style="shape=document;whiteSpace=wrap;fillColor=#e8f5e9;strokeColor=#2e7d32;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="370" y="905" width="420" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ============================================ -->
+        <!-- Right side: Summary / How top-k is determined -->
+        <!-- ============================================ -->
+        <mxCell id="topk_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#fff8e1;strokeColor=#f57f17;strokeWidth=2;arcSize=8;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="90" width="570" height="875" as="geometry" />
+        </mxCell>
+        <mxCell id="topk_title" value="寄与トークンの決定プロセス" style="text;html=1;fontSize=16;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#f57f17;" vertex="1" parent="1">
+          <mxGeometry x="1310" y="100" width="350" height="25" as="geometry" />
+        </mxCell>
+
+        <!-- Step 1 -->
+        <mxCell id="step1_num" value="1" style="ellipse;whiteSpace=wrap;fillColor=#f57f17;strokeColor=#e65100;fontSize=16;fontStyle=1;fontColor=#fff;" vertex="1" parent="1">
+          <mxGeometry x="1230" y="140" width="35" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="step1" value="&lt;b&gt;LRP逆伝播&lt;/b&gt;&lt;br&gt;ターゲットトークンの出力ロジットから&lt;br&gt;Transformerの全層を逆方向に伝播し、&lt;br&gt;各入力トークンへの寄与度（relevance）を計算&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#888&quot;&gt;※ bfloat16で計算（勾配オーバーフロー防止）&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#fff9c4;strokeColor=#f57f17;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="135" width="480" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- Step 2 -->
+        <mxCell id="step2_num" value="2" style="ellipse;whiteSpace=wrap;fillColor=#f57f17;strokeColor=#e65100;fontSize=16;fontStyle=1;fontColor=#fff;" vertex="1" parent="1">
+          <mxGeometry x="1230" y="250" width="35" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="step2" value="&lt;b&gt;セグメント別フィルタリング&lt;/b&gt;&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#1565c0&quot;&gt;■ Question→CoT:&lt;/font&gt;&lt;br&gt;　質問文のoffset_mappingで文字位置を照合し&lt;br&gt;　質問文範囲外（Few-Shot, CoT, 回答）を0に設定&lt;br&gt;&lt;br&gt;&lt;font color=&quot;#2e7d32&quot;&gt;■ CoT→Answer:&lt;/font&gt;&lt;br&gt;　[:prompt_token_count] = 0（プロンプト除外）&lt;br&gt;　[answer_token_start:] = 0（回答部分除外）&lt;br&gt;　CoT範囲のスコアのみ残る" style="rounded=1;whiteSpace=wrap;fillColor=#fff9c4;strokeColor=#f57f17;fontSize=11;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="240" width="480" height="170" as="geometry" />
+        </mxCell>
+
+        <!-- Step 3 -->
+        <mxCell id="step3_num" value="3" style="ellipse;whiteSpace=wrap;fillColor=#f57f17;strokeColor=#e65100;fontSize=16;fontStyle=1;fontColor=#fff;" vertex="1" parent="1">
+          <mxGeometry x="1230" y="435" width="35" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="step3" value="&lt;b&gt;上位k件トークン抽出 (get_top_k_tokens)&lt;/b&gt;&lt;br&gt;&lt;br&gt;フィルタ後のスコアを |score| の降順でソートし&lt;br&gt;上位k件のサブワードトークンを抽出&lt;br&gt;&lt;br&gt;各トークンの情報:&lt;br&gt;　- word: トークン文字列&lt;br&gt;　- score: relevanceスコア&lt;br&gt;　- position: トークンインデックス" style="rounded=1;whiteSpace=wrap;fillColor=#fff9c4;strokeColor=#f57f17;fontSize=11;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="425" width="480" height="145" as="geometry" />
+        </mxCell>
+
+        <!-- Step 4: Analysis usage -->
+        <mxCell id="step4_num" value="4" style="ellipse;whiteSpace=wrap;fillColor=#f57f17;strokeColor=#e65100;fontSize=16;fontStyle=1;fontColor=#fff;" vertex="1" parent="1">
+          <mxGeometry x="1230" y="600" width="35" height="35" as="geometry" />
+        </mxCell>
+        <mxCell id="step4" value="&lt;b&gt;保存と後段分析での利用&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;fillColor=#fff9c4;strokeColor=#f57f17;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="595" width="480" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- Usage boxes -->
+        <mxCell id="use_phase2" value="&lt;b&gt;Phase 2: 摂動対象選定&lt;/b&gt;&lt;br&gt;Question→CoTの上位k件トークンに&lt;br&gt;文字レベル摂動を適用&lt;br&gt;（importance / random / bottom_k）" style="rounded=1;whiteSpace=wrap;fillColor=#ffe0b2;strokeColor=#e65100;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="640" width="230" height="75" as="geometry" />
+        </mxCell>
+
+        <mxCell id="use_analysis" value="&lt;b&gt;Phase 4: 分析1-3&lt;/b&gt;&lt;br&gt;CoT→Answerのtoken_scores（フィルタ前）を使用し&lt;br&gt;質問文トークンとCoTトークンの寄与度を比較&lt;br&gt;共通/CoT固有トークンの分類" style="rounded=1;whiteSpace=wrap;fillColor=#ffcdd2;strokeColor=#c62828;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1530" y="640" width="230" height="75" as="geometry" />
+        </mxCell>
+
+        <mxCell id="use_jaccard" value="&lt;b&gt;Phase 4: Jaccard@k 安定性&lt;/b&gt;&lt;br&gt;摂動前後の上位k件トークン集合の&lt;br&gt;重複度を Jaccard 係数で評価&lt;br&gt;Q:Jaccard@k / CoT:Jaccard@k" style="rounded=1;whiteSpace=wrap;fillColor=#c8e6c9;strokeColor=#2e7d32;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="730" width="230" height="75" as="geometry" />
+        </mxCell>
+
+        <mxCell id="use_heatmap" value="&lt;b&gt;ヒートマップ生成&lt;/b&gt;&lt;br&gt;raw_relevanceを使用して&lt;br&gt;トークンごとの色強度を決定&lt;br&gt;PDF形式で出力" style="rounded=1;whiteSpace=wrap;fillColor=#e1bee7;strokeColor=#6a1b9a;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1530" y="730" width="230" height="75" as="geometry" />
+        </mxCell>
+
+        <!-- Arrows from outputs to right panel -->
+        <mxCell id="conn1" value="" style="endArrow=block;endFill=1;strokeColor=#1565c0;strokeWidth=2;dashed=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" source="lrp1_output" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1210" y="540" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="conn2" value="" style="endArrow=block;endFill=1;strokeColor=#2e7d32;strokeWidth=2;dashed=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" source="lrp2_output" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1210" y="935" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Backpropagation direction arrows on segments -->
+        <mxCell id="bp1_arrow" value="" style="endArrow=block;endFill=1;strokeColor=#1565c0;strokeWidth=3;curved=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="620" y="110" as="sourcePoint" />
+            <mxPoint x="470" y="110" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="550" y="75" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="bp1_label2" value="LRP計算1" style="text;html=1;fontSize=9;fillColor=none;strokeColor=none;fontColor=#1565c0;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="510" y="60" width="60" height="15" as="geometry" />
+        </mxCell>
+
+        <mxCell id="bp2_arrow" value="" style="endArrow=block;endFill=1;strokeColor=#2e7d32;strokeWidth=3;curved=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="920" y="130" as="sourcePoint" />
+            <mxPoint x="770" y="130" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="850" y="165" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="bp2_label2" value="LRP計算2" style="text;html=1;fontSize=9;fillColor=none;strokeColor=none;fontColor=#2e7d32;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="810" y="160" width="60" height="15" as="geometry" />
+        </mxCell>
+
+        <!-- Key insight box -->
+        <mxCell id="insight_bg" value="" style="rounded=1;whiteSpace=wrap;fillColor=#f3e5f5;strokeColor=#6a1b9a;strokeWidth=2;arcSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="830" width="570" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="insight_title" value="重要ポイント" style="text;html=1;fontSize=13;fontStyle=1;fillColor=none;strokeColor=none;fontColor=#6a1b9a;" vertex="1" parent="1">
+          <mxGeometry x="1410" y="835" width="150" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="insight_text" value="&lt;font color=&quot;#333&quot;&gt;• Few-Shot例示は両計算とも最終スコアから&lt;b&gt;除外&lt;/b&gt;される&lt;br&gt;• LRP計算1: 質問文の&lt;b&gt;どのトークン&lt;/b&gt;がCoT推論を駆動したか&lt;br&gt;• LRP計算2: CoT推論の&lt;b&gt;どのステップ&lt;/b&gt;が最終回答に寄与したか&lt;br&gt;• 2つの計算は独立だが、同一の入力系列に対して実行される&lt;br&gt;• _cot.pt の token_scores はフィルタ&lt;b&gt;前&lt;/b&gt;の値を保持（分析1-3で&lt;br&gt;　質問文 vs CoT の寄与度比較に使用）&lt;/font&gt;" style="text;html=1;fontSize=11;fillColor=none;strokeColor=none;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="855" width="550" height="100" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
