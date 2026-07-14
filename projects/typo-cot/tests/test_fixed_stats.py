@@ -39,7 +39,8 @@ class TestPartialCorrFlip:
         ref = pg.partial_corr(data=df, x="x", y="y", covar="z")
         assert n == len(j)
         assert r == pytest.approx(float(ref["r"].iloc[0]), abs=1e-10)
-        assert p == pytest.approx(float(ref["p-val"].iloc[0]), rel=1e-6)
+        p_col = "p_val" if "p_val" in ref.columns else "p-val"
+        assert p == pytest.approx(float(ref[p_col].iloc[0]), rel=1e-6)
 
     def test_negative_correlation_detected(self):
         j, flip, rouge = _synthetic(strength=-3.0)
