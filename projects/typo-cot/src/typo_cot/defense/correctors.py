@@ -247,19 +247,21 @@ class LLMCorrector(Corrector):
                 {"role": "system", "content": LLM_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ]
-            input_ids = tokenizer.apply_chat_template(
-                messages, add_generation_prompt=True, return_tensors="pt"
+            inputs = tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                return_tensors="pt",
+                return_dict=True,
             ).to(device)
             with torch.no_grad():
                 out_ids = model.generate(
-                    input_ids,
+                    **inputs,
                     max_new_tokens=self.max_new_tokens,
                     do_sample=False,
                     pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
                 )
-            return tokenizer.decode(
-                out_ids[0][input_ids.shape[1] :], skip_special_tokens=True
-            )
+            prompt_len = inputs["input_ids"].shape[1]
+            return tokenizer.decode(out_ids[0][prompt_len:], skip_special_tokens=True)
 
         return _fn
 
