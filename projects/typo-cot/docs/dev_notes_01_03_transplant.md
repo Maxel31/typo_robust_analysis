@@ -85,6 +85,28 @@ Random-4 は `--perturbed-dir ..._k4_random`。全 25 設定は docs/v1_run_mani
 どちらの結果でも執筆可能。GLMM の交互作用項が大きい場合は
 「質問 typo と CoT typo の効果は加法的でない」ことを明記する。
 
+## GPU スモーク結果 (2026-07-14, GPU 3, n=32)
+
+前回 nohup キューが GPU 3 解放後に自走し 18:17–18:18 に完了
+(logs/smoke_gsm8k_lxt4.log, results/smoke/gemma-3-4b-it_gsm8k_k4_importance/)。
+実行時間: モデルロード込み約40秒 (4セル生成 ~14s + divergence 32件 ~5s)。
+
+- **(a) TE 再現一致率**: 非除外 29/29 = **100%** (PASS)。全32件では 31/32=96.875% —
+  唯一の不一致 gsm8k_00007 は multi_trigger_typo/no_trigger_clean で除外対象
+  (最初の trigger で切断→再生成 "20.13671" vs アーカイブは丸め後 "20.14" を再掲する
+  2重 answer 文。除外フラグの設計意図どおりの検出)。
+- **(b) 4セル**: 全32件で A/B/C/D 同一骨格 (プレーンテキスト連結)・greedy
+  (do_sample=False, temperature=0.0)。flip 表出力: n_included=22,
+  TE=2, DE=0, IE=2, headline_restore_rate=1.0 (PASS)。
+- **(c) divergence**: 29/29 計算成功 (alignment 失敗 0)。位置別 KL/log-prob/rank
+  出力あり。KL は上位10%位置に平均 93.1% (中央値 94.6%, 最小 69.0%) 集中 (PASS)。
+- 除外: 3件 (no_trigger_clean 2, multi_trigger_typo 1, multi_trigger_clean 1;
+  gsm8k_00007 は重複フラグ)。A誤答除外 7件 → 分析対象 22件。
+
+注意: summary.json の `te_match_rate` は除外込みの全件比。本実行 (n≥1000) では
+除外サンプル分だけ 99% を割り得るため、非除外限定の一致率も併記するか
+基準の母集団を明文化すること。
+
 ## 残タスク / 注意
 
 - DeepSeek-R1-Distill-Qwen-7B はアーカイブに生成ログがないため、
