@@ -289,3 +289,85 @@ class TestComparePayloads:
         rep = compare_cot_payloads(p1, p2, ks=(1,))
         assert rep["n_tokens_match"] is False
         assert rep["max_abs_score_diff"] is None
+
+
+class TestNonflipMaterialization:
+    """--flip_only 時の非flip再利用 (default スコアの symlink + results エントリ生成).
+
+    非flip は R_C^fixed = R_C^default (定義上同値) なので、GPU 再計算せず
+    摂動 run の .pt を symlink し、results.json にもエントリを残す。
+    これで fixed_target ディレクトリが analyzer (run_rebuttal_analysis) に
+    そのまま掛けられる完全な run ディレクトリになる。
+    """
+
+    def _plan(self, spliced: bool) -> SplicePlan:
+        return SplicePlan(
+            sample_id="s1",
+            spliced=spliced,
+            spliced_text="reasoning. The answer is (A).",
+            baseline_answer="A",
+            perturbed_answer="A" if not spliced else "B",
+            baseline_pattern_type="choice",
+            perturbed_pattern_type="choice",
+        )
+
+    def test_fixed_target_entry_adds_metadata(self):
+        from typo_cot.attribution.fixed_target import fixed_target_entry
+
+        entry = {"sample_id": "s1", "generated_text": "x", "is_correct": True}
+        out = fixed_target_entry(entry, self._plan(spliced=False))
+        assert out["sample_id"] == "s1"
+        assert out["generated_text"] == "x"
+        assert out["fixed_target"] == {
+            "baseline_answer": "A",
+            "perturbed_answer": "A",
+            "spliced": False,
+            "baseline_pattern_type": "choice",
+            "perturbed_pattern_type": "choice",
+        }
+        # 元 entry は変更しない
+        assert "fixed_target" not in entry
+
+    def test_link_reused_scores_creates_symlinks(self, tmp_path):
+        from typo_cot.data import run_io
+
+        src = tmp_path / "perturbed_run"
+        (src / "importance_scores").mkdir(parents=True)
+        (src / "importance_scores" / "s1_cot.pt").write_bytes(b"cot")
+        (src / "importance_scores" / "s1.pt").write_bytes(b"q")
+        dst = tmp_path / "fixed_run" / "importance_scores"
+        dst.mkdir(parents=True)
+
+        linked = run_io.link_reused_scores(src, dst, "s1")
+        assert linked == {"cot": True, "question": True}
+        assert (dst / "s1_cot.pt").is_symlink()
+        assert (dst / "s1_cot.pt").read_bytes() == b"cot"
+        assert (dst / "s1.pt").is_symlink()
+        assert (dst / "s1.pt").read_bytes() == b"q"
+
+    def test_link_reused_scores_idempotent(self, tmp_path):
+        from typo_cot.data import run_io
+
+        src = tmp_path / "perturbed_run"
+        (src / "importance_scores").mkdir(parents=True)
+        (src / "importance_scores" / "s1_cot.pt").write_bytes(b"cot")
+        (src / "importance_scores" / "s1.pt").write_bytes(b"q")
+        dst = tmp_path / "fixed_run" / "importance_scores"
+        dst.mkdir(parents=True)
+
+        run_io.link_reused_scores(src, dst, "s1")
+        linked = run_io.link_reused_scores(src, dst, "s1")  # 2回目でも例外なし
+        assert linked == {"cot": True, "question": True}
+
+    def test_link_reused_scores_missing_source(self, tmp_path):
+        from typo_cot.data import run_io
+
+        src = tmp_path / "perturbed_run"
+        (src / "importance_scores").mkdir(parents=True)
+        (src / "importance_scores" / "s1.pt").write_bytes(b"q")  # cot 側なし
+        dst = tmp_path / "fixed_run" / "importance_scores"
+        dst.mkdir(parents=True)
+
+        linked = run_io.link_reused_scores(src, dst, "s1")
+        assert linked == {"cot": False, "question": True}
+        assert not (dst / "s1_cot.pt").exists()
