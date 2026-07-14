@@ -35,6 +35,7 @@ from typo_cot.attribution.fixed_target import (
     analyze_cot_fixed,
     build_prompt,
     compare_cot_payloads,
+    fixed_target_entry,
     plan_run,
 )
 from typo_cot.data import run_io
@@ -98,11 +99,13 @@ def main() -> None:
     plans, stats = plan_run(
         baseline_results, perturbed_results, limit=args.limit, sample_ids=sample_ids
     )
+    all_plans = list(plans)  # 出力順 (= 摂動 results.json 順) の復元用
+    nonflip_plans: list = []
     if args.flip_only:
-        skipped_nonflip = [p.sample_id for p in plans if not p.spliced]
+        nonflip_plans = [p for p in plans if not p.spliced]
         plans = [p for p in plans if p.spliced]
         stats["flip_only"] = True
-        stats["nonflip_skipped_for_reuse"] = len(skipped_nonflip)
+        stats["nonflip_reused"] = len(nonflip_plans)
     logger.info(
         f"計画: total={stats['total']} processed対象={len(plans)} "
         f"(spliced={stats['spliced']}, identical={stats['identical']})"
@@ -148,7 +151,7 @@ def main() -> None:
 
     ref_dir = Path(args.compare_dir) if args.compare_dir else None
     comparisons: dict[str, dict] = {}
-    out_results = []
+    computed: dict[str, dict] = {}
     t0 = time.time()
 
     for idx, plan in enumerate(plans):
@@ -176,15 +179,7 @@ def main() -> None:
         if src_q.exists() and not dst_q.exists():
             dst_q.symlink_to(src_q)
 
-        out_entry = dict(entry)
-        out_entry["fixed_target"] = {
-            "baseline_answer": plan.baseline_answer,
-            "perturbed_answer": plan.perturbed_answer,
-            "spliced": plan.spliced,
-            "baseline_pattern_type": plan.baseline_pattern_type,
-            "perturbed_pattern_type": plan.perturbed_pattern_type,
-        }
-        out_results.append(out_entry)
+        computed[sid] = fixed_target_entry(entry, plan)
 
         # スモーク検証 (a): rebuttal 参照との比較
         if ref_dir is not None and run_io.cot_scores_path(ref_dir, sid).exists():
@@ -208,6 +203,31 @@ def main() -> None:
         if (idx + 1) % 20 == 0:
             rate = (time.time() - t0) / (idx + 1)
             logger.info(f"{idx + 1}/{len(plans)} 処理済 ({rate:.2f}s/sample)")
+
+    # 非flip の再利用 (--flip_only): default 側 .pt を symlink し、エントリを合流。
+    # これで出力ディレクトリが analyzer にそのまま掛けられる完全な run になる。
+    nonflip_missing_cot = []
+    nonflip_ids = {p.sample_id for p in nonflip_plans}
+    for plan in nonflip_plans:
+        linked = run_io.link_reused_scores(perturbed_dir, scores_dir, plan.sample_id)
+        if not linked["cot"]:
+            nonflip_missing_cot.append(plan.sample_id)
+            stats["skipped_ids"][plan.sample_id] = "nonflip_default_cot_pt_missing"
+    if nonflip_missing_cot:
+        logger.warning(
+            f"非flip {len(nonflip_missing_cot)} 件で default _cot.pt が見つからず "
+            "再利用不能 (skipped_ids に記録)"
+        )
+    stats["nonflip_missing_default_cot"] = len(nonflip_missing_cot)
+    missing_set = set(nonflip_missing_cot)
+
+    out_results = []
+    for plan in all_plans:
+        sid = plan.sample_id
+        if sid in computed:
+            out_results.append(computed[sid])
+        elif sid in nonflip_ids and sid not in missing_set:
+            out_results.append(fixed_target_entry(perturbed_by_id[sid], plan))
 
     with open(out_dir / "results.json", "w", encoding="utf-8") as f:
         json.dump(out_results, f, ensure_ascii=False, indent=2)

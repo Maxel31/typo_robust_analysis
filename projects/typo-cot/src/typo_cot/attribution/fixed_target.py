@@ -190,6 +190,23 @@ def plan_run(
     return plans, stats
 
 
+def fixed_target_entry(entry: dict[str, Any], plan: SplicePlan) -> dict[str, Any]:
+    """results.json 用エントリを作る (摂動 entry のコピー + fixed_target メタデータ).
+
+    flip (GPU 再計算) と非flip (default 再利用) の両方で同一のスキーマを使う。
+    元 entry は変更しない。
+    """
+    out = dict(entry)
+    out["fixed_target"] = {
+        "baseline_answer": plan.baseline_answer,
+        "perturbed_answer": plan.perturbed_answer,
+        "spliced": plan.spliced,
+        "baseline_pattern_type": plan.baseline_pattern_type,
+        "perturbed_pattern_type": plan.perturbed_pattern_type,
+    }
+    return out
+
+
 def top_k_token_set(token_scores: list, k: int = 10) -> set:
     """analysis/metrics.py top_k_jaccard_by_token と同じ規約 (トークン文字列 dedup, max)."""
     best: dict[str, float] = {}

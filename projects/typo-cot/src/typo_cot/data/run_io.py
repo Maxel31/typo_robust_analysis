@@ -40,6 +40,32 @@ def cot_scores_path(run_dir: Path, sample_id: str) -> Path:
     return Path(run_dir) / "importance_scores" / f"{sample_id}_cot.pt"
 
 
+def link_reused_scores(
+    src_run_dir: Path, dst_scores_dir: Path, sample_id: str
+) -> dict[str, bool]:
+    """摂動 run の .pt を fixed_target 側 scores ディレクトリへ symlink する.
+
+    非flip サンプルの R_C^fixed は default と定義上同値なので、GPU 再計算せず
+    default 側の `{sid}_cot.pt` / `{sid}.pt` を再利用する (実験4 の再利用トリック)。
+    冪等 (既存リンクがあれば何もしない)。ソースが無いキーは False を返す。
+
+    Returns:
+        {"cot": bool, "question": bool} — 呼び出し後にリンク (または実体) が存在するか
+    """
+    dst_scores_dir = Path(dst_scores_dir)
+    out = {}
+    for key, src in [
+        ("cot", cot_scores_path(src_run_dir, sample_id)),
+        ("question", question_scores_path(src_run_dir, sample_id)),
+    ]:
+        dst = dst_scores_dir / src.name
+        if not dst.exists():
+            if src.exists():
+                dst.symlink_to(src.resolve())
+        out[key] = dst.exists()
+    return out
+
+
 def load_cot_scores(run_dir: Path, sample_id: str) -> dict[str, Any]:
     """R_C の .pt を CPU 上に読み込む (token_scores / cot_token_start 等)."""
     import torch
