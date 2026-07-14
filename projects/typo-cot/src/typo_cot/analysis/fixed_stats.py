@@ -236,6 +236,63 @@ def join_fixed_default_records(
     }
 
 
+def format_meta_comparison(
+    rows: Sequence[dict],
+    format_map: dict[str, str],
+    k: str = "top10",
+    n_perm: int = 10_000,
+    seed: int = 42,
+) -> dict[str, Any]:
+    """自由記述 vs 多肢選択の Δρ メタ比較 (設定レベル permutation 検定).
+
+    Args:
+        rows: delta_rho_table の行 ({setting, k, delta_rho, ...})
+        format_map: setting 名 -> "free" | "mc" (未登録 setting は無視)
+        k: 対象の Jaccard キー
+        n_perm: permutation 回数
+        seed: 乱数シード
+
+    Returns:
+        {mean_delta_free, mean_delta_mc, diff_mc_minus_free, p_value,
+         n_free, n_mc, n_perm}
+        p は「グループラベルを並べ替えた時に観測差以上の |差| が出る確率」
+        ((count+1)/(n_perm+1) 規約, 両側)。
+    """
+    free_vals = [
+        float(r["delta_rho"]) for r in rows
+        if r["k"] == k and format_map.get(r["setting"]) == "free"
+    ]
+    mc_vals = [
+        float(r["delta_rho"]) for r in rows
+        if r["k"] == k and format_map.get(r["setting"]) == "mc"
+    ]
+    n_free, n_mc = len(free_vals), len(mc_vals)
+    mean_free = float(np.mean(free_vals)) if free_vals else float("nan")
+    mean_mc = float(np.mean(mc_vals)) if mc_vals else float("nan")
+    diff = mean_mc - mean_free
+
+    pooled = np.asarray(free_vals + mc_vals, dtype=np.float64)
+    rng = np.random.default_rng(seed)
+    count = 0
+    for _ in range(n_perm):
+        perm = rng.permutation(len(pooled))
+        pf = pooled[perm[:n_free]]
+        pm = pooled[perm[n_free:]]
+        if abs(float(np.mean(pm)) - float(np.mean(pf))) >= abs(diff):
+            count += 1
+    p_value = (count + 1) / (n_perm + 1)
+
+    return {
+        "mean_delta_free": mean_free,
+        "mean_delta_mc": mean_mc,
+        "diff_mc_minus_free": float(diff),
+        "p_value": float(p_value),
+        "n_free": n_free,
+        "n_mc": n_mc,
+        "n_perm": int(n_perm),
+    }
+
+
 def cot_jaccard_from_scores(
     clean_scores: Sequence[Sequence],
     other_scores: Sequence[Sequence],
