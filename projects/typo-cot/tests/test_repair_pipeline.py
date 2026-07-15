@@ -10,6 +10,8 @@ from typo_cot.repair.pipeline import (
     HF_MODEL_NAMES,
     build_prompt_pair,
     build_word_rows,
+    shard_tag,
+    slice_records,
 )
 from typo_cot.repair.span_align import AlignedSpan
 
@@ -100,6 +102,38 @@ class TestBuildPromptPair:
         assert typo_prompt.count("(A) dukc (B) cat (C) dog (D) cow") == 1
         # clean 側の選択肢行が typo 側に重複して付加されない
         assert "(A) duck" not in typo_prompt
+
+
+class TestShardTag:
+    """本番キューの範囲シャード用の出力タグ (冪等スキップの完了マーカー名と一致)."""
+
+    def test_whole_setting_has_plain_tag(self) -> None:
+        assert shard_tag("gemma-3-4b-it", "gsm8k", "lxt4") == "gemma-3-4b-it_gsm8k_lxt4"
+        assert shard_tag("m", "b", "c", start=0, n=None) == "m_b_c"
+
+    def test_range_shard_encodes_start_and_n(self) -> None:
+        assert shard_tag("m", "mmlu", "lxt4", start=0, n=1425) == "m_mmlu_lxt4_s0_n1425"
+        assert shard_tag("m", "mmlu", "lxt4", start=1425) == "m_mmlu_lxt4_s1425"
+        assert shard_tag("m", "b", "c", n=32) == "m_b_c_s0_n32"
+
+
+class TestSliceRecords:
+    def test_partition_covers_all_without_overlap(self) -> None:
+        records = list(range(10))
+        a = slice_records(records, start=0, n=4)
+        b = slice_records(records, start=4, n=4)
+        c = slice_records(records, start=8)
+        assert a == [0, 1, 2, 3]
+        assert b == [4, 5, 6, 7]
+        assert c == [8, 9]
+        assert a + b + c == records
+
+    def test_defaults_are_identity(self) -> None:
+        records = ["x", "y"]
+        assert slice_records(records) == records
+
+    def test_out_of_range_start_is_empty(self) -> None:
+        assert slice_records([1, 2], start=5) == []
 
 
 class TestBuildWordRows:

@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from typo_cot.repair.regression import fit_flip_regression
+from typo_cot.repair.regression import filter_clean_correct, fit_flip_regression
 
 
 def _make_synthetic(n_items: int = 120, words_per_item: int = 4, seed: int = 0) -> pd.DataFrame:
@@ -37,6 +37,26 @@ def _make_synthetic(n_items: int = 120, words_per_item: int = 4, seed: int = 0) 
 
 
 FEATURES = ["repair_score", "split_increment", "zipf_freq", "r_q"]
+
+
+class TestFilterCleanCorrect:
+    """主推定量の条件付け: clean 正解サンプルの語のみ残す (分析側で適用)."""
+
+    def test_keeps_only_clean_correct_rows(self) -> None:
+        df = pd.DataFrame(
+            {
+                "sample_id": ["a", "b", "c", "d"],
+                "clean_correct": [True, False, None, True],
+                "flip": [False, True, False, True],
+            }
+        )
+        out = filter_clean_correct(df)
+        assert list(out["sample_id"]) == ["a", "d"]
+
+    def test_missing_column_raises(self) -> None:
+        df = pd.DataFrame({"sample_id": ["a"], "flip": [False]})
+        with pytest.raises(KeyError):
+            filter_clean_correct(df)
 
 
 class TestFitFlipRegression:
