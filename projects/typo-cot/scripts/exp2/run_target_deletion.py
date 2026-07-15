@@ -59,9 +59,25 @@ def shard_entries(entries: list[dict], start: int | None, end: int | None) -> li
 
 def resolve_arms(preset: str):
     """腕プリセット名 → ArmSpec リスト."""
-    from typo_cot.intervention.deletion_runner import core_arms, full_grid_arms, smoke_arms
+    from typo_cot.intervention.deletion_runner import (
+        ArmSpec,
+        core_arms,
+        full_grid_arms,
+        smoke_arms,
+    )
 
-    presets = {"core": core_arms, "smoke": smoke_arms, "full": full_grid_arms}
+    def loo_arms():
+        # LOO 腕 (修正B): M3×B2 で top_loo × delete × k∈{1,2,4} を単独実行する用
+        return [
+            ArmSpec(f"top_loo_delete_k{k}", "top_loo", "delete", k) for k in (1, 2, 4)
+        ]
+
+    presets = {
+        "core": core_arms,
+        "smoke": smoke_arms,
+        "full": full_grid_arms,
+        "loo": loo_arms,
+    }
     if preset not in presets:
         raise ValueError(f"unknown arms preset: {preset!r} (expected {sorted(presets)})")
     return presets[preset]()
@@ -182,7 +198,7 @@ def main() -> None:
     parser.add_argument("--model", type=str, required=True)
     parser.add_argument("--benchmark", type=str, required=True)
     parser.add_argument("--arms", type=str, default="core",
-                        choices=["core", "smoke", "full"])
+                        choices=["core", "smoke", "full", "loo"])
     parser.add_argument("--start", type=int, default=None, help="シャード開始行")
     parser.add_argument("--end", type=int, default=None, help="シャード終了行 (排他)")
     parser.add_argument("--n", type=int, default=None,
