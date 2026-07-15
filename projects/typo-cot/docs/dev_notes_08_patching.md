@@ -68,20 +68,35 @@
   指標: KL(p_donor ‖ p_patched) と KL(p_donor ‖ p_recipient) から
   recovery = 1 − KL_patched/KL_recipient。
 
-## スイープと 1 ペアあたりの forward 数
+## スイープの軸と 1 ペアあたりの forward 数
+
+**「部位」の 2 解釈と実装**: 計画書 §4 実験8 手法3 の「部位3種」は
+{(a)質問の摂動語スパン/(b)CoT+答えのsuffix/(c)答え位置} =
+**注入する位置の種別** (`site_kind`) であり、介入は
+「do(第l層の残差ストリーム := clean実行の値)」= residual が既定。
+一方タスク指示は部位を {residual / attention出力 / MLP出力} =
+**hook 先モジュール** (`site`) とも読める。実装は両軸を直交して持ち
+(`--sites` × `--site-kinds`)、スイープは
+`site (hook部位) × site_kind (位置種別) × 層窓 × 方向` の全交差。
+本番でどちらを見出しの「部位3」とするかは open question (計画書に忠実なら
+`--sites residual` 固定で site_kind×方向×層窓)。
 
 - 方向 2: `clean→pert` (denoising: recipient=pert run, donor=clean run) /
   `pert→clean` (noising: 逆)。
 - 層窓: 幅 w=3、stride は既定 w (非重複)。Gemma-3-4B (34層) → 12 窓
   ([0,3) … [33,34))。--window-stride 1 でスライディングに変更可。
-- answer モード 1 セル = 1 回の patched generate (prefill 1 + ≤16 decode)。
+- 1 セル = 1 回の patched generate (prefill 1 + ≤16 decode)。
   step-0 scores から Δlogit、生成テキストから flip を同時取得。
+  site_kind=question_span のセルでは同じ forward の最終層 hook から
+  c1 位置の hidden を取り、final norm + lm_head で c1 分布を復元して
+  S2 の KL 回復も同時に読み出す (追加 forward ゼロ)。
 - 1 ペア×1 摂動条件あたり (Gemma-3-4B, w=s=3):
-  - baseline 2 (clean/pert 各 1 generate、全層×3部位の捕捉を同時実行)
-  - no-op 検証 6 (3 部位 × 2 方向、中央窓)
-  - answer セル 3 部位 × 12 窓 × 2 方向 = 72 generate
-  - S2 セル 1 部位 × 12 窓 × 2 方向 = 24 prompt-only forward (+ baseline 2)
-  - 計 ≈ 106 forward/ペア/条件。バッチは 1 固定 (プレフィル長がペアごとに異なるため)。
+  - 捕捉 2 forward + 基準 2 forward + 基準 2 generate (clean/pert 両 run)
+  - no-op 検証 6 (3 hook部位 × 2 方向、中央窓、cot_suffix 位置)
+  - 本スイープ: 3 hook部位 × 3 位置種別 × 12 窓 × 2 方向 = 216 patched generate
+    (計画書忠実の residual 限定なら 72)
+  - 計 ≈ 228 forward/ペア/条件 (residual 限定なら ≈ 84)。
+    バッチは 1 固定 (プレフィル長がペアごとに異なるため)。
 
 ## 指標 (セルごと)
 
@@ -143,6 +158,10 @@ uv run python scripts/exp8/run_patching.py \
 
 ## Open questions (ユーザー判断待ち)
 
+0. **見出しの「部位3」の解釈**: 計画書 (§4 実験8 手法3) の部位 =
+   位置種別 {質問スパン/CoT+答えsuffix/答え位置} で介入は residual 固定、
+   タスク指示の部位 = hook 先 {residual/attn/mlp}。実装は両軸対応済み。
+   本番は計画書解釈 (--sites residual、コスト 1/3) を既定とする想定でよいか。
 1. 本番の層窓 stride (非重複 w=3 か、スライディング s=1 で解像度優先か)。
 2. site=(a) の平均プーリング変種を追加するか (計画書は「または」表記)。
 3. flip 判定の common_answer_prefix 条件付け (設計判断3) の感度チェック要否。
