@@ -155,6 +155,24 @@ gemma-3-4b-it × gsm8k 全量 (n=1319) × 両摂動条件。GPU 6 で各 ~11〜1
   greedy 分岐 2件 (gsm8k_00844, 01265 — "Alternatively," 継続)。~0.3% の
   teacher-forcing 固有アーティファクトで、全セル対称 (max長は計画の ≦16 凍結値を維持)。
 
+## 本番実行完了 (2026-07-15 16:51, M5×B5×2条件 全60シャード)
+
+09:26 開始 → 16:51 全完了 (ワーカー2〜3並列、失敗 0・再実行 0)。
+`results/exp01_03/<shard>/{summary.json,outcomes.json,divergence/}`。
+
+- 生成ペア 79,618 (4セル×答えスパン)、主分析対象 (A正解×非除外) 39,275
+- **TE 再現一致率 (非除外, pooled): 98.23%** (67,251/68,462)。モデル別では
+  gemma-3-4b ≈99.7% / Llama-3B ≈99% / Mistral-7B ≈98.5% / Llama-1B ≈97.5% /
+  gemma-3-1b ≈95% (最低 mmlu_pro 92.2%)。小型モデルほど再トークン化境界の
+  greedy 分岐と max16 切断の影響が大きい (全セル対称なので分解には内的整合)
+- **divergence 68,462 プロファイル、alignment 失敗 0**
+- pooled flip: LXT-4 TE=23.9% / DE=7.4% / IE=19.7% (IE/TE=0.83, DE/TE=0.31)、
+  Random-4 TE=17.0% / DE=6.1% / IE=13.6% (IE/TE=0.80, DE/TE=0.36)
+  → **IE優位の分解構造が両摂動条件で一致、効果量は LXT > Random** (修正Aの見出し論理成立)
+- ベンチ形式差: gsm8k (自由記述) は DE ≈1〜3% で restore 90〜99% (パターンX鮮明)、
+  多肢選択は DE がやや大 (計画の予想どおり)
+- 集計テーブルは `scripts/exp01_03/verify_shard.py` を全シャードに回して再現可能
+
 ## 残タスク / 注意
 
 - DeepSeek-R1-Distill-Qwen-7B はアーカイブに生成ログがないため、
