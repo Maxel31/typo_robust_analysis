@@ -29,6 +29,21 @@ class FlipRegressionResult:
     standardized: bool
 
 
+def filter_clean_correct(df: pd.DataFrame, col: str = "clean_correct") -> pd.DataFrame:
+    """主推定量の条件付け: clean 生成が正解のサンプルの語行のみ残す.
+
+    本番計測は全量 (条件付けなし) で行い、分析側でこのフィルタを適用する
+    (計画書の共通規約)。clean_correct が None (正誤判定不能) の行は落とす。
+
+    Raises:
+        KeyError: clean_correct 列が無い場合
+    """
+    if col not in df.columns:
+        raise KeyError(f"列がありません: {col}")
+    mask = df[col].map(lambda v: v is True or v == 1)
+    return df[mask]
+
+
 def fit_flip_regression(
     df: pd.DataFrame,
     feature_cols: list[str],

@@ -26,6 +26,34 @@ HF_MODEL_NAMES: dict[str, str] = {
 }
 
 
+def shard_tag(
+    model: str, benchmark: str, condition: str, start: int = 0, n: int | None = None
+) -> str:
+    """出力ファイル名・完了マーカー名に使うシャードタグを返す.
+
+    設定全体を 1 シャードで回す場合 (start=0, n=None) は従来どおり
+    "model_benchmark_condition"。範囲シャード (大設定の分割) では
+    "_s{start}" と (n 指定時) "_n{n}" を付けて衝突を防ぐ。
+    キュー側の冪等スキップ判定 (summary_{tag}.json の存在) と一致させること。
+    """
+    tag = f"{model}_{benchmark}_{condition}"
+    if start > 0 or n is not None:
+        tag += f"_s{start}"
+        if n is not None:
+            tag += f"_n{n}"
+    return tag
+
+
+def slice_records(records: list, start: int = 0, n: int | None = None) -> list:
+    """レコード列の範囲シャード [start, start+n) を返す (n=None は末尾まで).
+
+    入力順 (perturbed_dataset.json 順) は決定的なため、同じ start/n の
+    再実行は同じ部分集合になる (再開・冪等スキップの前提)。
+    """
+    end = None if n is None else start + n
+    return records[start:end]
+
+
 def build_prompt_pair(record: RepairInputRecord) -> tuple[str, str]:
     """clean/typo の完全プロンプト対を構築する.
 

@@ -23,7 +23,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from typo_cot.repair.regression import fit_flip_regression
+from typo_cot.repair.regression import filter_clean_correct, fit_flip_regression
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("exp9.analyze")
@@ -72,6 +72,8 @@ def main() -> None:
     p = argparse.ArgumentParser(description="実験9: 集計・回帰・図表")
     p.add_argument("--input-dir", required=True)
     p.add_argument("--output-dir", required=True)
+    p.add_argument("--clean-correct-only", action="store_true",
+                   help="clean 正解サンプルの語行に限定 (主推定量の規約; 分析側で条件付け)")
     args = p.parse_args()
 
     input_dir = Path(args.input_dir)
@@ -79,6 +81,10 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     df = load_rows(input_dir)
+    if args.clean_correct_only:
+        n_before = len(df)
+        df = filter_clean_correct(df)
+        logger.info("clean 正解条件付け: %d -> %d 行", n_before, len(df))
     logger.info("語レベル行: %d (モデル=%s)", len(df), sorted(df["model"].unique()))
 
     summary: dict = {"n_rows": int(len(df)), "groups": {}}
@@ -123,6 +129,19 @@ def main() -> None:
             }
         except (ValueError, KeyError) as e:
             summary["groups"][f"pooled_{model}"] = {"error": str(e)}
+
+    # 全設定プール版 (モデル横断; 参考値。主報告はモデル別 pooled)
+    try:
+        result = fit_flip_regression(df, feature_cols=FEATURES, cluster_col="sample_id")
+        result.coefs.to_csv(out_dir / "regression_pooled_all.csv")
+        summary["groups"]["pooled_all"] = {
+            "n_obs": result.n_obs,
+            "repair_coef": float(result.coefs.loc["repair_score", "coef"]),
+            "repair_p": float(result.coefs.loc["repair_score", "p"]),
+        }
+    except (ValueError, KeyError) as e:
+        summary["groups"]["pooled_all"] = {"error": str(e)}
+    summary["clean_correct_only"] = bool(args.clean_correct_only)
 
     with open(out_dir / "analysis_summary.json", "w") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)

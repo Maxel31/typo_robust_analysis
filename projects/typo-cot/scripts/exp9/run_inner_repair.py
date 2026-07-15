@@ -31,7 +31,13 @@ from typo_cot.repair.lexicon_probe import (
     extract_span_hiddens,
     layerwise_cos,
 )
-from typo_cot.repair.pipeline import HF_MODEL_NAMES, build_prompt_pair, build_word_rows
+from typo_cot.repair.pipeline import (
+    HF_MODEL_NAMES,
+    build_prompt_pair,
+    build_word_rows,
+    shard_tag,
+    slice_records,
+)
 from typo_cot.repair.span_align import align_typo_spans
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -47,6 +53,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--conditions", nargs="+", default=["lxt4", "random4"],
                    choices=["lxt4", "random4"])
     p.add_argument("--n", type=int, default=None, help="条件あたりの最大サンプル数")
+    p.add_argument("--start", type=int, default=0,
+                   help="範囲シャードの開始オフセット (フィルタ後レコード列に対する)")
     p.add_argument("--archive-root", default=None,
                    help="アーカイブルート (省略時 configs/paths.yaml の jsai2026_root)")
     p.add_argument("--output-dir", default="results/exp9")
@@ -75,9 +83,7 @@ def _iter_records(
     records = [r for r in records if r.span_extract_ok and r.flip is not None]
     if args.clean_correct_only:
         records = [r for r in records if r.clean_correct]
-    if args.n is not None:
-        records = records[: args.n]
-    return records
+    return slice_records(records, start=args.start, n=args.n)
 
 
 def run_dry(root: Path, args: argparse.Namespace) -> None:
@@ -193,7 +199,7 @@ def main() -> None:
                     sanity = sanity_clean_pair(model, tokenizer, clean_prompt, clean_spans[0])
                     logger.info("サニティ (clean 同一対 cos): %s", sanity)
 
-            tag = f"{args.model}_{benchmark}_{condition}"
+            tag = shard_tag(args.model, benchmark, condition, start=args.start, n=args.n)
             rows_path = out_dir / f"word_rows_{tag}.jsonl"
             with open(rows_path, "w") as f:
                 for row in all_rows:
