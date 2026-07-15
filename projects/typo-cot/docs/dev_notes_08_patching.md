@@ -156,6 +156,24 @@ uv run python scripts/exp8/run_patching.py \
 6. **捕捉は必要位置のみ**: donor 側 forward で {span 末尾, suffix 全位置} だけを
    CPU に複製 (bf16 のまま)。34層×3部位×(suffix≈300)×2560 ≈ 160MB/ペア (一時)。
 
+## 本番 GPU 見積 (スモーク実測 2026-07-15, RTX PRO 6000 Blackwell)
+
+実測: Gemma-3-4B × GSM8K で 1 forward (prefill ≈1100 tok + 16 decode) ≈ 0.175 s
+(decode 支配的)。1 ペア (228 forward, 3部位交差) ≈ 40 s。
+
+アーカイブ flip 全数 (M3×B2, LXT-4+Random-4: gemma 662 / llama-3B 870 /
+mistral 729 ペア) を使う場合:
+
+| 構成 | 概算 |
+|---|---|
+| 計画書忠実 (--sites residual, w=s=3) | ≈ 9〜10 h ≈ **0.4 GPU日** |
+| hook部位 3 交差 (residual/attn/mlp) | ≈ 25 h ≈ **1.1 GPU日** |
+| 上記 + スライディング窓 (stride=1, 窓数×3) | ≈ 1.2 / 3.1 GPU日 |
+
+いずれも計画書の 4〜6 GPU日を大きく下回る (Mistral の decode 速度を
+0.28 s/fwd と仮定。MMLU はプロンプト長同程度・CoT 短めでほぼ同等)。
+実験1本番で flip ペアを再判定・増員した場合はペア数に比例してスケール。
+
 ## Open questions (ユーザー判断待ち)
 
 0. **見出しの「部位3」の解釈**: 計画書 (§4 実験8 手法3) の部位 =
