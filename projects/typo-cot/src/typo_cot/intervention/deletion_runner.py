@@ -29,6 +29,7 @@ from typo_cot.intervention.target_selector import (
     normalize_ranking,
     rng_for_sample,
     select_matched_random,
+    select_stratum_matched_random,
     select_top,
 )
 
@@ -37,7 +38,17 @@ logger = logging.getLogger(__name__)
 BASELINE_ARM = "baseline"
 GenerateFn = Callable[[list[str]], list[str]]
 
-TARGET_KINDS = ("top_rc", "matched_random", "bottom_rc", "top_loo")
+TARGET_KINDS = (
+    "top_rc",
+    "matched_random",
+    "bottom_rc",
+    "top_loo",
+    "top_rc_unrestricted",
+    "stratum_matched_random",
+)
+
+# 無制限腕 (層をまたぐ選定) の集計ラベル。content / numeric とは混ぜない
+STRATUM_ALL = "all"
 
 
 @dataclass(frozen=True)
@@ -46,10 +57,12 @@ class ArmSpec:
 
     Attributes:
         name: 腕名 (results.json のキー)
-        target_kind: "top_rc" | "matched_random" | "bottom_rc" | "top_loo"
+        target_kind: TARGET_KINDS のいずれか
+            (top_rc_unrestricted = 数値・演算語を含む R_C 純粋上位 k、
+             stratum_matched_random = その層内マッチ統制)
         op: "delete" | "mask" | "replace"
         k: 用量 (標的語タイプ数)
-        stratum: "content" (主) | "numeric" (別枠)
+        stratum: "content" (主) | "numeric" (別枠) | "all" (無制限腕)
     """
 
     name: str
@@ -59,24 +72,62 @@ class ArmSpec:
     stratum: str = "content"
 
 
+def _unrestricted_contrast_arms() -> list[ArmSpec]:
+    """主対比 (2026-07-15 決定): 無制限 top-R_C vs 層内マッチランダム、削除."""
+    arms: list[ArmSpec] = []
+    for k in (1, 2, 4):
+        arms.append(
+            ArmSpec(
+                f"top_rc_unrestricted_delete_k{k}",
+                "top_rc_unrestricted", "delete", k, stratum=STRATUM_ALL,
+            )
+        )
+        arms.append(
+            ArmSpec(
+                f"stratum_matched_random_delete_k{k}",
+                "stratum_matched_random", "delete", k, stratum=STRATUM_ALL,
+            )
+        )
+    return arms
+
+
 def core_arms() -> list[ArmSpec]:
-    """コア対比 (M5×B5 昇格分): top vs 一致ランダム、削除のみ、k=1."""
-    return [
-        ArmSpec("top_rc_delete_k1", "top_rc", "delete", 1),
-        ArmSpec("matched_random_delete_k1", "matched_random", "delete", 1),
-    ]
+    """コア対比 (M5×B5 昇格分) の両建て構成: 削除のみ、k∈{1,2,4}.
+
+    - 主対比: 無制限 top-R_C vs 層内マッチランダム (stratum="all")
+    - 機構分解: 層別腕を維持 — content の top vs matched + numeric の top
+      (スモーク#2 の発見: 内容語削除 ≈0%、数値削除 k=4 で 91.7%)
+    """
+    arms = _unrestricted_contrast_arms()
+    for k in (1, 2, 4):
+        arms.append(ArmSpec(f"top_rc_delete_k{k}", "top_rc", "delete", k))
+        arms.append(
+            ArmSpec(f"matched_random_delete_k{k}", "matched_random", "delete", k)
+        )
+        arms.append(
+            ArmSpec(
+                f"numeric_top_rc_delete_k{k}", "top_rc", "delete", k, stratum="numeric"
+            )
+        )
+    return arms
 
 
 def smoke_arms() -> list[ArmSpec]:
-    """GPU スモーク: コア対比 + LOO 腕1セル + 数値層別枠1セル."""
-    return core_arms() + [
+    """GPU スモーク: 旧コア対比 k=1 + LOO 腕1セル + 数値層別枠1セル.
+
+    スモーク#1/#2 との比較可能性のため core_arms() の両建て化後も 4 腕に固定。
+    """
+    return [
+        ArmSpec("top_rc_delete_k1", "top_rc", "delete", 1),
+        ArmSpec("matched_random_delete_k1", "matched_random", "delete", 1),
         ArmSpec("top_loo_delete_k1", "top_loo", "delete", 1),
         ArmSpec("numeric_top_rc_delete_k1", "top_rc", "delete", 1, stratum="numeric"),
     ]
 
 
 def full_grid_arms() -> list[ArmSpec]:
-    """完全グリッド (Gemma-3-4B×B2): 標的3×操作3×用量3 + 数値層 + LOO 腕."""
+    """完全グリッド (Gemma-3-4B×B2): 標的3×操作3×用量3 + 数値層 + LOO 腕
+    + 無制限主対比腕 (33 + 6 = 39 腕)."""
     arms: list[ArmSpec] = []
     for kind in ("top_rc", "matched_random", "bottom_rc"):
         for op in ("delete", "mask", "replace"):
@@ -88,6 +139,7 @@ def full_grid_arms() -> list[ArmSpec]:
         )
     for k in (1, 2, 4):
         arms.append(ArmSpec(f"top_loo_delete_k{k}", "top_loo", "delete", k))
+    arms.extend(_unrestricted_contrast_arms())
     return arms
 
 
@@ -150,12 +202,20 @@ def _plan_arm(
             return plan
         targets = select_matched_random(top, candidates, rng, stratum=spec.stratum)
         plan.matched_to = top
+    elif spec.target_kind == "stratum_matched_random":
+        # 無制限 top を照合元に、語ごとに同一層 (数値↔数値、内容↔内容) でマッチ
+        top = select_top(scores, candidates, spec.k, stratum=None)
+        if len(top) < spec.k:
+            plan.skip_reason = "insufficient_candidates"
+            return plan
+        targets = select_stratum_matched_random(top, candidates, rng)
+        plan.matched_to = top
     else:
         targets = select_top(
             scores,
             candidates,
             spec.k,
-            stratum=spec.stratum,
+            stratum=None if spec.target_kind == "top_rc_unrestricted" else spec.stratum,
             bottom=spec.target_kind == "bottom_rc",
         )
     if len(targets) < spec.k:

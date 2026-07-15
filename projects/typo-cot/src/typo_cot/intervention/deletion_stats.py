@@ -9,6 +9,14 @@
 import math
 import random
 
+# 対比ペア (arm_a の target_kind, arm_b の target_kind)。同一 (op, k, stratum)
+# セル内で両腕が揃ったときに McNemar + リスク差 CI を計算する。
+# 2ペア目は 2026-07-15 決定の主対比 (無制限 top vs 層内マッチランダム)。
+CONTRAST_PAIRS = (
+    ("top_rc", "matched_random"),
+    ("top_rc_unrestricted", "stratum_matched_random"),
+)
+
 
 def mcnemar_exact(flips_a: list[bool], flips_b: list[bool]) -> dict:
     """対応のある2値系列の McNemar 厳密検定 (二項、両側).
@@ -194,39 +202,40 @@ def aggregate_results(
         }
         strata.setdefault(meta["stratum"], {"arms": {}})["arms"][name] = summary
 
-    # コア対比: 同一 (op, k, stratum) の top_rc vs matched_random
+    # 対比: 同一 (op, k, stratum) セル内で CONTRAST_PAIRS の両腕が揃うもの
     contrasts: list[dict] = []
     by_cell: dict[tuple, dict[str, str]] = {}
     for name, meta in arm_meta.items():
         cell = (meta["op"], meta["k"], meta["stratum"])
         by_cell.setdefault(cell, {})[meta["target_kind"]] = name
     for cell, kinds in sorted(by_cell.items(), key=str):
-        if "top_rc" not in kinds or "matched_random" not in kinds:
-            continue
-        name_a, name_b = kinds["top_rc"], kinds["matched_random"]
-        cc_a, cc_b = flip_maps[name_a][1], flip_maps[name_b][1]
-        shared = sorted(set(cc_a) & set(cc_b))
-        if not shared:
-            continue
-        flags_a = [cc_a[s] for s in shared]
-        flags_b = [cc_b[s] for s in shared]
-        mc = mcnemar_exact(flags_a, flags_b)
-        rd = paired_risk_difference(flags_a, flags_b, n_boot=n_boot, seed=seed)
-        contrasts.append(
-            {
-                "arm_a": name_a,
-                "arm_b": name_b,
-                "op": cell[0],
-                "k": cell[1],
-                "stratum": cell[2],
-                "n_paired": len(shared),
-                "mcnemar_p": mc["p_value"],
-                "mcnemar_b": mc["b"],
-                "mcnemar_c": mc["c"],
-                "risk_difference": rd["rd"],
-                "rd_ci95": [rd["ci_low"], rd["ci_high"]],
-            }
-        )
+        for kind_a, kind_b in CONTRAST_PAIRS:
+            if kind_a not in kinds or kind_b not in kinds:
+                continue
+            name_a, name_b = kinds[kind_a], kinds[kind_b]
+            cc_a, cc_b = flip_maps[name_a][1], flip_maps[name_b][1]
+            shared = sorted(set(cc_a) & set(cc_b))
+            if not shared:
+                continue
+            flags_a = [cc_a[s] for s in shared]
+            flags_b = [cc_b[s] for s in shared]
+            mc = mcnemar_exact(flags_a, flags_b)
+            rd = paired_risk_difference(flags_a, flags_b, n_boot=n_boot, seed=seed)
+            contrasts.append(
+                {
+                    "arm_a": name_a,
+                    "arm_b": name_b,
+                    "op": cell[0],
+                    "k": cell[1],
+                    "stratum": cell[2],
+                    "n_paired": len(shared),
+                    "mcnemar_p": mc["p_value"],
+                    "mcnemar_b": mc["b"],
+                    "mcnemar_c": mc["c"],
+                    "risk_difference": rd["rd"],
+                    "rd_ci95": [rd["ci_low"], rd["ci_high"]],
+                }
+            )
 
     return {
         "n_records": len(records),

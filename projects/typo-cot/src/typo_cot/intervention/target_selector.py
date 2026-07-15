@@ -137,19 +137,20 @@ def select_top(
     ranking: list[dict] | dict[str, float],
     candidates: list[Candidate],
     k: int,
-    stratum: str = "content",
+    stratum: str | None = "content",
     bottom: bool = False,
 ) -> list[str]:
     """ランキング上位 (bottom=True で下位 = Anti) k 語タイプを層内から選ぶ.
 
     候補はランキングにスコアを持つものに限る (prefix に存在しない語・層違いは
-    除外)。返り値は選定順。候補不足時は k 未満の短いリストを返す (呼び出し側で
-    腕 skip を判断する)。
+    除外)。stratum=None は**無制限選定** (数値・演算語を含む R_C 純粋上位 k 語;
+    "other" 層は候補構築時点で除外済み)。返り値は選定順。候補不足時は k 未満の
+    短いリストを返す (呼び出し側で腕 skip を判断する)。
     """
     scores = ranking if isinstance(ranking, dict) else normalize_ranking(ranking)
     scored: list[tuple[float, str]] = []
     for c in candidates:
-        if c.stratum != stratum:
+        if stratum is not None and c.stratum != stratum:
             continue
         key = normalize_word(c.word)
         if key in scores:
@@ -193,6 +194,58 @@ def select_matched_random(
                 c
                 for c in pool
                 if (len_tol is None or abs(c.length - t_len) <= len_tol)
+                and (zipf_tol is None or abs(c.zipf - t_zipf) < zipf_tol)
+            ]
+            if band:
+                chosen = rng.choice(sorted(band, key=lambda c: c.word))
+                break
+        if chosen is None:
+            continue
+        matched.append(chosen.word)
+        pool = [c for c in pool if c.word != chosen.word]
+    return matched
+
+
+def select_stratum_matched_random(
+    top_words: list[str],
+    candidates: list[Candidate],
+    rng: random.Random,
+    exclude: set[str] | None = None,
+) -> list[str]:
+    """無制限 top 標的の**層内マッチ**ランダム統制を非復元抽出する.
+
+    top_words の各語について、その語自身の層 (content / numeric) と同じ層の
+    プールから MATCH_SCHEDULE (文字長×Zipf 帯) を緩和しながら候補を探す —
+    数値標的には数値語を、内容語には内容語をマッチさせる (2026-07-15 決定)。
+    どこかの標的でプールが枯渇した場合は短いリストを返す (腕 skip 判断は
+    呼び出し側)。
+    """
+    excluded = {normalize_word(w).lower() for w in top_words}
+    if exclude:
+        excluded |= {normalize_word(w).lower() for w in exclude}
+    pool = [
+        c
+        for c in candidates
+        if c.stratum in ("content", "numeric")
+        and normalize_word(c.word).lower() not in excluded
+    ]
+    by_word = {c.word: c for c in candidates}
+
+    matched: list[str] = []
+    for word in top_words:
+        target = by_word.get(word)
+        core = normalize_word(word)
+        t_stratum = target.stratum if target else word_stratum(word)
+        t_len = target.length if target else len(core)
+        t_zipf = target.zipf if target else zipf_frequency(core.lower(), "en")
+
+        chosen: Candidate | None = None
+        for len_tol, zipf_tol in MATCH_SCHEDULE:
+            band = [
+                c
+                for c in pool
+                if c.stratum == t_stratum
+                and (len_tol is None or abs(c.length - t_len) <= len_tol)
                 and (zipf_tol is None or abs(c.zipf - t_zipf) < zipf_tol)
             ]
             if band:
