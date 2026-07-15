@@ -97,6 +97,25 @@ GPU 見積(RTX PRO 6000 級、バッチ 16、greedy):
 - skip 理由・residual フラグの動作確認済み。top_loo は ranking 未供給時に
   missing_ranking で腕 skip(設計どおり)
 
+## 5.6 GPU スモーク結果 (2026-07-15)
+
+**スモーク#1** (`results/smoke/exp2/gemma-3-4b-it_gsm8k_smoke/`): Gemma-3-4B-it ×
+GSM8K、clean 正解 n=24、arms=smoke (コア対比 + LOO腕 + 数値層、各 delete k=1)、
+LOO インライン。GPU 6、実行 2.2 分 (5.3s/sample、LOO インライン込み)。
+
+- **基準腕の妥当性: matches_archive = 1.0 (24/24)** — greedy 再生成がアーカイブの
+  抽出答えを完全再現(teacher-forcing 経路の検証として最強の合格線)
+- 腕別 flip 率 (clean 正解条件付き): top_rc_delete_k1 = 0/24、
+  matched_random_delete_k1 = 0/24、top_loo_delete_k1 = 0/24、
+  **numeric_top_rc_delete_k1 = 1/24 (4.2%)**(例: '125' 削除 → 答え 125→96)
+- 合格判定: (b) スキーマ整合 OK、(c) 数値層の分離集計 OK。
+  (a) top>random の方向は k=1・n=24 では両腕 0 で未観測 → 用量を上げた
+  スモーク#2 (arms=full、同一24サンプル) で確認
+- 解釈メモ: GSM8K の R_C 上位はほぼ数値トークンであり (cot_top_k_words 参照)、
+  内容語だけを k=1 で消しても計算結果の数値が CoT に残るため答えが復元される
+  のは整合的。数値層 4.2% > 内容語層 0% はまさに「数値=準自明、別枠」の設計を
+  裏づける方向
+
 ## 6. 本番の設定リスト案と GPU 見積
 
 | # | 設定 | CLI | 規模 | 見積 |
