@@ -107,6 +107,33 @@ Random-4 は `--perturbed-dir ..._k4_random`。全 25 設定は docs/v1_run_mani
 除外サンプル分だけ 99% を割り得るため、非除外限定の一致率も併記するか
 基準の母集団を明文化すること。
 
+## 本番キュー (2026-07-15)
+
+- **スコープ**: M5 (gemma-3-1b/4b, Llama-3.2-1B/3B, Mistral-7B-v0.3) × B5
+  (gsm8k/mmlu/mmlu_pro/arc/commonsense_qa) × {k4_importance, k4_random} = 50 設定。
+  アーカイブに全 50 の baseline/perturbed ログを確認済み (計 79,618 結合ペア)。
+  mmlu (2850 ペア) のみ `--start`/`--n` で 2 分割 → **総シャード数 60**。
+  n は全量 (`--clean-correct-only` なし。clean 正解条件付けは分析側 flip_table が適用)。
+  batch_size=8 / max_new_tokens=16 (スモーク実測準拠の既定値)。
+- **TE 再現一致率の判定母集団は非除外サンプル限定** (multi_trigger 等の構造的除外は
+  アーカイブと一致し得ないため)。全件比は参考値として verify_shard.py が併記。
+- **キュー構成** (`scripts/exp01_03/`):
+  - `make_shards.py` → `shards_all.tsv` (60 行)。Qwen2.5-7B / R1蒸留 / MATH-500 は
+    基盤生成完了後に **shards_active.tsv へ行を追記するだけ**でキューが拾う
+    (worker はループ毎に一覧を再読込)。
+  - `queue_worker.sh`: 冪等スキップ (summary.json 存在)・mkdir 原子 claim・
+    stale claim 自動回収 (pid 生存確認)・進捗 JSON
+    (`results/exp01_03/queue/progress_<id>.json`)。GPU は run_with_gpu.sh 経由のみ。
+    rc=86 (PAUSED) はワーカー終了、rc=124 (ロック待ちタイムアウト) は failed に
+    せず再試行。失敗は `queue/failed/<name>` (削除で再試行)。
+  - 起動: `cd <proj> && WORKER_ID=wN setsid nohup bash scripts/exp01_03/queue_worker.sh
+    < /dev/null >> logs/exp01_03/worker_wN.log 2>&1 &`
+  - 監視: `bash scripts/exp01_03/queue_status.sh` / 停止: `touch results/exp01_03/queue/STOP`
+  - 検証: `uv run python scripts/exp01_03/verify_shard.py results/exp01_03/<shard>`
+- **段階投入**: 検証シャード 2 本 (gemma-3-4b gsm8k LXT-4/Random-4 全量) を先行実行し、
+  TE 再現率 (非除外)・flip 表・KL 集中がスモーク水準であることを確認してから
+  残り 58 シャードを shards_active.tsv に追記する。
+
 ## 残タスク / 注意
 
 - DeepSeek-R1-Distill-Qwen-7B はアーカイブに生成ログがないため、
