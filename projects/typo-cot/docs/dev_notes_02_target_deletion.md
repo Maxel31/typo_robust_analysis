@@ -86,7 +86,32 @@ GPU 見積(RTX PRO 6000 級、バッチ 16、greedy):
 - 腕: baseline + top_rc/matched_random × delete × k1(コア対比)+ top_loo × delete × k1(LOO インライン)+ numeric top_rc × delete × k1(別枠実演)
 - 合格: (a) 腕別 flip 率が算出され top > random 方向、(b) results/summary スキーマが分析側(§4)と整合、(c) numeric 層が content 層と分離集計
 
-## 6. 実装中の技術判断(ユーザー判断不要と整理したもの)
+## 5.5 CPU ドライラン検証(2026-07-15、GPU 不要部分)
+
+アーカイブ実データ (gemma-3-4b-it_gsm8k、clean 正解先頭5件) で prepare_sample を検証:
+
+- top_rc 標的: dollars / bolts / week / cups / total(答え句前 prefix の内容語、妥当)
+- matched_random: ducks / robe / times / meal / wants(top と別語、長さ・頻度帯マッチ)
+- numeric 層: 18 / 3 / 540 / 20 / 64 — **gsm8k_00000 では CoT 中の最終計算結果 18
+  がそのまま標的になる**(= 準自明性の実例。別枠報告の設計根拠を裏づけ)
+- skip 理由・residual フラグの動作確認済み。top_loo は ranking 未供給時に
+  missing_ranking で腕 skip(設計どおり)
+
+## 6. 本番の設定リスト案と GPU 見積
+
+| # | 設定 | CLI | 規模 | 見積 |
+|---|---|---|---|---|
+| P1 | コア対比 M5×B5 (25設定、昇格済み) | `--arms core --clean_correct_only` | ~750サンプル×3短生成/設定 | 0.5–1 GPU日 |
+| P2 | 完全グリッド Gemma-3-4B×B2 (2設定) | `--arms full --loo_results <exp6>` | ~500×34短生成/設定 | 0.5 GPU日 |
+| P3 | LOO腕 残り M3×B2 (Llama-3.2-3B / Mistral-7B × B2 = 4設定) | `--arms loo --loo_results <exp6>` | ~500×4短生成/設定 | 0.2 GPU日 |
+| P4 | 回復曲線 M3×B2 (6設定) | `run_recovery_curve.py` | ~300 flip事例×5長生成/設定 | ~1 GPU日 |
+
+合計 ≈2.5 GPU 日(計画 §4 実験2 の 2.5〜3 日と整合)。全 CLI がシャード
+(--start/--end)+resume 対応なのでロック待ち環境でも分割投入可能。
+R_C ソースは実験4の fixed-target ランキング完成後に `--baseline_dir`(または
+importance_scores 差し替え)で切替。LOO は exp/06 の results.json を供給。
+
+## 7. 実装中の技術判断(ユーザー判断不要と整理したもの)
 
 1. 答え句分割は `loo_scorer.split_generated_text`(最後のマッチ採用)に統一 — LOO 腕・log-prob 系と規約を揃える。exp1 の cell_builder(最初のマッチ)とは異なるが、prefix 内答え句残留は `residual_answer_in_prefix` フラグで除外制御
 2. 標的の「全出現操作」(計画の明文)と LOO ランキングの occurrence 主定義(ユーザー決定)は独立の事項 — 前者は編集、後者は順位付け
