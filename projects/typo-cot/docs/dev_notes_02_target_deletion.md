@@ -221,10 +221,11 @@ CPU ドライラン(clean 正解先頭5件)では無制限 top4 = ['18','dollars
   易ベンチで効果縮小(early answering の事前予想と整合)。gsm8k×gemma-3-1b は
   **RD=0.803 (p=8e-111)**(top 85.0% vs 統制 4.2%)
 
-### 基準腕診断: 小型モデルの matches_archive 低下(gemma-3-1b×gsm8k = 0.816)
+### 基準腕診断: matches_archive 低下は gemma-3-1b×gsm8k に特異(= 0.816)
 
-1B では teacher-forcing 境界での greedy 再生成が archive 答えから外れる事例が
-92/500(すべて再生成側が不正解に逸れる)。4B は 0.994〜1.0。**対比は同一基準腕
+gemma-3-1b では teacher-forcing 境界での greedy 再生成が archive 答えから外れる
+事例が 92/500(すべて再生成側が不正解に逸れる)。他は正常(gemma-4b 0.994〜1.0、
+**Llama-3.2-1B 0.998** → 「1B 一般」ではなく gemma-3-1b の archive run 固有)。**対比は同一基準腕
 との対比較なので内的整合は保たれる**うえ、record に `baseline.matches_archive`
 が保存されているため下流で制限感度分析が可能。実測: matches_archive=True の
 408件に制限すると主対比はむしろ強まる(k=4 top 88.7% vs 1.5%、RD=0.866、
