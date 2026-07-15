@@ -63,6 +63,15 @@ class TestResolveArms:
         assert len(cli.resolve_arms("smoke")) == 4
         assert len(cli.resolve_arms("full")) == 33
 
+    def test_loo_preset_for_m3b2(self, cli):
+        # LOO 腕 (修正B): M3×B2 で top_loo × delete × k∈{1,2,4} を単独実行する用
+        arms = cli.resolve_arms("loo")
+        assert [(a.target_kind, a.op, a.k) for a in arms] == [
+            ("top_loo", "delete", 1),
+            ("top_loo", "delete", 2),
+            ("top_loo", "delete", 4),
+        ]
+
     def test_unknown_raises(self, cli):
         with pytest.raises(ValueError):
             cli.resolve_arms("everything")
