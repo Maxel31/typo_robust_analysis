@@ -1,0 +1,320 @@
+#!/usr/bin/env python3
+"""実験1 (CoT transplant 2×2) + 実験3 (--dump-divergence) 実行スクリプト.
+
+アーカイブの baseline/perturbed 生成ログから PairRecord を構築し、
+4 セル (A/B/C/D) の teacher-forcing 生成 → flip 表 / bootstrap / GLMM。
+--dump-divergence 指定時は A セルと C セル (DE 条件) の forward を共有して
+CoT 位置別の KL / log-prob / rank プロファイルを出力する。
+
+GPU 実行は必ず run_with_gpu.sh 経由 (CUDA_VISIBLE_DEVICES はヘルパーが設定
+するため、このスクリプトでは一切変更しない)。
+
+例:
+    bash <...>/run_with_gpu.sh uv run python scripts/exp01_03/run_transplant.py \
+        --model google/gemma-3-4b-it --benchmark gsm8k \
+        --baseline-dir <archive>/outputs/baseline/gemma-3-4b-it_gsm8k \
+        --perturbed-dir <archive>/outputs/perturbed/gemma-3-4b-it_gsm8k_k4_importance \
+        --n 32 --dump-divergence --output-dir results/smoke/gemma3-4b_gsm8k_lxt4
+"""
+
+import argparse
+import json
+import logging
+from dataclasses import asdict
+from datetime import datetime
+from pathlib import Path
+
+import torch
+from tqdm import tqdm
+
+from typo_cot.intervention.analysis import (
+    bootstrap_flip_cis,
+    flip_table,
+    glmm_decomposition,
+)
+from typo_cot.intervention.archive_loader import load_pair_records
+from typo_cot.intervention.cell_builder import build_cell_inputs
+from typo_cot.intervention.divergence import (
+    align_cot_targets,
+    divergence_onset,
+    positionwise_divergence,
+    precision_at_k,
+    shuffle_null_precision,
+)
+from typo_cot.intervention.records import PairRecord
+from typo_cot.intervention.runner import run_cells
+from typo_cot.models.wrapper import ModelWrapper
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger("run_transplant")
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--model", required=True, help="HuggingFace モデル名")
+    p.add_argument("--benchmark", required=True, help="ベンチマーク名 (gsm8k/mmlu/...)")
+    p.add_argument("--baseline-dir", required=True, help="アーカイブ baseline ディレクトリ")
+    p.add_argument("--perturbed-dir", required=True, help="アーカイブ perturbed ディレクトリ")
+    p.add_argument("--output-dir", required=True, help="結果出力先")
+    p.add_argument("--n", type=int, default=None, help="サンプル数上限 (スモーク用)")
+    p.add_argument("--batch-size", type=int, default=8)
+    p.add_argument("--max-new-tokens", type=int, default=16)
+    p.add_argument(
+        "--clean-correct-only",
+        action="store_true",
+        help="clean 条件正解のサンプルのみロード (主分析対象を先に絞る)",
+    )
+    p.add_argument("--dump-divergence", action="store_true", help="実験3 の位置別プロファイル出力")
+    p.add_argument(
+        "--divergence-rank-threshold", type=int, default=5, help="発散オンセットの順位しきい値"
+    )
+    p.add_argument("--precision-k", type=int, default=10)
+    p.add_argument("--n-shuffles", type=int, default=1000, help="precision@k 帰無分布の B")
+    p.add_argument(
+        "--trigger-pattern",
+        default=None,
+        help="答え句の正規表現 (モデル別差し替え。既定: The answer is)",
+    )
+    p.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
+    return p.parse_args()
+
+
+def build_generate_fn(wrapper: ModelWrapper, max_new_tokens: int):
+    """ModelWrapper.generate_batch を runner.GenerateFn に適合させる."""
+
+    def generate_fn(prompts: list[str]) -> list[str]:
+        results = wrapper.generate_batch(
+            prompts, max_new_tokens=max_new_tokens, temperature=0.0, do_sample=False
+        )
+        return [r.generated_text for r in results]
+
+    return generate_fn
+
+
+@torch.no_grad()
+def dump_divergence_for_pair(
+    wrapper: ModelWrapper,
+    pair: PairRecord,
+    trigger_pattern: str | None,
+    rank_threshold: int,
+    precision_k: int,
+    n_shuffles: int,
+) -> dict | None:
+    """A セル / C セル (DE 条件) の forward で位置別 divergence を計算する.
+
+    clean run = (clean質問, clean CoT), typo run = (typo質問, clean CoT)。
+    CoT は同一文字列なので位置は 1:1 対応 (質問長差のオフセットのみ)。
+    """
+    cells = build_cell_inputs(pair, trigger_pattern=trigger_pattern)
+    tok = wrapper.tokenizer
+
+    ids_full: dict[str, list[int]] = {}
+    prompt_lens: dict[str, int] = {}
+    for run, cell in (("clean", "A"), ("typo", "C")):
+        prompt_ids = tok(cells.prompts[cell], return_tensors=None)["input_ids"]
+        full_ids = tok(cells.full_input(cell), return_tensors=None)["input_ids"]
+        ids_full[run] = full_ids
+        prompt_lens[run] = len(prompt_ids)
+
+    aligned = align_cot_targets(
+        ids_full["clean"], prompt_lens["clean"], ids_full["typo"], prompt_lens["typo"]
+    )
+    if not aligned.ok or len(aligned.cot_ids) < 2:
+        return {
+            "sample_id": pair.sample_id,
+            "ok": False,
+            "reason": "token_alignment_mismatch" if not aligned.ok else "cot_too_short",
+        }
+
+    t_len = len(aligned.cot_ids)
+    logits_by_run = {}
+    for run, start in (("clean", aligned.start_clean), ("typo", aligned.start_typo)):
+        input_ids = torch.tensor([ids_full[run]], device=wrapper.device)
+        out = wrapper.model(input_ids=input_ids, use_cache=False)
+        # 位置 start-1+j の logits がトークン start+j (= cot_ids[j]) を予測
+        logits_by_run[run] = out.logits[0, start - 1 : start - 1 + t_len, :]
+
+    profiles = positionwise_divergence(
+        logits_by_run["clean"], logits_by_run["typo"], aligned.cot_ids
+    )
+    del logits_by_run
+
+    onset = divergence_onset(profiles.rank_typo, threshold=rank_threshold)
+
+    cot_tokens = [tok.decode([tid]) for tid in aligned.cot_ids]
+    kl_words = [(w.strip() or w, v) for w, v in zip(cot_tokens, profiles.kl, strict=True)]
+    rc_words = [
+        (d["word"], float(d["score"]))
+        for d in pair.extra.get("rc_top_words", [])
+        if d.get("word")
+    ]
+
+    precision = None
+    null = None
+    if rc_words:
+        precision = precision_at_k(kl_words, rc_words, k=precision_k)
+        null_res = shuffle_null_precision(kl_words, rc_words, k=precision_k, n_shuffles=n_shuffles)
+        null = {
+            "null_mean": null_res.null_mean,
+            "null_std": null_res.null_std,
+            "p_value": null_res.p_value,
+        }
+
+    return {
+        "sample_id": pair.sample_id,
+        "ok": True,
+        "n_positions": t_len,
+        "onset": onset,
+        "kl_sum": float(sum(profiles.kl)),
+        "kl_max": float(max(profiles.kl)) if profiles.kl else None,
+        "precision_at_k": precision,
+        "null": null,
+        "kl": profiles.kl,
+        "logp_clean": profiles.logp_clean,
+        "logp_typo": profiles.logp_typo,
+        "rank_clean": profiles.rank_clean,
+        "rank_typo": profiles.rank_typo,
+        "tokens": cot_tokens,
+    }
+
+
+def _count_reasons(outcomes) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for o in outcomes:
+        for r in o.exclude_reasons:
+            counts[r] = counts.get(r, 0) + 1
+    return counts
+
+
+def main() -> None:
+    args = parse_args()
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    pairs = load_pair_records(
+        args.baseline_dir,
+        args.perturbed_dir,
+        clean_correct_only=args.clean_correct_only,
+        limit=args.n,
+    )
+    logger.info("PairRecord %d 件をロード", len(pairs))
+
+    dtype = getattr(torch, args.dtype)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    wrapper = ModelWrapper(model_name=args.model, device=device, dtype=dtype)
+    _ = wrapper.model  # ロード
+
+    generate_fn = build_generate_fn(wrapper, args.max_new_tokens)
+    logger.info("4 セル生成を開始 (batch_size=%d)", args.batch_size)
+    outcomes = run_cells(
+        pairs, generate_fn, batch_size=args.batch_size, trigger_pattern=args.trigger_pattern
+    )
+
+    table = flip_table(outcomes)
+    cis = bootstrap_flip_cis(outcomes)
+    glmm = glmm_decomposition(outcomes)
+
+    te_mismatch_ids = [o.sample_id for o in outcomes if o.te_match is False]
+
+    with open(out_dir / "outcomes.json", "w", encoding="utf-8") as f:
+        json.dump([asdict(o) for o in outcomes], f, ensure_ascii=False, indent=1)
+
+    divergence_summary = None
+    if args.dump_divergence:
+        div_dir = out_dir / "divergence"
+        div_dir.mkdir(exist_ok=True)
+        div_records = []
+        outcome_by_id = {o.sample_id: o for o in outcomes}
+        n_attempted = 0
+        for pair in tqdm(pairs, desc="divergence"):
+            o = outcome_by_id[pair.sample_id]
+            if o.exclude:
+                continue
+            n_attempted += 1
+            rec = dump_divergence_for_pair(
+                wrapper,
+                pair,
+                args.trigger_pattern,
+                args.divergence_rank_threshold,
+                args.precision_k,
+                args.n_shuffles,
+            )
+            if rec is None:
+                continue
+            with open(div_dir / f"{pair.sample_id}.json", "w", encoding="utf-8") as f:
+                json.dump(rec, f, ensure_ascii=False)
+            if rec.get("ok"):
+                rec_small = {
+                    k: v
+                    for k, v in rec.items()
+                    if k
+                    not in ("kl", "logp_clean", "logp_typo", "rank_clean", "rank_typo", "tokens")
+                }
+                rec_small["te_flip"] = o.answers["B"].strip() != o.answers["A"].strip()
+                div_records.append(rec_small)
+
+        n_ok = len(div_records)
+        flip_recs = [r for r in div_records if r["te_flip"]]
+        noflip_recs = [r for r in div_records if not r["te_flip"]]
+
+        def _mean(vals):
+            vals = [v for v in vals if v is not None]
+            return sum(vals) / len(vals) if vals else None
+
+        divergence_summary = {
+            "n_attempted": n_attempted,
+            "n_ok": n_ok,
+            "n_alignment_failed": n_attempted - n_ok,
+            "mean_kl_sum": _mean([r["kl_sum"] for r in div_records]),
+            "mean_precision_at_k": _mean([r["precision_at_k"] for r in div_records]),
+            "mean_null_mean": _mean([r["null"]["null_mean"] for r in div_records if r["null"]]),
+            "onset_rate": _mean([1 if r["onset"] is not None else 0 for r in div_records]),
+            "flip_group": {
+                "n": len(flip_recs),
+                "mean_onset": _mean([r["onset"] for r in flip_recs]),
+                "mean_kl_sum": _mean([r["kl_sum"] for r in flip_recs]),
+            },
+            "noflip_group": {
+                "n": len(noflip_recs),
+                "mean_onset": _mean([r["onset"] for r in noflip_recs]),
+                "mean_kl_sum": _mean([r["kl_sum"] for r in noflip_recs]),
+            },
+        }
+
+    summary = {
+        "config": {
+            "model": args.model,
+            "benchmark": args.benchmark,
+            "baseline_dir": str(args.baseline_dir),
+            "perturbed_dir": str(args.perturbed_dir),
+            "n": args.n,
+            "batch_size": args.batch_size,
+            "max_new_tokens": args.max_new_tokens,
+            "clean_correct_only": args.clean_correct_only,
+            "dump_divergence": args.dump_divergence,
+            "timestamp": datetime.now().isoformat(),
+        },
+        "flip_table": table,
+        "bootstrap_ci": {k: list(v) for k, v in cis.items()},
+        "glmm": glmm,
+        "te_mismatch_sample_ids": te_mismatch_ids,
+        "exclusion_reasons": _count_reasons(outcomes),
+        "divergence": divergence_summary,
+    }
+    with open(out_dir / "summary.json", "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+
+    logger.info("=== flip table ===")
+    logger.info(json.dumps(table, ensure_ascii=False, indent=1))
+    logger.info("TE match rate: %s", table["te_match_rate"])
+    if divergence_summary:
+        logger.info("=== divergence ===")
+        logger.info(json.dumps(divergence_summary, ensure_ascii=False, indent=1))
+    logger.info("保存先: %s", out_dir)
+
+
+if __name__ == "__main__":
+    main()
