@@ -103,11 +103,18 @@ class TestCaptureActivations:
 
         with torch.no_grad():
             out = tiny_model(input_ids=ids, output_hidden_states=True)
-        # hidden_states[l+1] = 第 l 層通過後の残差ストリーム
-        for layer_idx in range(4):
+        # hidden_states[l+1] = 第 l 層通過後の残差ストリーム (l < 最終層)
+        for layer_idx in range(3):
             captured = cache.values("residual", layer_idx, positions)
             expected = out.hidden_states[layer_idx + 1][0, positions, :]
             assert torch.allclose(captured, expected, atol=1e-6)
+        # 最終層だけは output_hidden_states 側に final norm が掛かっているため、
+        # 捕捉値 (= 生の層出力) に final norm を適用した値と比較する
+        captured_last = cache.values("residual", 3, positions)
+        with torch.no_grad():
+            normed = tiny_model.model.norm(captured_last)
+        expected_last = out.hidden_states[4][0, positions, :]
+        assert torch.allclose(normed, expected_last, atol=1e-6)
 
     def test_attn_mlp_shapes(self, tiny_model):
         ids = _input(1)

@@ -1,4 +1,4 @@
-"""介入実験モジュール (実験1: CoT移植 2×2 / 実験3: forced-decoding divergence)."""
+"""介入実験モジュール (実験1: CoT移植 2×2 / 実験3: divergence / 実験8: patching)."""
 
 from typo_cot.intervention.analysis import (
     bootstrap_ci,
@@ -20,15 +20,47 @@ from typo_cot.intervention.divergence import (
     precision_at_k,
     shuffle_null_precision,
 )
+from typo_cot.intervention.patching import (
+    DIRECTIONS,
+    SITES,
+    ActivationCache,
+    FirstDivergence,
+    PatchCell,
+    PatchInjector,
+    capture_activations,
+    find_decoder_layers,
+    first_divergence,
+    get_site_module,
+    iter_patch_cells,
+    kl_from_logits,
+    layer_windows,
+    result_is_current,
+    span_end_token,
+)
 from typo_cot.intervention.records import PairRecord
 from typo_cot.intervention.runner import CellOutcome, run_cells
 
 __all__ = [
+    "DIRECTIONS",
+    "SITES",
+    "ActivationCache",
     "CellInputs",
     "CellOutcome",
+    "FirstDivergence",
     "PairRecord",
+    "PatchCell",
+    "PatchInjector",
     "TruncationResult",
     "align_cot_targets",
+    "capture_activations",
+    "find_decoder_layers",
+    "first_divergence",
+    "get_site_module",
+    "iter_patch_cells",
+    "kl_from_logits",
+    "layer_windows",
+    "result_is_current",
+    "span_end_token",
     "bootstrap_ci",
     "bootstrap_flip_cis",
     "build_cell_inputs",
