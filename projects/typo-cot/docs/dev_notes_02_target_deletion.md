@@ -217,6 +217,18 @@ CPU ドライラン(clean 正解先頭5件)では無制限 top4 = ['18','dollars
 - MMLU では content 層でも top>matched (k=4: 9.5% vs 1.7%, p<0.001) —
   GSM8K(内容語 ≈0%)とのベンチ差は「答え形式モデレーター」仮説と整合
 - numeric 腕は候補不足 skip が多い (MMLU で 270–362/473) — 設計どおり別枠報告
+- 続報(同日): arc RD=0.037 (p=5e-4)、csqa RD=0.063 (p=2e-7) — 方向維持のまま
+  易ベンチで効果縮小(early answering の事前予想と整合)。gsm8k×gemma-3-1b は
+  **RD=0.803 (p=8e-111)**(top 85.0% vs 統制 4.2%)
+
+### 基準腕診断: 小型モデルの matches_archive 低下(gemma-3-1b×gsm8k = 0.816)
+
+1B では teacher-forcing 境界での greedy 再生成が archive 答えから外れる事例が
+92/500(すべて再生成側が不正解に逸れる)。4B は 0.994〜1.0。**対比は同一基準腕
+との対比較なので内的整合は保たれる**うえ、record に `baseline.matches_archive`
+が保存されているため下流で制限感度分析が可能。実測: matches_archive=True の
+408件に制限すると主対比はむしろ強まる(k=4 top 88.7% vs 1.5%、RD=0.866、
+p=5e-98)→ キュー続行、論文分析では matches_archive 制限版を感度分析として併記。
 
 ## 7. 実装中の技術判断(ユーザー判断不要と整理したもの)
 
