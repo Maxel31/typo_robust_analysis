@@ -361,3 +361,80 @@ class TestActivationCacheApi:
             data={("residual", 0): torch.zeros(2, 8)},
         )
         assert cache.values("residual", 0, [7]).shape == (1, 8)
+
+
+def _pair(sample_id: str, clean_ok: bool, typo_ok: bool):
+    from typo_cot.intervention.records import PairRecord
+
+    return PairRecord(
+        sample_id=sample_id,
+        model="m",
+        benchmark="gsm8k",
+        question_clean="q",
+        question_typo="q'",
+        choices_clean=None,
+        choices_typo=None,
+        subset=None,
+        correct_answer="1",
+        cot_clean="c",
+        cot_typo="c'",
+        answer_clean="1",
+        answer_typo="2",
+        is_correct_clean=clean_ok,
+        extra={"is_correct_typo": typo_ok},
+    )
+
+
+class TestSelectFlipPairs:
+    def test_filters_flips_only(self):
+        from typo_cot.intervention.patching import select_flip_pairs
+
+        pairs = [
+            _pair("s0", True, True),  # 非flip
+            _pair("s1", True, False),  # flip
+            _pair("s2", False, False),  # clean誤答
+            _pair("s3", True, False),  # flip
+        ]
+        out = select_flip_pairs(pairs, n=None, seed=42)
+        assert sorted(p.sample_id for p in out) == ["s1", "s3"]
+
+    def test_n_limit_and_determinism(self):
+        from typo_cot.intervention.patching import select_flip_pairs
+
+        pairs = [_pair(f"s{i:02d}", True, False) for i in range(10)]
+        a = select_flip_pairs(pairs, n=4, seed=42)
+        b = select_flip_pairs(list(reversed(pairs)), n=4, seed=42)
+        assert len(a) == 4
+        # 入力順に依存しない (sample_id ソート後にシャッフルするため)
+        assert [p.sample_id for p in a] == [p.sample_id for p in b]
+
+    def test_different_seed_changes_selection(self):
+        from typo_cot.intervention.patching import select_flip_pairs
+
+        pairs = [_pair(f"s{i:02d}", True, False) for i in range(30)]
+        a = [p.sample_id for p in select_flip_pairs(pairs, n=5, seed=1)]
+        b = [p.sample_id for p in select_flip_pairs(pairs, n=5, seed=2)]
+        assert a != b
+
+
+class TestShardSlice:
+    def test_partition_is_complete_and_disjoint(self):
+        from typo_cot.intervention.patching import shard_slice
+
+        items = list(range(10))
+        shards = [shard_slice(items, i, 3) for i in range(3)]
+        merged = sorted(x for s in shards for x in s)
+        assert merged == items
+
+    def test_single_shard_is_identity(self):
+        from typo_cot.intervention.patching import shard_slice
+
+        assert shard_slice([1, 2, 3], 0, 1) == [1, 2, 3]
+
+    def test_invalid_index_raises(self):
+        from typo_cot.intervention.patching import shard_slice
+
+        with pytest.raises(ValueError):
+            shard_slice([1], 3, 3)
+        with pytest.raises(ValueError):
+            shard_slice([1], -1, 3)

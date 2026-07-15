@@ -353,6 +353,39 @@ def kl_from_logits(p_logits: torch.Tensor, q_logits: torch.Tensor) -> float:
 
 
 # ---------------------------------------------------------------------------
+# flip ペア選定・シャード (CLI 用)
+# ---------------------------------------------------------------------------
+
+
+def select_flip_pairs(pairs: Sequence, n: int | None, seed: int = 42) -> list:
+    """flip ペア (clean 正解 ∧ 摂動誤答) を決定論的に選ぶ.
+
+    アーカイブ analysis の pattern="correct→incorrect" と同値の判定を
+    PairRecord (is_correct_clean / extra["is_correct_typo"]) に対して行い、
+    sample_id ソート → seed シャッフル → 先頭 n 件を返す (n=None は全件)。
+    """
+    import random
+
+    flips = [
+        p
+        for p in pairs
+        if p.is_correct_clean and not p.extra.get("is_correct_typo", False)
+    ]
+    flips.sort(key=lambda p: p.sample_id)
+    random.Random(seed).shuffle(flips)
+    return flips if n is None else flips[:n]
+
+
+def shard_slice(items: Sequence, shard_index: int, num_shards: int) -> list:
+    """決定論的なシャード分割 items[shard_index::num_shards]."""
+    if num_shards <= 0:
+        raise ValueError(f"num_shards は正の整数: {num_shards}")
+    if not 0 <= shard_index < num_shards:
+        raise ValueError(f"shard_index {shard_index} が範囲 [0, {num_shards}) の外")
+    return list(items[shard_index::num_shards])
+
+
+# ---------------------------------------------------------------------------
 # 冪等実行 (CLI 用)
 # ---------------------------------------------------------------------------
 
