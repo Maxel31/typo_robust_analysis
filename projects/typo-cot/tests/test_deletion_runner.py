@@ -51,11 +51,27 @@ def _arm(name, kind, op="delete", k=1, stratum="content"):
 
 
 class TestArmFactories:
-    def test_core_arms(self):
+    def test_core_arms_two_pronged(self):
+        """コア対比の両建て (2026-07-15 ユーザー決定): 削除のみ k∈{1,2,4}.
+
+        主対比 = 無制限 top-R_C vs 層内マッチランダム (stratum="all")。
+        機構分解 = 層別腕を維持 (content の top/matched + numeric top)。
+        """
         arms = core_arms()
-        kinds = {a.target_kind for a in arms}
-        assert kinds == {"top_rc", "matched_random"}
-        assert all(a.op == "delete" and a.k == 1 and a.stratum == "content" for a in arms)
+        assert all(a.op == "delete" for a in arms)
+        cells = {(a.target_kind, a.stratum, a.k) for a in arms}
+        # 主対比 (無制限、両腕 × 用量3)
+        for k in (1, 2, 4):
+            assert ("top_rc_unrestricted", "all", k) in cells
+            assert ("stratum_matched_random", "all", k) in cells
+        # 機構分解 (層別腕の維持 × 用量3)
+        for k in (1, 2, 4):
+            assert ("top_rc", "content", k) in cells
+            assert ("matched_random", "content", k) in cells
+            assert ("top_rc", "numeric", k) in cells
+        assert len(arms) == 15
+        names = [a.name for a in arms]
+        assert len(names) == len(set(names))
 
     def test_smoke_arms_include_loo_and_numeric(self):
         arms = smoke_arms()
@@ -74,6 +90,15 @@ class TestArmFactories:
         assert len(content_grid) == 27  # 標的3 × 操作3 × 用量3
         names = [a.name for a in arms]
         assert len(names) == len(set(names))
+
+    def test_full_grid_includes_unrestricted_main_contrast(self):
+        """完全グリッドにも無制限腕を併設 (33 → 39 腕)."""
+        arms = full_grid_arms()
+        cells = {(a.target_kind, a.stratum, a.op, a.k) for a in arms}
+        for k in (1, 2, 4):
+            assert ("top_rc_unrestricted", "all", "delete", k) in cells
+            assert ("stratum_matched_random", "all", "delete", k) in cells
+        assert len(arms) == 39
 
 
 class TestPrepareSample:
@@ -121,6 +146,49 @@ class TestPrepareSample:
         assert (
             p1.arm_plans["matched_random_delete_k1"].target_words
             == p2.arm_plans["matched_random_delete_k1"].target_words
+        )
+
+    def test_unrestricted_arm_targets_numeric_when_numeric_ranks_top(self):
+        plan = prepare_sample(
+            ENTRY, PROMPT, rc_ranking=RC_RANKING, loo_ranking=None,
+            arms=[_arm("top_rc_unrestricted_delete_k1", "top_rc_unrestricted",
+                       stratum="all")],
+            seed=42,
+        )
+        arm = plan.arm_plans["top_rc_unrestricted_delete_k1"]
+        assert arm.skip_reason is None
+        assert arm.target_words == ["16"]  # 無制限: 数値首位が飛ばされない
+
+    def test_stratum_matched_random_matches_strata_per_word(self):
+        plan = prepare_sample(
+            ENTRY, PROMPT, rc_ranking=RC_RANKING, loo_ranking=None,
+            arms=[_arm("stratum_matched_random_delete_k2", "stratum_matched_random",
+                       k=2, stratum="all")],
+            seed=42,
+        )
+        arm = plan.arm_plans["stratum_matched_random_delete_k2"]
+        assert arm.skip_reason is None
+        assert arm.matched_to == ["16", "eggs"]  # 無制限 top が照合元
+        assert len(arm.target_words) == 2
+        from typo_cot.intervention.target_selector import word_stratum
+
+        assert word_stratum(arm.target_words[0]) == "numeric"  # 数値には数値マッチ
+        assert arm.target_words[0] != "16"
+        assert word_stratum(arm.target_words[1]) == "content"
+        assert arm.target_words[1] != "eggs"
+
+    def test_stratum_matched_random_deterministic_across_calls(self):
+        kwargs = dict(
+            rc_ranking=RC_RANKING, loo_ranking=None,
+            arms=[_arm("stratum_matched_random_delete_k2", "stratum_matched_random",
+                       k=2, stratum="all")],
+            seed=42,
+        )
+        p1 = prepare_sample(ENTRY, PROMPT, **kwargs)
+        p2 = prepare_sample(ENTRY, PROMPT, **kwargs)
+        assert (
+            p1.arm_plans["stratum_matched_random_delete_k2"].target_words
+            == p2.arm_plans["stratum_matched_random_delete_k2"].target_words
         )
 
     def test_top_loo_uses_loo_ranking(self):

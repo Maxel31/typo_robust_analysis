@@ -59,9 +59,17 @@ class TestShardEntries:
 
 class TestResolveArms:
     def test_presets(self, cli):
-        assert len(cli.resolve_arms("core")) == 2
+        # core は両建て (2026-07-15): 主対比6 (無制限×2×k3) + 層別9 (top/matched/numeric×k3)
+        assert len(cli.resolve_arms("core")) == 15
         assert len(cli.resolve_arms("smoke")) == 4
-        assert len(cli.resolve_arms("full")) == 33
+        # full は 33 + 無制限腕6 = 39
+        assert len(cli.resolve_arms("full")) == 39
+
+    def test_core_preset_contains_unrestricted_main_contrast(self, cli):
+        names = {a.name for a in cli.resolve_arms("core")}
+        for k in (1, 2, 4):
+            assert f"top_rc_unrestricted_delete_k{k}" in names
+            assert f"stratum_matched_random_delete_k{k}" in names
 
     def test_loo_preset_for_m3b2(self, cli):
         # LOO 腕 (修正B): M3×B2 で top_loo × delete × k∈{1,2,4} を単独実行する用

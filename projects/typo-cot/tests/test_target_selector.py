@@ -15,6 +15,7 @@ from typo_cot.intervention.target_selector import (
     normalize_ranking,
     rng_for_sample,
     select_matched_random,
+    select_stratum_matched_random,
     select_top,
     word_stratum,
 )
@@ -124,6 +125,62 @@ class TestSelectTop:
         cands = build_candidates("Janet eggs")
         top = select_top(self.RANKING, cands, k=4, stratum="content")
         assert len(top) < 4
+
+    def test_unrestricted_selection_spans_strata(self):
+        # stratum=None = 無制限 top-R_C: 数値・演算語も含む純粋上位 k 語
+        cands = build_candidates(COT)
+        top = select_top(self.RANKING, cands, k=2, stratum=None)
+        assert top == ["16", "eggs"]  # numeric 首位が飛ばされない
+
+    def test_unrestricted_still_excludes_other_stratum(self):
+        # ストップワード・単一文字 ("other" 層) は無制限でも候補外
+        cands = build_candidates(COT)
+        top = select_top(self.RANKING, cands, k=10, stratum=None)
+        assert "the" not in top
+
+
+class TestSelectStratumMatchedRandom:
+    """無制限 top 標的の層内マッチ統制: 数値標的には数値語、内容語には内容語."""
+
+    def _strata(self, cands):
+        return {c.word: c.stratum for c in cands}
+
+    def test_matches_stratum_per_target(self):
+        cands = build_candidates(COT)
+        strata = self._strata(cands)
+        matched = select_stratum_matched_random(
+            ["16", "eggs"], cands, rng=random.Random(0)
+        )
+        assert len(matched) == 2
+        assert strata[matched[0]] == "numeric"
+        assert strata[matched[1]] == "content"
+
+    def test_excludes_top_set(self):
+        cands = build_candidates(COT)
+        matched = select_stratum_matched_random(
+            ["16", "eggs"], cands, rng=random.Random(0)
+        )
+        assert "16" not in matched
+        assert "eggs" not in matched
+
+    def test_deterministic_given_same_rng_seed(self):
+        cands = build_candidates(COT)
+        m1 = select_stratum_matched_random(["16", "eggs"], cands, rng=random.Random(7))
+        m2 = select_stratum_matched_random(["16", "eggs"], cands, rng=random.Random(7))
+        assert m1 == m2
+
+    def test_without_replacement(self):
+        cands = build_candidates(COT)
+        matched = select_stratum_matched_random(
+            ["16", "3", "eggs"], cands, rng=random.Random(3)
+        )
+        assert len(matched) == len(set(matched)) == 3
+
+    def test_exhausted_stratum_pool_returns_short_list(self):
+        # numeric 候補が標的以外に存在しない → 数値標的にマッチ不能で短いリスト
+        cands = build_candidates("Janet has 16 eggs and muffins for breakfast")
+        matched = select_stratum_matched_random(["16"], cands, rng=random.Random(0))
+        assert matched == []
 
 
 class TestSelectMatchedRandom:

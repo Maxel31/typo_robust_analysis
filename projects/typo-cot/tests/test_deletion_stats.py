@@ -82,6 +82,12 @@ def _record(sample_id, clean_correct, arm_flips: dict, skip=None):
             "top_rc_delete_k1": ("top_rc", "delete", 1, "content"),
             "matched_random_delete_k1": ("matched_random", "delete", 1, "content"),
             "numeric_top_rc_delete_k1": ("top_rc", "delete", 1, "numeric"),
+            "top_rc_unrestricted_delete_k1": (
+                "top_rc_unrestricted", "delete", 1, "all"
+            ),
+            "stratum_matched_random_delete_k1": (
+                "stratum_matched_random", "delete", 1, "all"
+            ),
         }[name]
         arms[name] = {
             "target_kind": kind, "op": op, "k": k, "stratum": stratum,
@@ -142,3 +148,31 @@ class TestAggregateResults:
         )
         assert core["risk_difference"] > 0
         assert 0 <= core["mcnemar_p"] <= 1
+
+    def test_unrestricted_main_contrast_is_computed(self):
+        """主対比 (両建て): top_rc_unrestricted vs stratum_matched_random."""
+        recs = [
+            _record(
+                f"s{i}",
+                clean_correct=True,
+                arm_flips={
+                    "top_rc_unrestricted_delete_k1": i < 5,     # 5/10 flip
+                    "stratum_matched_random_delete_k1": i == 0,  # 1/10 flip
+                },
+            )
+            for i in range(10)
+        ]
+        summary = aggregate_results(recs)
+        assert "all" in summary["strata"]
+        assert (
+            "top_rc_unrestricted_delete_k1" in summary["strata"]["all"]["arms"]
+        )
+        main = next(
+            c
+            for c in summary["contrasts"]
+            if c["arm_a"] == "top_rc_unrestricted_delete_k1"
+            and c["arm_b"] == "stratum_matched_random_delete_k1"
+        )
+        assert main["stratum"] == "all"
+        assert main["risk_difference"] > 0
+        assert 0 <= main["mcnemar_p"] <= 1
