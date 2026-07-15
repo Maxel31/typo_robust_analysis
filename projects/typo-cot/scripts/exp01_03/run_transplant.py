@@ -59,7 +59,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--baseline-dir", required=True, help="アーカイブ baseline ディレクトリ")
     p.add_argument("--perturbed-dir", required=True, help="アーカイブ perturbed ディレクトリ")
     p.add_argument("--output-dir", required=True, help="結果出力先")
-    p.add_argument("--n", type=int, default=None, help="サンプル数上限 (スモーク用)")
+    p.add_argument("--n", type=int, default=None, help="サンプル数上限 (スモーク・シャード分割用)")
+    p.add_argument(
+        "--start",
+        type=int,
+        default=0,
+        help="結合済みペアの先頭 start 件を読み飛ばす (大設定のシャード分割用)",
+    )
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--max-new-tokens", type=int, default=16)
     p.add_argument(
@@ -199,6 +205,7 @@ def main() -> None:
         args.perturbed_dir,
         clean_correct_only=args.clean_correct_only,
         limit=args.n,
+        start=args.start,
     )
     logger.info("PairRecord %d 件をロード", len(pairs))
 
@@ -291,6 +298,7 @@ def main() -> None:
             "baseline_dir": str(args.baseline_dir),
             "perturbed_dir": str(args.perturbed_dir),
             "n": args.n,
+            "start": args.start,
             "batch_size": args.batch_size,
             "max_new_tokens": args.max_new_tokens,
             "clean_correct_only": args.clean_correct_only,

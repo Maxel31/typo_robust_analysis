@@ -157,3 +157,18 @@ class TestLoadPairRecords:
         baseline_dir, perturbed_dir = archive_dirs
         pairs = load_pair_records(baseline_dir, perturbed_dir, limit=1)
         assert len(pairs) == 1
+
+    def test_start_offset_splits_without_overlap(self, archive_dirs):
+        # 大設定のシャード分割用: start で先頭を読み飛ばし、limit と組み合わせて
+        # 重複も欠落もない分割になること
+        baseline_dir, perturbed_dir = archive_dirs
+        all_pairs = load_pair_records(baseline_dir, perturbed_dir)
+        first = load_pair_records(baseline_dir, perturbed_dir, limit=1)
+        rest = load_pair_records(baseline_dir, perturbed_dir, start=1)
+        assert [p.sample_id for p in first + rest] == [p.sample_id for p in all_pairs]
+
+    def test_start_beyond_end_returns_empty(self, archive_dirs):
+        baseline_dir, perturbed_dir = archive_dirs
+        all_pairs = load_pair_records(baseline_dir, perturbed_dir)
+        pairs = load_pair_records(baseline_dir, perturbed_dir, start=len(all_pairs))
+        assert pairs == []

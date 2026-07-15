@@ -30,6 +30,7 @@ def load_pair_records(
     perturbed_dir: str | Path,
     clean_correct_only: bool = False,
     limit: int | None = None,
+    start: int = 0,
 ) -> list[PairRecord]:
     """baseline / perturbed の results.json を結合して PairRecord を構築する.
 
@@ -37,7 +38,9 @@ def load_pair_records(
         baseline_dir: baseline 実行ディレクトリ (results.json / config.json)
         perturbed_dir: 摂動実行ディレクトリ (results.json / config.json)
         clean_correct_only: clean 条件で正解だったサンプルのみに絞る
-        limit: 先頭から limit 件のみ返す (スモーク用)
+        limit: start 位置から limit 件のみ返す (スモーク・シャード分割用)
+        start: 結合済みペア列の先頭 start 件を読み飛ばす (大設定のシャード分割用。
+            start/limit はフィルタ適用後の結合ペア列に対する [start, start+limit) 切り出し)
 
     Returns:
         sample_id で結合された PairRecord のリスト (両方に存在するもののみ)
@@ -53,11 +56,16 @@ def load_pair_records(
     perturbed_records = {r["sample_id"]: r for r in _read_json(perturbed_dir / "results.json")}
 
     pairs: list[PairRecord] = []
+    n_seen = 0
     for sample_id, base in baseline_records.items():
         pert = perturbed_records.get(sample_id)
         if pert is None:
             continue
         if clean_correct_only and not base.get("is_correct", False):
+            continue
+
+        n_seen += 1
+        if n_seen <= start:
             continue
 
         pairs.append(
