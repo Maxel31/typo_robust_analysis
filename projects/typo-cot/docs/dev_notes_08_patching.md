@@ -174,6 +174,67 @@ mistral 729 ペア) を使う場合:
 0.28 s/fwd と仮定。MMLU はプロンプト長同程度・CoT 短めでほぼ同等)。
 実験1本番で flip ペアを再判定・増員した場合はペア数に比例してスケール。
 
+## スモーク検証集計 (2026-07-16, gemma-3-4b-it x gsm8k, n_pairs=16)
+
+### 実行サマリ
+
+| 項目 | 値 |
+|---|---|
+| 全タスク数 | 16 (lxt4: 8, rnd4: 8) |
+| 完了 (patching 実行) | 11 |
+| 冪等スキップ | 2 |
+| 除外 | 3 (no_typo_answer: 2, no_answer_divergence: 1) |
+| 失敗 | 0 |
+
+除外ペア (lxt4 のみ): gsm8k_00107 (no_typo_answer), gsm8k_00152 (no_typo_answer),
+gsm8k_00757 (no_answer_divergence), gsm8k_00959 (no_typo_answer)。
+lxt4 は 4/8 完了、rnd4 は 8/8 完了。
+
+### 判定 (a): 恒等パッチ (no-op) テスト
+
+**PASS**: 72/72 の no-op 検証がすべて合格。6 組合せ (3 hook部位 x 2 方向) x
+12 ペアで、全て generation_unchanged=true かつ answer_unchanged=true。
+恒等パッチ (donor=recipient) で greedy 生成が bit 同一であることを確認。
+
+### 判定 (b): clean→pert (denoising) パッチの効果
+
+2592 セル (1296 clean_to_pert + 1296 pert_to_clean) の全数解析。
+
+**答え flip**: 0/2592 セルで答え flip なし (0.0%)。全ペアで clean/pert の答えが
+もとから一致 (flip ペアではなく同答ペアが選定された) ため、Dlogit 回復のみが
+有意義な指標。
+
+**S2 KL 回復 (question_span, clean_to_pert 方向)**:
+
+| hook部位 | mean recovery | max | n_positive/total |
+|---|---|---|---|
+| residual | -0.045 | 0.989 | 84/144 (58%) |
+| attn | -0.095 | 0.783 | 74/144 (51%) |
+| mlp | +0.045 | 0.936 | 78/144 (54%) |
+
+residual の早期層窓 [3,6) で平均 0.075 のピーク。mlp は [0,3) で 0.355
+と顕著に高い (入力埋め込み直後の MLP が質問摂動の影響を支配的に媒介)。
+後半層窓 [24,27)~[30,33) では residual/attn ともに recovery 負値
+(KL がむしろ増大)、これは後半層の残差が答え句方向に特化しているため
+質問スパンのパッチが有害に作用する解釈と整合。
+
+### 判定 (c): スキーマ網羅性
+
+**PASS**: 12/12 完了ペアで site*site_kind*direction = 18/18 全カバー。
+各ペア 216 セル (3 hook x 3 位置種別 x 12 窓 x 2 方向)。
+cell_exclude_reasons が付いたペアは 2 件 (gsm8k_00507: multi_trigger_typo,
+gsm8k_00464: multi_trigger_clean + no_trigger_typo) だが、
+セル生成自体はエラーなく完了。
+
+### 最終判定
+
+スモーク **PASS**。(a) no-op 恒等性 100%、(b) S2 KL 回復の方向は mlp
+早期層で明瞭 (+0.355)、(c) スキーマ全セル完走。
+
+**注意点**: 今回の n=16 ペアでは答え flip ペアが 0 件だったため、
+denoising による答え flip 逆転は未検証。本番で flip ペアを明示的に
+選定する必要がある (open question 4 で議論済み)。
+
 ## Open questions (ユーザー判断待ち)
 
 0. **見出しの「部位3」の解釈**: 計画書 (§4 実験8 手法3) の部位 =
