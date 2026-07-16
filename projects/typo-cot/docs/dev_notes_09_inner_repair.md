@@ -156,3 +156,70 @@ uv run python scripts/exp9/analyze_inner_repair.py \
 (主報告) / モデル横断 `regression_pooled_all.csv` (参考値) /
 flip 群別 cos カーブ図 / `analysis_summary.json`。
 範囲シャードの word_rows は `load_rows()` が glob で自動結合する。
+
+## 本番結果 (2026-07-16, 60 シャード全完了)
+
+60 summary / 60 word_rows = 298,376 語レベル行 (clean 正解条件付けで 164,190 行)。
+5 モデル (gemma-3-1b-it, gemma-3-4b-it, Llama-3.2-1B/3B-Instruct,
+Mistral-7B-Instruct-v0.3) x 5 ベンチ (arc, commonsense_qa, gsm8k, mmlu, mmlu_pro)
+x 2 条件 (lxt4, random4)。MMLU はシャード分割 (s0_n1425 + s1425) で 2 ファイル。
+全 60 設定の `sanity_clean_pair.pass = true` (min cos >= 0.999999)。
+
+### pooled 回帰係数 (主推定量: clean 正解限定, GLM Binomial + cluster SE)
+
+| モデル | n_obs | repair_coef | p |
+|---|---|---|---|
+| gemma-3-1b-it | 23,536 | **-0.088** | 4.5e-9 |
+| gemma-3-4b-it | 40,956 | **-0.146** | 9.1e-19 |
+| Llama-3.2-1B-Instruct | 25,583 | **-0.102** | 4.3e-9 |
+| Llama-3.2-3B-Instruct | 38,324 | **-0.189** | 4.0e-32 |
+| Mistral-7B-Instruct-v0.3 | 35,791 | **-0.155** | 8.9e-19 |
+| **pooled all** | **164,190** | **-0.128** | **1.5e-36** |
+
+全5モデルで repair_coef が統計的に有意な負値 (p < 1e-8)。
+修復スコアが低い語ほど flip が起きやすい = 内部語彙修復の失敗が
+答え flip の予測因子であるという主仮説を支持。
+
+### 設定別の方向一貫性
+
+50 設定中 47 で repair_coef < 0 (94%)。正の 3 件:
+- Llama-3.2-1B-Instruct_gsm8k_random4: +0.089 (p=0.19)
+- gemma-3-1b-it_mmlu_pro_lxt4: +0.011 (p=0.90)
+- gemma-3-4b-it_mmlu_pro_lxt4: +0.025 (p=0.66)
+
+いずれも p > 0.19 で統計的に非有意。
+
+### 設定別で有意 (p < 0.05) な負の repair_coef (24/50)
+
+代表的な強い効果:
+- Mistral commonsense_qa lxt4: coef=-0.296, p=6.4e-8
+- Llama-3.2-3B gsm8k lxt4: coef=-0.244, p=6.7e-6
+- Mistral arc lxt4: coef=-0.277, p=5.7e-6
+- gemma-3-4b gsm8k lxt4: coef=-0.257, p=3.3e-6
+- Llama-3.2-3B arc lxt4: coef=-0.245, p=8.3e-6
+
+LXT-4 条件のほうが Random-4 よりも効果サイズが概して大きい (重要語の
+摂動が修復失敗→flip をより強く引き起こす)。
+
+### Logit lens hit rate
+
+| モデル | typo 平均 | clean_self 平均 |
+|---|---|---|
+| gemma-3-1b-it | 0.189 | 0.940 |
+| gemma-3-4b-it | 0.303 | 0.942 |
+| Llama-3.2-1B-Instruct | 0.350 | 0.910 |
+| Llama-3.2-3B-Instruct | 0.507 | 0.924 |
+| Mistral-7B-Instruct-v0.3 | 0.334 | 0.376 |
+
+clean_self hit rate はモデル内部の tokenizer-unembed 整合性のサニティ。
+Llama/Gemma 系は 0.91-0.94 で良好。Mistral は 0.376 と低い (unembed の
+tie-break 悲観評価が影響。Mistral は vocab が大きく rank タイが多い)。
+typo hit rate はモデルサイズに比例して上昇 (1B < 3/4B < 7B)。
+Llama-3.2-3B が 0.507 で最高 = 内部修復能力が最も高い。
+
+### 保存先
+
+- `results/prod/exp9/analysis_summary.json` (主サマリ)
+- `results/prod/exp9/regression_pooled_*.csv` (モデル別 pooled 回帰)
+- `results/prod/exp9/regression_*.csv` (設定別回帰)
+- `results/prod/exp9/cos_curves_*.png` (flip/no-flip 群別 cos カーブ, 50 枚)
