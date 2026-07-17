@@ -40,6 +40,67 @@ ANSWER_PATTERNS = [
 ]
 
 
+# MATH-500 (boxed 形式) 対応。evaluation.extractor.MATHAnswerExtractor と同じ
+# 「最後の閉じた \boxed{...} を採用・未閉じは無視」規約で中身スパンを特定する。
+BOXED_RE = re.compile(r"\\boxed\s*\{")
+# boxed 直前の回答トリガー句 ("The answer is" / "The final answer is: $" 等)。
+# 回答スパン開始 (= CoT 終端の決定) にのみ使用する。
+BOXED_TRIGGER_RE = re.compile(r"[Tt]he\s+(?:final\s+)?answer\s+is[:\s]*\$?\s*$")
+
+
+@dataclass
+class BoxedAnswer:
+    """最後の閉じた \\boxed{...} の位置情報 (文字オフセット).
+
+    Attributes:
+        pattern_start: 回答パターン開始 (トリガー句があればその先頭、なければ \\boxed)
+        content_start: 中身の開始 (\\boxed{ の直後)
+        content_end: 中身の終了 (閉じ括弧の位置; exclusive)
+        content: 中身の生文字列 (strip しない — splice スパンと同一)
+    """
+
+    pattern_start: int
+    content_start: int
+    content_end: int
+    content: str
+
+
+def find_boxed_answer(text: str) -> BoxedAnswer | None:
+    """最後の「閉じた」\\boxed{...} の中身スパンを括弧追跡で返す.
+
+    extractor の MATHAnswerExtractor.extract と同じ採用規約:
+    閉じた boxed のうち最後のものを採用し、末尾の未閉じ boxed は無視する。
+    """
+    last: tuple[int, int, int] | None = None
+    for m in BOXED_RE.finditer(text):
+        content_start = m.end()
+        depth = 1
+        i = content_start
+        while i < len(text):
+            ch = text[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        if depth != 0:  # 未閉じ (途中打ち切り) は無視
+            continue
+        last = (m.start(), content_start, i)
+    if last is None:
+        return None
+    boxed_start, content_start, content_end = last
+    trigger = BOXED_TRIGGER_RE.search(text, 0, boxed_start)
+    pattern_start = trigger.start() if trigger else boxed_start
+    return BoxedAnswer(
+        pattern_start=pattern_start,
+        content_start=content_start,
+        content_end=content_end,
+        content=text[content_start:content_end],
+    )
+
+
 def find_answer_match(text: str) -> tuple[re.Match | None, str | None]:
     """lrp.analyzer._find_answer_pattern と同じ規約で最終回答のマッチを返す.
 
@@ -86,7 +147,44 @@ def plan_splice(
     """baseline / 摂動後の生成テキストから splice 計画を立てる.
 
     flip 判定は生成テキスト中の生スパン文字列の比較 (rebuttal 規約: 大文字化しない)。
+
+    MATH (boxed 形式): どちらかのテキストに \\boxed があれば boxed 経路を優先する。
+    片側にしか閉じた boxed が無いサンプルはスキップ (union 除外の strict=boxed
+    規約と同じ母集団になる)。両側に \\boxed が無ければ従来経路 (回帰なし)。
     """
+    base_boxed = find_boxed_answer(baseline_text)
+    pert_boxed = find_boxed_answer(perturbed_text)
+    if base_boxed is not None or pert_boxed is not None:
+        if base_boxed is None:
+            return SplicePlan(
+                sample_id=sample_id, skip_reason="no_baseline_answer_pattern"
+            )
+        if pert_boxed is None:
+            return SplicePlan(
+                sample_id=sample_id,
+                skip_reason="no_perturbed_answer_pattern",
+                baseline_answer=base_boxed.content,
+                baseline_pattern_type="boxed",
+            )
+        s, e = pert_boxed.content_start, pert_boxed.content_end
+        if pert_boxed.content == base_boxed.content:
+            spliced_text = perturbed_text
+            spliced = False
+        else:
+            spliced_text = (
+                perturbed_text[:s] + base_boxed.content + perturbed_text[e:]
+            )
+            spliced = True
+        return SplicePlan(
+            sample_id=sample_id,
+            spliced=spliced,
+            spliced_text=spliced_text,
+            baseline_answer=base_boxed.content,
+            perturbed_answer=pert_boxed.content,
+            baseline_pattern_type="boxed",
+            perturbed_pattern_type="boxed",
+        )
+
     base_match, base_type = find_answer_match(baseline_text)
     if base_match is None:
         return SplicePlan(
@@ -256,6 +354,76 @@ def compare_cot_payloads(
     return report
 
 
+def map_answer_char_spans_to_tokens(
+    offset_list: list[tuple[int, int]],
+    prompt_token_count: int,
+    answer_char_start: int,
+    answer_char_end: int,
+    choice_char_start: int,
+    choice_char_end: int,
+) -> tuple[int | None, int | None, int | None]:
+    """文字スパンをトークン位置へ写像する (lrp.analyzer._find_answer_pattern と同一規約).
+
+    - answer_token_start: プロンプト以降で最初の「end > answer_char_start」トークン
+    - answer_choice_position: 最初の「start < choice_char_end かつ end > choice_char_start」
+    - answer_token_end: 最後の「start < answer_char_end」トークン
+    プロンプト範囲 (i < prompt_token_count) のトークンはスパンに重なっても不採用。
+    """
+    answer_token_start: int | None = None
+    answer_token_end: int | None = None
+    answer_choice_position: int | None = None
+    for i, (start, end) in enumerate(offset_list):
+        if i < prompt_token_count:
+            continue
+        if answer_token_start is None and end > answer_char_start:
+            answer_token_start = i
+        if (
+            answer_choice_position is None
+            and start < choice_char_end
+            and end > choice_char_start
+        ):
+            answer_choice_position = i
+        if start < answer_char_end:
+            answer_token_end = i
+    return answer_token_start, answer_token_end, answer_choice_position
+
+
+def find_answer_token_positions(
+    generated_text: str,
+    tokens: list[str],
+    prompt_token_count: int,
+    offset_list: list[tuple[int, int]],
+    prompt_length: int,
+    analyzer: Any = None,
+) -> tuple[int | None, int | None, int | None]:
+    """回答スパンのトークン位置を boxed 優先で決定する.
+
+    - 生成テキストに閉じた \\boxed があれば boxed 経路:
+      ターゲット = boxed 中身の先頭トークン、回答スパン = トリガー句先頭〜閉じ括弧。
+    - なければ analyzer._find_answer_pattern (choice/number の従来規約) へ委譲。
+      analyzer が None の場合は (None, None, None)。
+    """
+    boxed = find_boxed_answer(generated_text)
+    if boxed is not None:
+        return map_answer_char_spans_to_tokens(
+            offset_list=offset_list,
+            prompt_token_count=prompt_token_count,
+            answer_char_start=prompt_length + boxed.pattern_start,
+            answer_char_end=prompt_length + boxed.content_end + 1,  # 閉じ括弧含む
+            choice_char_start=prompt_length + boxed.content_start,
+            choice_char_end=prompt_length + boxed.content_end,
+        )
+    if analyzer is None:
+        return None, None, None
+    return analyzer._find_answer_pattern(
+        generated_text=generated_text,
+        tokens=tokens,
+        prompt_token_count=prompt_token_count,
+        offset_list=offset_list,
+        prompt_length=prompt_length,
+    )
+
+
 # ---------------------------------------------------------------------------
 # GPU 依存部 (AttnLRP backward)。ユニットテスト対象外・スクリプトから使用。
 # ---------------------------------------------------------------------------
@@ -307,12 +475,13 @@ def analyze_cot_fixed(analyzer, prompt: str, generated_text: str) -> dict:
     tokens = [analyzer.tokenizer.decode([tid]) for tid in full_input_ids[0].tolist()]
 
     answer_token_start, answer_token_end, answer_choice_position = (
-        analyzer._find_answer_pattern(
+        find_answer_token_positions(
             generated_text=generated_text,
             tokens=tokens,
             prompt_token_count=prompt_token_count,
             offset_list=offset_list,
             prompt_length=prompt_length,
+            analyzer=analyzer,
         )
     )
 

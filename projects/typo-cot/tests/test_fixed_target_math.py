@@ -161,16 +161,17 @@ class TestMapAnswerCharSpansToTokens:
         assert ate == 5
 
     def test_prompt_tokens_skipped(self):
+        """プロンプト範囲のトークンはスパンに重なっても候補にならない."""
         offset_list = [(0, 5), (5, 10), (10, 20)]
         ats, ate, acp = map_answer_char_spans_to_tokens(
             offset_list=offset_list,
             prompt_token_count=2,
-            answer_char_start=2,
-            answer_char_end=9,
-            choice_char_start=3,
-            choice_char_end=6,
+            answer_char_start=7,
+            answer_char_end=18,
+            choice_char_start=8,
+            choice_char_end=12,
         )
-        # プロンプト範囲のトークンは候補にならない
+        # トークン1 (5,10) は answer_char_start=7 に重なるが prompt 範囲なので不採用
         assert ats == 2
         assert acp == 2
         assert ate == 2
