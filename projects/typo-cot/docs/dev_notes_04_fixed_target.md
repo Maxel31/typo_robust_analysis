@@ -108,6 +108,78 @@
 - Δρ 表: キュー完了後 `bash results/prod/run_delta_table.sh`
   → `results/prod/delta_rho/delta_rho_table.{json,csv}` (B=10,000, Holm)。
 
+## MATH-500 拡張 (2026-07-18, 実験4-MATH)
+
+事前登録分岐の発動 (MC 型で有意消失 → 自由記述主役化) を受け、第2の自由記述
+ベンチマーク MATH-500 で fixed-target 再現を行う。データは exp-10-scope
+worktree の再生成済み run (読み取りのみ):
+`$WT10/outputs/baseline/<model>_math` / `$WT10/outputs/perturbed/<model>_math_k4_importance`。
+
+### 規約上の重要な発見と設計判断
+
+- **既存 MATH .pt はフォールバック規約**: lrp/analyzer の `_find_answer_pattern`
+  に boxed パターンが無いため、exp-10 再生成 (=アーカイブ互換) の MATH
+  importance_scores は全サンプルで回答スパン未検出 → target=-1 (最終トークン)、
+  回答トークンが CoT 範囲に混入した状態で計算されている
+  (例: baseline gemma-3-4b math_00000 は cot_token_end = n_tokens-2)。
+- **default 側も再計算する**: 上記のまま fixed (boxed 回答トークンへ帰属) と
+  対比すると「ターゲット規約の差」と「帰属先回答内容の差」が交絡する。
+  そこで摂動側 R_C を default (生成された答えへ帰属)・fixed (元の答えへ帰属)
+  の両方とも同一の boxed 回答トークン規約で再計算し、差を帰属先の内容のみに
+  純化する (GSM8K の実験4手続きの MATH 対応版)。
+- **clean 側はアーカイブ互換 .pt を利用** (指示どおり)。J@10 の clean 側だけ
+  フォールバック規約なのは両条件対称なので Δρ の内的妥当性には影響しないが、
+  ρ の絶対値は GSM8K と規約が揃わない可能性がある → スモークの
+  comparison.json (default再計算 vs フォールバック .pt の top10 Jaccard) で
+  規約変更の影響を定量化し、必要なら clean 再計算を感度分析として追加
+  (open question)。
+- **boxed 検出規約** (`fixed_target.find_boxed_answer`, TDD):
+  「最後の閉じた \boxed{...}」を採用・末尾の未閉じ boxed は無視
+  (`MATHAnswerExtractor` と同一の採用規約)。中身スパンは文字単位の括弧追跡
+  (ネスト対応)。回答スパン開始はトリガー句 `The (final )?answer is[:\s]*\$?`
+  があればその先頭。flip 判定は boxed 中身の生文字列比較 (rebuttal 規約踏襲)。
+  片側にしか boxed が無いサンプルはスキップ (strict=boxed の union 除外と同じ
+  母集団)。\boxed を含まないテキストは従来経路 (GSM8K/MMLU 回帰なし;
+  既存テスト 215 passed)。
+- **splice**: 摂動テキストの boxed 中身のみを baseline の boxed 中身に置換。
+  ターゲット = boxed 中身の先頭トークン (`map_answer_char_spans_to_tokens` は
+  analyzer のトークン写像ループと同一規約)。
+
+### 実装 (コミット)
+
+- `test_fixed_target_math.py` (RED) → `fixed_target.py` boxed 対応 (GREEN)
+- `run_fixed_target.py`: `--mode default` (splice なし・回答トークン規約で
+  default 再計算、出力 suffix `default_recomputed`) / `--reuse_from`
+  (非flip 再利用元を default 再計算 dir へ) / `--skip_existing` (サンプル単位の
+  冪等再開)。既存 CLI の挙動は不変。
+
+### 計画数 (settings_plan_math.json, 500サンプル中)
+
+| model | processed | flip | union除外後母集団 (flip) |
+|---|---|---|---|
+| gemma-3-1b-it | 194 | 124 | 162 (103) |
+| gemma-3-4b-it | 239 | 42 | 216 (36) |
+| Llama-3.2-1B | 328 | 251 | 288 (215) |
+| Llama-3.2-3B | 346 | 240 | 313 (212) |
+| Mistral-7B | 323 | 271 | 295 (245) |
+| Qwen2.5-7B | 292 | 58 | 274 (55) |
+
+GPU 見積: Σ(processed + flip) ≈ 2,708 backward + モデルロード 12 回。
+
+### 運用 (results/ は gitignore のため非追跡の作業ファイル)
+
+- 計画: `uv run --no-sync python results/prod_math/plan_math_settings.py`
+- スモーク (gemma-3-4b n=16): `bash results/smoke_math/run_smoke_math.sh`
+  → `uv run --no-sync python results/smoke_math/validate_smoke_math.py`
+- 本番キュー: `setsid nohup uv run --no-sync python
+  results/prod_math/run_queue_math.py >> results/prod_math/queue_math.log
+  2>&1 < /dev/null &`
+  (1モデル = default GPU パス → fixed GPU パス → CPU 分析 → Δρ 表随時更新。
+  再開は同コマンド、停止は `results/prod_math/STOP_MATH` 作成。
+  進捗 `results/prod_math/progress_math.json`)
+- 分析出力: `results/prod_math/analysis/math/<model>/k4_{default_recomputed,fixed_target}/full_results.json`
+- Δρ 表: `results/prod_math/delta_rho/delta_rho_table.{json,csv}`
+
 ## 未実装 / 別途判断が必要
 
 - GLMM 再推定 (R lme4 / glmmTMB): R 環境が必要。未着手。
