@@ -119,6 +119,36 @@ class TestRankingLoaders:
     def test_rc_missing_pt_returns_none(self, cli, tmp_path):
         assert cli.load_rc_ranking(tmp_path, "nope", {}, "cot_pt") is None
 
+    def test_rc_from_degenerate_cot_pt_rebuilds_from_token_scores(self, cli, tmp_path):
+        """Mistral アーカイブ不良: word_scores が全文結合1語 → token_scores から再構築."""
+        full_text = "Q: add 3 and 4.\nA: 3 + 4 = 7. The answer is 7."
+        tokens = [
+            "<s>", "Q", ":", "add", "3", "and", "4", ".", "\n", "A", ":",
+            "3", "+", "4", "=", "7", ".", "The", "answer", "is", "7", ".",
+        ]
+        by_index = {11: 0.5, 12: 1.0, 13: 2.0, 14: 3.0, 15: 5.0, 16: 0.25}
+        scores_dir = tmp_path / "importance_scores"
+        scores_dir.mkdir()
+        torch.save(
+            {
+                "word_scores": [
+                    {
+                        "word": full_text.replace(" ", "").replace("\n", ""),
+                        "score": 1.23,
+                        "token_indices": list(range(1, len(tokens))),
+                    }
+                ],
+                "token_scores": [
+                    (t, by_index.get(i, 0.1)) for i, t in enumerate(tokens)
+                ],
+                "cot_token_start": 11,
+                "cot_token_end": 16,
+            },
+            scores_dir / "sid_cot.pt",
+        )
+        ranking = cli.load_rc_ranking(tmp_path, "sid", {}, "cot_pt", full_text=full_text)
+        assert [r["word"] for r in ranking] == ["7.", "=", "4", "+", "3"]
+
     def test_loo_rankings_from_file(self, cli, tmp_path):
         path = tmp_path / "loo_results.json"
         path.write_text(

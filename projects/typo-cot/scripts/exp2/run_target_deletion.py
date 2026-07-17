@@ -90,13 +90,19 @@ def filter_pending(entries: list[dict], existing_records: list[dict]) -> list[di
 
 
 def load_rc_ranking(
-    run_dir: Path, sample_id: str, entry: dict, rc_source: str
+    run_dir: Path,
+    sample_id: str,
+    entry: dict,
+    rc_source: str,
+    full_text: str | None = None,
 ) -> list[dict] | None:
     """R_C ランキングをロードする.
 
     rc_source:
         "cot_pt": importance_scores/{sid}_cot.pt の word_scores (CoT 領域、完全ランキング)
         "results": results.json の cot_top_k_words (上位のみ)
+    full_text: prompt + generated_text。word_scores が結合不良のアーカイブ
+        (Mistral) では token_scores から語ランキングを再構築するのに使う。
     本番は実験4の fixed-target 版ランキング (上流依存) — ディレクトリ差し替えで対応。
     """
     if rc_source == "results":
@@ -110,7 +116,7 @@ def load_rc_ranking(
         if not path.exists():
             return None
         data = torch.load(path, map_location="cpu", weights_only=False)
-        return rc_word_ranking_from_cot_pt(data)
+        return rc_word_ranking_from_cot_pt(data, full_text=full_text)
     raise ValueError(f"unknown rc_source: {rc_source!r}")
 
 
@@ -322,8 +328,14 @@ def main() -> None:
             chunk = pending[i : i + args.save_every]
             prompts = [build_prompt(template, args.benchmark, e) for e in chunk]
             rc_rankings = [
-                load_rc_ranking(run_dir, e["sample_id"], e, args.rc_source)
-                for e in chunk
+                load_rc_ranking(
+                    run_dir,
+                    e["sample_id"],
+                    e,
+                    args.rc_source,
+                    full_text=p + e["generated_text"],
+                )
+                for e, p in zip(chunk, prompts, strict=True)
             ]
             loo_rankings: list[list[dict] | None] = []
             if need_loo:

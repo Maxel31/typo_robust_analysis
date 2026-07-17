@@ -364,16 +364,139 @@ def score_sample_loo(
 # ============================================================
 
 
-def rc_word_ranking_from_cot_pt(data: dict) -> list[dict]:
+# tokens_to_words (lrp/analyzer.py) と同じ特殊トークン + 主要モデルの BOS/EOS
+_SPECIAL_TOKENS = frozenset(
+    {"<s>", "</s>", "<pad>", "<unk>", "<bos>", "<eos>", "[CLS]", "[SEP]", "[PAD]"}
+)
+_BYTE_TOKEN_RE = re.compile(r"<0x([0-9A-Fa-f]{2})>")
+
+
+def word_scores_degenerate(data: dict) -> bool:
+    """`_cot.pt` の word_scores がトークン結合不良で潰れているかを判定する.
+
+    アーカイブ生成側 (lrp/analyzer.py tokens_to_words) は先頭スペース / "▁" で
+    語境界を検出するが、Mistral アーカイブの token_scores は空白マーカーの無い
+    トークン文字列のため全トークンが1語に結合されている (2026-07 本番で確認)。
+    実語が 16 トークンを超えることは無いため、それを閾値に検出する。
+    """
+    word_scores = data.get("word_scores") or []
+    if not word_scores:
+        return bool(data.get("token_scores"))
+    max_span = max(len(w.get("token_indices") or []) for w in word_scores)
+    return max_span >= 16
+
+
+def align_tokens_to_text(
+    tokens: list[str], text: str
+) -> list[tuple[int, int] | None] | None:
+    """トークン文字列列を text に貪欲整合し、各トークンの文字スパンを返す.
+
+    - 特殊トークン (<s> 等) は None
+    - `<0xNN>` バイトトークンは該当文字に展開 (ASCII のみ)、"▁" はスペース扱い
+    - トークンが空白マーカーを持たない場合 (Mistral アーカイブ) は text 側の
+      空白をスキップして照合する
+    - 整合に失敗したら None (呼び出し側でフォールバック)
+    """
+    spans: list[tuple[int, int] | None] = []
+    pos = 0
+    for tok in tokens:
+        if tok in _SPECIAL_TOKENS:
+            spans.append(None)
+            continue
+        m = _BYTE_TOKEN_RE.fullmatch(tok)
+        piece = chr(int(m.group(1), 16)) if m else tok.replace("▁", " ")
+        if text.startswith(piece, pos):
+            spans.append((pos, pos + len(piece)))
+            pos += len(piece)
+            continue
+        j = pos
+        while j < len(text) and text[j].isspace():
+            j += 1
+        if text.startswith(piece, j):
+            spans.append((j, j + len(piece)))
+            pos = j + len(piece)
+            continue
+        stripped = piece.lstrip()
+        if stripped and text.startswith(stripped, j):
+            spans.append((j, j + len(stripped)))
+            pos = j + len(stripped)
+            continue
+        if not stripped:
+            # 空白のみのトークンが text と一致しない場合は幅0で読み飛ばす
+            spans.append((pos, pos))
+            continue
+        return None
+    return spans
+
+
+def rc_word_ranking_from_token_scores(
+    data: dict, full_text: str
+) -> list[dict] | None:
+    """token_scores を full_text に整合し、CoT 領域の語ランキングを再構築する.
+
+    word_scores が結合不良のアーカイブ (Mistral) 用のフォールバック。語の単位は
+    full_text の空白区切りチャンク (extract_word_types と同じ規約)、スコアは
+    チャンクに重なる CoT 領域内トークンの relevance 合計 (tokens_to_words の
+    合計規約 + cot_filtered_relevance の領域ゼロ埋めと同値)。
+
+    Args:
+        data: torch.load した `_cot.pt` 辞書 (token_scores: [(token, score)])
+        full_text: トークン列が表すテキスト (prompt + generated_text)
+
+    Returns:
+        [{"word","score"}] スコア降順。整合失敗時は None。
+    """
+    token_scores = data.get("token_scores") or []
+    tokens = [t for t, _ in token_scores]
+    scores = [float(s) for _, s in token_scores]
+    spans = align_tokens_to_text(tokens, full_text)
+    if spans is None:
+        return None
+    start = data.get("cot_token_start")
+    end = data.get("cot_token_end")
+    aligned = [(i, sp) for i, sp in enumerate(spans) if sp is not None]
+    ranking = []
+    ti = 0
+    for m in re.finditer(r"\S+", full_text):
+        s, e = m.span()
+        while ti < len(aligned) and aligned[ti][1][1] <= s:
+            ti += 1
+        indices = []
+        tj = ti
+        while tj < len(aligned) and aligned[tj][1][0] < e:
+            if aligned[tj][1][1] > s:
+                indices.append(aligned[tj][0])
+            tj += 1
+        if not indices:
+            continue
+        if start is not None and end is not None:
+            indices = [i for i in indices if start <= i <= end]
+            if not indices:
+                continue
+        ranking.append(
+            {"word": m.group(0), "score": float(sum(scores[i] for i in indices))}
+        )
+    ranking.sort(key=lambda d: d["score"], reverse=True)
+    return ranking
+
+
+def rc_word_ranking_from_cot_pt(data: dict, full_text: str | None = None) -> list[dict]:
     """`{id}_cot.pt` の word_scores から CoT 領域の語ランキングを抽出する.
 
     Args:
         data: torch.load した `_cot.pt` 辞書
             (word_scores: [{"word","score","token_indices"}], cot_token_start/end)
+        full_text: トークン列が表すテキスト (prompt + generated_text)。指定時、
+            word_scores が結合不良 (Mistral アーカイブ) なら token_scores から
+            語ランキングを再構築する。
 
     Returns:
         [{"word": str, "score": float}, ...] スコア降順（CoT 領域内のみ）
     """
+    if full_text is not None and word_scores_degenerate(data):
+        rebuilt = rc_word_ranking_from_token_scores(data, full_text)
+        if rebuilt is not None:
+            return rebuilt
     start = data.get("cot_token_start")
     end = data.get("cot_token_end")
     ranking = []

@@ -199,6 +199,10 @@ def main() -> None:
     with open(out_dir / "config.json", "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
 
+    from typo_cot.models.prompts import create_prompt_template
+
+    template = create_prompt_template(args.benchmark)
+
     # load_rc_ranking は run_target_deletion.py と同一規約 (スクリプト間 import 不可のため再掲)
     def load_rc(sample_id: str, entry: dict) -> list[dict] | None:
         if args.rc_source == "results":
@@ -210,13 +214,17 @@ def main() -> None:
         path = baseline_dir / "importance_scores" / f"{sample_id}_cot.pt"
         if not path.exists():
             return None
+        # word_scores 結合不良 (Mistral アーカイブ) は token_scores から再構築
+        full_text = build_prompt(template, args.benchmark, entry) + entry.get(
+            "generated_text", ""
+        )
         return rc_word_ranking_from_cot_pt(
-            torch.load(path, map_location="cpu", weights_only=False)
+            torch.load(path, map_location="cpu", weights_only=False),
+            full_text=full_text,
         )
 
     records = list(existing)
     if pending:
-        from typo_cot.models.prompts import create_prompt_template
         from typo_cot.models.wrapper import create_model_wrapper
 
         gpu_id = resolve_gpu_id(args.gpu_id, os.environ)
@@ -224,7 +232,6 @@ def main() -> None:
         wrapper = create_model_wrapper(
             model_name=args.model, gpu_id=gpu_id, wrap_for_lxt=False
         )
-        template = create_prompt_template(args.benchmark)
         extractor = create_extractor(args.benchmark)
 
         t0 = time.time()
