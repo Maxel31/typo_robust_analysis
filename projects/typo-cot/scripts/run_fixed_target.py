@@ -69,6 +69,26 @@ def parse_args() -> argparse.Namespace:
         help="flip (splice) 事例のみ再計算する (非flip は default と同値)",
     )
     parser.add_argument(
+        "--mode", choices=["fixed", "default"], default="fixed",
+        help=(
+            "fixed: spliced_text で R_C^fixed を計算 (従来動作)。"
+            "default: 摂動テキストのまま R_C^default を回答ターゲット規約で再計算 "
+            "(MATH のように既存 default .pt がフォールバック規約 [回答スパン未検出] "
+            "の場合に、fixed と同一ターゲット規約の default 側を作る)"
+        ),
+    )
+    parser.add_argument(
+        "--reuse_from", type=str, default=None,
+        help=(
+            "--flip_only 時の非flip .pt 再利用元 run ディレクトリ "
+            "(デフォルト: --perturbed_dir。MATH では default 再計算ディレクトリを指定)"
+        ),
+    )
+    parser.add_argument(
+        "--skip_existing", action="store_true",
+        help="出力先に {sid}_cot.pt が既にあるサンプルは GPU 計算をスキップ (再開用)",
+    )
+    parser.add_argument(
         "--compare_dir", type=str, default=None,
         help="参照 fixed_target ディレクトリ (同一サンプルの _cot.pt と比較)",
     )
@@ -96,6 +116,11 @@ def main() -> None:
         with open(args.sample_ids_file, encoding="utf-8") as f:
             sample_ids = (sample_ids or set()) | set(json.load(f))
 
+    if args.mode == "default" and args.flip_only:
+        raise SystemExit("--mode default では全 processed サンプルを計算するため "
+                         "--flip_only は指定できません")
+    reuse_dir = Path(args.reuse_from) if args.reuse_from else perturbed_dir
+
     plans, stats = plan_run(
         baseline_results, perturbed_results, limit=args.limit, sample_ids=sample_ids
     )
@@ -115,9 +140,10 @@ def main() -> None:
         "num_perturbations", "unknown"
     )
     model_short = args.model.split("/")[-1]
+    mode_suffix = "fixed_target" if args.mode == "fixed" else "default_recomputed"
     out_dir = (
         Path(args.output_dir)
-        / f"{model_short}_{args.benchmark}_k{num_perturbations}_fixed_target"
+        / f"{model_short}_{args.benchmark}_k{num_perturbations}_{mode_suffix}"
     )
     scores_dir = out_dir / "importance_scores"
     scores_dir.mkdir(parents=True, exist_ok=True)
@@ -128,7 +154,7 @@ def main() -> None:
     config["timestamp"] = datetime.now().isoformat()
     if "perturbed_metadata" in config:
         config["perturbed_metadata"] = dict(config["perturbed_metadata"])
-        config["perturbed_metadata"]["perturbation_mode"] = "fixed_target"
+        config["perturbed_metadata"]["perturbation_mode"] = mode_suffix
     with open(out_dir / "config.json", "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
 
@@ -157,9 +183,19 @@ def main() -> None:
     for idx, plan in enumerate(plans):
         sid = plan.sample_id
         entry = perturbed_by_id[sid]
+        # 帰属対象テキスト: fixed=spliced_text / default=摂動テキストそのまま
+        target_text = (
+            plan.spliced_text if args.mode == "fixed" else entry["generated_text"]
+        )
+        if args.skip_existing and (scores_dir / f"{sid}_cot.pt").exists():
+            computed[sid] = fixed_target_entry(entry, plan)
+            computed[sid]["fixed_target"]["attribution_target"] = (
+                "baseline" if args.mode == "fixed" else "generated"
+            )
+            continue
         try:
             prompt = build_prompt(template, args.benchmark, entry)
-            cot_data = analyze_cot_fixed(analyzer, prompt, plan.spliced_text)
+            cot_data = analyze_cot_fixed(analyzer, prompt, target_text)
         except Exception as exc:  # noqa: BLE001
             stats["errors"] += 1
             stats["processed"] -= 1
@@ -171,6 +207,7 @@ def main() -> None:
         cot_data["fixed_target_baseline_answer"] = plan.baseline_answer
         cot_data["fixed_target_perturbed_answer"] = plan.perturbed_answer
         cot_data["fixed_target_spliced"] = plan.spliced
+        cot_data["fixed_target_mode"] = args.mode
         torch.save(cot_data, scores_dir / f"{sid}_cot.pt")
 
         # 質問側 .pt は摂動 run と同一 (固定ターゲット化の影響なし) → シンボリックリンク
@@ -180,6 +217,9 @@ def main() -> None:
             dst_q.symlink_to(src_q)
 
         computed[sid] = fixed_target_entry(entry, plan)
+        computed[sid]["fixed_target"]["attribution_target"] = (
+            "baseline" if args.mode == "fixed" else "generated"
+        )
 
         # スモーク検証 (a): rebuttal 参照との比較
         if ref_dir is not None and run_io.cot_scores_path(ref_dir, sid).exists():
@@ -188,10 +228,13 @@ def main() -> None:
             rep["kind"] = "vs_reference_fixed"
             rep["spliced"] = plan.spliced
             comparisons[sid] = rep
-        # スモーク検証 (b): 非flip事例は default _cot.pt と同値のはず
+        # スモーク検証 (b): 摂動 run の default _cot.pt との比較。
+        # fixed モード: 非flip は定義上同値のはず (回答スパン規約が同じ場合)。
+        # default モード: 全サンプルで比較し、ターゲット規約変更
+        # (フォールバック → 回答トークン) の影響を定量化する診断。
         if (
             args.compare_default
-            and not plan.spliced
+            and (args.mode == "default" or not plan.spliced)
             and run_io.cot_scores_path(perturbed_dir, sid).exists()
         ):
             ref = run_io.load_cot_scores(perturbed_dir, sid)
@@ -206,10 +249,12 @@ def main() -> None:
 
     # 非flip の再利用 (--flip_only): default 側 .pt を symlink し、エントリを合流。
     # これで出力ディレクトリが analyzer にそのまま掛けられる完全な run になる。
+    # 再利用元は --reuse_from (未指定なら摂動 run)。MATH では default 再計算
+    # ディレクトリを指定する (既存摂動 .pt はフォールバック規約のため)。
     nonflip_missing_cot = []
     nonflip_ids = {p.sample_id for p in nonflip_plans}
     for plan in nonflip_plans:
-        linked = run_io.link_reused_scores(perturbed_dir, scores_dir, plan.sample_id)
+        linked = run_io.link_reused_scores(reuse_dir, scores_dir, plan.sample_id)
         if not linked["cot"]:
             nonflip_missing_cot.append(plan.sample_id)
             stats["skipped_ids"][plan.sample_id] = "nonflip_default_cot_pt_missing"
@@ -221,13 +266,21 @@ def main() -> None:
     stats["nonflip_missing_default_cot"] = len(nonflip_missing_cot)
     missing_set = set(nonflip_missing_cot)
 
+    stats["mode"] = args.mode
+    if args.flip_only:
+        stats["reuse_from"] = str(reuse_dir)
+
     out_results = []
     for plan in all_plans:
         sid = plan.sample_id
         if sid in computed:
             out_results.append(computed[sid])
         elif sid in nonflip_ids and sid not in missing_set:
-            out_results.append(fixed_target_entry(perturbed_by_id[sid], plan))
+            reused = fixed_target_entry(perturbed_by_id[sid], plan)
+            reused["fixed_target"]["attribution_target"] = (
+                "baseline" if args.mode == "fixed" else "generated"
+            )
+            out_results.append(reused)
 
     with open(out_dir / "results.json", "w", encoding="utf-8") as f:
         json.dump(out_results, f, ensure_ascii=False, indent=2)
