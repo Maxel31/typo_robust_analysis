@@ -154,3 +154,76 @@ commonsense_qa 1221; 計 7,962/モデル)。
 
 - LLM 校正の「同一モデル版は参考掲載」(評価モデル自身で校正) の実施範囲。
 - neural 段の縮退弁 (GSM8K/MMLU のみ) を引くかどうか。
+
+
+## within-run byte-identical 検証 (2026-07-19): flip 0% の正式測定
+
+### 目的と方法
+
+rebuttal の鍵となる主張「表層が byte-identical に復元されれば flip 0%
+(= 被害は表層起点)」の正式検証。本番評価生成はアーカイブ baseline との
+クロスラン比較で再現性ノイズが乗るため、clean 入力と校正後入力を
+**同一ラン・同一バッチ** (greedy, temperature=0.0, max_new_tokens=512,
+2 ペア = 4 行/バッチ、clean/校正後は必ず同一バッチ) で生成して測定した。
+
+- 実装: `src/typo_cot/defense/within_run.py` (TDD:
+  `tests/test_defense_within_run.py`) + `scripts/exp7/within_run_flip.py`
+  (--scan / 生成) + `scripts/exp7/prod/run_within_run_queue.sh`
+  (1 シャード = 1 設定 × 1 校正器、冪等) +
+  `scripts/exp7/aggregate_within_run.py` (集計とクロスラン対比)。
+- byte-identical 判定は **プロンプト厳密一致** (Phase 3 と同一構築規約で
+  clean/校正後プロンプトを構築し文字列比較) を正とする。
+- スモーク: gemma-3-4b-it×gsm8k×pyspell の 8 ペアで flip 0/8
+  (`results/smoke/exp7_within_run/`)。
+
+### スキャン (CPU、75 設定)
+
+byte-identical 総数 45,641 ペア
+(`results/prod/exp7/within_run/byte_identical_index.json`)。
+率は spellfix 10.5〜32.5% / llmfix 27.8〜64.4% / neuralfix 36.6〜83.8%。
+
+**発見**: restoration_stats の fully_restored フラグ (空白正規化の全文一致)
+とプロンプト厳密一致の不一致が neural/LLM 校正器で最大 234 件/設定
+(方向はすべて「フラグ=True だが byte 非一致」)。原因は校正器による連続
+空白の正規化 (例: gsm8k_00002 "house.␣␣He" → "house.␣He")。厳密
+byte-identical 集合は fully_restored の部分集合であり、within-run 検証は
+厳密集合で実施した。pyspell は全設定で不一致 0 (位置置換のみのため)。
+
+### M3×B2 within-run 結果 (18 設定、13,438 ペア)
+
+| モデル | ベンチ | 校正器 | byte-identical n/N | within-run flip | クロスラン flip (参考) |
+|---|---|---|---|---|---|
+| Llama-3.2-3B-Instruct | gsm8k | Qwen2.5-7B-Instruct | 491/1319 | 0/491 (0.0%) | 51/491 (10.4%) |
+| Llama-3.2-3B-Instruct | gsm8k | T5-large-spell | 614/1319 | 0/614 (0.0%) | 71/614 (11.6%) |
+| Llama-3.2-3B-Instruct | gsm8k | pyspell | 196/1319 | 0/196 (0.0%) | 18/196 (9.2%) |
+| Llama-3.2-3B-Instruct | mmlu | Qwen2.5-7B-Instruct | 1322/2850 | 0/1322 (0.0%) | 148/1322 (11.2%) |
+| Llama-3.2-3B-Instruct | mmlu | T5-large-spell | 1413/2850 | 0/1413 (0.0%) | 99/1413 (7.0%) |
+| Llama-3.2-3B-Instruct | mmlu | pyspell | 511/2850 | 0/511 (0.0%) | 53/511 (10.4%) |
+| Mistral-7B-Instruct-v0.3 | gsm8k | Qwen2.5-7B-Instruct | 517/1319 | 0/517 (0.0%) | 80/517 (15.5%) |
+| Mistral-7B-Instruct-v0.3 | gsm8k | T5-large-spell | 679/1319 | 0/679 (0.0%) | 105/679 (15.5%) |
+| Mistral-7B-Instruct-v0.3 | gsm8k | pyspell | 138/1319 | 0/138 (0.0%) | 24/138 (17.4%) |
+| Mistral-7B-Instruct-v0.3 | mmlu | Qwen2.5-7B-Instruct | 1207/2850 | 0/1207 (0.0%) | 122/1207 (10.1%) |
+| Mistral-7B-Instruct-v0.3 | mmlu | T5-large-spell | 1422/2850 | 0/1422 (0.0%) | 101/1422 (7.1%) |
+| Mistral-7B-Instruct-v0.3 | mmlu | pyspell | 393/2850 | 0/393 (0.0%) | 29/393 (7.4%) |
+| gemma-3-4b-it | gsm8k | Qwen2.5-7B-Instruct | 397/1319 | 0/397 (0.0%) | 14/397 (3.5%) |
+| gemma-3-4b-it | gsm8k | T5-large-spell | 577/1319 | 0/577 (0.0%) | 24/577 (4.2%) |
+| gemma-3-4b-it | gsm8k | pyspell | 185/1319 | 0/185 (0.0%) | 9/185 (4.9%) |
+| gemma-3-4b-it | mmlu | Qwen2.5-7B-Instruct | 1317/2850 | 0/1317 (0.0%) | 139/1317 (10.6%) |
+| gemma-3-4b-it | mmlu | T5-large-spell | 1475/2850 | 0/1475 (0.0%) | 139/1475 (9.4%) |
+| gemma-3-4b-it | mmlu | pyspell | 584/2850 | 0/584 (0.0%) | 55/584 (9.4%) |
+
+合計: within-run flip 0/13438 (0.00%) vs クロスラン参考 1281/13438 (9.53%)
+
+
+- **within-run flip 0/13,438 (0.00%)**。全 18 設定で 0。さらに全ペアで
+  生成テキスト自体が byte 一致 (n_gen_identical = n)、生成失敗 0。
+- 同一サンプル集合のクロスラン flip (本番生成 vs アーカイブ baseline) は
+  **9.53% (1,281/13,438)**。全 75 設定プールでは 9.56% (4,362/45,641;
+  spellfix 9.38% / neuralfix 8.80% / llmfix 10.60%)。実験指示の参考値
+  7.6% は部分集合での見積もりで、本測定は同一集合で算出した値を正とする。
+- 結論: 本番評価生成で byte-identical 集合に観測される「flip」は全量が
+  クロスラン再現性ノイズであり、byte-identical 復元 → flip 0% が
+  within-run で厳密に成立 (greedy の理論どおり)。flip 事例の精査対象なし。
+- 残り 57 設定 (32,203 ペア) は `run_within_run_queue.sh rest` で実行中
+  (冪等)。完了後に `aggregate_within_run.py` で再集計すれば全 75 設定の
+  表になる (results/ は gitignore のため表は本ノートが正)。
