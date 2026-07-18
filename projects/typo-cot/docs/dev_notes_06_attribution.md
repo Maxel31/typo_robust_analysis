@@ -182,6 +182,29 @@ R_C の `word_scores` は改行をまたいで語が結合される（例 "dolla
   数値のスコアを希釈する（調査メモの「冗長性バイアス」がそのまま観測される）。
   論文では案A 併記でこの差自体を分析対象にできる。
 
+## 本番実行 (2026-07-18, 実験6-(iv) LOO ランキング本番)
+
+スコープ: M3 (Gemma-3-4B-it / Llama-3.2-3B-Instruct / Mistral-7B-Instruct-v0.3)
+× B2 (GSM8K / MMLU) × {clean, LXT-4 (k4_importance)}。
+主定義 = occurrence (案B)、感度分析 = type (案A、Gemma-3-4B × B2 のみ)。
+
+- サンプル選定: `run_loo_scoring.py --seed 42 --n 300 --clean_run_dir <baseline>`
+  で clean 正解サンプルから決定論的に 300 件 (`select_sample_ids`)。
+  摂動 run も同じ選定 (baseline を `--clean_run_dir` に指定) で同一 id 集合。
+- Mistral R_C: アーカイブ `_cot.pt` の word_scores は全文1語に結合する既知バグ
+  (4条件×8サンプルの実査で 32/32 degenerate)。exp/02-target-deletion コミット
+  fef3958 の token_scores 貪欲整列ローダーを移植し、`load_rc_ranking` が
+  `full_text = prompt + generated_text` を配線して自動再構築。
+  再構築発動数は summary.json の `stats.rc_degenerate` に記録。
+- キュー: `scripts/run_loo_production_queue.sh` (16シャード、summary.json で冪等、
+  mkdir claim、進捗 JSON は results/loo/queue/progress/)。GPU は
+  tmp/gpu-locks/run_with_gpu.sh 経由 (GPU 3-6、他系統とロック共有)。
+- 集計: `scripts/analyze_loo_rankings.py` — LOO 版 CoT:Jaccard@10
+  (clean-LOO vs LXT4-LOO、expand_multiword_entries 適用パス) と
+  ρ(J_LOO@10|R) (R = アーカイブ full_results.json の cot_rouge_l.f1、
+  参照値 ρ(J_RC@10|R) を同一結合行 + アーカイブ全数で併記)。
+  出力: results/loo/aggregate_loo_{occ,type}.json。
+
 ### コスト再見積り（本番 M3×B2, n≈200〜300）
 
 事前想定「出現ごと削除で forward 数が最大2〜3割増」は**実測で否定**:
