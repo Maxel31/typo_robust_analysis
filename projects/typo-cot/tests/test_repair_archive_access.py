@@ -143,3 +143,87 @@ class TestLoadConditionRecords:
         records = load_condition_records(root, MODEL, BENCH, "random4")
         assert len(records) == 2
         assert records[0].condition == "random4"
+
+
+class TestOverrideRoots:
+    """拡張シャード (Qwen B5 / MATH-500) 用の複数ルート解決.
+
+    exp-10-scope worktree に生成された baseline/perturbed/datasets を、
+    アーカイブ (jsai2026_root) より優先して参照する。ファイル単位で
+    解決するため、Qwen のように baseline のみアーカイブ・摂動側のみ
+    exp-10 という混在構成を単一の呼び出しで扱える。
+    """
+
+    def _clone_tree(self, src_root: Path, dst_root: Path, parts: list[str]) -> None:
+        src = src_root.joinpath(*parts)
+        dst = dst_root.joinpath(*parts)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(src.read_text())
+
+    def test_file_level_fallback_across_roots(
+        self, mini_archive: Path, tmp_path: Path
+    ) -> None:
+        """baseline はアーカイブ、摂動側+データセットは override 側 (Qwen 構成)."""
+        override = tmp_path / "wt10"
+        # 摂動側とデータセットを override 側へ移動 (アーカイブ側から削除)
+        for parts in (
+            ["outputs", "perturbed", f"{MODEL}_{BENCH}_k4_importance", "results.json"],
+            [
+                "datasets",
+                "perturbed",
+                f"{MODEL}_{BENCH}_k4_with_choices",
+                "perturbed_dataset.json",
+            ],
+        ):
+            self._clone_tree(mini_archive, override, parts)
+            mini_archive.joinpath(*parts).unlink()
+
+        records = load_condition_records(
+            mini_archive, MODEL, BENCH, "lxt4", override_roots=[override]
+        )
+        assert len(records) == 2
+        assert records[0].sample_id == "gsm8k_00000"
+
+    def test_override_root_takes_precedence(
+        self, mini_archive: Path, tmp_path: Path
+    ) -> None:
+        """両ルートに存在する場合は override 側を採用する.
+
+        (Qwen の k4_with_choices はアーカイブと exp-10 で内容が異なり、
+        WT10 摂動生成に使われたのは exp-10 側のため)
+        """
+        override = tmp_path / "wt10"
+        ds_parts = [
+            "datasets",
+            "perturbed",
+            f"{MODEL}_{BENCH}_k4_with_choices",
+            "perturbed_dataset.json",
+        ]
+        self._clone_tree(mini_archive, override, ds_parts)
+        # override 側のデータセットは 1 サンプルのみに書き換える
+        ds = json.loads(override.joinpath(*ds_parts).read_text())
+        ds["samples"] = ds["samples"][:1]
+        override.joinpath(*ds_parts).write_text(json.dumps(ds))
+
+        records = load_condition_records(
+            mini_archive, MODEL, BENCH, "lxt4", override_roots=[override]
+        )
+        assert len(records) == 1  # override 側データセット (1 サンプル) が優先
+
+    def test_no_override_keeps_existing_behavior(self, mini_archive: Path) -> None:
+        records = load_condition_records(mini_archive, MODEL, BENCH, "lxt4")
+        assert len(records) == 2
+
+    def test_missing_everywhere_raises_with_tried_paths(
+        self, mini_archive: Path, tmp_path: Path
+    ) -> None:
+        override = tmp_path / "wt10"
+        base = mini_archive / "outputs" / "baseline" / f"{MODEL}_{BENCH}" / "results.json"
+        base.unlink()
+        with pytest.raises(FileNotFoundError) as exc:
+            load_condition_records(
+                mini_archive, MODEL, BENCH, "lxt4", override_roots=[override]
+            )
+        msg = str(exc.value)
+        assert str(override) in msg
+        assert str(mini_archive) in msg
