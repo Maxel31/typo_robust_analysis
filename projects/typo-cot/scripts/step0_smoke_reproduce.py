@@ -41,6 +41,8 @@ from typo_cot.analysis.reproduce import (  # noqa: E402
     partial_correlation_flip,
 )
 from typo_cot.data.archive_reader import (  # noqa: E402
+    V1_BENCHMARKS,
+    V1_MODELS,
     baseline_dir,
     load_analysis_partial_correlations,
     load_paths_config,
@@ -49,8 +51,8 @@ from typo_cot.data.archive_reader import (  # noqa: E402
 )
 from typo_cot.data.master_builder import derive_union_exclusion  # noqa: E402
 from typo_cot.data.master_table import (  # noqa: E402
-    CONDITION_TO_ARCHIVE_SUFFIX,
     CONDITIONS,
+    V1_UNION_CONDITIONS,
     read_master_table,
 )
 from typo_cot.registry import load_registry  # noqa: E402
@@ -116,13 +118,14 @@ def check_accuracy(
                     ref is not None and abs(float(ours) - float(ref)) <= ATOL
                 ),
             }
-            # figures/table5.csv とも照合 (セルが存在する場合のみ)
-            if figures_table5 is not None:
+            # figures/table5.csv とも照合 (セルが存在する場合のみ。
+            # anti_lxt4 は table5 に列が無いので summary.json のみ)
+            col = _TABLE5_COL.get(cond)
+            if figures_table5 is not None and col is not None:
                 t5row = figures_table5[
                     (figures_table5["model"] == model)
                     & (figures_table5["benchmark"] == bench)
                 ]
-                col = _TABLE5_COL[cond]
                 if not t5row.empty and col in t5row.columns:
                     val = t5row.iloc[0][col]
                     if pd.notna(val):
@@ -201,8 +204,10 @@ def check_span_exclusion(master: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]
         clean_ok = dict(
             zip(clean["sample_id"], clean["span_extract_ok"].astype(bool), strict=True)
         )
+        # union 除外は旧 analyzer と同じ v1 の 5 摂動条件のみ
+        # (anti_lxt4 は含めない: dev_notes_step0.md)
         cond_ok: dict[str, dict[str, bool]] = {}
-        for cond in CONDITION_TO_ARCHIVE_SUFFIX:
+        for cond in V1_UNION_CONDITIONS:
             sub = group[group["condition"] == cond]
             if sub.empty:
                 continue
@@ -246,8 +251,10 @@ def main() -> None:
     figures_root = Path(paths.get("archive_figures", outputs_root / "figures"))
     registry = load_registry(args.registry)
 
-    models = args.models or list(registry["models"].keys())
-    benchmarks = args.benchmarks or list(registry["benchmarks"])
+    # 照合先 (summary.json / table5.csv / analysis) は v1 アーカイブの成果物
+    # のみのため、既定は v1 の 25 設定に固定する (wave2 は照合対象外)
+    models = args.models or list(V1_MODELS)
+    benchmarks = args.benchmarks or list(V1_BENCHMARKS)
 
     master = read_master_table(args.data, models=models, benchmarks=benchmarks)
     if master.empty:

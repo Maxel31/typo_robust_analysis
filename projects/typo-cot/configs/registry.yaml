@@ -17,12 +17,21 @@ models:
     hf_id: google/gemma-3-1b-it
   gemma-3-4b-it:
     hf_id: google/gemma-3-4b-it
+  # wave2 (2026-07-18 取込): スコープ拡張モデル (exp-10-scope 生成)
+  Qwen2.5-7B-Instruct:
+    hf_id: Qwen/Qwen2.5-7B-Instruct
+  DeepSeek-R1-Distill-Qwen-7B:
+    hf_id: deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+    # zero-shot chat template (<think> 形式)。max_new_tokens は
+    # gsm8k/mmlu 4096, math 8192 (reasoning 系のため decoding 凍結値の例外)
+    prompt_style: zero_shot_chat_template
 benchmarks:
 - gsm8k
 - mmlu
 - mmlu_pro
 - arc
 - commonsense_qa
+- math
 conditions:
   clean:
     perturbation_mode: null
@@ -41,6 +50,9 @@ conditions:
     num_perturbations: 8
   random4:
     perturbation_mode: random
+    num_perturbations: 4
+  anti_lxt4:
+    perturbation_mode: bottom_k
     num_perturbations: 4
 perturbation_types:
 - proximity
@@ -62,6 +74,19 @@ prompts:
   commonsense_qa:
     prompt_id: commonsense_qa_cot_v1
     sha256: 547b388a2530d03448e147ae576e09afa8488b4863eba6f2933c50ec7cea0908
+  math:
+    prompt_id: math_cot_v1
+    sha256: 0a1d8782ffadbbb3c88a717d6936de0f54c8ee8c02280275d787e9b078bae310
+# DeepSeek-R1-Distill 系のゼロショット chat template プロンプト (<think> 形式)。
+# テンプレートは tokenizer の chat template 依存のため sha256 は持たない
+# (プロベナンスは exp-10-scope の outputs/*/config.json)。
+reasoning_prompts:
+  gsm8k:
+    prompt_id: gsm8k_r1_think_v1
+  math:
+    prompt_id: math_r1_think_v1
+  mmlu:
+    prompt_id: mmlu_r1_think_v1
 metrics:
   cot_rouge_l_f1: main
   cot_jaccard_top10: main

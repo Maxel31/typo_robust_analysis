@@ -96,7 +96,18 @@ def build_condition_df(
     for r in results:
         sample_id = r["sample_id"]
         generated_text = r.get("generated_text", "") or ""
-        span = extractor.extract_strict(generated_text).strip()
+        # R1 蒸留 (<think> 形式, exp-10-scope run_inference_reasoning.py) の
+        # レコードは cot_text (= think 部) / answer_text (= </think> 後の読み出し部)
+        # を持つ。CoT 列は think 部、strict span は読み出し部からのみ抽出する
+        # (切断で </think> が無い場合 answer_text は空 → strict 失敗)。
+        is_think_format = "cot_text" in r
+        if is_think_format:
+            cot_text = r.get("cot_text", "") or ""
+            span_source = r.get("answer_text", "") or ""
+        else:
+            cot_text = generated_text
+            span_source = generated_text
+        span = extractor.extract_strict(span_source).strip()
         m = metrics.get(sample_id, {}) if not is_clean else {}
         row: dict[str, Any] = {
             "sample_id": sample_id,
@@ -104,7 +115,7 @@ def build_condition_df(
             "benchmark": benchmark,
             "condition": condition,
             "question_text": r.get("question"),
-            "cot_text": generated_text,
+            "cot_text": cot_text,
             "answer_span": span if span else None,
             "answer_pred": r.get("extracted_answer"),
             "answer_gold": r.get("correct_answer"),

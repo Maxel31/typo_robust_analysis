@@ -18,8 +18,11 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# 生成条件 (凍結). lxt{k} = AttnLRP importance top-k 摂動, random4 = ランダム4語摂動.
-CONDITIONS: tuple[str, ...] = ("clean", "lxt1", "lxt2", "lxt4", "lxt8", "random4")
+# 生成条件 (凍結). lxt{k} = AttnLRP importance top-k 摂動, random4 = ランダム4語摂動,
+# anti_lxt4 = bottom-k (Anti-LXT) 4語摂動 (2026-07-18 追加: span失敗率150セル表用).
+CONDITIONS: tuple[str, ...] = (
+    "clean", "lxt1", "lxt2", "lxt4", "lxt8", "random4", "anti_lxt4"
+)
 
 # アーカイブ outputs/perturbed/{model}_{bench}_{suffix} / outputs/analysis/.../{suffix} との対応.
 CONDITION_TO_ARCHIVE_SUFFIX: dict[str, str] = {
@@ -28,7 +31,13 @@ CONDITION_TO_ARCHIVE_SUFFIX: dict[str, str] = {
     "lxt4": "k4_importance",
     "lxt8": "k8_importance",
     "random4": "k4_random",
+    "anti_lxt4": "k4_bottom_k",
 }
+
+# 旧 analyzer の union 除外 (compute_unified_exclusion) が対象とした v1 の
+# 5 摂動条件。bottom_k (anti_lxt4) は含まれない (dev_notes_step0.md)。
+# span 除外の再導出はこの集合で行うこと (anti_lxt4 追加後も意味論を凍結)。
+V1_UNION_CONDITIONS: tuple[str, ...] = ("lxt1", "lxt2", "lxt4", "lxt8", "random4")
 
 # 統合テーブルの列 (列名 -> pandas dtype).
 # object 列は文字列 (nullable), Float64/boolean/Int32 は pandas nullable dtype.

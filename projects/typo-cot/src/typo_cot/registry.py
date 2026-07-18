@@ -116,8 +116,14 @@ def build_registry_dict() -> dict[str, Any]:
             "Mistral-7B-Instruct-v0.3": {"hf_id": "mistralai/Mistral-7B-Instruct-v0.3"},
             "gemma-3-1b-it": {"hf_id": "google/gemma-3-1b-it"},
             "gemma-3-4b-it": {"hf_id": "google/gemma-3-4b-it"},
+            # wave2 (2026-07-18): スコープ拡張モデル
+            "Qwen2.5-7B-Instruct": {"hf_id": "Qwen/Qwen2.5-7B-Instruct"},
+            "DeepSeek-R1-Distill-Qwen-7B": {
+                "hf_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+                "prompt_style": "zero_shot_chat_template",
+            },
         },
-        "benchmarks": ["gsm8k", "mmlu", "mmlu_pro", "arc", "commonsense_qa"],
+        "benchmarks": ["gsm8k", "mmlu", "mmlu_pro", "arc", "commonsense_qa", "math"],
         "conditions": {
             "clean": {"perturbation_mode": None, "num_perturbations": 0},
             "lxt1": {"perturbation_mode": "importance", "num_perturbations": 1},
@@ -125,6 +131,7 @@ def build_registry_dict() -> dict[str, Any]:
             "lxt4": {"perturbation_mode": "importance", "num_perturbations": 4},
             "lxt8": {"perturbation_mode": "importance", "num_perturbations": 8},
             "random4": {"perturbation_mode": "random", "num_perturbations": 4},
+            "anti_lxt4": {"perturbation_mode": "bottom_k", "num_perturbations": 4},
         },
         "perturbation_types": ["proximity", "double_typing", "omission"],
         "prompts": {
@@ -132,7 +139,11 @@ def build_registry_dict() -> dict[str, Any]:
                 "prompt_id": f"{bench}_cot_v1",
                 "sha256": compute_prompt_hash(bench),
             }
-            for bench in ("gsm8k", "mmlu", "mmlu_pro", "arc", "commonsense_qa")
+            for bench in ("gsm8k", "mmlu", "mmlu_pro", "arc", "commonsense_qa", "math")
+        },
+        "reasoning_prompts": {
+            bench: {"prompt_id": f"{bench}_r1_think_v1"}
+            for bench in ("gsm8k", "math", "mmlu")
         },
         "metrics": dict(METRIC_SCOPE),
     }

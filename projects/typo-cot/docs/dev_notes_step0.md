@@ -41,8 +41,8 @@ Step 0 の設計判断はここに記録する。
 | lxt1/2/4/8 | k{1,2,4,8}_importance |
 | random4 | k4_random |
 
-bottom_k (k4_bottom_k) は仕様の条件列挙に含まれないため未収録
-(アーカイブには存在する。必要になれば条件を1つ追加するだけで収録可能)。
+bottom_k (k4_bottom_k) は当初仕様の条件列挙に含まれないため未収録だったが、
+**2026-07-18 の wave2 取込で `anti_lxt4` として収録済み** (下記 wave2 節)。
 **注意**: 旧 analyzer の union 除外は bottom_k を含まない 5 摂動条件で計算されて
 おり、本テーブルの `span_extract_ok` から除外集合を正確に再導出できる
 (gemma-3-4b-it × gsm8k で 178 件一致を確認)。
@@ -114,5 +114,67 @@ uv run python scripts/step0_build_master_table.py
 # 移行ハッシュ・行数の再検証
 uv run python scripts/step0_build_master_table.py --verify
 # スモーク (25 設定全照合)
+uv run python scripts/step0_smoke_reproduce.py
+```
+
+## wave2 取込 (2026-07-18): 新規生成 + Anti-LXT-4
+
+150 parquet (v1 25 設定 × 6 条件) に 67 セルを追加し **217 parquet / 342,653 行**
+とした。取込元と行数:
+
+| グループ | セル | 行数 | 取込元 |
+|---|---|---|---|
+| v1 (既存) | 150 | 238,855 | アーカイブ (変更なし、**再ビルドで 150/150 byte 一致**) |
+| anti_lxt4 (k4_bottom_k) | 25 | 39,805 | アーカイブ perturbed (analysis 無 → flip/CoT 指標 NA) |
+| MATH-500 再生成 (M5 × 3 条件) | 15 | 7,500 | exp-10-scope outputs |
+| Qwen2.5-7B (B5 × 3 + math × 3) | 18 | 33,936 | clean(B5) はアーカイブ、他は exp-10-scope |
+| R1 蒸留 (gsm8k/math/mmlu × 3 条件) | 9 | 22,557 | exp-10-scope outputs (<think> 形式) |
+
+実装 (TDD、RED→GREEN):
+
+- `master_table.py`: `CONDITIONS` に `anti_lxt4` (suffix `k4_bottom_k`) を追加。
+  union 除外の意味論は **`V1_UNION_CONDITIONS` (5 摂動条件) に凍結**
+  (旧 analyzer は bottom_k を含まないため。スモークの除外導出もこちらを使用)。
+- `master_builder.py`: R1 <think> 形式 (`cot_text` キーを持つレコード) は
+  `cot_text` 列 = think 部、strict span 抽出 = `answer_text` (</think> 後の
+  読み出し部) のみから行う。切断 (`has_think_close=false`) は answer_text 空 →
+  span 失敗として数える。標準レコードの経路は不変。
+- `archive_reader.py`: `build_cell_plan(paths, registry)` で 217 セルの取込元
+  (baseline/perturbed のルート・analysis 有無・prompt_id) を宣言的に列挙。
+  Qwen の B5 clean はアーカイブ、摂動は exp-10-scope という混成もここで解決。
+- `registry.yaml`: models += Qwen2.5-7B-Instruct / DeepSeek-R1-Distill-Qwen-7B、
+  benchmarks += math (prompt hash 凍結 `math_cot_v1`)、conditions += anti_lxt4、
+  `reasoning_prompts` ({bench}_r1_think_v1; chat template 依存のため sha256 なし)。
+  R1 は zero-shot chat template / max_new_tokens 4096(gsm8k,mmlu)・8192(math) の
+  例外を models 注記に記録 (生成規約は exp-10-scope dev notes 参照)。
+- `paths.yaml`: `exp10_outputs` (exp-10-scope worktree の outputs、読み取り専用)。
+
+検証 (2026-07-18):
+
+1. **既存 150 parquet の再現性**: 全 217 セルをフル再ビルド後、
+   事前 snapshot と sha256 照合 → **150/150 byte 一致** (思考形式分岐・条件追加は
+   既存行に影響しない)。
+2. **manifest 検証**: `--verify` で 217 エントリ・移行元 520 ファイルの
+   sha256 と parquet 行数 OK。
+3. **スモーク**: v1 25 設定で accuracy **175/175** (anti_lxt4 25 セルも
+   summary.json と一致 = span失敗率 150 セル表の分母データ完備)、
+   table5 90/90、偏相関 25/25、span 除外 25/25 (全体 13.19%、従来どおり)。
+   スモークの既定対象は照合先がアーカイブ成果物のため v1 25 設定に固定
+   (wave2 は照合先なし)。
+4. テスト 201 passed / 24 skipped (GPU系)。
+
+R1 の span 失敗 (strict canonical 未検出) は clean 11.3〜16.2% /
+摂動 12.6〜28.0% と v1 モデルより高め (truncation + reasoning 系の書式ゆれ)。
+flip/CoT 指標列は wave2 全セルで NA (analysis 未実施のため。実験1 の
+再判定パイプラインが本テーブルから計算する)。
+
+## 再構築手順 (wave2 以降)
+
+```bash
+# 全 217 セル (アーカイブ + exp-10-scope 読み取りのみ、GPU 不要、~3 分)
+uv run python scripts/step0_build_master_table.py
+# 移行ハッシュ・行数の再検証 (520 ソースファイル)
+uv run python scripts/step0_build_master_table.py --verify
+# スモーク (v1 25 設定の全照合; wave2 は対象外)
 uv run python scripts/step0_smoke_reproduce.py
 ```

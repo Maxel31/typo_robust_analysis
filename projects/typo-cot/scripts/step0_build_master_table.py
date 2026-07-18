@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Step 0: アーカイブ横断の統合テーブル (master table) 構築スクリプト.
 
-アーカイブ (configs/paths.yaml の archive_outputs) から
-25 設定 (5 モデル × 5 ベンチマーク) × 6 条件 (clean + lxt1/2/4/8 + random4) の
-生成ログ・R_Q/R_C 帰属・flip 判定・CoT 指標を読み、
-`data/{model}/{benchmark}/{condition}.parquet` に統合する。
+`archive_reader.build_cell_plan` の 217 セルを
+`data/{model}/{benchmark}/{condition}.parquet` に統合する:
+- v1: アーカイブ 25 設定 (5 モデル × 5 ベンチ) × 6 条件 + anti_lxt4 (k4_bottom_k)
+- wave2 (2026-07-18): MATH-500 再生成 (6 モデル × 3 条件)、
+  Qwen2.5-7B (B5 × lxt4/random4 + clean はアーカイブ)、
+  DeepSeek-R1-Distill-Qwen-7B (gsm8k/math/mmlu × 3 条件, <think> 形式)
+  — いずれも exp-10-scope worktree の outputs (paths.yaml: exp10_outputs)。
 
 - 移行元ファイルの sha256 を data/master_manifest.json に記録し、
   `--verify` で同一性を再検証できる (アーカイブには一切書き込まない)
@@ -31,11 +34,10 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from typo_cot.data.archive_reader import (  # noqa: E402
     analysis_condition_dir,
-    baseline_dir,
+    build_cell_plan,
     load_analysis_sample_results,
     load_json,
     load_paths_config,
-    perturbed_dir,
     sha256_file,
 )
 from typo_cot.data.master_builder import (  # noqa: E402
@@ -43,11 +45,10 @@ from typo_cot.data.master_builder import (  # noqa: E402
     sample_metrics_from_analysis,
 )
 from typo_cot.data.master_table import (  # noqa: E402
-    CONDITIONS,
     master_parquet_path,
     write_condition_parquet,
 )
-from typo_cot.registry import load_registry, prompt_id_for, validate_registry  # noqa: E402
+from typo_cot.registry import load_registry, validate_registry  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -73,56 +74,61 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def build_setting(
-    outputs_root: Path,
-    analysis_root: Path,
+def build_cells(
+    cells: list[dict],
     out_root: Path,
-    model: str,
-    benchmark: str,
     seed: int,
-    prompt_id: str,
 ) -> list[dict]:
-    """1 設定 (model, benchmark) の全条件を parquet 化し、manifest エントリを返す."""
+    """同一 (model, benchmark) のセル群を parquet 化し、manifest エントリを返す.
+
+    cells は `archive_reader.build_cell_plan` のエントリ (baseline_path は
+    グループ内で共通)。baseline の results.json は一度だけ読む。
+    """
     entries: list[dict] = []
-    bdir = baseline_dir(outputs_root, model, benchmark)
-    baseline_path = bdir / "results.json"
+    model = cells[0]["model"]
+    benchmark = cells[0]["benchmark"]
+    baseline_paths = {str(c["baseline_path"]) for c in cells}
+    if len(baseline_paths) != 1:
+        raise ValueError(f"baseline_path mixed in group {model} x {benchmark}: {baseline_paths}")
+    baseline_path = cells[0]["baseline_path"]
     if not baseline_path.exists():
         raise FileNotFoundError(f"baseline results.json not found: {baseline_path}")
     baseline_results = load_json(baseline_path)
+    baseline_sha = sha256_file(baseline_path)
 
-    for condition in CONDITIONS:
-        sources: list[dict] = [
-            {"path": str(baseline_path), "sha256": sha256_file(baseline_path)}
-        ]
+    for c in cells:
+        condition = c["condition"]
+        sources: list[dict] = [{"path": str(baseline_path), "sha256": baseline_sha}]
         if condition == "clean":
             perturbed_results = None
             sample_metrics = None
             source_path = str(baseline_path)
         else:
-            pdir = perturbed_dir(outputs_root, model, benchmark, condition)
-            ppath = pdir / "results.json"
+            ppath = c["perturbed_path"]
             if not ppath.exists():
                 logger.warning(f"  [skip] {model} x {benchmark} x {condition}: {ppath} なし")
                 continue
             perturbed_results = load_json(ppath)
             sources.append({"path": str(ppath), "sha256": sha256_file(ppath)})
             source_path = str(ppath)
-            sample_results = load_analysis_sample_results(
-                analysis_root, model, benchmark, condition
-            )
-            if sample_results is None:
-                logger.warning(
-                    f"  [warn] analysis full_results.json なし: "
-                    f"{model} x {benchmark} x {condition} (flip/CoT指標は NA)"
+            sample_metrics = None
+            analysis_root = c["analysis_root"]
+            if analysis_root is not None:
+                sample_results = load_analysis_sample_results(
+                    analysis_root, model, benchmark, condition
                 )
-                sample_metrics = None
-            else:
-                sample_metrics = sample_metrics_from_analysis(sample_results)
-                apath = (
-                    analysis_condition_dir(analysis_root, model, benchmark, condition)
-                    / "full_results.json"
-                )
-                sources.append({"path": str(apath), "sha256": sha256_file(apath)})
+                if sample_results is None:
+                    logger.warning(
+                        f"  [warn] analysis full_results.json なし: "
+                        f"{model} x {benchmark} x {condition} (flip/CoT指標は NA)"
+                    )
+                else:
+                    sample_metrics = sample_metrics_from_analysis(sample_results)
+                    apath = (
+                        analysis_condition_dir(analysis_root, model, benchmark, condition)
+                        / "full_results.json"
+                    )
+                    sources.append({"path": str(apath), "sha256": sha256_file(apath)})
 
         df = build_condition_df(
             baseline_results=baseline_results,
@@ -132,7 +138,7 @@ def build_setting(
             benchmark=benchmark,
             condition=condition,
             seed=seed,
-            prompt_id=prompt_id,
+            prompt_id=c["prompt_id"],
             source_path=source_path,
         )
         path = write_condition_parquet(df, out_root)
@@ -194,38 +200,39 @@ def main() -> None:
         sys.exit(0 if verify_manifest(manifest_path) else 1)
 
     paths = load_paths_config(args.paths)
-    outputs_root = Path(paths["archive_outputs"])
-    analysis_root = Path(paths["archive_analysis"])
     registry = load_registry(args.registry)
     validate_registry(registry)
-
-    models = args.models or list(registry["models"].keys())
-    benchmarks = args.benchmarks or list(registry["benchmarks"])
     seed = int(registry["seed"])
 
-    logger.info(f"アーカイブ: {outputs_root}")
+    plan = build_cell_plan(paths, registry)
+    if args.models:
+        plan = [c for c in plan if c["model"] in set(args.models)]
+    if args.benchmarks:
+        plan = [c for c in plan if c["benchmark"] in set(args.benchmarks)]
+    if not plan:
+        logger.error("フィルタ後の計画セルが 0 件です")
+        sys.exit(1)
+
+    logger.info(f"アーカイブ: {paths['archive_outputs']}")
+    logger.info(f"wave2 (exp-10-scope): {paths['exp10_outputs']}")
     logger.info(f"出力: {args.out}")
-    logger.info(f"設定: {len(models)} models x {len(benchmarks)} benchmarks")
+    logger.info(f"計画: {len(plan)} セル")
+
+    # (model, benchmark) ごとにグループ化 (計画順を保持)
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for c in plan:
+        groups.setdefault((c["model"], c["benchmark"]), []).append(c)
 
     all_entries: list[dict] = []
-    for model in models:
-        for benchmark in benchmarks:
-            logger.info(f"[{model} x {benchmark}]")
-            entries = build_setting(
-                outputs_root,
-                analysis_root,
-                args.out,
-                model,
-                benchmark,
-                seed=seed,
-                prompt_id=prompt_id_for(registry, benchmark),
-            )
-            all_entries.extend(entries)
+    for (model, benchmark), cells in groups.items():
+        logger.info(f"[{model} x {benchmark}]")
+        all_entries.extend(build_cells(cells, args.out, seed=seed))
 
     # 既存 manifest とマージ (部分ビルドの積み上げを許す)
     manifest: dict = {
         "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
-        "archive_outputs": str(outputs_root),
+        "archive_outputs": str(paths["archive_outputs"]),
+        "exp10_outputs": str(paths["exp10_outputs"]),
         "registry": str(args.registry),
         "entries": [],
     }
@@ -248,13 +255,13 @@ def main() -> None:
     logger.info(
         f"完了: {len(manifest['entries'])} parquet, 合計 {total_rows} 行 -> {manifest_path}"
     )
-    # 参考: 期待ファイルの欠落チェック
+    # 参考: 計画セルの欠落チェック
     missing = [
-        (m, b, c)
-        for m in models
-        for b in benchmarks
-        for c in CONDITIONS
-        if not master_parquet_path(args.out, m, b, c).exists()
+        (c["model"], c["benchmark"], c["condition"])
+        for c in plan
+        if not master_parquet_path(
+            args.out, c["model"], c["benchmark"], c["condition"]
+        ).exists()
     ]
     if missing:
         logger.warning(f"未生成の (model, benchmark, condition): {missing}")
