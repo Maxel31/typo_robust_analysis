@@ -87,6 +87,9 @@ while :; do
               --dump-divergence --output-dir "results/exp01_03/$name")
         [ "$start" != "-" ] && args+=(--start "$start")
         [ "$n" != "-" ] && args+=(--n "$n")
+        # MATH-500: 答えは "The answer is \boxed{...}" 形式で LaTeX 内容が最長 133 文字
+        # (M6 ベースライン実測)。既定の 16 トークンでは boxed が閉じず抽出失敗するため拡張。
+        [ "$bench" = "math" ] && args+=(--max-new-tokens 128)
 
         shard_log="$PROJ/logs/exp01_03/$name.log"
         log "running $name (log: $shard_log)"
