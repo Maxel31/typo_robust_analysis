@@ -217,3 +217,44 @@ R_C の `word_scores` は改行をまたいで語が結合される（例 "dolla
   合計 **約 8〜10 GPU 時間**（2 GPU 並行で実時間 4〜5 時間）。
   案A 感度分析を全条件で併走すると +40%（案A は x1 なので安価）。
   シャード分割（--n/--sample_offset で 100 サンプル単位）で実行する。
+
+## 実験6-(i)〜(iii): 帰属ファミリー代替手法（wave 3, 2026-07-18）
+
+別エージェント（(i)〜(iii) 担当）による追記。LOO（(iv)）とはモジュール・
+スクリプト・出力ディレクトリを分離し、規約（サンプル選定・3分割・語集約・
+R_C ローダー）は LOO 実装を importlib / パッケージ経由で共有する。
+
+### 実装: `src/typo_cot/attribution_family/methods.py`
+
+- 目的関数は 3手法共通で「答えトークン列 log-prob 合計」（LOO と同一の
+  `split_generated_text` 3分割、context = prompt + cot + trigger、
+  target = answer。answer より後のテキストは入力から除外）。
+- **(i) G×I**: `gradient_x_input_token_scores` — 埋め込みへの勾配×入力
+  （backward 1回、grad·embed の内積を fp32 で計算）。
+- **(ii) IG**: `integrated_gradients_token_scores` — ベースライン=ゼロ埋め込み、
+  midpoint 則 α_k=(k+0.5)/m、m=16（本番）、α ステップは 4件ずつバッチ。
+  completeness 診断（sum_attr / (F(x)-F(0))）をサンプルごとに保存。
+- **(iii) rollout**: `attention_rollout_token_scores` — 層ごとに head 平均 →
+  0.5I + 0.5A → 行正規化 → 層積（Abnar & Zuidema 2020）。答え予測位置
+  （target_start-1 .. S-2）の行を平均。モデルは attn_implementation="eager"
+  でロード（SDPA は attention を返さない）。
+- **語集約**: `token_scores_to_word_ranking` が Mistral R_C 再構築ローダー
+  `rc_word_ranking_from_token_scores` をそのまま再利用（空白チャンク整合・
+  CoT 領域フィルタ・スコア合計の規約を R_C/LOO 比較経路と完全一致）。
+  Llama 系特殊トークン（"<|begin_of_text|>"）は `decode_tokens_for_alignment`
+  で "<s>" に写像して整合対象外にする。
+- ランキングは R_C/LOO と同じ raw スコア降順 `{word, score}`（比較は
+  `loo_jaccard_topk` = expand_multiword + normalize_word + top_k_jaccard_by_token）。
+
+### スクリプト
+
+- `scripts/run_attribution_family.py`: 1 run = 1設定×1手法×1条件。サンプル選定は
+  run_loo_scoring.py の `select_sample_ids` を importlib 共有（**n=300, seed=42 =
+  LOO 本番と同一サンプル**）。R_C との Jaccard@10 は `load_rc_ranking`
+  （full_text 配線 = Mistral は token_scores 再構築）で計算。
+  出力: `results/attribution_family/{model}_{bench}_{method}_{clean|lxt4}/`。
+- `scripts/analyze_attribution_family.py`: 内的軸 J_method@10（clean vs LXT-4 の
+  手法ランキング Jaccard）を再計算し、アーカイブ full_results.json の R
+  (cot_rouge_l.f1) と結合して ρ(J_method@10|R)。参照 ρ(J_RC@10|R) を同一結合行で併記。
+- `scripts/run_attribution_family_queue.sh`: 36 シャード（3手法 × M3×B2 ×
+  {clean, LXT-4}）の冪等キュー（LOO キューと同型、GPU ロック共有、軽い手法から）。
