@@ -12,6 +12,7 @@ import pytest
 import torch
 
 from typo_cot.intervention.loo_scorer import (
+    align_tokens_to_text,
     batched_answer_logprobs,
     build_loo_variants,
     delete_word_type,
@@ -19,9 +20,11 @@ from typo_cot.intervention.loo_scorer import (
     loo_jaccard_topk,
     normalize_word,
     rc_word_ranking_from_cot_pt,
+    rc_word_ranking_from_token_scores,
     score_sample_loo,
     sequence_logprob,
     split_generated_text,
+    word_scores_degenerate,
 )
 
 
@@ -346,6 +349,128 @@ class TestRcWordRanking:
         assert [r["word"] for r in ranking] == ["16", "eggs", "the"]
         for r in ranking:
             assert set(r.keys()) == {"word", "score"}
+
+
+class TestRcRankingRebuildFromTokenScores:
+    """Mistral アーカイブ不良 (word_scores が全文1語に結合) の再構築フォールバック.
+
+    アーカイブの tokens_to_words は先頭スペース/▁ で語境界を検出するが、
+    Mistral の token_scores は空白マーカーなしのトークン文字列を持つため
+    word_scores が全トークン結合の1語に潰れる。token_scores を既知の
+    生成テキスト (prompt + generated_text) に貪欲整合して語ランキングを
+    再構築する。
+    """
+
+    # "Q : add 3 and 4 .\n A : 3 + 4 = 7 . The answer is 7 ."
+    FULL_TEXT = "Q: add 3 and 4.\nA: 3 + 4 = 7. The answer is 7."
+    # Mistral 風: 空白マーカーなしトークン列 (<s> + 21 トークン)
+    TOKENS = [
+        "<s>", "Q", ":", "add", "3", "and", "4", ".", "\n", "A", ":",
+        "3", "+", "4", "=", "7", ".", "The", "answer", "is", "7", ".",
+    ]
+    # CoT 領域 = "3 + 4 = 7." (トークン 11..16)
+    COT_START, COT_END = 11, 16
+
+    def _token_scores(self):
+        by_index = {11: 0.5, 12: 1.0, 13: 2.0, 14: 3.0, 15: 5.0, 16: 0.25}
+        return [(t, by_index.get(i, 0.1)) for i, t in enumerate(self.TOKENS)]
+
+    def _degenerate_data(self):
+        return {
+            "word_scores": [
+                {
+                    "word": self.FULL_TEXT.replace(" ", "").replace("\n", ""),
+                    "score": 1.23,
+                    "token_indices": list(range(1, len(self.TOKENS))),
+                }
+            ],
+            "token_scores": self._token_scores(),
+            "cot_token_start": self.COT_START,
+            "cot_token_end": self.COT_END,
+        }
+
+    def test_degenerate_detection_on_merged_word_scores(self):
+        assert word_scores_degenerate(self._degenerate_data())
+
+    def test_healthy_word_scores_not_degenerate(self):
+        data = {
+            "word_scores": [
+                {"word": "eggs", "score": 2.0, "token_indices": [10, 11]},
+                {"word": "16", "score": 5.0, "token_indices": [12]},
+            ],
+            "token_scores": [("a", 0.1)] * 20,
+        }
+        assert not word_scores_degenerate(data)
+
+    def test_align_mistral_style_tokens(self):
+        spans = align_tokens_to_text(self.TOKENS, self.FULL_TEXT)
+        assert spans is not None
+        assert spans[0] is None  # <s>
+        assert self.FULL_TEXT[slice(*spans[3])] == "add"
+        # 貪欲整合: 最初の "3" は質問側 (token 4)、CoT 側は token 11
+        assert spans[4] == (7, 8)
+        assert self.FULL_TEXT[slice(*spans[11])] == "3"
+        assert spans[11][0] > spans[4][0]
+
+    def test_align_space_and_sentencepiece_markers(self):
+        # Gemma 風 (先頭スペース) と ▁ マーカーも同じ整合器で扱える
+        text = "He ran.\nFast!"
+        tokens = ["<bos>", "He", " ran", ".", "▁Fast", "!"]
+        spans = align_tokens_to_text(tokens, text)
+        assert spans is not None
+        assert text[slice(*spans[2])] == " ran"
+        assert text[slice(*spans[4])] == "Fast"
+
+    def test_align_byte_fallback_token(self):
+        text = "a\nb"
+        tokens = ["a", "<0x0A>", "b"]
+        spans = align_tokens_to_text(tokens, text)
+        assert spans is not None
+        assert spans[1] == (1, 2)
+
+    def test_align_failure_returns_none(self):
+        assert align_tokens_to_text(["zzz"], "abc") is None
+
+    def test_rebuild_ranking_restricted_to_cot_region(self):
+        ranking = rc_word_ranking_from_token_scores(
+            self._degenerate_data(), self.FULL_TEXT
+        )
+        assert ranking is not None
+        # 領域内チャンク: "7."(5.25) > "="(3.0) > "4"(2.0) > "+"(1.0) > "3"(0.5)
+        assert [r["word"] for r in ranking] == ["7.", "=", "4", "+", "3"]
+        assert ranking[0]["score"] == pytest.approx(5.25)
+        assert ranking[1]["score"] == pytest.approx(3.0)
+        for r in ranking:
+            assert set(r.keys()) == {"word", "score"}
+
+    def test_cot_pt_falls_back_to_rebuild_when_degenerate(self):
+        ranking = rc_word_ranking_from_cot_pt(
+            self._degenerate_data(), full_text=self.FULL_TEXT
+        )
+        assert [r["word"] for r in ranking] == ["7.", "=", "4", "+", "3"]
+
+    def test_cot_pt_keeps_existing_path_when_healthy(self):
+        data = {
+            "word_scores": [
+                {"word": "eggs", "score": 2.0, "token_indices": [10]},
+                {"word": "outside", "score": 9.0, "token_indices": [99]},
+            ],
+            "token_scores": [("eggs", 2.0)],
+            "cot_token_start": 5,
+            "cot_token_end": 15,
+        }
+        ranking = rc_word_ranking_from_cot_pt(data, full_text="eggs outside")
+        assert ranking == [{"word": "eggs", "score": 2.0}]
+
+    def test_cot_pt_degenerate_without_full_text_uses_existing_path(self):
+        # full_text なしでは従来挙動 (結合1語がそのまま返る) — 後方互換
+        ranking = rc_word_ranking_from_cot_pt(self._degenerate_data())
+        assert len(ranking) == 1
+
+    def test_cot_pt_degenerate_align_failure_falls_back(self):
+        data = self._degenerate_data()
+        ranking = rc_word_ranking_from_cot_pt(data, full_text="unrelated text")
+        assert len(ranking) == 1  # 再構築失敗 → 従来経路
 
 
 class TestLooJaccard:
