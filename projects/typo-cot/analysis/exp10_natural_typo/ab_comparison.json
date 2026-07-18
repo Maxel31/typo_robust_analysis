@@ -1,0 +1,94 @@
+[
+  {
+    "benchmark": "gsm8k",
+    "n_common": 1319,
+    "n_base_correct": 1101,
+    "accuracy": {
+      "baseline": 0.8347,
+      "A_synthetic": 0.7824,
+      "B_natural": 0.7824
+    },
+    "delta_accuracy": {
+      "A_synthetic": -0.0523,
+      "B_natural": -0.0523
+    },
+    "flip_rate_correct_to_incorrect": {
+      "A_synthetic": 0.1163,
+      "B_natural": 0.109
+    },
+    "recovery_rate_incorrect_to_correct": {
+      "A_synthetic": 0.2706,
+      "B_natural": 0.2339
+    },
+    "answer_change_rate": {
+      "A_synthetic": 0.2009,
+      "B_natural": 0.1827
+    },
+    "flip_agreement": {
+      "n_flip_A_only": 65,
+      "n_flip_B_only": 57,
+      "n_flip_both": 63,
+      "jaccard_flip_sets": 0.3405,
+      "mcnemar_p": 0.526244
+    },
+    "op_distribution": {
+      "A_synthetic": {
+        "double_typing": 0.3357,
+        "omission": 0.3332,
+        "proximity": 0.3311
+      },
+      "B_natural": {
+        "deletion": 0.405,
+        "insertion": 0.231,
+        "substitution": 0.2305,
+        "transposition": 0.1335
+      }
+    }
+  },
+  {
+    "benchmark": "mmlu",
+    "n_common": 2850,
+    "n_base_correct": 1802,
+    "accuracy": {
+      "baseline": 0.6323,
+      "A_synthetic": 0.586,
+      "B_natural": 0.5937
+    },
+    "delta_accuracy": {
+      "A_synthetic": -0.0463,
+      "B_natural": -0.0386
+    },
+    "flip_rate_correct_to_incorrect": {
+      "A_synthetic": 0.202,
+      "B_natural": 0.2003
+    },
+    "recovery_rate_incorrect_to_correct": {
+      "A_synthetic": 0.2214,
+      "B_natural": 0.2395
+    },
+    "answer_change_rate": {
+      "A_synthetic": 0.2888,
+      "B_natural": 0.2989
+    },
+    "flip_agreement": {
+      "n_flip_A_only": 172,
+      "n_flip_B_only": 169,
+      "n_flip_both": 192,
+      "jaccard_flip_sets": 0.3602,
+      "mcnemar_p": 0.913753
+    },
+    "op_distribution": {
+      "A_synthetic": {
+        "double_typing": 0.3379,
+        "omission": 0.3207,
+        "proximity": 0.3414
+      },
+      "B_natural": {
+        "deletion": 0.4064,
+        "insertion": 0.2252,
+        "substitution": 0.2284,
+        "transposition": 0.1399
+      }
+    }
+  }
+]
