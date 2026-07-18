@@ -57,6 +57,10 @@ def parse_args() -> argparse.Namespace:
                    help="範囲シャードの開始オフセット (フィルタ後レコード列に対する)")
     p.add_argument("--archive-root", default=None,
                    help="アーカイブルート (省略時 configs/paths.yaml の jsai2026_root)")
+    p.add_argument("--override-root", action="append", default=None,
+                   help="アーカイブより優先する入力ルート (複数可、先頭が最優先)。"
+                        "省略時 configs/paths.yaml の exp9_override_roots (無ければ空)。"
+                        "Qwen B5 / MATH-500 拡張シャードは exp-10-scope worktree を指す")
     p.add_argument("--output-dir", default="results/exp9")
     p.add_argument("--lens-top-k", type=int, default=5)
     p.add_argument("--clean-correct-only", action="store_true",
@@ -76,10 +80,21 @@ def _archive_root(args: argparse.Namespace) -> Path:
     return Path(paths["jsai2026_root"])
 
 
+def _override_roots(args: argparse.Namespace) -> list[Path]:
+    """優先入力ルート群 (CLI 指定 > paths.yaml exp9_override_roots > 空)."""
+    if args.override_root:
+        return [Path(p) for p in args.override_root]
+    with open(_DEFAULT_PATHS) as f:
+        paths = yaml.safe_load(f)
+    return [Path(p) for p in paths.get("exp9_override_roots") or []]
+
+
 def _iter_records(
     root: Path, model: str, benchmark: str, condition: str, args: argparse.Namespace
 ) -> list[RepairInputRecord]:
-    records = load_condition_records(root, model, benchmark, condition)
+    records = load_condition_records(
+        root, model, benchmark, condition, override_roots=_override_roots(args)
+    )
     records = [r for r in records if r.span_extract_ok and r.flip is not None]
     if args.clean_correct_only:
         records = [r for r in records if r.clean_correct]
@@ -129,6 +144,7 @@ def main() -> None:
     args = parse_args()
     root = _archive_root(args)
     logger.info("アーカイブ: %s (読み取り専用)", root)
+    logger.info("優先入力ルート: %s", [str(p) for p in _override_roots(args)])
 
     if args.dry_run:
         run_dry(root, args)
