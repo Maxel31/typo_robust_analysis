@@ -13,6 +13,7 @@ from typo_cot.data.master_table import (
     CONDITIONS,
     MASTER_COLUMNS,
     METRIC_SCOPE,
+    V1_UNION_CONDITIONS,
     empty_master_df,
     master_parquet_path,
     read_master_table,
@@ -61,13 +62,23 @@ def _make_df(rows: list[dict]) -> pd.DataFrame:
 
 class TestSchema:
     def test_conditions_frozen(self):
-        assert CONDITIONS == ("clean", "lxt1", "lxt2", "lxt4", "lxt8", "random4")
+        # 2026-07-18: Anti-LXT-4 (bottom-k) を追加 (span失敗率150セル表の完全再現用)
+        assert CONDITIONS == (
+            "clean", "lxt1", "lxt2", "lxt4", "lxt8", "random4", "anti_lxt4"
+        )
 
     def test_condition_archive_mapping(self):
         assert CONDITION_TO_ARCHIVE_SUFFIX["lxt4"] == "k4_importance"
         assert CONDITION_TO_ARCHIVE_SUFFIX["random4"] == "k4_random"
         assert CONDITION_TO_ARCHIVE_SUFFIX["lxt1"] == "k1_importance"
+        assert CONDITION_TO_ARCHIVE_SUFFIX["anti_lxt4"] == "k4_bottom_k"
         assert "clean" not in CONDITION_TO_ARCHIVE_SUFFIX
+
+    def test_v1_union_conditions_exclude_anti_lxt4(self):
+        # 旧 analyzer の union 除外は bottom_k を含まない 5 摂動条件で計算される
+        # (dev_notes_step0.md)。anti_lxt4 追加後も除外集合の意味論を凍結する。
+        assert V1_UNION_CONDITIONS == ("lxt1", "lxt2", "lxt4", "lxt8", "random4")
+        assert "anti_lxt4" not in V1_UNION_CONDITIONS
 
     def test_master_columns_contains_spec_columns(self):
         # 仕様(§手法の詳細)の列が全て存在すること

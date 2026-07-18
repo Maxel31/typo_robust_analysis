@@ -24,8 +24,13 @@ PAPER_MODELS = {
     "Mistral-7B-Instruct-v0.3": "mistralai/Mistral-7B-Instruct-v0.3",
     "gemma-3-1b-it": "google/gemma-3-1b-it",
     "gemma-3-4b-it": "google/gemma-3-4b-it",
+    # wave2 (2026-07-18 取込): スコープ拡張モデル
+    "Qwen2.5-7B-Instruct": "Qwen/Qwen2.5-7B-Instruct",
+    "DeepSeek-R1-Distill-Qwen-7B": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
 }
-PAPER_BENCHMARKS = ("gsm8k", "mmlu", "mmlu_pro", "arc", "commonsense_qa")
+# wave2 で math (MATH-500) を追加
+PAPER_BENCHMARKS = ("gsm8k", "mmlu", "mmlu_pro", "arc", "commonsense_qa", "math")
+R1_PROMPT_BENCHMARKS = ("gsm8k", "math", "mmlu")
 
 
 @pytest.fixture(scope="module")
@@ -60,6 +65,15 @@ class TestRegistryContent:
         assert registry["conditions"]["lxt4"]["num_perturbations"] == 4
         assert registry["conditions"]["random4"]["perturbation_mode"] == "random"
         assert registry["conditions"]["clean"]["perturbation_mode"] is None
+        assert registry["conditions"]["anti_lxt4"]["perturbation_mode"] == "bottom_k"
+        assert registry["conditions"]["anti_lxt4"]["num_perturbations"] == 4
+
+    def test_reasoning_prompts_frozen(self, registry):
+        # R1 蒸留はゼロショット chat template (<think> 形式) のため
+        # prompt_id を別系列で凍結する (sha256 は tokenizer 依存のため持たない)
+        rp = registry["reasoning_prompts"]
+        for bench in R1_PROMPT_BENCHMARKS:
+            assert rp[bench]["prompt_id"] == f"{bench}_r1_think_v1"
 
     def test_prompts_have_id_and_hash(self, registry):
         for bench in PAPER_BENCHMARKS:
