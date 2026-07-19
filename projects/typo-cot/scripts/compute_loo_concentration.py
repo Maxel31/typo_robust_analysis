@@ -17,7 +17,10 @@ import math
 import statistics
 from pathlib import Path
 
-from typo_cot.analysis.concentration import loo_sample_concentration
+from typo_cot.analysis.concentration import (
+    loo_content_concentration,
+    loo_sample_concentration,
+)
 
 
 def _clean(xs):
@@ -42,6 +45,7 @@ def compute_setting(results_path: Path, clip_negative: bool = True) -> dict:
     for e in entries:
         ws = e.get("loo_word_scores") or []
         conc = loo_sample_concentration(ws, clip_negative=clip_negative)
+        cont = loo_content_concentration(ws, clip_negative=clip_negative)
         per_sample.append(
             {
                 "sample_id": e.get("sample_id"),
@@ -50,6 +54,12 @@ def compute_setting(results_path: Path, clip_negative: bool = True) -> dict:
                 "top1_share": conc["top1_share"],
                 "top4_share": conc["top4_share"],
                 "effective_count": conc["effective_count"],
+                # 内容語限定 (exp2 content 層と同一区分)
+                "n_content_words": cont["n_content_words"],
+                "content_gini": cont["content_gini"],
+                "content_top1_share": cont["content_top1_share"],
+                "content_mass_share": cont["content_mass_share"],
+                "top1_is_content": cont["top1_stratum"] == "content",
             }
         )
     ginis = [s["gini"] for s in per_sample]
@@ -64,6 +74,16 @@ def compute_setting(results_path: Path, clip_negative: bool = True) -> dict:
             "mean_top4_share": _mean([s["top4_share"] for s in per_sample]),
             "mean_effective_count": _mean([s["effective_count"] for s in per_sample]),
             "mean_n_words": _mean([s["n_words"] for s in per_sample]),
+            # 内容語限定の集中度 + 内容語追跡の指標
+            "mean_content_gini": _mean([s["content_gini"] for s in per_sample]),
+            "mean_content_top1_share": _mean(
+                [s["content_top1_share"] for s in per_sample]),
+            "mean_content_mass_share": _mean(
+                [s["content_mass_share"] for s in per_sample]),
+            "frac_top1_is_content": _mean(
+                [1.0 if s["top1_is_content"] else 0.0 for s in per_sample]),
+            "mean_n_content_words": _mean(
+                [s["n_content_words"] for s in per_sample]),
         },
         "per_sample": per_sample,
     }

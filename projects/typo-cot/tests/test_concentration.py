@@ -15,9 +15,11 @@ from typo_cot.analysis.concentration import (
     attention_gini_per_layer,
     effective_count,
     gini,
+    loo_content_concentration,
     loo_sample_concentration,
     top1_share,
     topk_share,
+    word_stratum,
 )
 
 
@@ -153,6 +155,65 @@ def test_answer_to_cot_distribution_mean_over_answer_positions():
     )
     dist = answer_to_cot_distribution(A, answer_positions=[2, 3], cot_positions=[1, 2])
     assert np.allclose(dist, [0.3, 0.3])
+
+
+# ---------------------------------------------------------------
+# content word stratum (exp2 と同一規約) + 内容語限定集中度
+# ---------------------------------------------------------------
+
+
+def test_word_stratum_matches_exp2_rules():
+    # numeric: 数字を含む / 演算語
+    assert word_stratum("18") == "numeric"
+    assert word_stratum("3.5") == "numeric"
+    assert word_stratum("=") == "numeric"
+    # other: ストップワード / 1文字 / 選択肢文字 / 非英字
+    assert word_stratum("the") == "other"
+    assert word_stratum("A") == "other"
+    assert word_stratum("of") == "other"
+    # content: 2文字以上・英字・非ストップワード
+    assert word_stratum("boxes") == "content"
+    assert word_stratum("apples") == "content"
+
+
+def test_loo_content_concentration_restricts_to_content_words():
+    ws = [
+        {"word": "boxes", "score": 8.0},   # content
+        {"word": "the", "score": 5.0},     # other (function)
+        {"word": "18", "score": 4.0},      # numeric
+        {"word": "apples", "score": 1.0},  # content
+        {"word": "of", "score": 3.0},      # other
+    ]
+    out = loo_content_concentration(ws)
+    # 内容語のみ [boxes=8, apples=1] で Gini/top1 を測る
+    assert out["n_content_words"] == 2
+    assert out["content_gini"] == pytest.approx(gini([8.0, 1.0]))
+    assert out["content_top1_share"] == pytest.approx(8.0 / 9.0)
+    # 上位語の stratum
+    assert out["top1_stratum"] == "content"
+    # 内容語質量シェア = content正質量 / 全正質量 = 9 / 21
+    assert out["content_mass_share"] == pytest.approx(9.0 / 21.0)
+
+
+def test_loo_content_concentration_top1_non_content():
+    ws = [
+        {"word": "the", "score": 10.0},   # other だが最大
+        {"word": "boxes", "score": 2.0},  # content
+    ]
+    out = loo_content_concentration(ws)
+    assert out["top1_stratum"] == "other"
+    assert out["n_content_words"] == 1
+    # 内容語質量シェア = 2 / 12
+    assert out["content_mass_share"] == pytest.approx(2.0 / 12.0)
+
+
+def test_loo_content_concentration_empty_and_no_content():
+    out = loo_content_concentration([])
+    assert out["n_content_words"] == 0
+    assert math.isnan(out["content_gini"])
+    out2 = loo_content_concentration([{"word": "the", "score": 1.0}])
+    assert out2["n_content_words"] == 0
+    assert out2["content_mass_share"] == pytest.approx(0.0)
 
 
 def test_attention_gini_per_layer_shapes_and_concentration():

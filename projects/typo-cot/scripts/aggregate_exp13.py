@@ -125,6 +125,13 @@ def main() -> None:
                 "loo_top4": loo.get("mean_top4_share") if loo else None,
                 "loo_eff_count": loo.get("mean_effective_count") if loo else None,
                 "loo_n_words": loo.get("mean_n_words") if loo else None,
+                # 内容語限定 (削除RD の content 層と同区分)
+                "content_gini": loo.get("mean_content_gini") if loo else None,
+                "content_top1": loo.get("mean_content_top1_share") if loo else None,
+                "content_mass_share": (
+                    loo.get("mean_content_mass_share") if loo else None),
+                "frac_top1_is_content": (
+                    loo.get("frac_top1_is_content") if loo else None),
                 **attn,
                 **rd,
             })
@@ -140,6 +147,15 @@ def main() -> None:
         "loo_top1_vs_deletion_rd": _spearman([r["loo_top1"] for r in rows], rd_vals),
         "attn_gini_vs_deletion_rd": _spearman(attn_gini, rd_vals),
         "loo_gini_vs_attn_gini": _spearman(loo_gini, attn_gini),
+        # 内容語限定の集中度・内容語追跡 vs 削除RD (content 層)
+        "content_gini_vs_deletion_rd": _spearman(
+            [r["content_gini"] for r in rows], rd_vals),
+        "content_top1_vs_deletion_rd": _spearman(
+            [r["content_top1"] for r in rows], rd_vals),
+        "content_mass_share_vs_deletion_rd": _spearman(
+            [r["content_mass_share"] for r in rows], rd_vals),
+        "frac_top1_content_vs_deletion_rd": _spearman(
+            [r["frac_top1_is_content"] for r in rows], rd_vals),
         "rd_key": rd_key,
     }
     # sensitivity: RD_all
@@ -179,7 +195,9 @@ def main() -> None:
 
     out_dir.mkdir(parents=True, exist_ok=True)
     fields = ["model", "family", "benchmark", "loo_n", "loo_gini", "loo_top1",
-              "loo_top4", "loo_eff_count", "loo_n_words", "attn_gini_mean",
+              "loo_top4", "loo_eff_count", "loo_n_words",
+              "content_gini", "content_top1", "content_mass_share",
+              "frac_top1_is_content", "attn_gini_mean",
               "attn_gini_agg", "attn_top1_agg", "attn_n",
               "rd_content_k4", "rd_all_k4"]
     with open(out_dir / "setting_table.csv", "w", newline="", encoding="utf-8") as f:
@@ -209,8 +227,13 @@ def main() -> None:
               f"{fmt(r['loo_top1'])} {fmt(r['attn_gini_mean'], 9)} "
               f"{fmt(r['rd_content_k4'])} {fmt(r['rd_all_k4'])}")
     print(f"\nfamily Gini: {fam_gini}  order={fam_order}")
-    print(f"rank-corr(LOO Gini, 削除RD[{rd_key}]) = "
+    print(f"rank-corr(LOO Gini(全語), 削除RD[{rd_key}]) = "
           f"{corr['loo_gini_vs_deletion_rd']}")
+    print(f"rank-corr(内容語Gini, 削除RD) = {corr['content_gini_vs_deletion_rd']}")
+    print(f"rank-corr(内容語質量シェア, 削除RD) = "
+          f"{corr['content_mass_share_vs_deletion_rd']}")
+    print(f"rank-corr(top1が内容語の割合, 削除RD) = "
+          f"{corr['frac_top1_content_vs_deletion_rd']}")
     print(f"rank-corr(attn Gini, 削除RD) = {corr['attn_gini_vs_deletion_rd']}")
     print(f"proxy: rank-corr(LOO Gini, attn Gini) = {corr['loo_gini_vs_attn_gini']}")
     print(f"\n=== H13 判定 ===\n{json.dumps(judgment, ensure_ascii=False, indent=2)}")
