@@ -29,6 +29,12 @@ from typo_cot.lrp.analyzer import create_analyzer
 from typo_cot.models.prompts import create_prompt_template
 from typo_cot.models.wrapper import ModelWrapper, create_model_wrapper
 from typo_cot.perturbation.dataset import PerturbedDataset
+from typo_cot.sharding import (
+    build_summary_from_results,
+    load_shard_rows,
+    merge_shard_results,
+    shard_results_path,
+)
 from typo_cot.visualization.heatmap import (
     generate_cot_heatmap,
     generate_question_heatmap,
@@ -191,6 +197,24 @@ def parse_args() -> argparse.Namespace:
         default=1.0,
         help="リトライ間の待機時間（秒）",
     )
+    # シャード実行 (実験10②: 1シャード=1 GPUヘルパー呼び出しのキュー運用)
+    parser.add_argument(
+        "--start",
+        type=int,
+        default=0,
+        help="シャード開始インデックス（--endと併用。省略時は従来どおり全件実行）",
+    )
+    parser.add_argument(
+        "--end",
+        type=int,
+        default=None,
+        help="シャード終了インデックス（exclusive）。指定時はshards/にシャード結果を保存",
+    )
+    parser.add_argument(
+        "--merge",
+        action="store_true",
+        help="shards/results_*.json を統合して results.json / summary.json を出力して終了",
+    )
 
     return parser.parse_args()
 
@@ -303,6 +327,45 @@ def main() -> None:
     if heatmap_interval > 0:
         logger.info(f"ヒートマップ生成: 有効（{heatmap_interval}件に1回）")
 
+    # シャード統合モード (実験10②): shards/ を統合して results.json / summary.json を出力
+    if args.merge:
+        merged_results, covered = merge_shard_results(output_dir)
+        if not merged_results:
+            logger.error(f"統合対象のシャードが見つかりません: {output_dir / 'shards'}")
+            sys.exit(1)
+        results_path = output_dir / "results.json"
+        with open(results_path, "w", encoding="utf-8") as f:
+            json.dump(merged_results, f, ensure_ascii=False, indent=2)
+        summary = build_summary_from_results(
+            model=args.model,
+            benchmark=args.benchmark,
+            results=merged_results,
+            num_samples_per_subset=args.num_samples,
+            batch_size=args.batch_size,
+            merged_shards=covered,
+        )
+        summary_path = output_dir / "summary.json"
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+        logger.info(
+            f"シャード統合完了: {len(merged_results)}件, カバー範囲={covered}, "
+            f"正答率={summary['overall_metrics']['accuracy']:.2%}"
+        )
+        logger.info(f"結果を保存: {results_path}")
+        logger.info(f"サマリーを保存: {summary_path}")
+        return
+
+    # シャード実行モードの判定と完了済みチェック（モデルロード前の早期終了）
+    shard_mode = args.end is not None or args.start > 0
+    if shard_mode and args.end is not None:
+        existing_rows = load_shard_rows(shard_results_path(output_dir, args.start, args.end))
+        if len(existing_rows) >= args.end - args.start:
+            logger.info(
+                f"シャード [{args.start}, {args.end}) は完了済み"
+                f"（{len(existing_rows)}件）。スキップします"
+            )
+            return
+
     # 摂動データセットの読み込み（Phase 3の場合）
     perturbed_dataset: PerturbedDataset | None = None
     perturbed_metadata: dict | None = None
@@ -397,6 +460,29 @@ def main() -> None:
 
     # 結果を格納するリスト
     results_list: list[dict] = []
+
+    # シャード実行モード (実験10②): サンプルを [start, end) に切り出し、
+    # 既存シャードファイルがあれば処理済みサンプルをスキップ（シャード内復帰）
+    shard_end = total_samples
+    shard_path: Path | None = None
+    if shard_mode:
+        shard_end = min(args.end, total_samples) if args.end is not None else total_samples
+        if args.start >= shard_end:
+            logger.error(f"不正なシャード範囲: [{args.start}, {shard_end})")
+            sys.exit(1)
+        shard_path = shard_results_path(output_dir, args.start, shard_end)
+        shard_path.parent.mkdir(parents=True, exist_ok=True)
+        samples = samples[args.start : shard_end]
+        resumed_rows = load_shard_rows(shard_path)
+        if resumed_rows:
+            done_ids = {row["sample_id"] for row in resumed_rows}
+            samples = [s for s in samples if s.sample_id not in done_ids]
+            results_list.extend(resumed_rows)
+            logger.info(f"シャード内復帰: {len(resumed_rows)}件処理済みをスキップ")
+        logger.info(
+            f"シャード [{args.start}, {shard_end}) / 全{total_samples}件, "
+            f"残り{len(samples)}サンプル"
+        )
 
     # サブセットごとの統計
     subset_stats: dict[str, dict[str, int | float]] = {}
@@ -738,6 +824,11 @@ def main() -> None:
                 accuracy = correct_count / processed_count
                 pbar.set_postfix({"正答率": f"{accuracy:.1%}", "正答": correct_count})
 
+        # シャード実行モード: 毎バッチ上書き保存（中断からのシャード内復帰用）
+        if shard_mode and shard_path is not None:
+            with open(shard_path, "w", encoding="utf-8") as f:
+                json.dump(results_list, f, ensure_ascii=False, indent=2)
+
         # バッチ終了後のメモリクリーンアップ
         if batch_gen_results is not None:
             del batch_gen_results
@@ -747,6 +838,19 @@ def main() -> None:
             torch.cuda.empty_cache()
 
     pbar.close()
+
+    # シャード実行モード: シャードファイルのみ保存して終了
+    # （results.json / summary.json は全シャード完了後に --merge で生成）
+    if shard_mode and shard_path is not None:
+        with open(shard_path, "w", encoding="utf-8") as f:
+            json.dump(results_list, f, ensure_ascii=False, indent=2)
+        accuracy = correct_count / processed_count if processed_count > 0 else 0
+        logger.info(
+            f"シャード [{args.start}, {shard_end}) 完了: {len(results_list)}件保存 "
+            f"(このシャード実行分の正答率: {accuracy:.2%})"
+        )
+        logger.info(f"シャード結果を保存: {shard_path}")
+        return
 
     # 結果をJSONファイルに保存
     results_path = output_dir / "results.json"
