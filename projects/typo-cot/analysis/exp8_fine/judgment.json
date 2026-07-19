@@ -1,0 +1,770 @@
+{
+  "experiment": "exp8_fine",
+  "settings": {
+    "Llama-3.2-3B-Instruct_gsm8k": {
+      "n_layers": 28,
+      "stats": {
+        "n_pairs": 141,
+        "n_excluded": 9,
+        "n_error": 0
+      },
+      "H8f-1": {
+        "best_layer": 3,
+        "peak_stat": "median",
+        "peak_value": 0.5998174275001333,
+        "peak_median": 0.5998174275001333,
+        "peak_mean": 0.11913876938783091,
+        "rel_depth": 0.10714285714285714,
+        "depth_thresh": 0.2,
+        "supported": true
+      },
+      "H8f-2": {
+        "plateau_layers": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "plateau_width": 4,
+        "shape": "plateau",
+        "supported": true,
+        "branch": null
+      },
+      "H8f-3": {
+        "single_max": 0.5998174275001333,
+        "cumulative_max": 0.7165231092107287,
+        "ratio_cum_over_single": 1.1945686743331068,
+        "ratio_thresh": 1.2,
+        "saturation_layer": 3,
+        "saturation_rel_depth": 0.10714285714285714,
+        "depth_thresh": 0.2,
+        "supported": false
+      },
+      "H8f-4": {
+        "val_means": {
+          "14": 0.21980248820129544,
+          "20": 0.13099291184029238,
+          "26": 0.01833011656857597
+        },
+        "thresh": 0.1,
+        "supported": false
+      },
+      "H8f-5": {
+        "layers": [
+          2,
+          3,
+          4
+        ],
+        "band_means": {
+          "2": 0.40268769303705243,
+          "3": 0.3738191586332624,
+          "4": 0.38714115748189204
+        },
+        "mean_at_best": 0.3738191586332624,
+        "thresh": 0.5,
+        "supported": false
+      },
+      "A3": {
+        "a_other_span_early_abs_max": 0.03000419989793157,
+        "a_other_span_supported": true,
+        "b_all_positions_min": 1.0000001013406694,
+        "b_all_positions_supported": true,
+        "c_semantic": {
+          "pearson": 0.9005013322486856,
+          "peak_typo": 3,
+          "peak_semantic": 0,
+          "peak_match": false,
+          "isomorphic": false,
+          "n": 12,
+          "interpretation": "typo-specific depth localization"
+        }
+      },
+      "best_early_layer": 3,
+      "sham_early_abs_max": 0.0
+    },
+    "Llama-3.2-3B-Instruct_mmlu": {
+      "n_layers": 28,
+      "stats": {
+        "n_pairs": 136,
+        "n_excluded": 14,
+        "n_error": 0
+      },
+      "H8f-1": {
+        "best_layer": 4,
+        "peak_stat": "median",
+        "peak_value": 0.6130265143649666,
+        "peak_median": 0.6130265143649666,
+        "peak_mean": 0.4645809582425878,
+        "rel_depth": 0.14285714285714285,
+        "depth_thresh": 0.2,
+        "supported": true
+      },
+      "H8f-2": {
+        "plateau_layers": [
+          2,
+          3,
+          4,
+          5
+        ],
+        "plateau_width": 4,
+        "shape": "plateau",
+        "supported": true,
+        "branch": null
+      },
+      "H8f-3": {
+        "single_max": 0.6130265143649666,
+        "cumulative_max": 0.7380955081075903,
+        "ratio_cum_over_single": 1.2040188977342725,
+        "ratio_thresh": 1.2,
+        "saturation_layer": 3,
+        "saturation_rel_depth": 0.10714285714285714,
+        "depth_thresh": 0.2,
+        "supported": true
+      },
+      "H8f-4": {
+        "val_means": {
+          "14": 0.2568401704320461,
+          "20": 0.12026818415355339,
+          "26": 0.00876902570030963
+        },
+        "thresh": 0.1,
+        "supported": false
+      },
+      "H8f-5": {
+        "layers": [
+          3,
+          4,
+          5
+        ],
+        "band_means": {
+          "3": 0.550623208300222,
+          "4": 0.5303742078811773,
+          "5": 0.5211091528623897
+        },
+        "mean_at_best": 0.5303742078811773,
+        "thresh": 0.5,
+        "supported": true
+      },
+      "A3": {
+        "a_other_span_early_abs_max": 0.0444646639546209,
+        "a_other_span_supported": true,
+        "b_all_positions_min": null,
+        "b_all_positions_supported": false,
+        "c_semantic": {
+          "pearson": 0.8397302318747542,
+          "peak_typo": 4,
+          "peak_semantic": 0,
+          "peak_match": false,
+          "isomorphic": false,
+          "n": 12,
+          "interpretation": "typo-specific depth localization"
+        }
+      },
+      "best_early_layer": 4,
+      "sham_early_abs_max": 1.6606943087360548e-07
+    },
+    "Mistral-7B-Instruct-v0.3_gsm8k": {
+      "n_layers": 32,
+      "stats": {
+        "n_pairs": 149,
+        "n_excluded": 1,
+        "n_error": 0
+      },
+      "H8f-1": {
+        "best_layer": 1,
+        "peak_stat": "median",
+        "peak_value": 0.5539053390775108,
+        "peak_median": 0.5539053390775108,
+        "peak_mean": -0.06884245205735626,
+        "rel_depth": 0.03125,
+        "depth_thresh": 0.2,
+        "supported": true
+      },
+      "H8f-2": {
+        "plateau_layers": [
+          1,
+          2,
+          3
+        ],
+        "plateau_width": 3,
+        "shape": "plateau",
+        "supported": true,
+        "branch": null
+      },
+      "H8f-3": {
+        "single_max": 0.5539053390775108,
+        "cumulative_max": 0.5702326553016888,
+        "ratio_cum_over_single": 1.0294767265673408,
+        "ratio_thresh": 1.2,
+        "saturation_layer": 1,
+        "saturation_rel_depth": 0.03125,
+        "depth_thresh": 0.2,
+        "supported": false
+      },
+      "H8f-4": {
+        "val_means": {
+          "14": 0.16760040155393008,
+          "20": 0.01604456059193693,
+          "26": 0.0219450074975307
+        },
+        "thresh": 0.1,
+        "supported": false
+      },
+      "H8f-5": {
+        "layers": [
+          0,
+          1,
+          2
+        ],
+        "band_means": {
+          "0": 0.009958175874665298,
+          "1": 0.28071393611279805,
+          "2": 0.3098645898533565
+        },
+        "mean_at_best": 0.28071393611279805,
+        "thresh": 0.5,
+        "supported": false
+      },
+      "A3": {
+        "a_other_span_early_abs_max": 0.05534087972510804,
+        "a_other_span_supported": true,
+        "b_all_positions_min": 1.0000000070431554,
+        "b_all_positions_supported": true,
+        "c_semantic": {
+          "pearson": 0.8002900327213419,
+          "peak_typo": 1,
+          "peak_semantic": 2,
+          "peak_match": true,
+          "isomorphic": true,
+          "n": 12,
+          "interpretation": "read-out generic; typo-specific effect in LXT/Random magnitude"
+        }
+      },
+      "best_early_layer": 1,
+      "sham_early_abs_max": 0.0
+    },
+    "Mistral-7B-Instruct-v0.3_mmlu": {
+      "n_layers": 32,
+      "stats": {
+        "n_pairs": 143,
+        "n_excluded": 7,
+        "n_error": 0
+      },
+      "H8f-1": {
+        "best_layer": 1,
+        "peak_stat": "median",
+        "peak_value": 0.5074083772718365,
+        "peak_median": 0.5074083772718365,
+        "peak_mean": -0.05110521034978858,
+        "rel_depth": 0.03125,
+        "depth_thresh": 0.2,
+        "supported": true
+      },
+      "H8f-2": {
+        "plateau_layers": [
+          1,
+          2
+        ],
+        "plateau_width": 2,
+        "shape": "plateau",
+        "supported": true,
+        "branch": null
+      },
+      "H8f-3": {
+        "single_max": 0.5074083772718365,
+        "cumulative_max": 0.5948816728990642,
+        "ratio_cum_over_single": 1.1723922969059795,
+        "ratio_thresh": 1.2,
+        "saturation_layer": 1,
+        "saturation_rel_depth": 0.03125,
+        "depth_thresh": 0.2,
+        "supported": false
+      },
+      "H8f-4": {
+        "val_means": {
+          "14": 0.11746026002856813,
+          "20": 0.03871764218998475,
+          "26": 0.01728028611920418
+        },
+        "thresh": 0.1,
+        "supported": false
+      },
+      "H8f-5": {
+        "layers": [
+          0,
+          1,
+          2
+        ],
+        "band_means": {
+          "0": 0.13817307780776078,
+          "1": 0.3218651869978837,
+          "2": 0.28490122073002444
+        },
+        "mean_at_best": 0.3218651869978837,
+        "thresh": 0.5,
+        "supported": false
+      },
+      "A3": {
+        "a_other_span_early_abs_max": 0.058856534300158136,
+        "a_other_span_supported": true,
+        "b_all_positions_min": 1.0000000006352967,
+        "b_all_positions_supported": true,
+        "c_semantic": {
+          "pearson": 0.8565655419011161,
+          "peak_typo": 1,
+          "peak_semantic": 2,
+          "peak_match": true,
+          "isomorphic": true,
+          "n": 12,
+          "interpretation": "read-out generic; typo-specific effect in LXT/Random magnitude"
+        }
+      },
+      "best_early_layer": 1,
+      "sham_early_abs_max": 0.0
+    },
+    "gemma-3-4b-it_gsm8k": {
+      "n_layers": 34,
+      "stats": {
+        "n_pairs": 124,
+        "n_excluded": 26,
+        "n_error": 0
+      },
+      "H8f-1": {
+        "best_layer": 5,
+        "peak_stat": "median",
+        "peak_value": 0.612389610549924,
+        "peak_median": 0.612389610549924,
+        "peak_mean": 0.20723542843662837,
+        "rel_depth": 0.14705882352941177,
+        "depth_thresh": 0.2,
+        "supported": true
+      },
+      "H8f-2": {
+        "plateau_layers": [
+          5
+        ],
+        "plateau_width": 1,
+        "shape": "spike",
+        "supported": false,
+        "branch": "spike -> stronger localization claim"
+      },
+      "H8f-3": {
+        "single_max": 0.612389610549924,
+        "cumulative_max": 0.7311173149856758,
+        "ratio_cum_over_single": 1.1938760919362017,
+        "ratio_thresh": 1.2,
+        "saturation_layer": 4,
+        "saturation_rel_depth": 0.11764705882352941,
+        "depth_thresh": 0.2,
+        "supported": false
+      },
+      "H8f-4": {
+        "val_means": {
+          "14": 0.2998297401075608,
+          "20": 0.025624820656279967,
+          "26": 0.034826271931255814
+        },
+        "thresh": 0.1,
+        "supported": false
+      },
+      "H8f-5": {
+        "layers": [
+          4,
+          5,
+          6
+        ],
+        "band_means": {
+          "4": 0.411314175943836,
+          "5": 0.45749807049936364,
+          "6": 0.4847703261327317
+        },
+        "mean_at_best": 0.45749807049936364,
+        "thresh": 0.5,
+        "supported": false
+      },
+      "A3": {
+        "a_other_span_early_abs_max": 0.023590848668150977,
+        "a_other_span_supported": true,
+        "b_all_positions_min": 1.0000000494346972,
+        "b_all_positions_supported": true,
+        "c_semantic": {
+          "pearson": 0.4306573402179641,
+          "peak_typo": 5,
+          "peak_semantic": 0,
+          "peak_match": false,
+          "isomorphic": false,
+          "n": 12,
+          "interpretation": "typo-specific depth localization"
+        }
+      },
+      "best_early_layer": 5,
+      "sham_early_abs_max": 0.0
+    },
+    "gemma-3-4b-it_mmlu": {
+      "n_layers": 34,
+      "stats": {
+        "n_pairs": 145,
+        "n_excluded": 5,
+        "n_error": 0
+      },
+      "H8f-1": {
+        "best_layer": 5,
+        "peak_stat": "median",
+        "peak_value": 0.4651041803635765,
+        "peak_median": 0.4651041803635765,
+        "peak_mean": -2.4784130438699545,
+        "rel_depth": 0.14705882352941177,
+        "depth_thresh": 0.2,
+        "supported": true
+      },
+      "H8f-2": {
+        "plateau_layers": [
+          5,
+          6,
+          7
+        ],
+        "plateau_width": 3,
+        "shape": "plateau",
+        "supported": true,
+        "branch": null
+      },
+      "H8f-3": {
+        "single_max": 0.4651041803635765,
+        "cumulative_max": 0.6727026377028433,
+        "ratio_cum_over_single": 1.4463482937886842,
+        "ratio_thresh": 1.2,
+        "saturation_layer": 7,
+        "saturation_rel_depth": 0.20588235294117646,
+        "depth_thresh": 0.2,
+        "supported": false
+      },
+      "H8f-4": {
+        "val_means": {
+          "14": 0.2562544005204451,
+          "20": 0.14653311650617062,
+          "26": 0.03351537901595125
+        },
+        "thresh": 0.1,
+        "supported": false
+      },
+      "H8f-5": {
+        "layers": [
+          4,
+          5,
+          6
+        ],
+        "band_means": {
+          "4": 0.5069730623740172,
+          "5": 0.46555973739682455,
+          "6": 0.40886182588144004
+        },
+        "mean_at_best": 0.46555973739682455,
+        "thresh": 0.5,
+        "supported": false
+      },
+      "A3": {
+        "a_other_span_early_abs_max": 0.05793780073950261,
+        "a_other_span_supported": true,
+        "b_all_positions_min": 0.9999997329092978,
+        "b_all_positions_supported": true,
+        "c_semantic": {
+          "pearson": 0.13985699384228314,
+          "peak_typo": 5,
+          "peak_semantic": 0,
+          "peak_match": false,
+          "isomorphic": false,
+          "n": 12,
+          "interpretation": "typo-specific depth localization"
+        }
+      },
+      "best_early_layer": 5,
+      "sham_early_abs_max": 0.0
+    }
+  },
+  "pooled_by_model": {
+    "Llama-3.2-3B-Instruct": {
+      "n_layers": 28,
+      "H8f-1": {
+        "best_layer": 3,
+        "peak_stat": "median",
+        "peak_value": 0.5882694009265237,
+        "peak_median": 0.5882694009265237,
+        "peak_mean": 0.2792505145824077,
+        "rel_depth": 0.10714285714285714,
+        "depth_thresh": 0.2,
+        "supported": true
+      },
+      "H8f-2": {
+        "plateau_layers": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "plateau_width": 5,
+        "shape": "plateau",
+        "supported": true,
+        "branch": null
+      },
+      "H8f-3": {
+        "single_max": 0.5882694009265237,
+        "cumulative_max": 0.7259243146940246,
+        "ratio_cum_over_single": 1.2339997857286042,
+        "ratio_thresh": 1.2,
+        "saturation_layer": 3,
+        "saturation_rel_depth": 0.10714285714285714,
+        "depth_thresh": 0.2,
+        "supported": true
+      },
+      "H8f-4": {
+        "val_means": {
+          "14": 0.22571779115167478,
+          "20": 0.13072997072777282,
+          "26": 0.0112906069877039
+        },
+        "thresh": 0.1,
+        "supported": false
+      },
+      "H8f-5": {
+        "layers": [
+          2,
+          3,
+          4
+        ],
+        "band_means": {
+          "2": 0.46954159731099476,
+          "3": 0.46002412531479087,
+          "4": 0.4398358682984953
+        },
+        "mean_at_best": 0.46002412531479087,
+        "thresh": 0.5,
+        "supported": false
+      },
+      "A3": {
+        "a_other_span_early_abs_max": 0.03289637480984764,
+        "a_other_span_supported": true,
+        "b_all_positions_min": 1.0000001013406694,
+        "b_all_positions_supported": true
+      },
+      "best_early_layer": 3,
+      "sham_early_abs_max": 0.0
+    },
+    "Mistral-7B-Instruct-v0.3": {
+      "n_layers": 32,
+      "H8f-1": {
+        "best_layer": 1,
+        "peak_stat": "median",
+        "peak_value": 0.5133576790009238,
+        "peak_median": 0.5133576790009238,
+        "peak_mean": -0.06015606313892414,
+        "rel_depth": 0.03125,
+        "depth_thresh": 0.2,
+        "supported": true
+      },
+      "H8f-2": {
+        "plateau_layers": [
+          1,
+          2
+        ],
+        "plateau_width": 2,
+        "shape": "plateau",
+        "supported": true,
+        "branch": null
+      },
+      "H8f-3": {
+        "single_max": 0.5133576790009238,
+        "cumulative_max": 0.5670885058647088,
+        "ratio_cum_over_single": 1.104665478012044,
+        "ratio_thresh": 1.2,
+        "saturation_layer": 1,
+        "saturation_rel_depth": 0.03125,
+        "depth_thresh": 0.2,
+        "supported": false
+      },
+      "H8f-4": {
+        "val_means": {
+          "14": 0.14629487629201393,
+          "20": 0.02538464765244347,
+          "26": 0.018744751387949732
+        },
+        "thresh": 0.1,
+        "supported": false
+      },
+      "H8f-5": {
+        "layers": [
+          0,
+          1,
+          2
+        ],
+        "band_means": {
+          "0": 0.08860806946081295,
+          "1": 0.3075302670648764,
+          "2": 0.3069234460508632
+        },
+        "mean_at_best": 0.3075302670648764,
+        "thresh": 0.5,
+        "supported": false
+      },
+      "A3": {
+        "a_other_span_early_abs_max": 0.05573929884617579,
+        "a_other_span_supported": true,
+        "b_all_positions_min": 1.0000000051324847,
+        "b_all_positions_supported": true
+      },
+      "best_early_layer": 1,
+      "sham_early_abs_max": 0.0
+    },
+    "gemma-3-4b-it": {
+      "n_layers": 34,
+      "H8f-1": {
+        "best_layer": 5,
+        "peak_stat": "median",
+        "peak_value": 0.521121404415893,
+        "peak_median": 0.521121404415893,
+        "peak_mean": -1.240418952546474,
+        "rel_depth": 0.14705882352941177,
+        "depth_thresh": 0.2,
+        "supported": true
+      },
+      "H8f-2": {
+        "plateau_layers": [
+          4,
+          5
+        ],
+        "plateau_width": 2,
+        "shape": "plateau",
+        "supported": true,
+        "branch": null
+      },
+      "H8f-3": {
+        "single_max": 0.521121404415893,
+        "cumulative_max": 0.6924214905988153,
+        "ratio_cum_over_single": 1.3287143547191784,
+        "ratio_thresh": 1.2,
+        "saturation_layer": 4,
+        "saturation_rel_depth": 0.11764705882352941,
+        "depth_thresh": 0.2,
+        "supported": true
+      },
+      "H8f-4": {
+        "val_means": {
+          "14": 0.2938721048577022,
+          "20": 0.10235591769776664,
+          "26": 0.03351537901595125
+        },
+        "thresh": 0.1,
+        "supported": false
+      },
+      "H8f-5": {
+        "layers": [
+          4,
+          5,
+          6
+        ],
+        "band_means": {
+          "4": 0.4729803417598679,
+          "5": 0.46555973739682455,
+          "6": 0.4354309763381602
+        },
+        "mean_at_best": 0.46555973739682455,
+        "thresh": 0.5,
+        "supported": false
+      },
+      "A3": {
+        "a_other_span_early_abs_max": 0.01577734336839942,
+        "a_other_span_supported": true,
+        "b_all_positions_min": 1.0000000450454198,
+        "b_all_positions_supported": true
+      },
+      "best_early_layer": 5,
+      "sham_early_abs_max": 0.0
+    }
+  },
+  "overall_supported_over_settings": {
+    "H8f-1": {
+      "supported": 6,
+      "evaluated": 6
+    },
+    "H8f-2": {
+      "supported": 5,
+      "evaluated": 6
+    },
+    "H8f-3": {
+      "supported": 1,
+      "evaluated": 6
+    },
+    "H8f-4": {
+      "supported": 0,
+      "evaluated": 6
+    },
+    "H8f-5": {
+      "supported": 1,
+      "evaluated": 6
+    },
+    "A3": {
+      "a_other_span_supported": 6,
+      "b_all_positions_supported": 5,
+      "c_semantic_isomorphic": 2,
+      "c_semantic_evaluated": 6,
+      "evaluated": 6
+    }
+  },
+  "semantic_compare": {
+    "Llama-3.2-3B-Instruct_gsm8k": {
+      "pearson": 0.9005013322486856,
+      "peak_typo": 3,
+      "peak_semantic": 0,
+      "peak_match": false,
+      "isomorphic": false,
+      "n": 12,
+      "interpretation": "typo-specific depth localization"
+    },
+    "Llama-3.2-3B-Instruct_mmlu": {
+      "pearson": 0.8397302318747542,
+      "peak_typo": 4,
+      "peak_semantic": 0,
+      "peak_match": false,
+      "isomorphic": false,
+      "n": 12,
+      "interpretation": "typo-specific depth localization"
+    },
+    "Mistral-7B-Instruct-v0.3_gsm8k": {
+      "pearson": 0.8002900327213419,
+      "peak_typo": 1,
+      "peak_semantic": 2,
+      "peak_match": true,
+      "isomorphic": true,
+      "n": 12,
+      "interpretation": "read-out generic; typo-specific effect in LXT/Random magnitude"
+    },
+    "Mistral-7B-Instruct-v0.3_mmlu": {
+      "pearson": 0.8565655419011161,
+      "peak_typo": 1,
+      "peak_semantic": 2,
+      "peak_match": true,
+      "isomorphic": true,
+      "n": 12,
+      "interpretation": "read-out generic; typo-specific effect in LXT/Random magnitude"
+    },
+    "gemma-3-4b-it_gsm8k": {
+      "pearson": 0.4306573402179641,
+      "peak_typo": 5,
+      "peak_semantic": 0,
+      "peak_match": false,
+      "isomorphic": false,
+      "n": 12,
+      "interpretation": "typo-specific depth localization"
+    },
+    "gemma-3-4b-it_mmlu": {
+      "pearson": 0.13985699384228314,
+      "peak_typo": 5,
+      "peak_semantic": 0,
+      "peak_match": false,
+      "isomorphic": false,
+      "n": 12,
+      "interpretation": "typo-specific depth localization"
+    }
+  },
+  "fig5_png": "analysis/exp8_fine/fig5_relative_depth_overlay.png"
+}

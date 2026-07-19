@@ -1,0 +1,496 @@
+{
+  "gsm8k": [
+    {
+      "sample_id": "gsm8k_00000",
+      "strict_top4_targets": [
+        [
+          838,
+          " Janet"
+        ],
+        [
+          841,
+          " ducks"
+        ],
+        [
+          842,
+          " lay"
+        ],
+        [
+          901,
+          "?"
+        ]
+      ],
+      "matched_twins": [
+        [
+          846,
+          " eggs",
+          " eegg",
+          "double_typing"
+        ],
+        [
+          851,
+          " eats",
+          "eatz",
+          "proximity"
+        ],
+        [
+          870,
+          " sells",
+          "sels",
+          "omission"
+        ],
+        [
+          896,
+          " at",
+          "att",
+          "double_typing"
+        ]
+      ],
+      "overlap_with_strict_top4": [],
+      "disjoint": true
+    },
+    {
+      "sample_id": "gsm8k_00001",
+      "strict_top4_targets": [
+        [
+          839,
+          " robe"
+        ],
+        [
+          840,
+          " takes"
+        ],
+        [
+          849,
+          " that"
+        ],
+        [
+          851,
+          " white"
+        ]
+      ],
+      "matched_twins": [
+        [
+          843,
+          " bolts",
+          "bols",
+          "omission"
+        ],
+        [
+          847,
+          " and",
+          "andd",
+          "double_typing"
+        ],
+        [
+          848,
+          " half",
+          "yalf",
+          "proximity"
+        ],
+        [
+          856,
+          " many",
+          "mahy",
+          "proximity"
+        ]
+      ],
+      "overlap_with_strict_top4": [],
+      "disjoint": true
+    },
+    {
+      "sample_id": "gsm8k_00002",
+      "strict_top4_targets": [
+        [
+          838,
+          " Josh"
+        ],
+        [
+          886,
+          "%."
+        ],
+        [
+          894,
+          "?"
+        ],
+        [
+          875,
+          " increased"
+        ]
+      ],
+      "matched_twins": [
+        [
+          848,
+          " buys",
+          "bus",
+          "omission"
+        ],
+        [
+          861,
+          " puts",
+          "pits",
+          "proximity"
+        ],
+        [
+          871,
+          " repairs",
+          "rpairs",
+          "omission"
+        ],
+        [
+          878,
+          " of",
+          "oof",
+          "double_typing"
+        ]
+      ],
+      "overlap_with_strict_top4": [],
+      "disjoint": true
+    },
+    {
+      "sample_id": "gsm8k_00003",
+      "strict_top4_targets": [
+        [
+          841,
+          " run"
+        ],
+        [
+          838,
+          " James"
+        ],
+        [
+          839,
+          " decides"
+        ],
+        [
+          849,
+          " week"
+        ]
+      ],
+      "matched_twins": [
+        [
+          857,
+          " meters",
+          " metee",
+          "proximity"
+        ],
+        [
+          864,
+          " total",
+          "tota",
+          "omission"
+        ],
+        [
+          868,
+          " run",
+          "ryn",
+          "proximity"
+        ],
+        [
+          870,
+          " week",
+          "wek",
+          "omission"
+        ]
+      ],
+      "overlap_with_strict_top4": [],
+      "disjoint": true
+    },
+    {
+      "sample_id": "gsm8k_00004",
+      "strict_top4_targets": [
+        [
+          841,
+          " W"
+        ],
+        [
+          938,
+          " W"
+        ],
+        [
+          842,
+          "endi"
+        ],
+        [
+          838,
+          " Every"
+        ]
+      ],
+      "matched_twins": [
+        [
+          848,
+          " three",
+          " thr",
+          "omission"
+        ],
+        [
+          911,
+          " of",
+          "o",
+          "omission"
+        ],
+        [
+          934,
+          " if",
+          "uf",
+          "proximity"
+        ],
+        [
+          939,
+          "endi",
+          "ebdi",
+          "proximity"
+        ]
+      ],
+      "overlap_with_strict_top4": [],
+      "disjoint": true
+    }
+  ],
+  "mmlu": [
+    {
+      "sample_id": "mmlu_abstract_algebra_0081",
+      "strict_top4_targets": [
+        [
+          514,
+          " Statement"
+        ],
+        [
+          502,
+          " Every"
+        ],
+        [
+          498,
+          " Statement"
+        ],
+        [
+          519,
+          " free"
+        ]
+      ],
+      "matched_twins": [
+        [
+          504,
+          " free",
+          " fe",
+          "omission"
+        ],
+        [
+          509,
+          " infinite",
+          " ihfinit",
+          "proximity"
+        ],
+        [
+          518,
+          " Every",
+          "Eery",
+          "omission"
+        ],
+        [
+          530,
+          " infinite",
+          "infonite",
+          "proximity"
+        ]
+      ],
+      "overlap_with_strict_top4": [],
+      "disjoint": true
+    },
+    {
+      "sample_id": "mmlu_abstract_algebra_0014",
+      "strict_top4_targets": [
+        [
+          508,
+          "_"
+        ],
+        [
+          507,
+          " S"
+        ],
+        [
+          506,
+          " of"
+        ],
+        [
+          505,
+          " element"
+        ]
+      ],
+      "matched_twins": [
+        [
+          498,
+          " Find",
+          "ond ",
+          "proximity"
+        ],
+        [
+          500,
+          " maximum",
+          "ximum pp",
+          "double_typing"
+        ],
+        [
+          503,
+          " for",
+          "orr ",
+          "double_typing"
+        ],
+        [
+          509,
+          "n",
+          "nn",
+          "double_typing"
+        ]
+      ],
+      "overlap_with_strict_top4": [],
+      "disjoint": true
+    },
+    {
+      "sample_id": "mmlu_abstract_algebra_0003",
+      "strict_top4_targets": [
+        [
+          518,
+          " Statement"
+        ],
+        [
+          498,
+          " Statement"
+        ],
+        [
+          516,
+          "elian"
+        ],
+        [
+          512,
+          " is"
+        ]
+      ],
+      "matched_twins": [
+        [
+          505,
+          " of",
+          " oo",
+          "double_typing"
+        ],
+        [
+          510,
+          "elian",
+          "elia",
+          "omission"
+        ],
+        [
+          527,
+          " subgroup",
+          "sibgroup",
+          "proximity"
+        ],
+        [
+          535,
+          " subgroup",
+          "sibgroup",
+          "proximity"
+        ]
+      ],
+      "overlap_with_strict_top4": [],
+      "disjoint": true
+    },
+    {
+      "sample_id": "mmlu_abstract_algebra_0094",
+      "strict_top4_targets": [
+        [
+          512,
+          " Statement"
+        ],
+        [
+          536,
+          " True"
+        ],
+        [
+          509,
+          "_"
+        ],
+        [
+          498,
+          " Statement"
+        ]
+      ],
+      "matched_twins": [
+        [
+          504,
+          " an",
+          "n",
+          "omission"
+        ],
+        [
+          505,
+          " extension",
+          "extenson",
+          "omission"
+        ],
+        [
+          529,
+          " extension",
+          "xtensin ",
+          "omission"
+        ],
+        [
+          548,
+          " True",
+          "Truue",
+          "double_typing"
+        ]
+      ],
+      "overlap_with_strict_top4": [],
+      "disjoint": true
+    },
+    {
+      "sample_id": "mmlu_abstract_algebra_0035",
+      "strict_top4_targets": [
+        [
+          500,
+          " degree"
+        ],
+        [
+          498,
+          " Find"
+        ],
+        [
+          505,
+          " extension"
+        ],
+        [
+          499,
+          " the"
+        ]
+      ],
+      "matched_twins": [
+        [
+          502,
+          " the",
+          "thr",
+          "proximity"
+        ],
+        [
+          503,
+          " given",
+          "giveb",
+          "proximity"
+        ],
+        [
+          504,
+          " field",
+          "ild ",
+          "omission"
+        ],
+        [
+          516,
+          " over",
+          "oover",
+          "double_typing"
+        ]
+      ],
+      "overlap_with_strict_top4": [],
+      "disjoint": true
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "dataset": "gemma-3-4b-it_gsm8k_k4_matched_rnd",
+  "seed": 42,
+  "pythonhashseed": "42",
+  "num_perturbations": 4,
+  "embedding_enabled": true,
+  "created_at": "2026-07-14T18:25:14.809506",
+  "smd_table": {
+    "n_targets": 5276,
+    "n_matched": 5276,
+    "smd": {
+      "char_len": -0.015210473680909508,
+      "zipf": -0.2545383996527208,
+      "split_increment": 0.031779414175929915,
+      "centrality": -0.015928896368622623
+    },
+    "class_match_rate": 0.9998104624715694,
+    "exact_len_match_rate": 0.6029188779378317,
+    "mean_len_diff": 0.494882486732373,
+    "relaxation_rates": {
+      "exact": 0.42266868840030325,
+      "no_centrality": 0.18498862774829417,
+      "caliper": 0.2670583775587566,
+      "class_len": 0.12509476876421532,
+      "any": 0.00018953752843062926,
+      "unmatched": 0.0
+    }
+  },
+  "applied_total": 5276,
+  "applied_from_matched": 4884,
+  "applied_from_matched_rate": 0.9257012888551933
+}

@@ -1,0 +1,86 @@
+{
+  "config_hash": "96015669c4371451",
+  "experiment": "exp8_fine",
+  "config": {
+    "model": "mistralai/Mistral-7B-Instruct-v0.3",
+    "benchmark": "mmlu",
+    "baseline_dir": "/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/baseline/Mistral-7B-Instruct-v0.3_mmlu",
+    "perturbed_dir_lxt": "/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/perturbed/Mistral-7B-Instruct-v0.3_mmlu_k4_importance",
+    "perturbed_dir_rnd": "/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/perturbed/Mistral-7B-Instruct-v0.3_mmlu_k4_random",
+    "n_pairs": 150,
+    "single_layers": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      14,
+      20,
+      26
+    ],
+    "cumulative_layers": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11
+    ],
+    "noising_layers": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "sham_layers": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11
+    ],
+    "site": "residual",
+    "site_kind": "question_span",
+    "controls": false,
+    "other_span_offset": 2,
+    "perturb_mode": "semantic",
+    "max_new_tokens": 16,
+    "shard": [
+      0,
+      1
+    ],
+    "timestamp": "2026-07-19T19:59:56.246439"
+  },
+  "n_tasks": 141,
+  "n_done": 134,
+  "n_skipped_idempotent": 0,
+  "n_excluded": 7,
+  "n_failed": 0,
+  "excluded_reasons": {
+    "no_trigger_clean": 7
+  }
+}
