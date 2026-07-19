@@ -22,6 +22,8 @@ HF_MODEL_NAMES: dict[str, str] = {
     "Mistral-7B-Instruct-v0.3": "mistralai/Mistral-7B-Instruct-v0.3",
     "gemma-3-1b-it": "google/gemma-3-1b-it",
     "gemma-3-4b-it": "google/gemma-3-4b-it",
+    "gemma-3-12b-it": "google/gemma-3-12b-it",  # size-ladder wave 1
+    "gemma-3-27b-it": "google/gemma-3-27b-it",  # size-ladder wave 1
     "Qwen2.5-7B-Instruct": "Qwen/Qwen2.5-7B-Instruct",
 }
 
