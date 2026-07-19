@@ -161,36 +161,68 @@ def main() -> None:
     # sensitivity: RD_all
     corr["loo_gini_vs_rd_all"] = _spearman(loo_gini, [r["rd_all_k4"] for r in rows])
 
-    # ---- family Gini 順位 ----
-    fam_gini = {}
-    for fam in ("llama", "gemma", "mistral"):
-        gs = [r["loo_gini"] for r in rows
-              if r["family"] == fam and r["loo_gini"] is not None]
-        fam_gini[fam] = (sum(gs) / len(gs)) if gs else None
-    fam_rank_ok = (
-        fam_gini["llama"] is not None and fam_gini["gemma"] is not None
-        and fam_gini["mistral"] is not None
-        and fam_gini["llama"] > fam_gini["gemma"] > fam_gini["mistral"]
-    )
-    fam_order = sorted(
-        (f for f in fam_gini if fam_gini[f] is not None),
-        key=lambda f: fam_gini[f], reverse=True,
-    )
+    # ---- family 平均 (Gini と 削除RD) ----
+    def _fam_mean(key):
+        out = {}
+        for fam in ("llama", "gemma", "mistral"):
+            vs = [r[key] for r in rows if r["family"] == fam and r[key] is not None]
+            out[fam] = (sum(vs) / len(vs)) if vs else None
+        return out
 
-    # ---- H13 判定 ----
-    rho = corr["loo_gini_vs_deletion_rd"]["rho"]
-    corr_ok = rho is not None and rho >= 0.7
+    def _order(d):
+        return sorted((f for f in d if d[f] is not None),
+                      key=lambda f: d[f], reverse=True)
+
+    def _is_llama_gemma_mistral(d):
+        return (d["llama"] is not None and d["gemma"] is not None
+                and d["mistral"] is not None
+                and d["llama"] > d["gemma"] > d["mistral"])
+
+    fam_gini = _fam_mean("loo_gini")
+    fam_rd_content = _fam_mean("rd_content_k4")
+    fam_rd_all = _fam_mean("rd_all_k4")
+    fam_rank_ok = _is_llama_gemma_mistral(fam_gini)
+
+    # ---- H13 判定 (scope-aware) ----
+    rho_content = corr["loo_gini_vs_deletion_rd"]["rho"]  # 全語Gini vs RD_content
+    rho_all = corr["loo_gini_vs_rd_all"]["rho"]           # 全語Gini vs RD_all (scope一致)
     n_loo_settings = sum(1 for r in rows if r["loo_gini"] is not None)
     judgment = {
-        "family_rank_llama_gt_gemma_gt_mistral": fam_rank_ok,
-        "family_gini_order": fam_order,
-        "family_gini": fam_gini,
-        "rankcorr_gini_vs_deletion_rd": rho,
-        "rankcorr_threshold_met (>=0.7)": corr_ok,
-        "H13_supported": bool(fam_rank_ok and corr_ok),
+        # 事前登録の文字通りの判定 (削除RD = content 層, 二重乖離の介入側順位)
+        "preregistered_literal": {
+            "rd_scope": "content",
+            "family_gini_order": _order(fam_gini),
+            "family_gini": fam_gini,
+            "family_rank_llama_gt_gemma_gt_mistral": fam_rank_ok,
+            "rankcorr_gini_vs_rd_content": rho_content,
+            "rankcorr_threshold_met (>=0.7)": bool(
+                rho_content is not None and rho_content >= 0.7),
+            "H13_supported": bool(
+                fam_rank_ok and rho_content is not None and rho_content >= 0.7),
+        },
+        # scope 一致の探索的判定 (全語Gini ↔ 全語削除RD)
+        "scope_matched_exploratory": {
+            "rd_scope": "all (unrestricted)",
+            "family_rd_all_order": _order(fam_rd_all),
+            "family_rd_all": fam_rd_all,
+            "family_rd_all_llama_gt_gemma_gt_mistral": _is_llama_gemma_mistral(fam_rd_all),
+            "rankcorr_gini_vs_rd_all": rho_all,
+            "rankcorr_threshold_met (>=0.7)": bool(rho_all is not None and rho_all >= 0.7),
+        },
+        "family_rd_content": fam_rd_content,
+        "family_rd_content_order": _order(fam_rd_content),
         "n_loo_settings_available": n_loo_settings,
-        "note": ("H13 = M3(読み出し集中度)が削除介入効果量を説明。"
-                 "2条件 (family順位 & rank-corr>=0.7) 両立で支持。"),
+        "interpretation": (
+            "全語 LOO Gini は scope 一致の RD_all を強く予測 (rho={:.2f}) するが、"
+            "content 層 RD_content とは逆符号 (rho={:.2f})。→ 集中度が numeric/機能語に"
+            "由来する場合 (Gemma gsm8k 等) は content 削除に効かない。Gini family 順位は"
+            "Gemma≈Llama>Mistral で、事前登録の Llama>Gemma>Mistral とは Gemma/Llama が"
+            "近接・逆転。Mistral は観察的集中 (LOO/内容語質量) は Llama と同程度でも "
+            "RD_content が桁違いに低い = 因果読み出しが冗長/分散 (削除に強い)。"
+        ).format(
+            rho_all if rho_all is not None else float("nan"),
+            rho_content if rho_content is not None else float("nan"),
+        ),
     }
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -226,9 +258,14 @@ def main() -> None:
         print(f"{r['model']:26s} {r['benchmark']:6s} {fmt(r['loo_gini'])} "
               f"{fmt(r['loo_top1'])} {fmt(r['attn_gini_mean'], 9)} "
               f"{fmt(r['rd_content_k4'])} {fmt(r['rd_all_k4'])}")
-    print(f"\nfamily Gini: {fam_gini}  order={fam_order}")
-    print(f"rank-corr(LOO Gini(全語), 削除RD[{rd_key}]) = "
+    print(f"\nfamily Gini: { {k: round(v,3) if v else v for k,v in fam_gini.items()} }"
+          f"  order={_order(fam_gini)}")
+    print(f"family RD_content order={_order(fam_rd_content)}; "
+          f"RD_all order={_order(fam_rd_all)}")
+    print(f"rank-corr(LOO Gini(全語), RD_content) = "
           f"{corr['loo_gini_vs_deletion_rd']}")
+    print(f"rank-corr(LOO Gini(全語), RD_all[scope一致]) = "
+          f"{corr['loo_gini_vs_rd_all']}")
     print(f"rank-corr(内容語Gini, 削除RD) = {corr['content_gini_vs_deletion_rd']}")
     print(f"rank-corr(内容語質量シェア, 削除RD) = "
           f"{corr['content_mass_share_vs_deletion_rd']}")
