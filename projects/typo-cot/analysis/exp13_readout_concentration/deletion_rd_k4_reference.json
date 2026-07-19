@@ -1,0 +1,102 @@
+{
+  "gemma-3-1b-it_gsm8k": {
+    "rd_all_k4": 0.803347280334728,
+    "rd_content_k4": -0.0044444444444444444
+  },
+  "gemma-3-1b-it_mmlu": {
+    "rd_all_k4": 0.10467706013363029,
+    "rd_content_k4": 0.09168443496801706
+  },
+  "gemma-3-1b-it_arc": {
+    "rd_all_k4": 0.06109979633401222,
+    "rd_content_k4": 0.05846774193548387
+  },
+  "gemma-3-1b-it_commonsense_qa": {
+    "rd_all_k4": 0.11600928074245939,
+    "rd_content_k4": 0.11136890951276102
+  },
+  "gemma-3-1b-it_mmlu_pro": {
+    "rd_all_k4": 0.10256410256410256,
+    "rd_content_k4": 0.06532663316582915
+  },
+  "gemma-3-4b-it_gsm8k": {
+    "rd_all_k4": 0.631578947368421,
+    "rd_content_k4": 0.009111617312072893
+  },
+  "gemma-3-4b-it_mmlu": {
+    "rd_all_k4": 0.1720183486238532,
+    "rd_content_k4": 0.07956989247311828
+  },
+  "gemma-3-4b-it_arc": {
+    "rd_all_k4": 0.037037037037037035,
+    "rd_content_k4": 0.03232323232323232
+  },
+  "gemma-3-4b-it_commonsense_qa": {
+    "rd_all_k4": 0.06292134831460675,
+    "rd_content_k4": 0.06278026905829596
+  },
+  "gemma-3-4b-it_mmlu_pro": {
+    "rd_all_k4": 0.20935412026726058,
+    "rd_content_k4": 0.07311827956989247
+  },
+  "Llama-3.2-1B-Instruct_gsm8k": {
+    "rd_all_k4": 0.5842450765864332,
+    "rd_content_k4": 0.3906810035842294
+  },
+  "Llama-3.2-1B-Instruct_mmlu": {
+    "rd_all_k4": 0.5118279569892473,
+    "rd_content_k4": 0.4957446808510638
+  },
+  "Llama-3.2-1B-Instruct_arc": {
+    "rd_all_k4": 0.510548523206751,
+    "rd_content_k4": 0.4968421052631579
+  },
+  "Llama-3.2-1B-Instruct_commonsense_qa": {
+    "rd_all_k4": 0.5167037861915368,
+    "rd_content_k4": 0.5355555555555556
+  },
+  "Llama-3.2-1B-Instruct_mmlu_pro": {
+    "rd_all_k4": 0.4251012145748988,
+    "rd_content_k4": 0.4122448979591837
+  },
+  "Llama-3.2-3B-Instruct_gsm8k": {
+    "rd_all_k4": 0.5502092050209205,
+    "rd_content_k4": 0.33248730964467005
+  },
+  "Llama-3.2-3B-Instruct_mmlu": {
+    "rd_all_k4": 0.4779735682819383,
+    "rd_content_k4": 0.47925311203319504
+  },
+  "Llama-3.2-3B-Instruct_arc": {
+    "rd_all_k4": 0.5705394190871369,
+    "rd_content_k4": 0.5454545454545454
+  },
+  "Llama-3.2-3B-Instruct_commonsense_qa": {
+    "rd_all_k4": 0.5807770961145194,
+    "rd_content_k4": 0.5897959183673469
+  },
+  "Llama-3.2-3B-Instruct_mmlu_pro": {
+    "rd_all_k4": 0.4682713347921225,
+    "rd_content_k4": 0.4115138592750533
+  },
+  "Mistral-7B-Instruct-v0.3_gsm8k": {
+    "rd_all_k4": 0.2632696390658174,
+    "rd_content_k4": 0.004662004662004662
+  },
+  "Mistral-7B-Instruct-v0.3_mmlu": {
+    "rd_all_k4": 0.0763888888888889,
+    "rd_content_k4": 0.026490066225165563
+  },
+  "Mistral-7B-Instruct-v0.3_arc": {
+    "rd_all_k4": 0.012578616352201259,
+    "rd_content_k4": 0.004149377593360996
+  },
+  "Mistral-7B-Instruct-v0.3_commonsense_qa": {
+    "rd_all_k4": 0.034782608695652174,
+    "rd_content_k4": 0.032467532467532464
+  },
+  "Mistral-7B-Instruct-v0.3_mmlu_pro": {
+    "rd_all_k4": 0.10244988864142539,
+    "rd_content_k4": 0.06318082788671024
+  }
+}

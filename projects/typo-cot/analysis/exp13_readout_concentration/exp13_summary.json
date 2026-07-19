@@ -1,0 +1,324 @@
+{
+  "benchmarks": [
+    "gsm8k",
+    "mmlu"
+  ],
+  "rd_primary": "rd_content_k4",
+  "rows": [
+    {
+      "model": "gemma-3-1b-it",
+      "family": "gemma",
+      "benchmark": "gsm8k",
+      "loo_n": 300,
+      "loo_gini": 0.9336152850677166,
+      "loo_top1": 0.7960374371915535,
+      "loo_top4": 0.9448208741232618,
+      "loo_eff_count": 2.0875279391220545,
+      "loo_n_words": 40.21333333333333,
+      "content_gini": 0.683507572844996,
+      "content_top1": 0.5060812384317162,
+      "content_mass_share": 0.03499830700657801,
+      "frac_top1_is_content": 0.023333333333333334,
+      "attn_gini_mean": 0.7915522804927443,
+      "attn_gini_agg": 0.738411316766716,
+      "attn_top1_agg": 0.15749683701967157,
+      "attn_n": 300,
+      "rd_all_k4": 0.803347280334728,
+      "rd_content_k4": -0.0044444444444444444,
+      "exp2_summary": "/diskthalys/ssd14tc/sfukuhata/dev/kanolab/typo_robust_analysis/.claude/worktrees/exp-02-target-deletion/projects/typo-cot/results/prod/exp2/gemma-3-1b-it_gsm8k_core/summary.json"
+    },
+    {
+      "model": "gemma-3-1b-it",
+      "family": "gemma",
+      "benchmark": "mmlu",
+      "loo_n": 292,
+      "loo_gini": 0.7731723788715689,
+      "loo_top1": 0.5096115827951402,
+      "loo_top4": 0.7440355880673877,
+      "loo_eff_count": 6.795113085236545,
+      "loo_n_words": 44.92123287671233,
+      "content_gini": 0.685663913331047,
+      "content_top1": 0.4466912432319254,
+      "content_mass_share": 0.5379799679793187,
+      "frac_top1_is_content": 0.5616438356164384,
+      "attn_gini_mean": 0.7575487694221322,
+      "attn_gini_agg": 0.6781723024738109,
+      "attn_top1_agg": 0.20585102550143924,
+      "attn_n": 292,
+      "rd_all_k4": 0.10467706013363029,
+      "rd_content_k4": 0.09168443496801706,
+      "exp2_summary": "/diskthalys/ssd14tc/sfukuhata/dev/kanolab/typo_robust_analysis/.claude/worktrees/exp-02-target-deletion/projects/typo-cot/results/prod/exp2/gemma-3-1b-it_mmlu_core/summary.json"
+    },
+    {
+      "model": "gemma-3-4b-it",
+      "family": "gemma",
+      "benchmark": "gsm8k",
+      "loo_n": 300,
+      "loo_gini": 0.9158093675361357,
+      "loo_top1": 0.598234199503728,
+      "loo_top4": 0.9484130207047906,
+      "loo_eff_count": 2.6033735525041757,
+      "loo_n_words": 34.42666666666667,
+      "content_gini": 0.6718751593473264,
+      "content_top1": 0.5272586110456521,
+      "content_mass_share": 0.012395376024214791,
+      "frac_top1_is_content": 0.0,
+      "attn_gini_mean": 0.7734593120516888,
+      "attn_gini_agg": 0.6979521424442904,
+      "attn_top1_agg": 0.1704044588022319,
+      "attn_n": 300,
+      "rd_all_k4": 0.631578947368421,
+      "rd_content_k4": 0.009111617312072893,
+      "exp2_summary": "/diskthalys/ssd14tc/sfukuhata/dev/kanolab/typo_robust_analysis/.claude/worktrees/exp-02-target-deletion/projects/typo-cot/results/prod/exp2/gemma-3-4b-it_gsm8k_core/summary.json"
+    },
+    {
+      "model": "gemma-3-4b-it",
+      "family": "gemma",
+      "benchmark": "mmlu",
+      "loo_n": 293,
+      "loo_gini": 0.7972017426918006,
+      "loo_top1": 0.4924612120743199,
+      "loo_top4": 0.721768830416622,
+      "loo_eff_count": 6.893997328041451,
+      "loo_n_words": 47.027303754266214,
+      "content_gini": 0.6935566205756537,
+      "content_top1": 0.4091337334185514,
+      "content_mass_share": 0.6014216974544416,
+      "frac_top1_is_content": 0.6006825938566553,
+      "attn_gini_mean": 0.7565153082824829,
+      "attn_gini_agg": 0.6704460249317968,
+      "attn_top1_agg": 0.18894943022152452,
+      "attn_n": 293,
+      "rd_all_k4": 0.1720183486238532,
+      "rd_content_k4": 0.07956989247311828,
+      "exp2_summary": "/diskthalys/ssd14tc/sfukuhata/dev/kanolab/typo_robust_analysis/.claude/worktrees/exp-02-target-deletion/projects/typo-cot/results/prod/exp2/gemma-3-4b-it_mmlu_core/summary.json"
+    },
+    {
+      "model": "Llama-3.2-1B-Instruct",
+      "family": "llama",
+      "benchmark": "gsm8k",
+      "loo_n": 300,
+      "loo_gini": 0.8535900432926021,
+      "loo_top1": 0.7217389884547055,
+      "loo_top4": 0.8852905722835595,
+      "loo_eff_count": 2.5718670085820152,
+      "loo_n_words": 25.35,
+      "content_gini": 0.5275600947078188,
+      "content_top1": 0.473159248783255,
+      "content_mass_share": 0.08628472507689408,
+      "frac_top1_is_content": 0.043333333333333335,
+      "attn_gini_mean": 0.7107848702754938,
+      "attn_gini_agg": 0.6692675716307455,
+      "attn_top1_agg": 0.20542110881381992,
+      "attn_n": 300,
+      "rd_all_k4": 0.5842450765864332,
+      "rd_content_k4": 0.3906810035842294,
+      "exp2_summary": "/diskthalys/ssd14tc/sfukuhata/dev/kanolab/typo_robust_analysis/.claude/worktrees/exp-02-target-deletion/projects/typo-cot/results/prod/exp2/Llama-3.2-1B-Instruct_gsm8k_core/summary.json"
+    },
+    {
+      "model": "Llama-3.2-1B-Instruct",
+      "family": "llama",
+      "benchmark": "mmlu",
+      "loo_n": 298,
+      "loo_gini": 0.7742270326804419,
+      "loo_top1": 0.4897981484557728,
+      "loo_top4": 0.7402214459427867,
+      "loo_eff_count": 6.148441546416917,
+      "loo_n_words": 33.13422818791946,
+      "content_gini": 0.7084656545431705,
+      "content_top1": 0.4741659102330984,
+      "content_mass_share": 0.6536158244218074,
+      "frac_top1_is_content": 0.697986577181208,
+      "attn_gini_mean": 0.651167166141241,
+      "attn_gini_agg": 0.5579397134148296,
+      "attn_top1_agg": 0.28652316928087707,
+      "attn_n": 298,
+      "rd_all_k4": 0.5118279569892473,
+      "rd_content_k4": 0.4957446808510638,
+      "exp2_summary": "/diskthalys/ssd14tc/sfukuhata/dev/kanolab/typo_robust_analysis/.claude/worktrees/exp-02-target-deletion/projects/typo-cot/results/prod/exp2/Llama-3.2-1B-Instruct_mmlu_core/summary.json"
+    },
+    {
+      "model": "Llama-3.2-3B-Instruct",
+      "family": "llama",
+      "benchmark": "gsm8k",
+      "loo_n": 300,
+      "loo_gini": 0.843079732890948,
+      "loo_top1": 0.6485620334549335,
+      "loo_top4": 0.8403943703605703,
+      "loo_eff_count": 3.018386341176013,
+      "loo_n_words": 31.546666666666667,
+      "content_gini": 0.5313171973533225,
+      "content_top1": 0.3704809830013134,
+      "content_mass_share": 0.062062374902878144,
+      "frac_top1_is_content": 0.006666666666666667,
+      "attn_gini_mean": 0.7261604440505919,
+      "attn_gini_agg": 0.6824957613231442,
+      "attn_top1_agg": 0.2131241563630697,
+      "attn_n": 300,
+      "rd_all_k4": 0.5502092050209205,
+      "rd_content_k4": 0.33248730964467005,
+      "exp2_summary": "/diskthalys/ssd14tc/sfukuhata/dev/kanolab/typo_robust_analysis/.claude/worktrees/exp-02-target-deletion/projects/typo-cot/results/prod/exp2/Llama-3.2-3B-Instruct_gsm8k_core/summary.json"
+    },
+    {
+      "model": "Llama-3.2-3B-Instruct",
+      "family": "llama",
+      "benchmark": "mmlu",
+      "loo_n": 297,
+      "loo_gini": 0.740665537310081,
+      "loo_top1": 0.45220494895149227,
+      "loo_top4": 0.665628687339608,
+      "loo_eff_count": 8.426390072541976,
+      "loo_n_words": 40.54882154882155,
+      "content_gini": 0.6449074515048016,
+      "content_top1": 0.37147520575277193,
+      "content_mass_share": 0.5811510003964327,
+      "frac_top1_is_content": 0.5925925925925926,
+      "attn_gini_mean": 0.6392543898534936,
+      "attn_gini_agg": 0.5934687615947087,
+      "attn_top1_agg": 0.23265327030709687,
+      "attn_n": 296,
+      "rd_all_k4": 0.4779735682819383,
+      "rd_content_k4": 0.47925311203319504,
+      "exp2_summary": "/diskthalys/ssd14tc/sfukuhata/dev/kanolab/typo_robust_analysis/.claude/worktrees/exp-02-target-deletion/projects/typo-cot/results/prod/exp2/Llama-3.2-3B-Instruct_mmlu_core/summary.json"
+    },
+    {
+      "model": "Mistral-7B-Instruct-v0.3",
+      "family": "mistral",
+      "benchmark": "gsm8k",
+      "loo_n": 300,
+      "loo_gini": 0.8680229348526921,
+      "loo_top1": 0.7223472638518285,
+      "loo_top4": 0.8811154647935825,
+      "loo_eff_count": 2.5628102889467255,
+      "loo_n_words": 33.57666666666667,
+      "content_gini": 0.4508023355410319,
+      "content_top1": 0.3216017781174547,
+      "content_mass_share": 0.08528023483329014,
+      "frac_top1_is_content": 0.04,
+      "attn_gini_mean": 0.6698975279629216,
+      "attn_gini_agg": 0.6419617250257932,
+      "attn_top1_agg": 0.15592920354117645,
+      "attn_n": 300,
+      "rd_all_k4": 0.2632696390658174,
+      "rd_content_k4": 0.004662004662004662,
+      "exp2_summary": "/diskthalys/ssd14tc/sfukuhata/dev/kanolab/typo_robust_analysis/.claude/worktrees/exp-02-target-deletion/projects/typo-cot/results/prod/exp2/Mistral-7B-Instruct-v0.3_gsm8k_core/summary.json"
+    },
+    {
+      "model": "Mistral-7B-Instruct-v0.3",
+      "family": "mistral",
+      "benchmark": "mmlu",
+      "loo_n": 295,
+      "loo_gini": 0.7127315894376661,
+      "loo_top1": 0.45834505566043454,
+      "loo_top4": 0.678400160371034,
+      "loo_eff_count": 7.660036419172809,
+      "loo_n_words": 33.15593220338983,
+      "content_gini": 0.6527722042561286,
+      "content_top1": 0.4350029753650039,
+      "content_mass_share": 0.6366573933767816,
+      "frac_top1_is_content": 0.6847457627118644,
+      "attn_gini_mean": 0.6096613251689964,
+      "attn_gini_agg": 0.5692363242906218,
+      "attn_top1_agg": 0.15622172741122117,
+      "attn_n": 295,
+      "rd_all_k4": 0.0763888888888889,
+      "rd_content_k4": 0.026490066225165563,
+      "exp2_summary": "/diskthalys/ssd14tc/sfukuhata/dev/kanolab/typo_robust_analysis/.claude/worktrees/exp-02-target-deletion/projects/typo-cot/results/prod/exp2/Mistral-7B-Instruct-v0.3_mmlu_core/summary.json"
+    }
+  ],
+  "correlations": {
+    "loo_gini_vs_deletion_rd": {
+      "rho": -0.5636363636363636,
+      "p": 0.0897240283170912,
+      "n": 10
+    },
+    "loo_top1_vs_deletion_rd": {
+      "rho": -0.5636363636363636,
+      "p": 0.0897240283170912,
+      "n": 10
+    },
+    "attn_gini_vs_deletion_rd": {
+      "rho": -0.49090909090909085,
+      "p": 0.1496556734208368,
+      "n": 10
+    },
+    "loo_gini_vs_attn_gini": {
+      "rho": 0.6969696969696969,
+      "p": 0.02509667588225185,
+      "n": 10
+    },
+    "content_gini_vs_deletion_rd": {
+      "rho": 0.12727272727272726,
+      "p": 0.7260570147627894,
+      "n": 10
+    },
+    "content_top1_vs_deletion_rd": {
+      "rho": -0.10303030303030303,
+      "p": 0.7769984634438898,
+      "n": 10
+    },
+    "content_mass_share_vs_deletion_rd": {
+      "rho": 0.5636363636363636,
+      "p": 0.0897240283170912,
+      "n": 10
+    },
+    "frac_top1_content_vs_deletion_rd": {
+      "rho": 0.49090909090909085,
+      "p": 0.1496556734208368,
+      "n": 10
+    },
+    "rd_key": "rd_content_k4",
+    "loo_gini_vs_rd_all": {
+      "rho": 0.7818181818181817,
+      "p": 0.0075470077810678785,
+      "n": 10
+    }
+  },
+  "H13_judgment": {
+    "preregistered_literal": {
+      "rd_scope": "content",
+      "family_gini_order": [
+        "gemma",
+        "llama",
+        "mistral"
+      ],
+      "family_gini": {
+        "llama": 0.8028905865435183,
+        "gemma": 0.8549496935418055,
+        "mistral": 0.7903772621451791
+      },
+      "family_rank_llama_gt_gemma_gt_mistral": false,
+      "rankcorr_gini_vs_rd_content": -0.5636363636363636,
+      "rankcorr_threshold_met (>=0.7)": false,
+      "H13_supported": false
+    },
+    "scope_matched_exploratory": {
+      "rd_scope": "all (unrestricted)",
+      "family_rd_all_order": [
+        "llama",
+        "gemma",
+        "mistral"
+      ],
+      "family_rd_all": {
+        "llama": 0.5310639517196348,
+        "gemma": 0.4279054091151581,
+        "mistral": 0.16982926397735315
+      },
+      "family_rd_all_llama_gt_gemma_gt_mistral": true,
+      "rankcorr_gini_vs_rd_all": 0.7818181818181817,
+      "rankcorr_threshold_met (>=0.7)": true
+    },
+    "family_rd_content": {
+      "llama": 0.4245415265282896,
+      "gemma": 0.04398037507719095,
+      "mistral": 0.015576035443585112
+    },
+    "family_rd_content_order": [
+      "llama",
+      "gemma",
+      "mistral"
+    ],
+    "n_loo_settings_available": 10,
+    "interpretation": "全語 LOO Gini は scope 一致の RD_all を強く予測 (rho=0.78) するが、content 層 RD_content とは逆符号 (rho=-0.56)。→ 集中度が numeric/機能語に由来する場合 (Gemma gsm8k 等) は content 削除に効かない。Gini family 順位はGemma≈Llama>Mistral で、事前登録の Llama>Gemma>Mistral とは Gemma/Llama が近接・逆転。Mistral は観察的集中 (LOO/内容語質量) は Llama と同程度でも RD_content が桁違いに低い = 因果読み出しが冗長/分散 (削除に強い)。"
+  }
+}

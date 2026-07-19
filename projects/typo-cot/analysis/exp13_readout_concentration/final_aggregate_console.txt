@@ -1,0 +1,74 @@
+
+=== 設定別表 (RD primary=rd_content_k4) ===
+model                      bm     loo_gini loo_top1 attn_gini  rd_cont   rd_all
+gemma-3-1b-it              gsm8k    0.9336   0.7960    0.7916  -0.0044   0.8033
+gemma-3-1b-it              mmlu     0.7732   0.5096    0.7575   0.0917   0.1047
+gemma-3-4b-it              gsm8k    0.9158   0.5982    0.7735   0.0091   0.6316
+gemma-3-4b-it              mmlu     0.7972   0.4925    0.7565   0.0796   0.1720
+Llama-3.2-1B-Instruct      gsm8k    0.8536   0.7217    0.7108   0.3907   0.5842
+Llama-3.2-1B-Instruct      mmlu     0.7742   0.4898    0.6512   0.4957   0.5118
+Llama-3.2-3B-Instruct      gsm8k    0.8431   0.6486    0.7262   0.3325   0.5502
+Llama-3.2-3B-Instruct      mmlu     0.7407   0.4522    0.6393   0.4793   0.4780
+Mistral-7B-Instruct-v0.3   gsm8k    0.8680   0.7223    0.6699   0.0047   0.2633
+Mistral-7B-Instruct-v0.3   mmlu     0.7127   0.4583    0.6097   0.0265   0.0764
+
+family Gini: {'llama': 0.803, 'gemma': 0.855, 'mistral': 0.79}  order=['gemma', 'llama', 'mistral']
+family RD_content order=['llama', 'gemma', 'mistral']; RD_all order=['llama', 'gemma', 'mistral']
+rank-corr(LOO Gini(全語), RD_content) = {'rho': -0.5636363636363636, 'p': 0.0897240283170912, 'n': 10}
+rank-corr(LOO Gini(全語), RD_all[scope一致]) = {'rho': 0.7818181818181817, 'p': 0.0075470077810678785, 'n': 10}
+rank-corr(内容語Gini, 削除RD) = {'rho': 0.12727272727272726, 'p': 0.7260570147627894, 'n': 10}
+rank-corr(内容語質量シェア, 削除RD) = {'rho': 0.5636363636363636, 'p': 0.0897240283170912, 'n': 10}
+rank-corr(top1が内容語の割合, 削除RD) = {'rho': 0.49090909090909085, 'p': 0.1496556734208368, 'n': 10}
+rank-corr(attn Gini, 削除RD) = {'rho': -0.49090909090909085, 'p': 0.1496556734208368, 'n': 10}
+proxy: rank-corr(LOO Gini, attn Gini) = {'rho': 0.6969696969696969, 'p': 0.02509667588225185, 'n': 10}
+
+=== H13 判定 ===
+{
+  "preregistered_literal": {
+    "rd_scope": "content",
+    "family_gini_order": [
+      "gemma",
+      "llama",
+      "mistral"
+    ],
+    "family_gini": {
+      "llama": 0.8028905865435183,
+      "gemma": 0.8549496935418055,
+      "mistral": 0.7903772621451791
+    },
+    "family_rank_llama_gt_gemma_gt_mistral": false,
+    "rankcorr_gini_vs_rd_content": -0.5636363636363636,
+    "rankcorr_threshold_met (>=0.7)": false,
+    "H13_supported": false
+  },
+  "scope_matched_exploratory": {
+    "rd_scope": "all (unrestricted)",
+    "family_rd_all_order": [
+      "llama",
+      "gemma",
+      "mistral"
+    ],
+    "family_rd_all": {
+      "llama": 0.5310639517196348,
+      "gemma": 0.4279054091151581,
+      "mistral": 0.16982926397735315
+    },
+    "family_rd_all_llama_gt_gemma_gt_mistral": true,
+    "rankcorr_gini_vs_rd_all": 0.7818181818181817,
+    "rankcorr_threshold_met (>=0.7)": true
+  },
+  "family_rd_content": {
+    "llama": 0.4245415265282896,
+    "gemma": 0.04398037507719095,
+    "mistral": 0.015576035443585112
+  },
+  "family_rd_content_order": [
+    "llama",
+    "gemma",
+    "mistral"
+  ],
+  "n_loo_settings_available": 10,
+  "interpretation": "全語 LOO Gini は scope 一致の RD_all を強く予測 (rho=0.78) するが、content 層 RD_content とは逆符号 (rho=-0.56)。→ 集中度が numeric/機能語に由来する場合 (Gemma gsm8k 等) は content 削除に効かない。Gini family 順位はGemma≈Llama>Mistral で、事前登録の Llama>Gemma>Mistral とは Gemma/Llama が近接・逆転。Mistral は観察的集中 (LOO/内容語質量) は Llama と同程度でも RD_content が桁違いに低い = 因果読み出しが冗長/分散 (削除に強い)。"
+}
+
+書き出し: analysis/exp13_readout_concentration/setting_table.csv, exp13_summary.json
