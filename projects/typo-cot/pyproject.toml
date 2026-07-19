@@ -10,6 +10,9 @@ dependencies = [
     "scipy>=1.13",
     "pingouin>=0.5.5",
     "tqdm>=4.65",
+    # 実験7 校正器ラダー: rebuttal と同一バージョンに固定 (辞書同梱のため
+    # バージョンが変わると訂正結果が変わる。archive .venv は 0.9.0)
+    "pyspellchecker==0.9.0",
     # 実験9 (inner lexicon 修復スコア): 回帰 (GLM cluster-robust SE) と Zipf 頻度
     "statsmodels>=0.14",
     # 実験2: matched-random 標的の頻度マッチングと置換語彙 (Zipf 頻度)

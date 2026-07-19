@@ -1,0 +1,139 @@
+============================================================================================
+EXP17 BEHAVIORAL REPAIR - DeepSeek-R1-Distill-Qwen-7B
+============================================================================================
+
+## 0. Flip rates (among baseline-correct samples). Reversal = math random>importance.
+task     cond          nSamp    nBC  pertAcc    flipN flipRate
+math     importance      500    367    0.650       68    0.185
+math     random          500    367    0.610       87    0.237
+gsm8k    importance     1319   1119    0.811      139    0.124
+gsm8k    random         1319   1119    0.827      122    0.109
+mmlu     importance     5700   3972    0.662      664    0.167
+mmlu     random         5700   3972    0.668      682    0.172
+
+## 1. Sample-level marker prevalence
+task     cond          nSamp      cue     anyC  anyA_ct explicit
+math     importance      500    0.172    0.318    0.682    0.384
+math     random          500    0.184    0.296    0.692    0.352
+gsm8k    importance     1319    0.123    0.257    0.619    0.306
+gsm8k    random         1319    0.140    0.214    0.870    0.290
+mmlu     importance     5700    0.207    0.238    0.810    0.355
+mmlu     random         5700    0.212    0.261    0.807    0.378
+
+   Importance vs Random within task (two-prop z):
+     explicit  math   imp=0.384 rand=0.352 z=1.05 p=0.294
+     explicit  gsm8k  imp=0.306 rand=0.290 z=0.89 p=0.372
+     explicit  mmlu   imp=0.355 rand=0.378 z=-2.55 p=0.011
+     cue       math   imp=0.172 rand=0.184 z=-0.50 p=0.620
+     cue       gsm8k  imp=0.123 rand=0.140 z=-1.32 p=0.185
+     cue       mmlu   imp=0.207 rand=0.212 z=-0.74 p=0.461
+
+## 2. repair x flip cross-tab (baseline-correct), OR of flip given repair
+   --- broad(cue|markC) ---
+   task     cond        R&flip  R&noflp  NR&flip  NR&noflp stats
+   math     importance      33      110       35       189  f|R=0.231 f|NR=0.156 OR=1.62[0.95,2.75]
+   math     random          52       73       35       207  f|R=0.416 f|NR=0.145 OR=4.21[2.54,6.98]
+   math     BOTH            85      183       70       396  f|R=0.317 f|NR=0.150 OR=2.63[1.83,3.77]
+   gsm8k    importance      67      268       72       712  f|R=0.200 f|NR=0.092 OR=2.47[1.72,3.55]
+   gsm8k    random          52      268       70       729  f|R=0.163 f|NR=0.088 OR=2.02[1.37,2.97]
+   gsm8k    BOTH           119      536      142      1441  f|R=0.182 f|NR=0.090 OR=2.25[1.73,2.93]
+   mmlu     importance     284     1084      380      2224  f|R=0.208 f|NR=0.146 OR=1.53[1.29,1.82]
+   mmlu     random         299     1162      383      2128  f|R=0.205 f|NR=0.153 OR=1.43[1.21,1.69]
+   mmlu     BOTH           583     2246      763      4352  f|R=0.206 f|NR=0.149 OR=1.48[1.31,1.67]
+   --- strict-cue-only ---
+   task     cond        R&flip  R&noflp  NR&flip  NR&noflp stats
+   math     importance      14       31       54       268  f|R=0.311 f|NR=0.168 OR=2.24[1.12,4.49]
+   math     random          24       30       63       250  f|R=0.444 f|NR=0.201 OR=3.17[1.74,5.81]
+   math     BOTH            38       61      117       518  f|R=0.384 f|NR=0.184 OR=2.76[1.76,4.33]
+   gsm8k    importance      29       82      110       898  f|R=0.261 f|NR=0.109 OR=2.89[1.81,4.61]
+   gsm8k    random          27       85       95       912  f|R=0.241 f|NR=0.094 OR=3.05[1.88,4.94]
+   gsm8k    BOTH            56      167      205      1810  f|R=0.251 f|NR=0.102 OR=2.96[2.12,4.14]
+   mmlu     importance     130      370      534      2938  f|R=0.260 f|NR=0.154 OR=1.93[1.55,2.41]
+   mmlu     random         144      385      538      2905  f|R=0.272 f|NR=0.156 OR=2.02[1.63,2.50]
+   mmlu     BOTH           274      755     1072      5843  f|R=0.266 f|NR=0.155 OR=1.98[1.70,2.30]
+
+## 3. R_Q-quintile x marker rate (token-level, pooled importance+random)
+   markA=correct-form ; markC=typo&correct co-occur ; markA(ct)=content-word subset
+   -- math  cuts=['0.0030', '0.0083', '0.0141', '0.0212']
+      Q      nTok    R_Q_med    markA    markC markA(ct)
+      Q0      788     0.0013    0.697    0.104     0.650
+      Q1      788     0.0054    0.750    0.112     0.688
+      Q2      787     0.0113    0.799    0.100     0.806
+      Q3      788     0.0173    0.799    0.090     0.760
+      Q4      786     0.0280    0.695    0.095     0.705
+   -- gsm8k  cuts=['0.0025', '0.0076', '0.0168', '0.0285']
+      Q      nTok    R_Q_med    markA    markC markA(ct)
+      Q0     2111     0.0011    0.826    0.060     0.844
+      Q1     2111     0.0043    0.851    0.059     0.844
+      Q2     2110     0.0125    0.814    0.076     0.783
+      Q3     2111     0.0215    0.803    0.097     0.696
+      Q4     2109     0.0404    0.703    0.066     0.478
+   -- mmlu  cuts=['0.0020', '0.0059', '0.0114', '0.0175']
+      Q      nTok    R_Q_med    markA    markC markA(ct)
+      Q0     9108     0.0009    0.735    0.076     0.730
+      Q1     9107     0.0035    0.779    0.085     0.744
+      Q2     9108     0.0089    0.798    0.082     0.750
+      Q3     9107     0.0141    0.785    0.077     0.727
+      Q4     9106     0.0243    0.798    0.066     0.726
+
+## 3b. R_Q-quintile x marker, CONTENT WORDS ONLY
+   -- math  nContentTok=1482  cuts=['0.0030', '0.0079', '0.0129', '0.0199']
+      Q      nTok    R_Q_med    markA    markC
+      Q0      297     0.0014    0.650    0.010
+      Q1      297     0.0053    0.687    0.017
+      Q2      296     0.0105    0.797    0.041
+      Q3      298     0.0160    0.768    0.037
+      Q4      294     0.0269    0.714    0.031
+   -- gsm8k  nContentTok=4343  cuts=['0.0019', '0.0051', '0.0132', '0.0238']
+      Q      nTok    R_Q_med    markA    markC
+      Q0      870     0.0008    0.848    0.032
+      Q1      868     0.0032    0.847    0.036
+      Q2      869     0.0087    0.804    0.052
+      Q3      868     0.0175    0.748    0.067
+      Q4      868     0.0416    0.505    0.091
+   -- mmlu  nContentTok=22822  cuts=['0.0021', '0.0064', '0.0118', '0.0173']
+      Q      nTok    R_Q_med    markA    markC
+      Q0     4565     0.0009    0.727    0.032
+      Q1     4565     0.0038    0.748    0.037
+      Q2     4564     0.0094    0.749    0.043
+      Q3     4565     0.0142    0.724    0.037
+      Q4     4563     0.0226    0.728    0.053
+
+## 4. Implicit read-through markA_frac by condition (baseline-correct)
+   task     cond            nBC    frac_flip    frac_noflip     frac_all
+   math     importance      367        0.722          0.770        0.761
+   math     random          365        0.782          0.751        0.758
+   gsm8k    importance     1119        0.719          0.762        0.757
+   gsm8k    random         1119        0.764          0.831        0.824
+   mmlu     importance     3971        0.776          0.797        0.794
+   mmlu     random         3971        0.729          0.781        0.773
+
+## 4c. markT (typo form reproduced) token rate by condition
+   math     importance   nTok= 1985 markT=0.131
+   math     random       nTok= 1952 markT=0.136
+   gsm8k    importance   nTok= 5276 markT=0.159
+   gsm8k    random       nTok= 5276 markT=0.083
+   mmlu     importance   nTok=22782 markT=0.099
+   mmlu     random       nTok=22754 markT=0.105
+
+## 5. FP AUDIT: 20 random MATH CoTs matching broad cue (both conds)
+   [random math_00317] cue='typo' | ...oblem, it's written as (xx - b), which is a bit unclear. Maybe it's a typo, perhaps it's (x - b)(x - c)? Or maybe it's (x^2 - b)(x - c). Hmm, th...
+   [importance math_00102] cue='typo' | ...irst term is written as "abb," which is a bit unusual. Maybe that's a typo or maybe it's supposed to be something else. Let me think.  First, I ...
+   [importance math_00322] cue='typo' | ...use in the function q(x), the coefficient is g, not b. Maybe that's a typo? Or perhaps "b" is supposed to be g? Let me check the problem again. ...
+   [importance math_00461] cue='typo' | ... written as f\left(\frac{\pk}{3}\right). Hmm, I think that might be a typo. Maybe it's supposed to be f(k/3)? Or perhaps it's f(k)/3? Hmm, the o...
+   [random math_00121] cue='typo' | ...= 5". I think "ffrac" and "frrac" might be some kind of formatting or typo. Maybe it's supposed to be x over 2 plus x times x over 3 equals 5? S...
+   [random math_00148] cue='typo' | ...oblem says "solve the following equation for xx." Hmm, maybe that's a typo? Maybe it's supposed to be x times x, which is x squared. So, I'll as...
+   [importance math_00290] cue='typo' | ...19r -7)/(2r -7) = 4t -3." Hmm, so it's given in terms of t? Or is t a typo? Maybe it's supposed to be 4r -3 instead of 4t -3? Because otherwise,...
+   [random math_00091] cue='typo' | ...n is given in terms of d, but the question is about x. Maybe that's a typo? Or maybe d is a function of x? Let me think.  Wait, the problem says...
+   [importance math_00203] cue='typo' | ...e the polynomial is in x, and c is a different variable. Maybe it's a typo? Or perhaps I'm supposed to treat c as a variable in the polynomial? ...
+   [random math_00152] cue='which I think' | ...e through G parallel to BC will create a smaller triangle at the top, which I think is triangle KGN, but I'm not sure. Alternatively, maybe it's a trapez...
+   [random math_00435] cue='typo' | ...se in the problem, it's written as sqrt(x² -5c +6). Hmm, maybe it's a typo, but I'll go with what's given. So, it's x squared minus 5c plus 6. B...
+   [importance math_00478] cue='typo' | ...ll complex solutions." Hmm, but the equation has 's' in it. Is that a typo? Maybe it's supposed to be 'x' instead of 's'? Because otherwise, I d...
+   [importance math_00265] cue='which I think' | ...e. In this case, each term increases by 2. So, the common difference, which I think is usually denoted as 'd', is 2 here.  Now, I need to find the 2003rd...
+   [importance math_00446] cue='typo' | ....} is 255/512. Find b." Hmm, wait, it says "nn" terms. Maybe that's a typo? Maybe it's supposed to be "n" terms? Because "nn" doesn't make much ...
+   [importance math_00143] cue='typo' | ...angle PAB. Hmm, I didn't see a definition for point P. Maybe that's a typo? Or perhaps P is another point related to O, A, and B? Let me think. ...
+   [random math_00077] cue='supposed to be' | ...k quite right. Let me make sure I understand it correctly. Maybe it's supposed to be $2^8 = 4^{x} \cdot x$? Yeah, that makes more sense. So, the equation ...
+   [random math_00264] cue='typo' | ...have all sides equal, but the notation is a bit unclear. Maybe it's a typo? Let me check the problem again.  Wait, the problem says quadrilatera...
+   [importance math_00237] cue='typo' | ... = 24, xz = 48, and yz = 72, then find x + y + zz." Hmm, maybe it's a typo? Because zz would just be z squared, right? So maybe it's supposed to...
+   [random math_00095] cue='supposed to be' | ... (-3 +8)/6 = 5/6, but wait, the second component of the projection is supposed to be -5/3, right? Wait, no, hold on. Wait, the projection vector is (5/6)[...
+   [random math_00359] cue='there's a typo' | ...\( xy^2 + x^2 y + x x z^2 + x^2 z + y z^2 + y^2 z = 12 \). Hmm, maybe there's a typo there. The term \( x x z^2 \) seems like it should be \( x z^2 \) or ...
