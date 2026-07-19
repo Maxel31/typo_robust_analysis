@@ -85,11 +85,17 @@ def write_profile_csv(path: Path, summary: dict, n_layers: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["layer", "rel_depth", "n", "mean", "ci_lo", "ci_hi"])
+        w.writerow(
+            ["layer", "rel_depth", "n", "median", "median_lo", "median_hi", "mean", "ci_lo", "ci_hi"]
+        )
         for layer in sorted(summary):
             s = summary[layer]
             rel = layer / n_layers if n_layers else ""
-            w.writerow([layer, rel, s["n"], s["mean"], s.get("ci_lo"), s.get("ci_hi")])
+            w.writerow([
+                layer, rel, s["n"],
+                s.get("median"), s.get("median_lo"), s.get("median_hi"),
+                s.get("mean"), s.get("ci_lo"), s.get("ci_hi"),
+            ])
 
 
 def write_semantic_csv(out_dir: Path, sem_single: dict[str, dict]) -> None:
@@ -106,12 +112,12 @@ def write_semantic_csv(out_dir: Path, sem_single: dict[str, dict]) -> None:
                 w.writerow([layer, s["n"], s["mean"], s.get("ci_lo"), s.get("ci_hi")])
 
 
-def _abs_max_mean(summary: dict, layers) -> float | None:
-    """指定層のうち |mean| の最大 (sham が ~0 かの確認用)."""
+def _abs_max_mean(summary: dict, layers, stat: str = "median") -> float | None:
+    """指定層のうち |median| の最大 (sham / other_span が ~0 かの確認用)."""
     vals = [
-        abs(summary[li]["mean"])
+        abs(summary[li][stat])
         for li in layers
-        if li in summary and summary[li]["mean"] is not None
+        if li in summary and summary[li].get(stat) is not None
     ]
     return max(vals) if vals else None
 
@@ -179,21 +185,21 @@ def summarize_setting(cells: list[dict], n_layers: int) -> dict:
     }
 
 
-def _min_mean(summary: dict) -> float | None:
-    """全層のうち mean の最小 (all_positions が ~1 かの確認用)."""
-    vals = [s["mean"] for s in summary.values() if s.get("mean") is not None]
+def _min_mean(summary: dict, stat: str = "median") -> float | None:
+    """全層のうち median の最小 (all_positions が ~1 かの確認用)."""
+    vals = [s[stat] for s in summary.values() if s.get(stat) is not None]
     return min(vals) if vals else None
 
 
-def profile_isomorphism(typo_single: dict, sem_single: dict, layers=EARLY) -> dict:
-    """typo と semantic の単層プロファイルの同形性 (Pearson 相関 + ピーク一致)."""
+def profile_isomorphism(typo_single: dict, sem_single: dict, layers=EARLY, stat="median") -> dict:
+    """typo と semantic の単層プロファイルの同形性 (Pearson 相関 + ピーク一致; median)."""
     import math
 
     xs, ys = [], []
     for li in layers:
         if li in typo_single and li in sem_single:
-            a = typo_single[li].get("mean")
-            b = sem_single[li].get("mean")
+            a = typo_single[li].get(stat)
+            b = sem_single[li].get(stat)
             if a is not None and b is not None:
                 xs.append(a)
                 ys.append(b)
@@ -250,7 +256,9 @@ def make_overlay_png(
             if not L:
                 continue
             pts = sorted(
-                (li / L, summary[li]["mean"]) for li in summary if summary[li]["mean"] is not None
+                (li / L, summary[li]["median"])
+                for li in summary
+                if summary[li].get("median") is not None
             )
             if not pts:
                 continue
@@ -263,7 +271,7 @@ def make_overlay_png(
         ax.axvspan(0, 0.2, color="grey", alpha=0.10, label="li/L < 0.2")
         ax.axhline(0.0, color="k", lw=0.5, ls=":")
         ax.set_xlabel("relative depth  li / L")
-        ax.set_ylabel("S2 KL recovery")
+        ax.set_ylabel("S2 KL recovery (median)")
         ax.set_title(title)
         ax.set_xlim(0, 1)
     # 重複ラベル除去

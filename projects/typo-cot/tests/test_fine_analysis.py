@@ -116,7 +116,7 @@ class TestSaturationLayer:
     def test_first_layer_reaching_fraction_of_max(self):
         # 累積: 早期で急伸、li>=2 で飽和
         cum = {0: 0.4, 1: 0.7, 2: 0.90, 3: 0.95, 4: 0.97, 5: 0.98}
-        summ = {li: {"mean": m, "n": 5} for li, m in cum.items()}
+        summ = {li: {"mean": m, "median": m, "n": 5} for li, m in cum.items()}
         # max=0.98, 90% = 0.882 → 最初に到達するのは層2 (0.90 >= 0.882)
         assert saturation_layer(summ, frac=0.9) == 2
 
@@ -143,9 +143,9 @@ class TestJudgments:
         assert v["plateau_width"] >= 2
 
     def test_h8f3_cumulative_saturation(self):
-        single = {li: {"mean": m, "n": 4} for li, m in
+        single = {li: {"mean": m, "median": m, "n": 4} for li, m in
                   {0: 0.3, 1: 0.5, 2: 0.55, 3: 0.4, 4: 0.2}.items()}
-        cumulative = {li: {"mean": m, "n": 4} for li, m in
+        cumulative = {li: {"mean": m, "median": m, "n": 4} for li, m in
                       {0: 0.3, 1: 0.6, 2: 0.75, 3: 0.78, 4: 0.79}.items()}
         v = judge_h8f3_cumulative_saturation(single, cumulative, n_layers=34, frac=0.9)
         assert v["single_max"] == pytest.approx(0.55)
@@ -158,18 +158,18 @@ class TestJudgments:
 
     def test_h8f4_late_null(self):
         # 検証点 14/20/26 が ~0
-        summ = {14: {"mean": 0.01, "ci_lo": -0.02, "ci_hi": 0.04, "n": 10},
-                20: {"mean": -0.01, "ci_lo": -0.03, "ci_hi": 0.02, "n": 10},
-                26: {"mean": 0.0, "ci_lo": -0.02, "ci_hi": 0.02, "n": 10},
-                2: {"mean": 0.88, "ci_lo": 0.8, "ci_hi": 0.95, "n": 10}}
+        summ = {14: {"mean": 0.01, "median": 0.01, "ci_lo": -0.02, "ci_hi": 0.04, "n": 10},
+                20: {"mean": -0.01, "median": -0.01, "ci_lo": -0.03, "ci_hi": 0.02, "n": 10},
+                26: {"mean": 0.0, "median": 0.0, "ci_lo": -0.02, "ci_hi": 0.02, "n": 10},
+                2: {"mean": 0.88, "median": 0.88, "ci_lo": 0.8, "ci_hi": 0.95, "n": 10}}
         v = judge_h8f4_late_null(summ, val_layers=[14, 20, 26], thresh=0.1)
         assert v["supported"] is True
         assert all(abs(x) < 0.1 for x in v["val_means"].values())
 
     def test_h8f5_noising_sufficiency(self):
         # noising s2_kl_recovery が best±1 で >= 0.5
-        summ = {1: {"mean": 0.55, "n": 10}, 2: {"mean": 0.62, "n": 10},
-                3: {"mean": 0.58, "n": 10}, 5: {"mean": 0.2, "n": 10}}
+        summ = {1: {"mean": 0.55, "median": 0.55, "n": 10}, 2: {"mean": 0.62, "median": 0.62, "n": 10},
+                3: {"mean": 0.58, "median": 0.58, "n": 10}, 5: {"mean": 0.2, "median": 0.2, "n": 10}}
         v = judge_h8f5_noising_sufficiency(summ, best_layer=2, thresh=0.5)
         assert set(v["layers"]) == {1, 2, 3}
         assert v["supported"] is True

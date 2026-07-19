@@ -44,6 +44,35 @@ def collect_by_layer(
     return dict(out)
 
 
+def _median(vals: list[float]) -> float:
+    s = sorted(vals)
+    n = len(s)
+    mid = n // 2
+    return s[mid] if n % 2 else 0.5 * (s[mid - 1] + s[mid])
+
+
+def _boot_ci(
+    values: Sequence[float],
+    statfn,
+    n_boot: int = 1000,
+    seed: int = 42,
+    alpha: float = 0.05,
+) -> tuple[float | None, float | None, float | None]:
+    """任意の統計量 statfn のパーセンタイル bootstrap CI. 空なら (None,None,None)."""
+    n = len(values)
+    if n == 0:
+        return (None, None, None)
+    vals = [float(v) for v in values]
+    point = statfn(vals)
+    if n == 1:
+        return (point, point, point)
+    rng = _random.Random(seed)
+    boot = sorted(statfn([vals[rng.randrange(n)] for _ in range(n)]) for _ in range(n_boot))
+    lo_idx = int((alpha / 2) * n_boot)
+    hi_idx = min(n_boot - 1, int((1 - alpha / 2) * n_boot))
+    return (point, boot[lo_idx], boot[hi_idx])
+
+
 def mean_ci(
     values: Sequence[float],
     n_boot: int = 1000,
@@ -51,20 +80,7 @@ def mean_ci(
     alpha: float = 0.05,
 ) -> tuple[float | None, float | None, float | None]:
     """連続値の平均のパーセンタイル bootstrap CI. 空なら (None, None, None)."""
-    n = len(values)
-    if n == 0:
-        return (None, None, None)
-    vals = [float(v) for v in values]
-    mean = sum(vals) / n
-    if n == 1:
-        return (mean, mean, mean)
-    rng = _random.Random(seed)
-    boot = sorted(
-        sum(vals[rng.randrange(n)] for _ in range(n)) / n for _ in range(n_boot)
-    )
-    lo_idx = int((alpha / 2) * n_boot)
-    hi_idx = min(n_boot - 1, int((1 - alpha / 2) * n_boot))
-    return (mean, boot[lo_idx], boot[hi_idx])
+    return _boot_ci(values, lambda v: sum(v) / len(v), n_boot=n_boot, seed=seed, alpha=alpha)
 
 
 def summarize_by_layer(
@@ -72,11 +88,24 @@ def summarize_by_layer(
     n_boot: int = 1000,
     seed: int = 42,
 ) -> dict[int, dict]:
-    """{層 → 値リスト} を {層 → {n, mean, ci_lo, ci_hi}} に要約する."""
+    """{層 → 値リスト} を {層 → {n, mean, median, ci_lo/hi, median_lo/hi}} に要約する.
+
+    主推定量は **median** (s2_kl_recovery は 1 - KL_patched/KL_base で下に非有界の
+    重い左裾を持ち平均が外れ値に汚染されるため)。mean は副次的に保持する。
+    """
     summary: dict[int, dict] = {}
     for layer, values in by_layer.items():
-        mean, lo, hi = mean_ci(values, n_boot=n_boot, seed=seed)
-        summary[layer] = {"n": len(values), "mean": mean, "ci_lo": lo, "ci_hi": hi}
+        mean, mlo, mhi = mean_ci(values, n_boot=n_boot, seed=seed)
+        median, dlo, dhi = _boot_ci(values, _median, n_boot=n_boot, seed=seed)
+        summary[layer] = {
+            "n": len(values),
+            "median": median,
+            "median_lo": dlo,
+            "median_hi": dhi,
+            "mean": mean,
+            "ci_lo": mlo,
+            "ci_hi": mhi,
+        }
     return summary
 
 
@@ -87,7 +116,7 @@ def summarize_by_layer(
 
 def argmax_layer(
     summary: dict[int, dict],
-    key: str = "mean",
+    key: str = "median",
     restrict: Sequence[int] | None = None,
 ) -> int | None:
     """平均が最大の層 index を返す (restrict 指定でその部分集合に限定)."""
@@ -102,7 +131,7 @@ def plateau_layers(
     summary: dict[int, dict],
     best_layer: int,
     rel: float = 0.9,
-    key: str = "mean",
+    key: str = "median",
 ) -> list[int]:
     """best_layer を中心に、平均が max の rel 倍以上で連続する層 index を返す.
 
@@ -130,7 +159,7 @@ def plateau_layers(
 def saturation_layer(
     summary: dict[int, dict],
     frac: float = 0.9,
-    key: str = "mean",
+    key: str = "median",
 ) -> int | None:
     """累積プロファイルが max の frac 倍に最初に到達する層 index (層昇順)."""
     layers = sorted(li for li in summary if summary[li].get(key) is not None)
@@ -154,15 +183,19 @@ def judge_h8f1_peak_depth(
     n_layers: int,
     restrict_early: Sequence[int] | None = None,
     depth_thresh: float = 0.2,
+    stat: str = "median",
 ) -> dict:
-    """H8f-1: 単層回復率ピークの相対深さ li/L < 0.2 か."""
-    best = argmax_layer(single_summary, restrict=restrict_early)
+    """H8f-1: 単層回復率ピークの相対深さ li/L < 0.2 か (主推定量 = median)."""
+    best = argmax_layer(single_summary, key=stat, restrict=restrict_early)
     if best is None or n_layers <= 0:
         return {"best_layer": None, "rel_depth": None, "supported": None}
     rel = best / n_layers
     return {
         "best_layer": best,
-        "peak_mean": single_summary[best]["mean"],
+        "peak_stat": stat,
+        "peak_value": single_summary[best].get(stat),
+        "peak_median": single_summary[best].get("median"),
+        "peak_mean": single_summary[best].get("mean"),
         "rel_depth": rel,
         "depth_thresh": depth_thresh,
         "supported": bool(rel < depth_thresh),
@@ -198,16 +231,17 @@ def judge_h8f3_cumulative_saturation(
     frac: float = 0.9,
     ratio_thresh: float = 1.2,
     depth_thresh: float = 0.2,
+    stat: str = "median",
 ) -> dict:
-    """H8f-3: 累積 patch が早期 (li/L<=0.2) で飽和し単層 max の >=1.2倍か."""
-    single_vals = [s["mean"] for s in single_summary.values() if s.get("mean") is not None]
-    cum_vals = [s["mean"] for s in cumulative_summary.values() if s.get("mean") is not None]
+    """H8f-3: 累積 patch が早期 (li/L<=0.2) で飽和し単層 max の >=1.2倍か (median)."""
+    single_vals = [s[stat] for s in single_summary.values() if s.get(stat) is not None]
+    cum_vals = [s[stat] for s in cumulative_summary.values() if s.get(stat) is not None]
     if not single_vals or not cum_vals:
         return {"supported": None}
     single_max = max(single_vals)
     cum_max = max(cum_vals)
     ratio = cum_max / single_max if abs(single_max) > 1e-9 else None
-    sat = saturation_layer(cumulative_summary, frac=frac)
+    sat = saturation_layer(cumulative_summary, frac=frac, key=stat)
     sat_rel = sat / n_layers if (sat is not None and n_layers > 0) else None
     supported = bool(
         ratio is not None
@@ -231,12 +265,13 @@ def judge_h8f4_late_null(
     single_summary: dict[int, dict],
     val_layers: Sequence[int] = (14, 20, 26),
     thresh: float = 0.1,
+    stat: str = "median",
 ) -> dict:
-    """H8f-4: 検証点 (第14/20/26層) が幅1でも回復 ≈ 0 か."""
+    """H8f-4: 検証点 (第14/20/26層) が幅1でも回復 ≈ 0 か (median)."""
     val_means: dict[int, float] = {}
     for li in val_layers:
-        if li in single_summary and single_summary[li].get("mean") is not None:
-            val_means[li] = single_summary[li]["mean"]
+        if li in single_summary and single_summary[li].get(stat) is not None:
+            val_means[li] = single_summary[li][stat]
     if not val_means:
         return {"val_means": {}, "supported": None}
     supported = all(abs(m) < thresh for m in val_means.values())
@@ -251,17 +286,18 @@ def judge_h8f5_noising_sufficiency(
     noising_summary: dict[int, dict],
     best_layer: int,
     thresh: float = 0.5,
+    stat: str = "median",
 ) -> dict:
-    """H8f-5: noising の最良層±1 で KL 乖離の過半 (recovery>=0.5) を再現するか."""
+    """H8f-5: noising の最良層±1 で KL 乖離の過半 (recovery>=0.5) を再現するか (median)."""
     candidate = [best_layer - 1, best_layer, best_layer + 1]
     layers = [
         li for li in candidate
-        if li in noising_summary and noising_summary[li].get("mean") is not None
+        if li in noising_summary and noising_summary[li].get(stat) is not None
     ]
-    if best_layer not in noising_summary or noising_summary[best_layer].get("mean") is None:
+    if best_layer not in noising_summary or noising_summary[best_layer].get(stat) is None:
         return {"layers": layers, "supported": None, "mean_at_best": None}
-    mean_at_best = noising_summary[best_layer]["mean"]
-    band_means = {li: noising_summary[li]["mean"] for li in layers}
+    mean_at_best = noising_summary[best_layer][stat]
+    band_means = {li: noising_summary[li][stat] for li in layers}
     return {
         "layers": layers,
         "band_means": band_means,
