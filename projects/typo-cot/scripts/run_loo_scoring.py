@@ -127,6 +127,8 @@ def main() -> None:
     with open(out_dir / "config.json", "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
 
+    import os
+
     import torch
 
     from typo_cot.intervention.loo_scorer import (
@@ -136,8 +138,6 @@ def main() -> None:
     )
     from typo_cot.models.prompts import create_prompt_template
     from typo_cot.models.wrapper import create_model_wrapper
-
-    import os
 
     gpu_id = resolve_gpu_id(args.gpu_id, os.environ)
     logger.info(f"モデルをロード: {args.model} (GPU {gpu_id})")
