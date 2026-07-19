@@ -92,6 +92,20 @@ def write_profile_csv(path: Path, summary: dict, n_layers: int) -> None:
             w.writerow([layer, rel, s["n"], s["mean"], s.get("ci_lo"), s.get("ci_hi")])
 
 
+def write_semantic_csv(out_dir: Path, sem_single: dict[str, dict]) -> None:
+    """設定別 semantic 単層プロファイルを CSV 出力 (typo 比較用)."""
+    for name, summary in sem_single.items():
+        # 総層数は不明でも rel_depth は近似で層/最大層。ここでは layer 昇順のみ出力。
+        path = out_dir / name / "a3c_semantic_single_profile.csv"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["layer", "n", "mean", "ci_lo", "ci_hi"])
+            for layer in sorted(summary):
+                s = summary[layer]
+                w.writerow([layer, s["n"], s["mean"], s.get("ci_lo"), s.get("ci_hi")])
+
+
 def _abs_max_mean(summary: dict, layers) -> float | None:
     """指定層のうち |mean| の最大 (sham が ~0 かの確認用)."""
     vals = [
@@ -119,8 +133,26 @@ def summarize_setting(cells: list[dict], n_layers: int) -> dict:
     flip_rev = summarize_by_layer(
         collect_by_layer(cells, "single", "clean_to_pert", "answer_matches_donor")
     )
+    # A3 統制
+    other_span = summarize_by_layer(
+        collect_by_layer(cells, "other_span", "clean_to_pert", "s2_kl_recovery")
+    )
+    all_positions = summarize_by_layer(
+        collect_by_layer(cells, "all_positions", "clean_to_pert", "s2_kl_recovery")
+    )
 
     best = argmax_layer(single, restrict=EARLY)
+    a3 = {
+        "a_other_span_early_abs_max": _abs_max_mean(other_span, EARLY),
+        "a_other_span_supported": (
+            (_abs_max_mean(other_span, EARLY) is not None)
+            and (_abs_max_mean(other_span, EARLY) < 0.2)
+        ),
+        "b_all_positions_min": _min_mean(all_positions),
+        "b_all_positions_supported": (
+            (_min_mean(all_positions) is not None) and (_min_mean(all_positions) > 0.8)
+        ),
+    }
     judgments = {
         "H8f-1": judge_h8f1_peak_depth(single, n_layers, restrict_early=EARLY),
         "H8f-2": (
@@ -131,6 +163,7 @@ def summarize_setting(cells: list[dict], n_layers: int) -> dict:
         "H8f-5": (
             judge_h8f5_noising_sufficiency(noising, best) if best is not None else {"supported": None}
         ),
+        "A3": a3,
         "best_early_layer": best,
         "sham_early_abs_max": _abs_max_mean(sham, EARLY),
     }
@@ -139,8 +172,54 @@ def summarize_setting(cells: list[dict], n_layers: int) -> dict:
         "cumulative": cumulative,
         "noising": noising,
         "sham": sham,
+        "other_span": other_span,
+        "all_positions": all_positions,
         "flip_reversal": flip_rev,
         "judgments": judgments,
+    }
+
+
+def _min_mean(summary: dict) -> float | None:
+    """全層のうち mean の最小 (all_positions が ~1 かの確認用)."""
+    vals = [s["mean"] for s in summary.values() if s.get("mean") is not None]
+    return min(vals) if vals else None
+
+
+def profile_isomorphism(typo_single: dict, sem_single: dict, layers=EARLY) -> dict:
+    """typo と semantic の単層プロファイルの同形性 (Pearson 相関 + ピーク一致)."""
+    import math
+
+    xs, ys = [], []
+    for li in layers:
+        if li in typo_single and li in sem_single:
+            a = typo_single[li].get("mean")
+            b = sem_single[li].get("mean")
+            if a is not None and b is not None:
+                xs.append(a)
+                ys.append(b)
+    if len(xs) < 3:
+        return {"pearson": None, "peak_match": None, "isomorphic": None, "n": len(xs)}
+    mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+    cov = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    vx = math.sqrt(sum((x - mx) ** 2 for x in xs))
+    vy = math.sqrt(sum((y - my) ** 2 for y in ys))
+    pearson = cov / (vx * vy) if vx > 0 and vy > 0 else None
+    peak_t = argmax_layer(typo_single, restrict=layers)
+    peak_s = argmax_layer(sem_single, restrict=layers)
+    peak_match = (peak_t is not None and peak_s is not None and abs(peak_t - peak_s) <= 1)
+    iso = bool(pearson is not None and pearson > 0.8 and peak_match)
+    return {
+        "pearson": pearson,
+        "peak_typo": peak_t,
+        "peak_semantic": peak_s,
+        "peak_match": peak_match,
+        "isomorphic": iso,
+        "n": len(xs),
+        "interpretation": (
+            "read-out generic; typo-specific effect in LXT/Random magnitude"
+            if iso
+            else "typo-specific depth localization"
+        ),
     }
 
 
@@ -213,7 +292,26 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--results-dir", required=True, help="設定ディレクトリを含む結果ルート")
     p.add_argument("--out-dir", required=True, help="解析出力先")
+    p.add_argument(
+        "--semantic-results-dir", default=None,
+        help="A3(c) 意味置換 run の結果ルート (typo との深さプロファイル比較に使用)",
+    )
     return p.parse_args()
+
+
+def load_semantic_single(results_root: Path) -> dict[str, dict]:
+    """意味置換 run の設定別 single (kind='semantic') プロファイル要約を返す."""
+    out: dict[str, dict] = {}
+    if not results_root or not results_root.is_dir():
+        return out
+    for sd in sorted(results_root.iterdir()):
+        if not sd.is_dir() or not ((sd / "lxt4").is_dir() or (sd / "rnd4").is_dir()):
+            continue
+        cells, _, _ = load_setting_cells(sd)
+        out[sd.name] = summarize_by_layer(
+            collect_by_layer(cells, "semantic", "clean_to_pert", "s2_kl_recovery")
+        )
+    return out
 
 
 def main() -> None:
@@ -229,6 +327,7 @@ def main() -> None:
     logger.info("設定 %d 件を検出: %s", len(setting_dirs), [d.name for d in setting_dirs])
 
     all_judgments: dict[str, dict] = {}
+    per_setting_single: dict[str, dict] = {}
     per_model_single: dict[str, dict] = {}
     per_model_cumulative: dict[str, dict] = {}
     per_model_nlayers: dict[str, int] = {}
@@ -247,7 +346,10 @@ def main() -> None:
         write_profile_csv(setting_out / "noising_profile.csv", res["noising"], n_layers)
         write_profile_csv(setting_out / "sham_profile.csv", res["sham"], n_layers)
         write_profile_csv(setting_out / "flip_reversal_profile.csv", res["flip_reversal"], n_layers)
+        write_profile_csv(setting_out / "a3_other_span_profile.csv", res["other_span"], n_layers)
+        write_profile_csv(setting_out / "a3_all_positions_profile.csv", res["all_positions"], n_layers)
         all_judgments[sd.name] = {"n_layers": n_layers, "stats": stats, **res["judgments"]}
+        per_setting_single[sd.name] = res["single"]
         logger.info(
             "%s: n_pairs=%d best=%s H8f-1=%s H8f-3=%s",
             sd.name, stats["n_pairs"], res["judgments"]["best_early_layer"],
@@ -278,17 +380,44 @@ def main() -> None:
         out_dir / "fig5_relative_depth_overlay.png",
     )
 
+    # A3(c) 意味置換プロファイルとの同形性比較 (設定別)
+    semantic_compare: dict[str, dict] = {}
+    if args.semantic_results_dir:
+        sem_single = load_semantic_single(Path(args.semantic_results_dir))
+        for name, j in all_judgments.items():
+            if name in sem_single and name in all_judgments:
+                typo_single = per_setting_single.get(name)
+                if typo_single is not None:
+                    cmp = profile_isomorphism(typo_single, sem_single[name])
+                    semantic_compare[name] = cmp
+                    j["A3"]["c_semantic"] = cmp
+        write_semantic_csv(out_dir, sem_single)
+
     overall = {}
     for h in ("H8f-1", "H8f-2", "H8f-3", "H8f-4", "H8f-5"):
         n_sup = sum(1 for j in all_judgments.values() if j.get(h, {}).get("supported") is True)
         n_tot = sum(1 for j in all_judgments.values() if j.get(h, {}).get("supported") is not None)
         overall[h] = {"supported": n_sup, "evaluated": n_tot}
+    overall["A3"] = {
+        "a_other_span_supported": sum(
+            1 for j in all_judgments.values() if j.get("A3", {}).get("a_other_span_supported") is True
+        ),
+        "b_all_positions_supported": sum(
+            1 for j in all_judgments.values() if j.get("A3", {}).get("b_all_positions_supported") is True
+        ),
+        "c_semantic_isomorphic": sum(
+            1 for c in semantic_compare.values() if c.get("isomorphic") is True
+        ),
+        "c_semantic_evaluated": len(semantic_compare),
+        "evaluated": len(all_judgments),
+    }
 
     judgment = {
         "experiment": "exp8_fine",
         "settings": all_judgments,
         "pooled_by_model": model_judgments,
         "overall_supported_over_settings": overall,
+        "semantic_compare": semantic_compare,
         "fig5_png": str(out_dir / "fig5_relative_depth_overlay.png") if png_ok else None,
     }
     with open(out_dir / "judgment.json", "w", encoding="utf-8") as f:

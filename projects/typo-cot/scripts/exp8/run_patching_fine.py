@@ -115,6 +115,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-new-tokens", type=int, default=16)
     p.add_argument("--answer-token-limit", type=int, default=16)
     p.add_argument("--trigger-pattern", default=None)
+    # A3 敵対的レビュー統制
+    p.add_argument(
+        "--no-controls", dest="controls", action="store_false",
+        help="A3 統制 (other_span / all_positions) を無効化",
+    )
+    p.add_argument("--other-span-offset", type=int, default=2, help="other_span 統制の下流オフセット")
+    p.add_argument(
+        "--perturb-mode", default="typo", choices=["typo", "semantic"],
+        help="typo=既存の摂動 / semantic=標的語を実語ランダム置換 (統制c)",
+    )
+    p.add_argument("--semantic-seed", type=int, default=1234, help="意味置換の乱数シード")
     p.add_argument("--num-shards", type=int, default=1)
     p.add_argument("--shard-index", type=int, default=0)
     p.add_argument("--force", action="store_true")
@@ -137,7 +148,11 @@ def config_hash(args: argparse.Namespace) -> str:
         "seed": args.seed,
         "site": SITE,
         "site_kind": SITE_KIND,
-        "schema": 1,
+        "controls": bool(getattr(args, "controls", True)),
+        "other_span_offset": args.other_span_offset,
+        "perturb_mode": args.perturb_mode,
+        "semantic_seed": args.semantic_seed if args.perturb_mode == "semantic" else None,
+        "schema": 2,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
@@ -158,15 +173,9 @@ def run_pair_fine(model, tokenizer, layers, prepared: PreparedPair, extractor, a
     sham_layers = [li for li in _int_list(args.sham_layers) if li < n_layers]
 
     ids = {run: torch.tensor([prepared.input_ids[run]], device=device) for run in RUNS}
-    # 捕捉位置: 摂動語スパン + プロンプト以降 (c1 位置 prompt_len-1 を含めるため全域)
-    capture_pos = {
-        run: sorted(
-            set(prepared.span_positions[run])
-            | set(range(prepared.prompt_len[run], len(prepared.input_ids[run])))
-            | {prepared.prompt_len[run] - 1}
-        )
-        for run in RUNS
-    }
+    # 捕捉位置: 全位置 (A3 統制 other_span / all_positions で任意位置の donor 値が要る)。
+    # residual 1 部位のみなので系列全域でもメモリは軽い。
+    capture_pos = {run: list(range(len(prepared.input_ids[run]))) for run in RUNS}
 
     # --- pass 1: 両 run の捕捉 + 無パッチ基準 ---------------------------------
     caches = {}
@@ -196,15 +205,25 @@ def run_pair_fine(model, tokenizer, layers, prepared: PreparedPair, extractor, a
         ),
     }
 
-    def run_cell(window, direction: str, kind: str, identity: bool = False) -> dict:
-        donor_run = "clean" if direction == "clean_to_pert" else "pert"
+    def run_cell(
+        window,
+        direction: str,
+        kind: str,
+        identity: bool = False,
+        src_pos: list[int] | None = None,
+        dst_pos: list[int] | None = None,
+    ) -> dict:
+        # target_run = 回復を測る基準 (denoising は clean, noising は pert)。
+        # value_run   = パッチ値の供給元 (sham は recipient 自身)。
+        target_run = "clean" if direction == "clean_to_pert" else "pert"
         recip_run = "pert" if direction == "clean_to_pert" else "clean"
-        if identity:
-            donor_run = recip_run  # sham: recipient 自身の値
-        src_pos = prepared.span_positions[donor_run]
-        dst_pos = prepared.span_positions[recip_run]
+        value_run = recip_run if identity else target_run
+        if src_pos is None:
+            src_pos = prepared.span_positions[value_run]
+        if dst_pos is None:
+            dst_pos = prepared.span_positions[recip_run]
         layer_indices = list(range(window[0], window[1]))
-        values = {li: caches[donor_run].values(SITE, li, src_pos) for li in layer_indices}
+        values = {li: caches[value_run].values(SITE, li, src_pos) for li in layer_indices}
 
         c1_capture: dict = {}
         c1_pos = prepared.prompt_len[recip_run] - 1
@@ -234,19 +253,19 @@ def run_pair_fine(model, tokenizer, layers, prepared: PreparedPair, extractor, a
             "direction": direction,
             "delta_logit": delta,
             "answer": answer,
-            "answer_matches_donor": answer == baseline[donor_run]["answer"],
+            # 回復 = 答えが target (denoising:clean / noising:pert) に一致すること
+            "answer_matches_donor": answer == baseline[target_run]["answer"],
             "answer_matches_recipient": answer == baseline[recip_run]["answer"],
             "generation_identical_to_recipient": gen == baseline[recip_run]["generated_ids"],
         }
-        if not identity:
-            d_donor = baseline[donor_run]["delta_logit"]
-            d_recip = baseline[recip_run]["delta_logit"]
-            gap = d_donor - d_recip
-            cell["recovery"] = (delta - d_recip) / gap if abs(gap) > 1e-3 else None
-        # S2 KL: 質問スパンへのパッチのみ c1 分布が動き得る
+        d_target = baseline[target_run]["delta_logit"]
+        d_recip = baseline[recip_run]["delta_logit"]
+        gap = d_target - d_recip
+        cell["recovery"] = (delta - d_recip) / gap if abs(gap) > 1e-3 else None
+        # S2 KL: 基準は常に target 分布 (sham でも clean を基準にするため回復≈0 になる)
         if "h" in c1_capture:
             c1_patched = _c1_logits(model, c1_capture["h"])
-            kl_patched = kl_from_logits(baseline[donor_run]["c1_logits"], c1_patched)
+            kl_patched = kl_from_logits(baseline[target_run]["c1_logits"], c1_patched)
             cell["s2_kl_patched"] = kl_patched
             kl_base = kl_unpatched[direction]
             if kl_base > 1e-9:
@@ -254,6 +273,24 @@ def run_pair_fine(model, tokenizer, layers, prepared: PreparedPair, extractor, a
         return cell
 
     cells: list[dict] = []
+    semantic_mode = getattr(args, "perturb_mode", "typo") == "semantic"
+    if semantic_mode:
+        # A3 統制(c): 意味置換ペアは単層 denoising のみ (typo プロファイルとの比較用)
+        for w in single_layer_windows(single_layers):
+            cells.append(run_cell(w, "clean_to_pert", "semantic"))
+        return {
+            "n_layers": n_layers,
+            "baseline": {
+                run: {
+                    "delta_logit": baseline[run]["delta_logit"],
+                    "answer": baseline[run]["answer"],
+                }
+                for run in RUNS
+            },
+            "s2_kl_unpatched": kl_unpatched,
+            "cells": cells,
+        }
+
     # 単層 denoising (主)
     for w in single_layer_windows(single_layers):
         cells.append(run_cell(w, "clean_to_pert", "single"))
@@ -266,6 +303,46 @@ def run_pair_fine(model, tokenizer, layers, prepared: PreparedPair, extractor, a
     # 単層 sham (統制1: recipient=pert 自身の値)
     for w in single_layer_windows(sham_layers):
         cells.append(run_cell(w, "clean_to_pert", "sham_single", identity=True))
+
+    # --- A3 敵対的レビュー統制 -------------------------------------------------
+    if getattr(args, "controls", True):
+        off = getattr(args, "other_span_offset", 2)
+        # (a) other_span: 無摂動語 (スパンから +off の下流位置) を clean 値で patch。
+        #     donor/recipient を同一 offset で対応付け、両方が有効な対のみ使う。
+        src_o: list[int] = []
+        dst_o: list[int] = []
+        span_c = prepared.span_positions["clean"]
+        span_p = prepared.span_positions["pert"]
+        span_c_set, span_p_set = set(span_c), set(span_p)
+        for sc, sp in zip(span_c, span_p):
+            cc, cp = sc + off, sp + off
+            if (
+                1 <= cc < prepared.prompt_len["clean"] - 1
+                and 1 <= cp < prepared.prompt_len["pert"] - 1
+                and cc not in span_c_set
+                and cp not in span_p_set
+            ):
+                src_o.append(cc)
+                dst_o.append(cp)
+        if src_o:
+            for w in single_layer_windows(single_layers):
+                cells.append(
+                    run_cell(w, "clean_to_pert", "other_span", src_pos=src_o, dst_pos=dst_o)
+                )
+
+        # (b) all_positions: 全プロンプト位置を clean 値で patch (枠組みサニティ; 任意層で
+        #     完全回復のはず)。トークン数一致ペアのみ (1対1 対応が取れる)。
+        len_c = len(prepared.input_ids["clean"])
+        len_p = len(prepared.input_ids["pert"])
+        if len_c == len_p and prepared.prompt_len["clean"] == prepared.prompt_len["pert"]:
+            all_pos = list(range(prepared.prompt_len["pert"]))
+            sanity_layers = [li for li in single_layers if li <= 11][::3] or single_layers[:1]
+            for w in single_layer_windows(sanity_layers):
+                cells.append(
+                    run_cell(
+                        w, "clean_to_pert", "all_positions", src_pos=all_pos, dst_pos=all_pos
+                    )
+                )
 
     return {
         "n_layers": n_layers,
@@ -304,7 +381,15 @@ def main() -> None:
     for cond, pdir in condition_dirs.items():
         pairs = load_pair_records(args.baseline_dir, pdir)
         flips = select_flip_pairs(pairs, n=n_per_cond, seed=args.seed)
-        logger.info("%s: flip %d 件を選定", cond, len(flips))
+        if args.perturb_mode == "semantic":
+            # A3 統制(c): 同じ flip ペアの標的語を実語ランダム置換に差し替える
+            from typo_cot.intervention.semantic_control import make_semantic_pair
+
+            sem = [make_semantic_pair(p, seed=args.semantic_seed) for p in flips]
+            flips = [p for p in sem if p is not None]
+            logger.info("%s: semantic 置換 flip %d 件", cond, len(flips))
+        else:
+            logger.info("%s: flip %d 件を選定", cond, len(flips))
         tasks.extend((cond, p) for p in flips)
 
     tasks.sort(key=lambda t: (t[0], t[1].sample_id))
@@ -380,6 +465,9 @@ def main() -> None:
             "sham_layers": _int_list(args.sham_layers),
             "site": SITE,
             "site_kind": SITE_KIND,
+            "controls": bool(getattr(args, "controls", True)),
+            "other_span_offset": args.other_span_offset,
+            "perturb_mode": args.perturb_mode,
             "max_new_tokens": args.max_new_tokens,
             "shard": [args.shard_index, args.num_shards],
             "timestamp": datetime.now().isoformat(),

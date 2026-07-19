@@ -16,7 +16,7 @@ mkdir -p "$OUTDIR" "$LOGDIR"
 
 m=gemma-3-4b-it
 b=gsm8k
-echo "[$(date '+%F %T')] SMOKE START $m $b (n=16)"
+echo "[$(date '+%F %T')] SMOKE START $m $b (typo, n=16)"
 bash "$GPU_HELPER" uv run --package typo-cot python scripts/exp8/run_patching_fine.py \
     --model google/${m} \
     --benchmark "$b" \
@@ -26,5 +26,18 @@ bash "$GPU_HELPER" uv run --package typo-cot python scripts/exp8/run_patching_fi
     --output-dir "$OUTDIR" \
     --n-pairs 16
 rc=$?
-echo "[$(date '+%F %T')] SMOKE DONE rc=$rc"
-exit $rc
+echo "[$(date '+%F %T')] SMOKE typo DONE rc=$rc"
+
+# A3(c) 意味置換対照スモーク
+echo "[$(date '+%F %T')] SMOKE START $m $b (semantic, n=16)"
+bash "$GPU_HELPER" uv run --package typo-cot python scripts/exp8/run_patching_fine.py \
+    --model google/${m} \
+    --benchmark "$b" \
+    --baseline-dir "$ARCH/outputs/baseline/${m}_${b}" \
+    --perturbed-dir-lxt "$ARCH/outputs/perturbed/${m}_${b}_k4_importance" \
+    --perturbed-dir-rnd "$ARCH/outputs/perturbed/${m}_${b}_k4_random" \
+    --output-dir "${OUTDIR}_semantic" \
+    --n-pairs 16 --perturb-mode semantic --no-controls
+rc2=$?
+echo "[$(date '+%F %T')] SMOKE semantic DONE rc=$rc2"
+exit $(( rc | rc2 ))

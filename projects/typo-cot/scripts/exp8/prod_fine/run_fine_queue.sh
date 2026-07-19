@@ -11,8 +11,9 @@ cd "$ROOT"
 GPU_HELPER=/diskthalys/ssd14tc/sfukuhata/dev/kanolab/typo_robust_analysis/tmp/gpu-locks/run_with_gpu.sh
 ARCH=/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026
 OUTROOT="$ROOT/results/prod/exp8_fine"
+OUTROOT_SEM="$ROOT/results/prod/exp8_fine_semantic"   # A3(c) 意味置換対照
 LOGDIR="$ROOT/logs/exp8_fine"
-mkdir -p "$OUTROOT" "$LOGDIR"
+mkdir -p "$OUTROOT" "$OUTROOT_SEM" "$LOGDIR"
 N_PAIRS="${N_PAIRS:-150}"
 
 log() { echo "[$(date '+%F %T')] $*"; }
@@ -34,7 +35,7 @@ for m in "${MODELS[@]}"; do
             continue
         fi
         mkdir -p "$SETTING_OUTDIR"
-        log "START $setting (n=$N_PAIRS)"
+        log "START $setting (typo, n=$N_PAIRS)"
         bash "$GPU_HELPER" uv run --package typo-cot python scripts/exp8/run_patching_fine.py \
             --model "${HF_NAME[$m]}" \
             --benchmark "$b" \
@@ -45,13 +46,32 @@ for m in "${MODELS[@]}"; do
             --n-pairs "$N_PAIRS" \
             > "$LOGDIR/${setting}.log" 2>&1
         rc=$?
-        if [ "$rc" -eq 0 ]; then
-            log "DONE $setting"
-        elif [ "$rc" -eq 86 ]; then
-            log "PAUSED $setting (SMOKE_PAUSED); leaving pending and continuing"
-        else
-            log "FAIL $setting (rc=$rc)"
+        if [ "$rc" -eq 0 ]; then log "DONE $setting (typo)"
+        elif [ "$rc" -eq 86 ]; then log "PAUSED $setting (typo); pending"
+        else log "FAIL $setting (typo rc=$rc)"; fi
+
+        # A3(c) 意味置換対照: 同じ flip ペアの標的語を実語ランダム置換, 単層 denoising のみ
+        SEM_OUTDIR="$OUTROOT_SEM/${setting}"
+        if [ -f "$SEM_OUTDIR/run_summary_fine.json" ]; then
+            log "SKIP $setting (semantic done)"
+            continue
         fi
+        mkdir -p "$SEM_OUTDIR"
+        log "START $setting (semantic, n=$N_PAIRS)"
+        bash "$GPU_HELPER" uv run --package typo-cot python scripts/exp8/run_patching_fine.py \
+            --model "${HF_NAME[$m]}" \
+            --benchmark "$b" \
+            --baseline-dir "$ARCH/outputs/baseline/${m}_${b}" \
+            --perturbed-dir-lxt "$ARCH/outputs/perturbed/${m}_${b}_k4_importance" \
+            --perturbed-dir-rnd "$ARCH/outputs/perturbed/${m}_${b}_k4_random" \
+            --output-dir "$SEM_OUTDIR" \
+            --n-pairs "$N_PAIRS" \
+            --perturb-mode semantic --no-controls \
+            > "$LOGDIR/${setting}_semantic.log" 2>&1
+        rc=$?
+        if [ "$rc" -eq 0 ]; then log "DONE $setting (semantic)"
+        elif [ "$rc" -eq 86 ]; then log "PAUSED $setting (semantic); pending"
+        else log "FAIL $setting (semantic rc=$rc)"; fi
     done
 done
 log "QUEUE FINISHED"
