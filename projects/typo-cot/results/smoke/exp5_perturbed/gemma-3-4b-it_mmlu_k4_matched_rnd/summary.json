@@ -1,0 +1,22 @@
+{
+  "experiment_info": {
+    "model": "google/gemma-3-4b-it",
+    "benchmark": "mmlu",
+    "num_samples_per_subset": null,
+    "batch_size": 4,
+    "total_samples": 24,
+    "timestamp": "2026-07-14T19:26:51.561781"
+  },
+  "overall_metrics": {
+    "accuracy": 0.4583333333333333,
+    "total_correct": 11,
+    "total_samples": 24
+  },
+  "per_subset_metrics": {
+    "abstract_algebra": {
+      "accuracy": 0.4583333333333333,
+      "correct": 11,
+      "total": 24
+    }
+  }
+}

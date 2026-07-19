@@ -23,6 +23,12 @@ archive_figures: /home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/figur
 archive_perturbed_datasets: /home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/datasets/perturbed  # 360 dirs: config.json + perturbed_dataset.json
 archive_rebuttal_datasets: /home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/datasets/rebuttal    # spellfix / matched_random 統制データ
 
+# wave2 (2026-07-18 取込) の新規生成 (読み取り専用):
+#   R1蒸留 baseline/perturbed, Qwen2.5-7B perturbed, MATH-500 再生成。
+#   exp-10-scope worktree の outputs。アーカイブ移設時はここを差し替える
+#   (取込済み実体の同一性は data/master_manifest.json の sha256 で検証可能)。
+exp10_outputs: /diskthalys/ssd14tc/sfukuhata/dev/kanolab/typo_robust_analysis/.claude/worktrees/exp-10-scope/projects/typo-cot/outputs
+
 # 25 設定の run manifest（どのモデル×ベンチマーク×摂動条件を回したかの正典）
 run_manifest: docs/v1_run_manifest.md
 

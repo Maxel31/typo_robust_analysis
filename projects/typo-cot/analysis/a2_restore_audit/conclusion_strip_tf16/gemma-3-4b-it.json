@@ -1,0 +1,2126 @@
+{
+ "gsm8k_random": {
+  "n": 60,
+  "restore_unstripped": 0.95,
+  "restore_stripped": 0.05,
+  "n_leaked_lastline": 60,
+  "restore_unstripped_leaked": 0.95,
+  "restore_stripped_leaked": 0.05,
+  "strip_mode": "last_line",
+  "per_case": [
+   {
+    "sample_id": "gsm8k_00039",
+    "correct_answer": "18",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "18",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00045",
+    "correct_answer": "104",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "104",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00099",
+    "correct_answer": "58",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "58",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00111",
+    "correct_answer": "16",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "16",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00115",
+    "correct_answer": "90",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "90",
+    "ans_Cs": "270",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00122",
+    "correct_answer": "48",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "48",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00141",
+    "correct_answer": "400",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "",
+    "ans_Cs": "100",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00151",
+    "correct_answer": "5",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "5",
+    "ans_Cs": "2",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00172",
+    "correct_answer": "51",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "51",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00177",
+    "correct_answer": "350",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "350",
+    "ans_Cs": "3",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00225",
+    "correct_answer": "9",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "",
+    "ans_Cs": "",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00227",
+    "correct_answer": "9",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "9.00",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00280",
+    "correct_answer": "7",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "7",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00281",
+    "correct_answer": "2450",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "2450",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00290",
+    "correct_answer": "390",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "390",
+    "ans_Cs": "1",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00296",
+    "correct_answer": "3",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "3",
+    "ans_Cs": "21",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00305",
+    "correct_answer": "4",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "4",
+    "ans_Cs": "80",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00361",
+    "correct_answer": "20",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "20",
+    "ans_Cs": "18000",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00363",
+    "correct_answer": "6",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "6",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00369",
+    "correct_answer": "1198",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "1198",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00401",
+    "correct_answer": "14400",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "14400",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00479",
+    "correct_answer": "15400",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "1540",
+    "ans_Cs": "10",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00532",
+    "correct_answer": "25",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "25",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00584",
+    "correct_answer": "2",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "2.00",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00602",
+    "correct_answer": "5",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "5",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00610",
+    "correct_answer": "65,960",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "65960",
+    "ans_Cs": "291",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00620",
+    "correct_answer": "1509",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "1509",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00638",
+    "correct_answer": "12",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "12.00",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00656",
+    "correct_answer": "10",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "10",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00680",
+    "correct_answer": "20",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "20",
+    "ans_Cs": "2",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00683",
+    "correct_answer": "50",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "50",
+    "ans_Cs": "20",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00690",
+    "correct_answer": "5760",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "5760",
+    "ans_Cs": "48",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00691",
+    "correct_answer": "25",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "25",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00716",
+    "correct_answer": "770",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "770",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00717",
+    "correct_answer": "5",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "5.00",
+    "ans_Cs": "5",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "gsm8k_00748",
+    "correct_answer": "336",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "336",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00813",
+    "correct_answer": "7",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "7",
+    "ans_Cs": "14",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00832",
+    "correct_answer": "42",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "42.00",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00844",
+    "correct_answer": "180",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "180",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00909",
+    "correct_answer": "38",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "38",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00916",
+    "correct_answer": "14",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "14",
+    "ans_Cs": "1",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00954",
+    "correct_answer": "34",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "34",
+    "ans_Cs": "1",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00960",
+    "correct_answer": "11",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "11",
+    "ans_Cs": "1",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00967",
+    "correct_answer": "30",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "30",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_00995",
+    "correct_answer": "12",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "12",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_01035",
+    "correct_answer": "35",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "35",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_01068",
+    "correct_answer": "24",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "24",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_01107",
+    "correct_answer": "360",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "360",
+    "ans_Cs": "3",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_01118",
+    "correct_answer": "5",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "5",
+    "ans_Cs": "5",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "gsm8k_01120",
+    "correct_answer": "560",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "560",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_01144",
+    "correct_answer": "34",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "34",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_01159",
+    "correct_answer": "50",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "50",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_01173",
+    "correct_answer": "10",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "10",
+    "ans_Cs": "1",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_01185",
+    "correct_answer": "6",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "6",
+    "ans_Cs": "6",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "gsm8k_01193",
+    "correct_answer": "9",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "9.00",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_01227",
+    "correct_answer": "66",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "66",
+    "ans_Cs": "6",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_01252",
+    "correct_answer": "70",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "70",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_01263",
+    "correct_answer": "500",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "500",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_01267",
+    "correct_answer": "40",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "40",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "gsm8k_01310",
+    "correct_answer": "64",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "64",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   }
+  ],
+  "timestamp": "2026-07-19T15:36:34.293214"
+ },
+ "mmlu_random": {
+  "n": 150,
+  "restore_unstripped": 0.8533333333333334,
+  "restore_stripped": 0.18666666666666668,
+  "n_leaked_lastline": 101,
+  "restore_unstripped_leaked": 0.8910891089108911,
+  "restore_stripped_leaked": 0.21782178217821782,
+  "strip_mode": "last_line",
+  "per_case": [
+   {
+    "sample_id": "mmlu_abstract_algebra_0011",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_anatomy_0000",
+    "correct_answer": "A",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_anatomy_0006",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_anatomy_0028",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_anatomy_0053",
+    "correct_answer": "B",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_anatomy_0064",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_anatomy_0077",
+    "correct_answer": "A",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_anatomy_0103",
+    "correct_answer": "B",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_anatomy_0106",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "C",
+    "ans_Cs": "C",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_astronomy_0035",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "D",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_astronomy_0045",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_astronomy_0107",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_astronomy_0142",
+    "correct_answer": "C",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_business_ethics_0014",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "A",
+    "ans_Cs": "",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_business_ethics_0020",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_business_ethics_0027",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_business_ethics_0031",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_business_ethics_0081",
+    "correct_answer": "C",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_business_ethics_0093",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "D",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_clinical_knowledge_0006",
+    "correct_answer": "B",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_clinical_knowledge_0039",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_college_biology_0057",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_college_chemistry_0000",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_college_chemistry_0006",
+    "correct_answer": "A",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_college_chemistry_0071",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_college_chemistry_0077",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_college_chemistry_0090",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_college_medicine_0001",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_college_medicine_0008",
+    "correct_answer": "A",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 0,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_college_medicine_0154",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_college_physics_0013",
+    "correct_answer": "B",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_college_physics_0031",
+    "correct_answer": "D",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_college_physics_0086",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "D",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_computer_security_0024",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_computer_security_0029",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_computer_security_0053",
+    "correct_answer": "B",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_computer_security_0075",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_conceptual_physics_0059",
+    "correct_answer": "C",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_conceptual_physics_0062",
+    "correct_answer": "C",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_conceptual_physics_0086",
+    "correct_answer": "C",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_conceptual_physics_0087",
+    "correct_answer": "C",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_conceptual_physics_0091",
+    "correct_answer": "B",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_conceptual_physics_0129",
+    "correct_answer": "C",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_conceptual_physics_0231",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_econometrics_0012",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "D",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_econometrics_0017",
+    "correct_answer": "B",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_econometrics_0095",
+    "correct_answer": "A",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_econometrics_0096",
+    "correct_answer": "A",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_electrical_engineering_0022",
+    "correct_answer": "B",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_electrical_engineering_0062",
+    "correct_answer": "B",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_electrical_engineering_0139",
+    "correct_answer": "D",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_elementary_mathematics_0111",
+    "correct_answer": "B",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "B",
+    "ans_Cs": "D",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_elementary_mathematics_0125",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "C",
+    "ans_Cs": "D",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_elementary_mathematics_0332",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "A",
+    "ans_Cs": "D",
+    "restore_unstripped": 0,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_formal_logic_0017",
+    "correct_answer": "D",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_formal_logic_0028",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_formal_logic_0091",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_formal_logic_0107",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "A",
+    "ans_Cs": "D",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_global_facts_0002",
+    "correct_answer": "C",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_global_facts_0027",
+    "correct_answer": "C",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_global_facts_0029",
+    "correct_answer": "C",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_global_facts_0093",
+    "correct_answer": "B",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_biology_0012",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "D",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_biology_0098",
+    "correct_answer": "B",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_biology_0142",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_biology_0287",
+    "correct_answer": "B",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_chemistry_0088",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "C",
+    "ans_Cs": "D",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_computer_science_0020",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_computer_science_0075",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "C",
+    "ans_Cs": "D",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_computer_science_0082",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_computer_science_0097",
+    "correct_answer": "B",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_european_history_0026",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_european_history_0057",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_high_school_geography_0028",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_geography_0071",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_high_school_geography_0183",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_government_and_politics_0007",
+    "correct_answer": "D",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_government_and_politics_0070",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_government_and_politics_0173",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_high_school_macroeconomics_0003",
+    "correct_answer": "C",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_macroeconomics_0057",
+    "correct_answer": "D",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_macroeconomics_0081",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_macroeconomics_0194",
+    "correct_answer": "C",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_macroeconomics_0357",
+    "correct_answer": "B",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_mathematics_0039",
+    "correct_answer": "A",
+    "leaked_lastline": false,
+    "stripped_empty": false,
+    "ans_C": "A",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_microeconomics_0059",
+    "correct_answer": "B",
+    "leaked_lastline": false,
+    "stripped_empty": false,
+    "ans_C": "D",
+    "ans_Cs": "D",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_microeconomics_0139",
+    "correct_answer": "B",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_microeconomics_0235",
+    "correct_answer": "D",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_physics_0015",
+    "correct_answer": "A",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "",
+    "ans_Cs": "A",
+    "restore_unstripped": 0,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_high_school_physics_0040",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "C",
+    "ans_Cs": "D",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_physics_0059",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_physics_0107",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "D",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_physics_0114",
+    "correct_answer": "C",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_physics_0139",
+    "correct_answer": "C",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_psychology_0344",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_psychology_0367",
+    "correct_answer": "B",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_statistics_0006",
+    "correct_answer": "D",
+    "leaked_lastline": false,
+    "stripped_empty": false,
+    "ans_C": "D",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_statistics_0071",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "D",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_statistics_0091",
+    "correct_answer": "D",
+    "leaked_lastline": false,
+    "stripped_empty": false,
+    "ans_C": "D",
+    "ans_Cs": "D",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_high_school_statistics_0179",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_us_history_0050",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "C",
+    "ans_Cs": "D",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_us_history_0087",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_world_history_0221",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_high_school_world_history_0227",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_human_aging_0024",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_human_aging_0071",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "D",
+    "ans_Cs": "D",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_human_aging_0143",
+    "correct_answer": "B",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_human_aging_0173",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_human_aging_0204",
+    "correct_answer": "B",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_human_sexuality_0019",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_human_sexuality_0071",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_human_sexuality_0083",
+    "correct_answer": "B",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_human_sexuality_0089",
+    "correct_answer": "B",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_human_sexuality_0109",
+    "correct_answer": "B",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_human_sexuality_0120",
+    "correct_answer": "A",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_human_sexuality_0123",
+    "correct_answer": "C",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_international_law_0014",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_international_law_0027",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_international_law_0082",
+    "correct_answer": "C",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_international_law_0086",
+    "correct_answer": "B",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_international_law_0112",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_jurisprudence_0031",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_jurisprudence_0105",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_logical_fallacies_0007",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_logical_fallacies_0149",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 0,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_logical_fallacies_0155",
+    "correct_answer": "C",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_machine_learning_0033",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_machine_learning_0064",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_machine_learning_0069",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "A",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_machine_learning_0077",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_machine_learning_0102",
+    "correct_answer": "B",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_machine_learning_0107",
+    "correct_answer": "B",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "B",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_management_0019",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_management_0025",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_management_0027",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "B",
+    "ans_Cs": "A",
+    "restore_unstripped": 0,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_management_0029",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "D",
+    "ans_Cs": "D",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_management_0085",
+    "correct_answer": "B",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_management_0091",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_marketing_0026",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_marketing_0224",
+    "correct_answer": "A",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "A",
+    "restore_unstripped": 0,
+    "restore_stripped": 1
+   },
+   {
+    "sample_id": "mmlu_medical_genetics_0019",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_medical_genetics_0077",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": false,
+    "ans_C": "C",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_medical_genetics_0095",
+    "correct_answer": "D",
+    "leaked_lastline": false,
+    "stripped_empty": false,
+    "ans_C": "D",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_miscellaneous_0025",
+    "correct_answer": "C",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "C",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_miscellaneous_0220",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_miscellaneous_0367",
+    "correct_answer": "B",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "",
+    "restore_unstripped": 0,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_moral_disputes_0016",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_moral_disputes_0047",
+    "correct_answer": "A",
+    "leaked_lastline": false,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_moral_disputes_0081",
+    "correct_answer": "D",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "D",
+    "ans_Cs": "",
+    "restore_unstripped": 1,
+    "restore_stripped": 0
+   },
+   {
+    "sample_id": "mmlu_moral_disputes_0114",
+    "correct_answer": "A",
+    "leaked_lastline": true,
+    "stripped_empty": true,
+    "ans_C": "A",
+    "ans_Cs": "A",
+    "restore_unstripped": 1,
+    "restore_stripped": 1
+   }
+  ],
+  "timestamp": "2026-07-19T15:39:22.187407"
+ }
+}
