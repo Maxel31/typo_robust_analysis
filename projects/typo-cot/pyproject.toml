@@ -10,6 +10,8 @@ dependencies = [
     "scipy>=1.13",
     "pingouin>=0.5.5",
     "tqdm>=4.65",
+    # 実験2: matched-random 標的の頻度マッチングと置換語彙 (Zipf 頻度)
+    "wordfreq>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -17,6 +19,13 @@ dependencies = [
 lrp = [
     "typo-utils[llm]",
     "lxt>=2.1",
+    # lxt 2.1 は transformers 5.x で削除された API
+    # (pytorch_utils.find_pruneable_heads_and_indices 等) に依存するため上限を固定
+    "transformers>=4.52,<5",
+    # rebuttal 参照 (.pt スコア) とビット一致再現のため archive/JSAI2026 の
+    # uv.lock と同じ torch に固定 (torch 2.12 では bf16 カーネル差で
+    # top10 Jaccard < 1.0 になるサンプルが出る)
+    "torch==2.9.1",
     "accelerate>=0.20",
     "sentencepiece>=0.2.1",
     "protobuf>=4",

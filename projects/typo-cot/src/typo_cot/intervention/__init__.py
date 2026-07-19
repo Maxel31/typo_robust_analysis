@@ -1,4 +1,4 @@
-"""介入実験モジュール (実験1: CoT移植 2×2 / 実験3: forced-decoding divergence)."""
+"""介入実験モジュール (実験1: CoT移植 2×2 / 実験2: ターゲット単語削除LOO / 実験3: forced-decoding divergence)."""
 
 from typo_cot.intervention.analysis import (
     bootstrap_ci,
