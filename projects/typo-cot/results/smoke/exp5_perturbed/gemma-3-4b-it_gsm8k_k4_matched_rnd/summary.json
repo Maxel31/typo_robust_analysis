@@ -1,0 +1,22 @@
+{
+  "experiment_info": {
+    "model": "google/gemma-3-4b-it",
+    "benchmark": "gsm8k",
+    "num_samples_per_subset": null,
+    "batch_size": 4,
+    "total_samples": 24,
+    "timestamp": "2026-07-14T19:26:17.281979"
+  },
+  "overall_metrics": {
+    "accuracy": 0.6666666666666666,
+    "total_correct": 16,
+    "total_samples": 24
+  },
+  "per_subset_metrics": {
+    "default": {
+      "accuracy": 0.6666666666666666,
+      "correct": 16,
+      "total": 24
+    }
+  }
+}

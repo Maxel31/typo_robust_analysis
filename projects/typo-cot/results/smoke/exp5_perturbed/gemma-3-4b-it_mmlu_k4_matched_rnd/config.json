@@ -1,0 +1,32 @@
+{
+  "model": "google/gemma-3-4b-it",
+  "benchmark": "mmlu",
+  "num_samples_per_subset": null,
+  "batch_size": 4,
+  "gpu_id": "4",
+  "top_k": null,
+  "max_new_tokens": 512,
+  "seed": 42,
+  "heatmap_interval": 0,
+  "timestamp": "2026-07-14T19:25:37.239671",
+  "perturbed_data": "data/exp5/matched_rnd/gemma-3-4b-it_mmlu_k4_matched_rnd/perturbed_dataset.json",
+  "phase": "phase3",
+  "perturbed_metadata": {
+    "source_dir": "/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/baseline/gemma-3-4b-it_mmlu",
+    "source_model": "google/gemma-3-4b-it",
+    "benchmark": "mmlu",
+    "num_perturbations": 4,
+    "perturbation_mode": "matched_rnd",
+    "include_choices": true,
+    "seed": 42,
+    "total_samples": 2850,
+    "skipped_samples": 0,
+    "created_at": "2026-07-14T18:41:27.577131",
+    "perturbation_types": [
+      "proximity",
+      "double_typing",
+      "omission"
+    ]
+  },
+  "lrp_skipped": true
+}

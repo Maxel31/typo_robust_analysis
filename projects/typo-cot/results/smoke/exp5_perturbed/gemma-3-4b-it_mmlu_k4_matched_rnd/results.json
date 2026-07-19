@@ -1,0 +1,1051 @@
+[
+  {
+    "sample_id": "mmlu_abstract_algebra_0081",
+    "question": "Statement 1 | Every nonzero fee abelian group has an ihfinite number of bases. Statement 2 | Eery free abelian group of rank at least 2 has an infonite number of bases.\n(A) True, True (B) False, False (C) True, False (D) False, True",
+    "correct_answer": "D",
+    "choices": null,
+    "context": null,
+    "generated_text": "\nStatement 1 is true.  An abelian group has a basis if it is a finite abelian group.  Since every nonzero free abelian group has an infinite number of bases, this statement is true.\nStatement 2 is true. A free abelian group of rank at least 2 has an infinite number of bases.\nTherefore, both statements are true.\n\nThe answer is (A).\n",
+    "extracted_answer": "A",
+    "is_correct": false,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Statement 1 | Every nonzero free abelian group has an infinite number of bases. Statement 2 | Every free abelian group of rank at least 2 has an infinite number of bases.",
+    "perturbed_tokens": [
+      {
+        "token_index": 504,
+        "original_token": " free",
+        "perturbed_token": " fe",
+        "importance_score": 0.08359238505363464,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 509,
+        "original_token": " infinite",
+        "perturbed_token": " ihfinit",
+        "importance_score": 0.07471207529306412,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 518,
+        "original_token": " Every",
+        "perturbed_token": "Eery",
+        "importance_score": 0.010458813980221748,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 530,
+        "original_token": " infinite",
+        "perturbed_token": "infonite",
+        "importance_score": 0.007765860762447119,
+        "perturbation_type": "proximity"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0014",
+    "question": "Fond the maximum ppossible order forr an element of S_nn for n = 10.\n(A) 6 (B) 12 (C) 30 (D) 105",
+    "correct_answer": "C",
+    "choices": null,
+    "context": null,
+    "generated_text": " The order of an element in the symmetric group $S_n$ is the least common multiple of the cycle lengths in its cycle decomposition.  For $n=10$, we want to find the maximum possible order of an element.  The order of an element must divide $n!$.  We want to find an element whose cycle decomposition has cycle lengths whose least common multiple is as large as possible.  The largest possible order of an element in $S_n$ is $n!/2$.  However, we are looking for the maximum possible order of an element.  The order of an element must divide $n!$.  The order of an element is the least common multiple of the cycle lengths in its cycle decomposition.  We want to find an element whose cycle lengths have a large LCM.  Consider the element $(12345678910)$.  Its cycle decomposition is $(1)(2)(3)(4)(5)(6)(7)(8)(9)(10)$.  The order of this element is 10.  However, we can find an element with a larger order.  Consider the element $(12345678910)$.  The order of this element is 10.  We want to find an element with the largest possible order.  The order of an element in $S_n$ is the least common multiple of the cycle lengths in its cycle decomposition.  The maximum possible order of an element in $S_n$ is $n$.  The order of an element in $S_n$ is the least common multiple of the cycle lengths in its cycle decomposition.  The maximum possible order of an element in $S_n$ is the largest possible value of the LCM of the cycle lengths.  For $n=10$, we want to find the maximum possible order of an element.  The order of an element is the least common multiple of the cycle lengths in its cycle decomposition.  The maximum possible order of an element in $S_n$ is $n!/2$.  For $n=10$, the maximum possible order is $10!/2 = 1814400/2 = 907200$.  However, this is incorrect.  The order of an element in $S_n$ is the least common multiple of the cycle lengths in its cycle decomposition.  The maximum possible order of an",
+    "extracted_answer": "A",
+    "is_correct": false,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Find the maximum possible order for an element of S_n for n = 10.",
+    "perturbed_tokens": [
+      {
+        "token_index": 498,
+        "original_token": " Find",
+        "perturbed_token": "ond ",
+        "importance_score": 0.1262921243906021,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 500,
+        "original_token": " maximum",
+        "perturbed_token": "ximum pp",
+        "importance_score": 0.07910359650850296,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 503,
+        "original_token": " for",
+        "perturbed_token": "orr ",
+        "importance_score": 0.16228052973747253,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 509,
+        "original_token": "n",
+        "perturbed_token": "nn",
+        "importance_score": 0.20066745579242706,
+        "perturbation_type": "double_typing"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0003",
+    "question": "Statement 1 | A factor group oof a non-Abelia group is non-Abelian. Statement 2 | If K is a normal sibgroup of H and H is a normal sibgroup of G, then K is a normal subgroup of G.\n(A) True, True (B) False, False (C) True, False (D) False, True",
+    "correct_answer": "B",
+    "choices": null,
+    "context": null,
+    "generated_text": "\nStatement 1: A factor group of a non-Abelian group is non-Abelian. This is true.  If G is non-Abelian, then G/[G:F] is non-Abelian, where F is a factor group of G.\nStatement 2: If K is a normal subgroup of H and H is a normal subgroup of G, then K is a normal subgroup of G. This is true.  By the properties of subgroups, if H is normal in G and K is normal in H, then K is normal in G.\n\nBoth statements are true.\nThe answer is (A).\n",
+    "extracted_answer": "A",
+    "is_correct": false,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Statement 1 | A factor group of a non-Abelian group is non-Abelian. Statement 2 | If K is a normal subgroup of H and H is a normal subgroup of G, then K is a normal subgroup of G.",
+    "perturbed_tokens": [
+      {
+        "token_index": 505,
+        "original_token": " of",
+        "perturbed_token": " oo",
+        "importance_score": 0.07207620143890381,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 510,
+        "original_token": "elian",
+        "perturbed_token": "elia",
+        "importance_score": 0.11469541490077972,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 527,
+        "original_token": " subgroup",
+        "perturbed_token": "sibgroup",
+        "importance_score": 0.03474780544638634,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 535,
+        "original_token": " subgroup",
+        "perturbed_token": "sibgroup",
+        "importance_score": 0.012876434251666069,
+        "perturbation_type": "proximity"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0094",
+    "question": "Statement 1 | Q is n extenson field of Z_2. Statement 2 | Every non-constant polynomial over a field has a zero in some extensin field.\n(A) True, True (B) False, False (C) Truue, False (D) False, True",
+    "correct_answer": "D",
+    "choices": null,
+    "context": null,
+    "generated_text": "\nStatement 1: Q is an extension field of Z_2 means that Q contains Z_2 as a subfield and Q is not equal to Z_2.  This is a standard definition of an extension field.\n\nStatement 2: Every non-constant polynomial over a field has a zero in some extension field. This is a fundamental result in Galois theory and field extensions.  It's a consequence of the Intermediate Value Theorem and the fact that extension fields are \"larger\" than the base field.\n\nBoth statements are true.  The extension field Q is constructed to ensure that the polynomial has a root in it.\n\nThe answer is (A).\n",
+    "extracted_answer": "A",
+    "is_correct": false,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Statement 1 | Q is an extension field of Z_2. Statement 2 | Every non-constant polynomial over a field has a zero in some extension field.",
+    "perturbed_tokens": [
+      {
+        "token_index": 504,
+        "original_token": " an",
+        "perturbed_token": "n",
+        "importance_score": 0.09193967282772064,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 505,
+        "original_token": " extension",
+        "perturbed_token": "extenson",
+        "importance_score": 0.030091525986790657,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 529,
+        "original_token": " extension",
+        "perturbed_token": "xtensin ",
+        "importance_score": 0.013433288782835007,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 548,
+        "original_token": " True",
+        "perturbed_token": "Truue",
+        "importance_score": 0.007732330355793238,
+        "perturbation_type": "double_typing"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0035",
+    "question": "Find the degree for thr giveb fild extension Q(sqrt(2), sqrt(3)) oover Q.\n(A) 0 (B) 4 (C) 2 (D) 6",
+    "correct_answer": "B",
+    "choices": null,
+    "context": null,
+    "generated_text": "\nLet $K = \\mathbb{Q}(\\sqrt{2}, \\sqrt{3}) / \\mathbb{Q}$.\nThe degree of the field extension is the number of elements in $K$ minus the number of elements in the base field, $\\mathbb{Q}$.\nWe have $\\mathbb{Q}(\\sqrt{2}) = \\{a + b\\sqrt{2} \\mid a, b \\in \\mathbb{Q}\\}$. The number of elements in $\\mathbb{Q}(\\sqrt{2})$ is infinite.\nWe have $\\mathbb{Q}(\\sqrt{2}, \\sqrt{3}) = \\{a + b\\sqrt{2} + c\\sqrt{3} \\mid a, b, c \\in \\mathbb{Q}\\}$. The number of elements in $\\mathbb{Q}(\\sqrt{2}, \\sqrt{3})$ is infinite.\nHowever, we are looking for the degree of the extension $\\mathbb{Q}(\\sqrt{2}, \\sqrt{3}) \\over \\mathbb{Q}$.\nThe degree of the extension is $[\\mathbb{Q}(\\sqrt{2}, \\sqrt{3}) : \\mathbb{Q}] = [\\mathbb{Q}(\\sqrt{2}, \\sqrt{3}) : \\mathbb{Q}(\\sqrt{2})] \\cdot [\\mathbb{Q}(\\sqrt{2}) : \\mathbb{Q}]$.\nSince $\\sqrt{2}$ is a root of the polynomial $x^2 - 2$, which is irreducible over $\\mathbb{Q}$, $[\\mathbb{Q}(\\sqrt{2}) : \\mathbb{Q}] = 2$.\nSince $\\sqrt{3}$ is a root of the polynomial $x^2 - 3$, which is irreducible over $\\mathbb{Q}$, $[\\mathbb{Q}(\\sqrt{3}) : \\mathbb{Q}] = 2$.\nWe have $\\mathbb{Q}(\\sqrt{2}, \\sqrt{3}) = \\mathbb{Q}(\\sqrt{2}) \\cap \\mathbb{Q}(\\sqrt{3})$.\nSince $\\sqrt{2}$ and $\\sqrt{3}$ are linearly independent over $\\mathbb{Q}$, we have $[\\mathbb{Q}(\\sqrt{2}, \\sqrt{3}) : \\mathbb{Q}(\\sqrt{2})] = 2$ and $[\\mathbb{Q}(\\sqrt{2}, \\sqrt{3}) : \\mathbb{Q}(\\sqrt{3})] = 2$.\nTherefore, $[\\mathbb{Q}(\\sqrt{2}, \\sqrt{3",
+    "extracted_answer": "A",
+    "is_correct": false,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Find the degree for the given field extension Q(sqrt(2), sqrt(3)) over Q.",
+    "perturbed_tokens": [
+      {
+        "token_index": 502,
+        "original_token": " the",
+        "perturbed_token": "thr",
+        "importance_score": 0.022633753716945648,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 503,
+        "original_token": " given",
+        "perturbed_token": "giveb",
+        "importance_score": 0.08178511261940002,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 504,
+        "original_token": " field",
+        "perturbed_token": "ild ",
+        "importance_score": 0.13974010944366455,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 516,
+        "original_token": " over",
+        "perturbed_token": "oover",
+        "importance_score": 0.018608061596751213,
+        "perturbation_type": "double_typing"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0031",
+    "question": "If (G, .) is a group such thay (ab)^-1 = a^-1b^-1, for all a, b in G, then G is a/an\n(A) commutative sem grroup (B) abelian ggroup (C) non-abelian group (D) None of these",
+    "correct_answer": "B",
+    "choices": null,
+    "context": null,
+    "generated_text": "\nThe given property is (ab)^-1 = a^-1b^-1. This is the defining property of an abelian group. An abelian group is a group where the operation is commutative, meaning that for all elements a and b in the group, ab = ba.\nThe answer is (B).\n",
+    "extracted_answer": "B",
+    "is_correct": true,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "If (G, .) is a group such that (ab)^-1 = a^-1b^-1, for all a, b in G, then G is a/an",
+    "perturbed_tokens": [
+      {
+        "token_index": 507,
+        "original_token": " that",
+        "perturbed_token": "hay ",
+        "importance_score": 0.1021919846534729,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 540,
+        "original_token": " semi",
+        "perturbed_token": "m g",
+        "importance_score": 0.013413420878350735,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 541,
+        "original_token": " group",
+        "perturbed_token": "rroup ",
+        "importance_score": 0.004125963430851698,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 546,
+        "original_token": " group",
+        "perturbed_token": "ggroup",
+        "importance_score": 0.058102987706661224,
+        "perturbation_type": "double_typing"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0028",
+    "question": "Statement 1 | The image of a group of 6 slements under a homomorphism may have 12 slements. Statement 2 | There is a homomorphism of some group of 6 slements into some group of 12 slements.\n(A) True, True (B) False, False (C) True, False (D) False, True",
+    "correct_answer": "D",
+    "choices": null,
+    "context": null,
+    "generated_text": "\nStatement 1 is true.  Consider the group of integers modulo 6, Z_6. The elements are {0, 1, 2, 3, 4, 5}.  A homomorphism from Z_6 to Z_12 is simply the identity map, which maps each element to itself.  The image of Z_6 under this homomorphism is Z_12, which has 12 elements.\n\nStatement 2 is true.  Consider the group of integers modulo 6, Z_6, and the group of integers modulo 12, Z_12. The homomorphism f: Z_6 -> Z_12 defined by f(x) = x is a homomorphism.\n\nTherefore, both statements are true.\n\nThe answer is (A).\n",
+    "extracted_answer": "A",
+    "is_correct": false,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Statement 1 | The image of a group of 6 elements under a homomorphism may have 12 elements. Statement 2 | There is a homomorphism of some group of 6 elements into some group of 12 elements.",
+    "perturbed_tokens": [
+      {
+        "token_index": 510,
+        "original_token": " elements",
+        "perturbed_token": "slements",
+        "importance_score": 0.05277504399418831,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 519,
+        "original_token": " elements",
+        "perturbed_token": "slements",
+        "importance_score": 0.05084886774420738,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 535,
+        "original_token": " elements",
+        "perturbed_token": "slements",
+        "importance_score": 0.0123839620500803,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 543,
+        "original_token": " elements",
+        "perturbed_token": "slements",
+        "importance_score": 0.0252368301153183,
+        "perturbation_type": "proximity"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0017",
+    "question": "Compute tthe product n the gien ring. (2,3)(3,5) in Z_5 x ZZ_9\n(A) (1,1) (B) (3,1) (C) (1,6) (D) (3,6)",
+    "correct_answer": "C",
+    "choices": null,
+    "context": null,
+    "generated_text": "\nWe are asked to compute the product of two elements in the ring Z_5 x Z_9. The elements are (2,3) and (3,5). The product is defined as the tuple of the product of the corresponding elements in each component of the ring.\nIn Z_5 x Z_9, the product of (a,b) and (c,d) is (ac + 5k, bd + 9l) for some integers k and l.\nWe have (2,3) * (3,5) = (2*3 + 5k, 3*5 + 9l) = (6 + 5k, 15 + 9l).\nSince we are working in Z_5 x Z_9, we need to reduce the elements modulo 5 and 9 respectively.\n6 + 5k ≡ 1 + 5k (mod 5)\n15 + 9l ≡ 6 + 9l (mod 9)\nSo, (6 + 5k, 15 + 9l) ≡ (1 + 5k, 6 + 9l) (mod 5,9).\nWe want to find k and l such that 1 + 5k ≡ 1 (mod 5) and 6 + 9l ≡ 6 (mod 9).\nSince 1 + 5k ≡ 1 (mod 5) for any integer k, we can choose k = 0.\nSince 6 + 9l ≡ 6 (mod 9) for any integer l, we can choose l = 0.\nTherefore, (6 + 5k, 15 + 9l) ≡ (1, 6) (mod 5,9).\nThe answer is (C).\n\nThe answer is (C).\n",
+    "extracted_answer": "C",
+    "is_correct": true,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Compute the product in the given ring. (2,3)(3,5) in Z_5 x Z_9",
+    "perturbed_tokens": [
+      {
+        "token_index": 499,
+        "original_token": " the",
+        "perturbed_token": " tth",
+        "importance_score": 0.058236025273799896,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 501,
+        "original_token": " in",
+        "perturbed_token": "n",
+        "importance_score": 0.05446658656001091,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 503,
+        "original_token": " given",
+        "perturbed_token": "gien",
+        "importance_score": 0.09897875785827637,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 520,
+        "original_token": " Z",
+        "perturbed_token": "ZZ",
+        "importance_score": 0.05534789711236954,
+        "perturbation_type": "double_typing"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0013",
+    "question": "The polynomial x^3 + 2x^2 + 2x + 1 can be actored into linear facttors in Z_7[x]. Find this ffactorization.\n(A) (x − 2)(x + 2)(x − 1) (B) (x + 1)(x + 4)(x − 2) (C) (x + 1)(x − 4)(z − 2) (D) (x - 1)(x − 4)(x − 2)",
+    "correct_answer": "C",
+    "choices": null,
+    "context": null,
+    "generated_text": " We are looking for roots of the polynomial x^3 + 2x^2 + 2x + 1 in Z_7 = {0, 1, 2, 3, 4, 5, 6}.\nLet's test the values:\nx = 0: 0^3 + 2(0)^2 + 2(0) + 1 = 1 ≠ 0\nx = 1: 1^3 + 2(1)^2 + 2(1) + 1 = 1 + 2 + 2 + 1 = 6 ≠ 0\nx = 2: 2^3 + 2(2)^2 + 2(2) + 1 = 8 + 8 + 4 + 1 = 21 ≡ 0 (mod 7)\nSo x = 2 is a root. Thus, (x - 2) is a factor.\nNow we can divide x^3 + 2x^2 + 2x + 1 by (x - 2) in Z_7[x].\nUsing polynomial long division:\n(x^3 + 2x^2 + 2x + 1) / (x - 2) = x^2 + 4x + 3\nNow we need to factor x^2 + 4x + 3 in Z_7[x].\nWe can use the quadratic formula: x = (-4 ± √(4^2 - 4(1)(3))) / 2(1) = (-4 ± √(16 - 12)) / 2 = (-4 ± √4) / 2 = (-4 ± 2) / 2\nx = (-4 + 2) / 2 = -2 / 2 = 1 (mod 7)\nx = (-4 - 2) / 2 = -6 / 2 = 3 (mod 7)\nSo x^2 + 4x + 3 = (x - 1)(x - 3).\nTherefore, the factorization is (x - 2)(x - 1)(x - 3).\nIn Z_7[x], we can write this as (x - 2)(x - 1)(x - 3).\nComparing this with the given options, we see that",
+    "extracted_answer": "A",
+    "is_correct": false,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "The polynomial x^3 + 2x^2 + 2x + 1 can be factored into linear factors in Z_7[x]. Find this factorization.",
+    "perturbed_tokens": [
+      {
+        "token_index": 517,
+        "original_token": " be",
+        "perturbed_token": " ",
+        "importance_score": 0.008964357897639275,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 521,
+        "original_token": " factors",
+        "perturbed_token": "acttors ",
+        "importance_score": 0.059709109365940094,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 531,
+        "original_token": " factorization",
+        "perturbed_token": "ffactorization",
+        "importance_score": 0.10918205231428146,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 586,
+        "original_token": "x",
+        "perturbed_token": "z",
+        "importance_score": 0.0044443500228226185,
+        "perturbation_type": "proximity"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0086",
+    "question": "Statdment 1 | If H and K are subgroups of a group G, then |HK| = |H||K|/|H intersection K|. Statement 2 | A group of order 2p where p is an odd prime is cyclic of isomorphic to D_p.\n(A) True, True (B) False, False (C) Truue, False (D) False, Truue",
+    "correct_answer": "A",
+    "choices": null,
+    "context": null,
+    "generated_text": "\nStatement 1 is a fundamental property of subgroups. The order of the product of subgroups is the product of their orders, divided by the order of their intersection. This is a well-known result in group theory.\nStatement 2 is also a true statement. A group of order 2p, where p is an odd prime, is cyclic and isomorphic to the dihedral group D_p. The dihedral group D_p is the group of symmetries of a regular p-sided polygon.\nTherefore, both statements are true.\nThe answer is (A).\n",
+    "extracted_answer": "A",
+    "is_correct": true,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Statement 1 | If H and K are subgroups of a group G, then |HK| = |H||K|/|H intersection K|. Statement 2 | A group of order 2p where p is an odd prime is cyclic or isomorphic to D_p.",
+    "perturbed_tokens": [
+      {
+        "token_index": 498,
+        "original_token": " Statement",
+        "perturbed_token": "Statdment",
+        "importance_score": 0.03393153101205826,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 548,
+        "original_token": " or",
+        "perturbed_token": "f ",
+        "importance_score": 0.017958400771021843,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 571,
+        "original_token": " True",
+        "perturbed_token": "Truue",
+        "importance_score": 0.008669011294841766,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 579,
+        "original_token": " True",
+        "perturbed_token": "Truue",
+        "importance_score": 0.01354989968240261,
+        "perturbation_type": "double_typing"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0069",
+    "question": "Statemeent 1 | There exists a free abelian group of everry positive integer rank. Statement 2 | A finitely generated aabelian group is free abelian if its Betti number equalss the number of elements in some generating set.\n(A) True, True (B) False, False (C) True, False (D) False, True",
+    "correct_answer": "A",
+    "choices": null,
+    "context": null,
+    "generated_text": "\nStatement 1 is true. The free abelian group of rank *n* is the direct sum of *n* copies of the integers $\\mathbb{Z}$. This group is free because it has a basis consisting of the vectors $(1, 0, 0, \\dots, 0), (0, 1, 0, \\dots, 0), \\dots, (0, 0, 1, \\dots, 0)$.\nStatement 2 is false. The Betti numbers of a finitely generated abelian group are related to the number of elements in the generating set, but the Betti numbers do not equal the number of elements in the generating set. The Betti numbers are topological invariants.\n\nThe answer is (D).\n",
+    "extracted_answer": "D",
+    "is_correct": false,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Statement 1 | There exists a free abelian group of every positive integer rank. Statement 2 | A finitely generated abelian group is free abelian if its Betti number equals the number of elements in some generating set.",
+    "perturbed_tokens": [
+      {
+        "token_index": 498,
+        "original_token": " Statement",
+        "perturbed_token": "Statemeent",
+        "importance_score": 0.18046501278877258,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 509,
+        "original_token": " every",
+        "perturbed_token": "everry",
+        "importance_score": 0.12577089667320251,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 521,
+        "original_token": " abelian",
+        "perturbed_token": "aabelian",
+        "importance_score": 0.01344200037419796,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 531,
+        "original_token": " equals",
+        "perturbed_token": "equalss",
+        "importance_score": 0.0037140557542443275,
+        "perturbation_type": "double_typing"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0011",
+    "question": "If A = {1, 2, 3} then relation S = {(1, 1), (2, 2)} is\n(A) symmetric only (B) anti-symmetriic oonly (C) both symetric and anti-symmetric (D) an equivalence rlation",
+    "correct_answer": "C",
+    "choices": null,
+    "context": null,
+    "generated_text": " A relation S is symmetric if for every pair (a, b) in S, the pair (b, a) is also in S. In this case, (1, 1) is in S, so (1, 1) must be in S. However, (2, 2) is in S, so (2, 2) must be in S.  For the relation to be symmetric, we need (1, 1) and (2, 2) to be in S.  Since (1, 1) is in S and (2, 2) is in S, the relation is symmetric.\n\nA relation is anti-symmetric if for every pair (a, b) in S, if a = b, then (a, b) is not in S. In this case, (1, 1) is in S, but 1 = 1, so (1, 1) is not in S. This is a contradiction.  However, if we consider the definition of anti-symmetric as if (a, b) is in S and (b, a) is in S, then a = b.  In this case, (1, 1) is in S and (1, 1) is in S, so 1 = 1.  This is true.  The relation is anti-symmetric.\n\nSince the relation is symmetric and anti-symmetric, the correct answer is (C).\n\nThe answer is (C).\n",
+    "extracted_answer": "C",
+    "is_correct": true,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "If A = {1, 2, 3} then relation S = {(1, 1), (2, 2)} is",
+    "perturbed_tokens": [
+      {
+        "token_index": 538,
+        "original_token": "symmetric",
+        "perturbed_token": "-symmetrii",
+        "importance_score": 0.0814632698893547,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 539,
+        "original_token": " only",
+        "perturbed_token": " oonl",
+        "importance_score": 0.035607725381851196,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 544,
+        "original_token": " symmetric",
+        "perturbed_token": " symetri",
+        "importance_score": 0.01462440937757492,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 554,
+        "original_token": " relation",
+        "perturbed_token": "rlation",
+        "importance_score": 0.21034128963947296,
+        "perturbation_type": "omission"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0075",
+    "question": "Statement 1 | In a group (ab)^{-2} = b^{-2}a^{-2}. Statement 2 | In a group (a)^h = a^nb^n.\n(A) True, True (B) Fale, Fale (C) True, False (D) False, True",
+    "correct_answer": "B",
+    "choices": null,
+    "context": null,
+    "generated_text": "\nStatement 1:  (ab)^{-2} = (ab)^(-2) = a^{-2}b^{-2}.  This is not equal to b^{-2}a^{-2}. Therefore, Statement 1 is false.\nStatement 2: (a)^h = a^nh. This is a general property of exponentiation in groups. Therefore, Statement 2 is true.\nThe answer is (D).\n",
+    "extracted_answer": "D",
+    "is_correct": false,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Statement 1 | In a group (ab)^{-2} = b^{-2}a^{-2}. Statement 2 | In a group (ab)^n = a^nb^n.",
+    "perturbed_tokens": [
+      {
+        "token_index": 528,
+        "original_token": ")^",
+        "perturbed_token": "a",
+        "importance_score": 0.053548265248537064,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 530,
+        "original_token": " =",
+        "perturbed_token": "h",
+        "importance_score": 0.087842658162117,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 547,
+        "original_token": " False",
+        "perturbed_token": " Fal",
+        "importance_score": 0.03978745639324188,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 549,
+        "original_token": " False",
+        "perturbed_token": "Fale",
+        "importance_score": 0.009428846649825573,
+        "perturbation_type": "omission"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0054",
+    "question": "Find the degree for thw givn fiield extension Q(sqrt(2)) overr Q.\n(A) 0 (B) 2 (C) 1 (D) 3",
+    "correct_answer": "B",
+    "choices": null,
+    "context": null,
+    "generated_text": " The degree of a field extension is the dimension of the quotient space Q(sqrt(2))/Q.  Since sqrt(2) is a root of the polynomial x^2 - 2, which is irreducible over Q, the extension Q(sqrt(2))/Q is a separable and finite extension.  The dimension of the vector space Q(sqrt(2))/Q is the number of elements in the minimal polynomial of sqrt(2) over Q. The minimal polynomial is x^2 - 2, which has degree 2.  Therefore, the degree of the field extension is 2.\nThe answer is (B).\n",
+    "extracted_answer": "B",
+    "is_correct": true,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Find the degree for the given field extension Q(sqrt(2)) over Q.",
+    "perturbed_tokens": [
+      {
+        "token_index": 502,
+        "original_token": " the",
+        "perturbed_token": "thw",
+        "importance_score": 0.029248084872961044,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 503,
+        "original_token": " given",
+        "perturbed_token": "givn",
+        "importance_score": 0.10396851599216461,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 504,
+        "original_token": " field",
+        "perturbed_token": "iield ",
+        "importance_score": 0.5024043917655945,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 512,
+        "original_token": " over",
+        "perturbed_token": "overr",
+        "importance_score": 0.11013765633106232,
+        "perturbation_type": "double_typing"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0004",
+    "question": "Find the product of the given polynomials in the gkven polyynomial ring. f(x) = 4x - 5, g(x) = 2x^2 - 4x + 2 i Z_8[x].\n(A) 2x^2 + 5 (B) 6s^2 + 4x + 6 (C) 0 (D) x^2 + 1",
+    "correct_answer": "B",
+    "choices": null,
+    "context": null,
+    "generated_text": " We are working in Z_8[x], which means we are performing polynomial operations modulo 8.\nf(x) = 4x - 5  =>  f(x) mod 8 = 4x - 5 mod 8 = 4x + 3 (since -5 mod 8 = 3)\ng(x) = 2x^2 - 4x + 2  =>  g(x) mod 8 = 2x^2 - 4x + 2 mod 8\nLet's evaluate g(x) at a few values of x:\nx = 0: g(0) = 2(0)^2 - 4(0) + 2 = 2\nx = 1: g(1) = 2(1)^2 - 4(1) + 2 = 2 - 4 + 2 = 0\nx = 2: g(2) = 2(2)^2 - 4(2) + 2 = 8 - 8 + 2 = 2\nx = 3: g(3) = 2(3)^2 - 4(3) + 2 = 18 - 12 + 2 = 8 mod 8 = 0\nx = 4: g(4) = 2(4)^2 - 4(4) + 2 = 32 - 16 + 2 = 18 mod 8 = 2\nx = 5: g(5) = 2(5)^2 - 4(5) + 2 = 50 - 20 + 2 = 32 mod 8 = 0\nx = 6: g(6) = 2(6)^2 - 4(6) + 2 = 72 - 24 + 2 = 50 mod 8 = 2\nx = 7: g(7) = 2(7)^2 - 4(7) + 2 = 98 - 28 + 2 = 72 mod 8 = 0\n\nSince g(1) = g(3) = g(5) = g(7) = 0, we know that (x-1)(x-3)(x-5)(x",
+    "extracted_answer": "A",
+    "is_correct": false,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Find the product of the given polynomials in the given polynomial ring. f(x) = 4x - 5, g(x) = 2x^2 - 4x + 2 in Z_8[x].",
+    "perturbed_tokens": [
+      {
+        "token_index": 507,
+        "original_token": " given",
+        "perturbed_token": " gkve",
+        "importance_score": 0.05504835397005081,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 508,
+        "original_token": " polynomial",
+        "perturbed_token": " polyynomia",
+        "importance_score": 0.09784506261348724,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 540,
+        "original_token": " in",
+        "perturbed_token": "i",
+        "importance_score": 0.06261938810348511,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 564,
+        "original_token": "x",
+        "perturbed_token": "s",
+        "importance_score": 0.0022941650822758675,
+        "perturbation_type": "proximity"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0097",
+    "question": "Find yhe numbet of elemeents in the indicated cyclic group: The cyclic subgroup of Z_30 geenerated by 25.\n(A) 25 (B) 5 (C) 6 (D) 30",
+    "correct_answer": "C",
+    "choices": null,
+    "context": null,
+    "generated_text": " A cyclic subgroup generated by an element 'a' in a group 'G' is isomorphic to Z_n, where 'n' is the order of 'a'. The order of 'a' is the smallest positive integer 'n' such that a^n = e (the identity element), where 'e' is the identity element of the group. In this case, we have a cyclic subgroup of Z_30 generated by 25.  We need to find the order of 25 in Z_30.  We are looking for the smallest positive integer 'n' such that 25^n ≡ 1 (mod 30).  Since 30 = 2 * 3 * 5, we can check powers of 25 modulo 30.\n25^1 ≡ 25 (mod 30)\n25^2 ≡ 625 ≡ 5 (mod 30)\n25^3 ≡ 25 * 5 ≡ 125 ≡ 5 (mod 30)\n25^4 ≡ 25 * 5 ≡ 125 ≡ 5 (mod 30)\n...\nWe can see that 25^2 ≡ 5 (mod 30) and 25^3 ≡ 5 (mod 30).  In fact, any power of 25 greater than 1 will also be congruent to 5 modulo 30.  Therefore, the order of 25 in Z_30 is 2.  However, the question asks for the number of elements in the cyclic subgroup generated by 25.  Since the cyclic subgroup is generated by 25, it consists of all the powers of 25 modulo 30.  These are 25^1, 25^2, 25^3, ..., 25^n, where n is the order of 25.  The order of 25 is 2, so the cyclic subgroup consists of {25, 25^2} = {25, 5}.  Therefore, the number of elements in the cyclic subgroup is 2.\n\nHowever, the question asks for the number of elements in the cyclic subgroup of Z_30 generated by 25. The cyclic subgroup generated by 2",
+    "extracted_answer": "A",
+    "is_correct": false,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Find the number of elements in the indicated cyclic group: The cyclic subgroup of Z_30 generated by 25.",
+    "perturbed_tokens": [
+      {
+        "token_index": 498,
+        "original_token": " Find",
+        "perturbed_token": "nd y",
+        "importance_score": 0.11229759454727173,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 500,
+        "original_token": " number",
+        "perturbed_token": "numbet",
+        "importance_score": 0.07692554593086243,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 502,
+        "original_token": " elements",
+        "perturbed_token": "elemeents",
+        "importance_score": 0.056296929717063904,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 517,
+        "original_token": " generated",
+        "perturbed_token": "geenerated",
+        "importance_score": 0.06797069311141968,
+        "perturbation_type": "double_typing"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0088",
+    "question": "Compute the produc un tthe givsn ring. (12)(16) in Z_24\n(A) 0 (B) 1 (C) 4 (D) 6",
+    "correct_answer": "A",
+    "choices": null,
+    "context": null,
+    "generated_text": " We are asked to compute the product (12)(16) in Z_24. This means we need to find the remainder when the product 12 * 16 is divided by 24.\n12 * 16 = 192.\nNow we divide 192 by 24: 192 = 8 * 24 + 0.\nSo, 192 ≡ 0 (mod 24).\nThe answer is (A).\nThe answer is (A).\n",
+    "extracted_answer": "A",
+    "is_correct": true,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Compute the product in the given ring. (12)(16) in Z_24",
+    "perturbed_tokens": [
+      {
+        "token_index": 500,
+        "original_token": " product",
+        "perturbed_token": "produc",
+        "importance_score": 0.1350499838590622,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 501,
+        "original_token": " in",
+        "perturbed_token": "un",
+        "importance_score": 0.05954008176922798,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 502,
+        "original_token": " the",
+        "perturbed_token": "tthe",
+        "importance_score": 0.051836445927619934,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 503,
+        "original_token": " given",
+        "perturbed_token": "givsn",
+        "importance_score": 0.11502863466739655,
+        "perturbation_type": "proximity"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0027",
+    "question": "Detedmine whether the polynomial in Z[x] sayisfies an Eisenstein criterion for irredjcibility lver Q. 8x^3 + 6x^2 - 9x + 24\n(A) Yes, with p=2. (B) Yes, with p=3. (C) Yes, with p=5. (D) No.",
+    "correct_answer": "B",
+    "choices": null,
+    "context": null,
+    "generated_text": "\nWe are given the polynomial $f(x) = 8x^3 + 6x^2 - 9x + 24 \\in \\mathbb{Z}[x]$. We want to determine if it is irreducible over $\\mathbb{Q}$ using the Eisenstein criterion.\nThe Eisenstein criterion states that a polynomial $f(x) \\in \\mathbb{Z}[x]$ is irreducible over $\\mathbb{Q}$ if there exists a prime $p$ such that $f(x)$ is a monic polynomial with all coefficients divisible by $p$, and $f(p) \\neq 0$.\nWe need to test several primes $p$.\nLet's try $p=2$. We have $f(x) = 8x^3 + 6x^2 - 9x + 24$.\nThe coefficients are $8, 6, -9, 24$.\n$8 \\equiv 0 \\pmod{2}$, $6 \\equiv 0 \\pmod{2}$, $-9 \\equiv 1 \\pmod{2}$, $24 \\equiv 0 \\pmod{2}$.\nSince the coefficient $-9 \\equiv 1 \\pmod{2}$, the Eisenstein criterion with $p=2$ is not satisfied.\nLet's try $p=3$. We have $f(x) = 8x^3 + 6x^2 - 9x + 24$.\nThe coefficients are $8, 6, -9, 24$.\n$8 \\equiv 2 \\pmod{3}$, $6 \\equiv 0 \\pmod{3}$, $-9 \\equiv 0 \\pmod{3}$, $24 \\equiv 0 \\pmod{3}$.\nSince all coefficients are divisible by $3$, and $f(3) = 8(3^3) + 6(3^2) - 9(3) + 24 = 8(27) + 6(9) - 27 + 24 = 216 + 54 - 27 + 24 = 267 \\neq 0$, the Eisenstein criterion with $p=3$ is satisfied.\nTherefore, the polynomial is irreducible over $\\mathbb{Q}$ with $p=3$.\n\nThe answer is (B).\n",
+    "extracted_answer": "B",
+    "is_correct": true,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Determine whether the polynomial in Z[x] satisfies an Eisenstein criterion for irreducibility over Q. 8x^3 + 6x^2 - 9x + 24",
+    "perturbed_tokens": [
+      {
+        "token_index": 498,
+        "original_token": " Determine",
+        "perturbed_token": "Detedmine",
+        "importance_score": 0.21820849180221558,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 507,
+        "original_token": " satisfies",
+        "perturbed_token": "sayisfies",
+        "importance_score": 0.13231177628040314,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 514,
+        "original_token": "duc",
+        "perturbed_token": "djc",
+        "importance_score": 0.0340372771024704,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 516,
+        "original_token": " over",
+        "perturbed_token": "lver",
+        "importance_score": 0.018191426992416382,
+        "perturbation_type": "proximity"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0029",
+    "question": "Statement 1 | The homomorphic image of a cyxlic group is cyclic. Statement 2 | Ghe homomorphic image of an Abelian group is Abelian.\n(A) True, True (B) alse, False (C) True, False (D) alse, True",
+    "correct_answer": "A",
+    "choices": null,
+    "context": null,
+    "generated_text": "\nStatement 1 is true. If G is a cyclic group generated by a single element, say 'a', then the homomorphic image of G under any homomorphism φ: G → H is also cyclic, generated by the image of 'a' under φ.\nStatement 2 is true. If G and H are Abelian groups, then the product of any two elements in G is also Abelian, and the same is true for H.  Therefore, the composite of any homomorphism from G to H is also Abelian.\n\nThe answer is (A).\n",
+    "extracted_answer": "A",
+    "is_correct": true,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Statement 1 | The homomorphic image of a cyclic group is cyclic. Statement 2 | The homomorphic image of an Abelian group is Abelian.",
+    "perturbed_tokens": [
+      {
+        "token_index": 508,
+        "original_token": " cyclic",
+        "perturbed_token": " cyxli",
+        "importance_score": 0.062411122024059296,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 517,
+        "original_token": " The",
+        "perturbed_token": "| G",
+        "importance_score": 0.00496887369081378,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 538,
+        "original_token": " False",
+        "perturbed_token": "alse",
+        "importance_score": 0.039836280047893524,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 550,
+        "original_token": " False",
+        "perturbed_token": "alse",
+        "importance_score": 0.008059520274400711,
+        "perturbation_type": "omission"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0064",
+    "question": "How many homomorphisms are there of ZZ inro Z_2?\n(A) 1 (B) 2 (C) infinittely mny (D) 0",
+    "correct_answer": "B",
+    "choices": null,
+    "context": null,
+    "generated_text": " A homomorphism is a structure-preserving map. We are looking for homomorphisms from Z to Z_2.  Z_2 is a cyclic group of order 2, so it has a unique generator. A homomorphism from Z to Z_2 must map each element of Z to an element of Z_2.  Since Z is infinite, we can't just map each element to 0 or 1.  However, we can map Z to Z_2 by sending each integer n to 0 if n is even and to 1 if n is odd. This is a homomorphism.  Since Z is infinite, there are infinitely many ways to do this.  The homomorphism must be a function from Z to Z_2, so it must be well-defined.  If f(x) = f(y), then x - y must be a multiple of 2.  Since Z is the set of integers, this is always true.  The map f(x) = 0 if x is even and f(x) = 1 if x is odd is a homomorphism.  Since Z is infinite, there are infinitely many homomorphisms.\nThe answer is (C).\n",
+    "extracted_answer": "C",
+    "is_correct": false,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "How many homomorphisms are there of Z into Z_2?",
+    "perturbed_tokens": [
+      {
+        "token_index": 504,
+        "original_token": " Z",
+        "perturbed_token": "ZZ",
+        "importance_score": 0.015614897944033146,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 505,
+        "original_token": " into",
+        "perturbed_token": "inro",
+        "importance_score": 0.1118556410074234,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 524,
+        "original_token": " infinitely",
+        "perturbed_token": "infinittely",
+        "importance_score": 0.09886579215526581,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 525,
+        "original_token": " many",
+        "perturbed_token": "mny",
+        "importance_score": 0.049075182527303696,
+        "perturbation_type": "omission"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0077",
+    "question": "Find the characteristic of ghee ring Z x ZZ.\n(A) 0 (B) 3 (C) 12 (D) 30",
+    "correct_answer": "A",
+    "choices": null,
+    "context": null,
+    "generated_text": "\nThe question asks for the characteristic of the ghee ring Z x ZZ. The ghee ring is the ring of matrices with entries in Z. The characteristic of a ring R is the smallest positive integer n such that n * 1_R = 0_R, where 1_R is the multiplicative identity and 0_R is the additive identity.\nIn the ring Z x ZZ, the multiplicative identity is 1, and the additive identity is 0.\nWe want to find the smallest positive integer n such that n * 1 = 0.\nSince 1 is in Z, n must be a divisor of 0. The smallest positive divisor of 0 is undefined. However, we are looking for the characteristic of the ring Z x ZZ.\nThe characteristic of a ring is the smallest positive integer n such that n * 1 = 0, where 1 is the multiplicative identity and 0 is the additive identity.\nIn the ring Z x ZZ, the multiplicative identity is 1, and the additive identity is 0.\nWe want to find the smallest positive integer n such that n * 1 = 0.\nSince 1 is in Z, n must be a divisor of 0. The smallest positive divisor of 0 is undefined.\nHowever, the characteristic of a ring is the smallest positive integer n such that n * 1 = 0, where 1 is the multiplicative identity and 0 is the additive identity.\nIn the ring Z x ZZ, the multiplicative identity is 1, and the additive identity is 0.\nWe want to find the smallest positive integer n such that n * 1 = 0.\nSince 1 is in Z, n must be a divisor of 0. The smallest positive divisor of 0 is undefined.\nThe characteristic of a ring is the smallest positive integer n such that n * 1 = 0, where 1 is the multiplicative identity and 0 is the additive identity.\nIn the ring Z x ZZ, the multiplicative identity is 1, and the additive identity is 0.\nWe want to find the smallest positive integer n such that n * 1 = 0.\nSince 1 is in Z, n must be a divisor of 0. The smallest positive divisor of 0 is undefined.\nThe characteristic of a ring is the smallest positive integer n such that n * 1 = 0, where 1 is the multiplicative identity and ",
+    "extracted_answer": "A",
+    "is_correct": true,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Find the characteristic of the ring Z x Z.",
+    "perturbed_tokens": [
+      {
+        "token_index": 501,
+        "original_token": " of",
+        "perturbed_token": " g",
+        "importance_score": 0.3628932535648346,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 502,
+        "original_token": " the",
+        "perturbed_token": "hee ",
+        "importance_score": 0.2653692066669464,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 506,
+        "original_token": " Z",
+        "perturbed_token": "ZZ",
+        "importance_score": 0.022355183959007263,
+        "perturbation_type": "double_typing"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0084",
+    "question": "Let A and B be sets, f: A -> B and g: B -> A be runctions such that for all a \\in A, g(f(a)) = a. Statement 1 | The unction g must neessarily be injective. Statement 2 | The unction g must necessarily be surjective.\n(A) True, True (B) False, False (C) True, False (D) False, True",
+    "correct_answer": "D",
+    "choices": null,
+    "context": null,
+    "generated_text": "\nStatement 1: g must be injective.  If g(f(a)) = g(f(b)) for some a, b \\in A, then a = b.  We are given g(f(a)) = a.  So, g(f(a)) = a and g(f(b)) = a.  If g(f(a)) = g(f(b)), then a = b.  This means g is injective.\n\nStatement 2: g must be surjective.  For every b \\in B, there must exist an a \\in A such that g(b) = a.  We are given g(f(a)) = a.  We need to show that for every b \\in B, there exists an a \\in A such that g(f(a)) = b.  However, we are given g(f(a)) = a, so g(f(a)) can only equal a.  Therefore, g is not surjective.\n\nThe answer is (D).\n---\nFinal Answer: The final answer is (D).\n",
+    "extracted_answer": "D",
+    "is_correct": true,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Let A and B be sets, f: A -> B and g: B -> A be functions such that for all a \\in A, g(f(a)) = a. Statement 1 | The function g must necessarily be injective. Statement 2 | The function g must necessarily be surjective.",
+    "perturbed_tokens": [
+      {
+        "token_index": 517,
+        "original_token": " functions",
+        "perturbed_token": "e runctio",
+        "importance_score": 0.04317881166934967,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 541,
+        "original_token": " function",
+        "perturbed_token": "unction",
+        "importance_score": 0.06053540110588074,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 544,
+        "original_token": " necessarily",
+        "perturbed_token": " neessaril",
+        "importance_score": 0.08271165192127228,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 553,
+        "original_token": " function",
+        "perturbed_token": "unction",
+        "importance_score": 0.002510986290872097,
+        "perturbation_type": "omission"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0071",
+    "question": "Find the degree for te givn fiield extension Q(sqrt(2)*sqrt(3)) oover Q.\n(A) 0 (B) 4 (C) 2 (D) 6",
+    "correct_answer": "C",
+    "choices": null,
+    "context": null,
+    "generated_text": "\nThe field extension Q(sqrt(2), sqrt(3)) over Q is the smallest field containing Q, sqrt(2), and sqrt(3).\nWe have Q = {0, 1, ...}.\nsqrt(2) is a root of x^2 - 2 = 0.\nsqrt(3) is a root of x^2 - 3 = 0.\nSince sqrt(2) and sqrt(3) are linearly independent over Q, the degree of the extension is the number of elements in the field Q(sqrt(2), sqrt(3)) minus the number of elements in Q.\nThe number of elements in Q is infinite, but we can consider the number of elements in the field Q(sqrt(2), sqrt(3)) that are not in Q.\nThe elements in Q(sqrt(2), sqrt(3)) are of the form a + b*sqrt(2) + c*sqrt(3), where a, b, and c are elements of Q.\nSince Q is a field, we can write Q(sqrt(2), sqrt(3)) = {a + b*sqrt(2) + c*sqrt(3) | a, b, c ∈ Q}.\nThe number of elements in Q is infinite.\nThe number of elements in Q(sqrt(2), sqrt(3)) is infinite.\nHowever, we can consider the number of elements in the field Q(sqrt(2), sqrt(3)) that are not in Q.\nThe elements in Q(sqrt(2), sqrt(3)) are of the form a + b*sqrt(2) + c*sqrt(3), where a, b, and c are elements of Q.\nThe number of elements in Q(sqrt(2), sqrt(3)) is the number of possible choices for a, b, and c, which is infinite.\nThe degree of the field extension [Q(sqrt(2), sqrt(3)) : Q] is the number of elements in the quotient field of Q(sqrt(2), sqrt(3)) over Q, which is the number of elements in the field Q(sqrt(2), sqrt(3)) minus the number of elements in Q.\nSince Q is a field, the degree of the extension is the number of elements in the field Q(sqrt(2), sqrt(3)) minus the number of elements in Q.\nThe degree of the extension is",
+    "extracted_answer": "A",
+    "is_correct": false,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Find the degree for the given field extension Q(sqrt(2)*sqrt(3)) over Q.",
+    "perturbed_tokens": [
+      {
+        "token_index": 502,
+        "original_token": " the",
+        "perturbed_token": "e ",
+        "importance_score": 0.020877521485090256,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 503,
+        "original_token": " given",
+        "perturbed_token": "vn f",
+        "importance_score": 0.08145207166671753,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 504,
+        "original_token": " field",
+        "perturbed_token": "fiield",
+        "importance_score": 0.11860626935958862,
+        "perturbation_type": "double_typing"
+      },
+      {
+        "token_index": 516,
+        "original_token": " over",
+        "perturbed_token": "oover",
+        "importance_score": 0.010720409452915192,
+        "perturbation_type": "double_typing"
+      }
+    ]
+  },
+  {
+    "sample_id": "mmlu_abstract_algebra_0025",
+    "question": "Let G dented the set of all n x n non-singular matrices with rational numbers as entries. Then under multiplication G is a/an\n(A) subgroup (B) rinite abelian group (C) nfinite, noj abelian group (D) ininite, abelian",
+    "correct_answer": "C",
+    "choices": null,
+    "context": null,
+    "generated_text": "\nA group must satisfy four properties: closure, associativity, identity, and inverses.\n1. Closure: If A and B are in G, then their product C = AB must also be in G (i.e., it must be a non-singular matrix with rational entries).\n2. Associativity: Matrix multiplication is associative.\n3. Identity: The identity matrix I is in G.\n4. Inverses: For every matrix A in G, there must be a matrix A⁻¹ in G such that A * A⁻¹ = A⁻¹ * A = I.\n\nFor n x n non-singular matrices, finding the inverse is generally difficult and not always possible.  The set of all n x n non-singular matrices is not closed under multiplication.  Consider two non-singular matrices A and B. Their product AB is also non-singular, but the inverse of AB is not always a matrix in G.\n\nTherefore, G is not a group.  It is not a finite abelian group because it is not abelian. It is not infinite, noj abelian group because it is not abelian.\n\nThe answer is (C).\nThe answer is (C).\n",
+    "extracted_answer": "C",
+    "is_correct": true,
+    "subset": "abstract_algebra",
+    "question_top_k_words": [],
+    "cot_top_k_words": [],
+    "original_question": "Let G denoted the set of all n x n non-singular matrices with rational numbers as entries. Then under multiplication G is a/an",
+    "perturbed_tokens": [
+      {
+        "token_index": 500,
+        "original_token": " denoted",
+        "perturbed_token": " dente",
+        "importance_score": 0.14388008415699005,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 534,
+        "original_token": " finite",
+        "perturbed_token": " rinit",
+        "importance_score": 0.02371138334274292,
+        "perturbation_type": "proximity"
+      },
+      {
+        "token_index": 540,
+        "original_token": " infinite",
+        "perturbed_token": "nfinite",
+        "importance_score": 0.022713221609592438,
+        "perturbation_type": "omission"
+      },
+      {
+        "token_index": 542,
+        "original_token": " non",
+        "perturbed_token": "noj",
+        "importance_score": 0.0007326869526877999,
+        "perturbation_type": "proximity"
+      }
+    ]
+  }
+]
