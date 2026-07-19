@@ -1,0 +1,949 @@
+{
+  "n_settings_total": 72,
+  "n_settings_regression": 60,
+  "rank_correlation_nocot_vs_DE": {
+    "rho": -0.035761920640213406,
+    "p": 0.7861832196584656,
+    "n": 60
+  },
+  "sample_odds_ratio": {
+    "mantel_haenszel": {
+      "mh_or": 8.849247323956646,
+      "n_strata": 60
+    },
+    "crude_pooled": {
+      "odds_ratio": 10.119756594597105,
+      "log_odds_ratio": 2.3144896116527853,
+      "table": {
+        "a": 1163,
+        "b": 1515,
+        "c": 4763,
+        "d": 62789
+      },
+      "haldane_applied": false
+    },
+    "n_strata": 60,
+    "per_setting": [
+      {
+        "model": "Llama-3.2-1B-Instruct",
+        "benchmark": "arc",
+        "perturbation": "importance",
+        "table": {
+          "a": 40,
+          "b": 74,
+          "c": 115,
+          "d": 941
+        },
+        "odds_ratio": 4.423031727379554,
+        "fisher_p": 1.9396245113234455e-10
+      },
+      {
+        "model": "Llama-3.2-1B-Instruct",
+        "benchmark": "arc",
+        "perturbation": "random",
+        "table": {
+          "a": 27,
+          "b": 40,
+          "c": 77,
+          "d": 1024
+        },
+        "odds_ratio": 8.976623376623376,
+        "fisher_p": 3.8711895967313023e-13
+      },
+      {
+        "model": "Llama-3.2-1B-Instruct",
+        "benchmark": "commonsense_qa",
+        "perturbation": "importance",
+        "table": {
+          "a": 77,
+          "b": 39,
+          "c": 169,
+          "d": 930
+        },
+        "odds_ratio": 10.864815657715067,
+        "fisher_p": 1.5166510871834632e-30
+      },
+      {
+        "model": "Llama-3.2-1B-Instruct",
+        "benchmark": "commonsense_qa",
+        "perturbation": "random",
+        "table": {
+          "a": 76,
+          "b": 33,
+          "c": 141,
+          "d": 962
+        },
+        "odds_ratio": 15.712873415001075,
+        "fisher_p": 6.322403598191704e-37
+      },
+      {
+        "model": "Llama-3.2-1B-Instruct",
+        "benchmark": "gsm8k",
+        "perturbation": "importance",
+        "table": {
+          "a": 0,
+          "b": 4,
+          "c": 18,
+          "d": 1241
+        },
+        "odds_ratio": 7.456456456456457,
+        "fisher_p": 1.0
+      },
+      {
+        "model": "Llama-3.2-1B-Instruct",
+        "benchmark": "gsm8k",
+        "perturbation": "random",
+        "table": {
+          "a": 0,
+          "b": 4,
+          "c": 20,
+          "d": 1232
+        },
+        "odds_ratio": 6.6802168021680215,
+        "fisher_p": 1.0
+      },
+      {
+        "model": "Llama-3.2-1B-Instruct",
+        "benchmark": "mmlu",
+        "perturbation": "importance",
+        "table": {
+          "a": 77,
+          "b": 76,
+          "c": 210,
+          "d": 2187
+        },
+        "odds_ratio": 10.551315789473684,
+        "fisher_p": 3.191964259091019e-36
+      },
+      {
+        "model": "Llama-3.2-1B-Instruct",
+        "benchmark": "mmlu",
+        "perturbation": "random",
+        "table": {
+          "a": 42,
+          "b": 85,
+          "c": 180,
+          "d": 2294
+        },
+        "odds_ratio": 6.297254901960784,
+        "fisher_p": 4.674993040763015e-16
+      },
+      {
+        "model": "Llama-3.2-1B-Instruct",
+        "benchmark": "mmlu_pro",
+        "perturbation": "importance",
+        "table": {
+          "a": 4,
+          "b": 28,
+          "c": 46,
+          "d": 1078
+        },
+        "odds_ratio": 3.347826086956522,
+        "fisher_p": 0.045519212134695106
+      },
+      {
+        "model": "Llama-3.2-1B-Instruct",
+        "benchmark": "mmlu_pro",
+        "perturbation": "random",
+        "table": {
+          "a": 5,
+          "b": 28,
+          "c": 34,
+          "d": 1132
+        },
+        "odds_ratio": 5.945378151260504,
+        "fisher_p": 0.0034070296046999566
+      },
+      {
+        "model": "Llama-3.2-3B-Instruct",
+        "benchmark": "arc",
+        "perturbation": "importance",
+        "table": {
+          "a": 26,
+          "b": 19,
+          "c": 136,
+          "d": 978
+        },
+        "odds_ratio": 9.840557275541796,
+        "fisher_p": 2.2389667356310983e-12
+      },
+      {
+        "model": "Llama-3.2-3B-Instruct",
+        "benchmark": "arc",
+        "perturbation": "random",
+        "table": {
+          "a": 17,
+          "b": 17,
+          "c": 96,
+          "d": 1035
+        },
+        "odds_ratio": 10.78125,
+        "fisher_p": 1.0799979159644447e-09
+      },
+      {
+        "model": "Llama-3.2-3B-Instruct",
+        "benchmark": "commonsense_qa",
+        "perturbation": "importance",
+        "table": {
+          "a": 52,
+          "b": 16,
+          "c": 209,
+          "d": 907
+        },
+        "odds_ratio": 14.104066985645932,
+        "fisher_p": 5.574636160953311e-23
+      },
+      {
+        "model": "Llama-3.2-3B-Instruct",
+        "benchmark": "commonsense_qa",
+        "perturbation": "random",
+        "table": {
+          "a": 48,
+          "b": 30,
+          "c": 117,
+          "d": 1007
+        },
+        "odds_ratio": 13.770940170940172,
+        "fisher_p": 7.410188124279388e-25
+      },
+      {
+        "model": "Llama-3.2-3B-Instruct",
+        "benchmark": "gsm8k",
+        "perturbation": "importance",
+        "table": {
+          "a": 0,
+          "b": 12,
+          "c": 36,
+          "d": 1197
+        },
+        "odds_ratio": 1.3123287671232877,
+        "fisher_p": 1.0
+      },
+      {
+        "model": "Llama-3.2-3B-Instruct",
+        "benchmark": "gsm8k",
+        "perturbation": "random",
+        "table": {
+          "a": 0,
+          "b": 10,
+          "c": 35,
+          "d": 1205
+        },
+        "odds_ratio": 1.6170355466130113,
+        "fisher_p": 1.0
+      },
+      {
+        "model": "Llama-3.2-3B-Instruct",
+        "benchmark": "math",
+        "perturbation": "importance",
+        "table": {
+          "a": 0,
+          "b": 4,
+          "c": 1,
+          "d": 122
+        },
+        "odds_ratio": 9.074074074074074,
+        "fisher_p": 1.0
+      },
+      {
+        "model": "Llama-3.2-3B-Instruct",
+        "benchmark": "math",
+        "perturbation": "random",
+        "table": {
+          "a": 1,
+          "b": 3,
+          "c": 3,
+          "d": 136
+        },
+        "odds_ratio": 15.11111111111111,
+        "fisher_p": 0.10837583154035058
+      },
+      {
+        "model": "Llama-3.2-3B-Instruct",
+        "benchmark": "mmlu",
+        "perturbation": "importance",
+        "table": {
+          "a": 29,
+          "b": 38,
+          "c": 316,
+          "d": 2204
+        },
+        "odds_ratio": 5.322784810126582,
+        "fisher_p": 9.075453259491659e-10
+      },
+      {
+        "model": "Llama-3.2-3B-Instruct",
+        "benchmark": "mmlu",
+        "perturbation": "random",
+        "table": {
+          "a": 31,
+          "b": 45,
+          "c": 193,
+          "d": 2360
+        },
+        "odds_ratio": 8.423719055843408,
+        "fisher_p": 6.151557455984128e-15
+      },
+      {
+        "model": "Llama-3.2-3B-Instruct",
+        "benchmark": "mmlu_pro",
+        "perturbation": "importance",
+        "table": {
+          "a": 10,
+          "b": 18,
+          "c": 83,
+          "d": 956
+        },
+        "odds_ratio": 6.398929049531459,
+        "fisher_p": 5.521602214390466e-05
+      },
+      {
+        "model": "Llama-3.2-3B-Instruct",
+        "benchmark": "mmlu_pro",
+        "perturbation": "random",
+        "table": {
+          "a": 5,
+          "b": 18,
+          "c": 51,
+          "d": 1007
+        },
+        "odds_ratio": 5.484749455337691,
+        "fisher_p": 0.005120474784801277
+      },
+      {
+        "model": "Mistral-7B-Instruct-v0.3",
+        "benchmark": "arc",
+        "perturbation": "importance",
+        "table": {
+          "a": 24,
+          "b": 14,
+          "c": 109,
+          "d": 999
+        },
+        "odds_ratio": 15.711664482306684,
+        "fisher_p": 1.2164977658863692e-14
+      },
+      {
+        "model": "Mistral-7B-Instruct-v0.3",
+        "benchmark": "arc",
+        "perturbation": "random",
+        "table": {
+          "a": 15,
+          "b": 13,
+          "c": 57,
+          "d": 1063
+        },
+        "odds_ratio": 21.518218623481783,
+        "fisher_p": 4.16434987756697e-12
+      },
+      {
+        "model": "Mistral-7B-Instruct-v0.3",
+        "benchmark": "commonsense_qa",
+        "perturbation": "importance",
+        "table": {
+          "a": 29,
+          "b": 30,
+          "c": 123,
+          "d": 997
+        },
+        "odds_ratio": 7.83550135501355,
+        "fisher_p": 2.7836974652473985e-12
+      },
+      {
+        "model": "Mistral-7B-Instruct-v0.3",
+        "benchmark": "commonsense_qa",
+        "perturbation": "random",
+        "table": {
+          "a": 31,
+          "b": 32,
+          "c": 71,
+          "d": 1062
+        },
+        "odds_ratio": 14.49031690140845,
+        "fisher_p": 8.311877597107937e-19
+      },
+      {
+        "model": "Mistral-7B-Instruct-v0.3",
+        "benchmark": "gsm8k",
+        "perturbation": "importance",
+        "table": {
+          "a": 1,
+          "b": 9,
+          "c": 40,
+          "d": 1245
+        },
+        "odds_ratio": 3.4583333333333335,
+        "fisher_p": 0.2759279254117554
+      },
+      {
+        "model": "Mistral-7B-Instruct-v0.3",
+        "benchmark": "gsm8k",
+        "perturbation": "random",
+        "table": {
+          "a": 0,
+          "b": 7,
+          "c": 32,
+          "d": 1252
+        },
+        "odds_ratio": 2.5692307692307694,
+        "fisher_p": 1.0
+      },
+      {
+        "model": "Mistral-7B-Instruct-v0.3",
+        "benchmark": "math",
+        "perturbation": "importance",
+        "table": {
+          "a": 0,
+          "b": 3,
+          "c": 18,
+          "d": 292
+        },
+        "odds_ratio": 2.258687258687259,
+        "fisher_p": 1.0
+      },
+      {
+        "model": "Mistral-7B-Instruct-v0.3",
+        "benchmark": "math",
+        "perturbation": "random",
+        "table": {
+          "a": 0,
+          "b": 1,
+          "c": 16,
+          "d": 308
+        },
+        "odds_ratio": 6.232323232323233,
+        "fisher_p": 1.0
+      },
+      {
+        "model": "Mistral-7B-Instruct-v0.3",
+        "benchmark": "mmlu",
+        "perturbation": "importance",
+        "table": {
+          "a": 40,
+          "b": 54,
+          "c": 286,
+          "d": 2258
+        },
+        "odds_ratio": 5.848225848225848,
+        "fisher_p": 6.275007113760215e-14
+      },
+      {
+        "model": "Mistral-7B-Instruct-v0.3",
+        "benchmark": "mmlu",
+        "perturbation": "random",
+        "table": {
+          "a": 18,
+          "b": 42,
+          "c": 136,
+          "d": 2453
+        },
+        "odds_ratio": 7.730042016806722,
+        "fisher_p": 2.4128993921268457e-09
+      },
+      {
+        "model": "Mistral-7B-Instruct-v0.3",
+        "benchmark": "mmlu_pro",
+        "perturbation": "importance",
+        "table": {
+          "a": 18,
+          "b": 24,
+          "c": 71,
+          "d": 1054
+        },
+        "odds_ratio": 11.133802816901408,
+        "fisher_p": 1.1298442877515912e-10
+      },
+      {
+        "model": "Mistral-7B-Instruct-v0.3",
+        "benchmark": "mmlu_pro",
+        "perturbation": "random",
+        "table": {
+          "a": 9,
+          "b": 17,
+          "c": 39,
+          "d": 1105
+        },
+        "odds_ratio": 15.0,
+        "fisher_p": 2.8270940430610996e-07
+      },
+      {
+        "model": "Qwen2.5-7B-Instruct",
+        "benchmark": "gsm8k",
+        "perturbation": "importance",
+        "table": {
+          "a": 0,
+          "b": 1,
+          "c": 18,
+          "d": 213
+        },
+        "odds_ratio": 3.8468468468468466,
+        "fisher_p": 1.0
+      },
+      {
+        "model": "Qwen2.5-7B-Instruct",
+        "benchmark": "gsm8k",
+        "perturbation": "random",
+        "table": {
+          "a": 0,
+          "b": 2,
+          "c": 9,
+          "d": 250
+        },
+        "odds_ratio": 5.273684210526316,
+        "fisher_p": 1.0
+      },
+      {
+        "model": "Qwen2.5-7B-Instruct",
+        "benchmark": "math",
+        "perturbation": "importance",
+        "table": {
+          "a": 0,
+          "b": 0,
+          "c": 4,
+          "d": 49
+        },
+        "odds_ratio": 11.0,
+        "fisher_p": 1.0
+      },
+      {
+        "model": "Qwen2.5-7B-Instruct",
+        "benchmark": "math",
+        "perturbation": "random",
+        "table": {
+          "a": 0,
+          "b": 0,
+          "c": 2,
+          "d": 55
+        },
+        "odds_ratio": 22.2,
+        "fisher_p": 1.0
+      },
+      {
+        "model": "gemma-3-1b-it",
+        "benchmark": "arc",
+        "perturbation": "importance",
+        "table": {
+          "a": 21,
+          "b": 40,
+          "c": 60,
+          "d": 705
+        },
+        "odds_ratio": 6.16875,
+        "fisher_p": 2.9810672666184805e-08
+      },
+      {
+        "model": "gemma-3-1b-it",
+        "benchmark": "arc",
+        "perturbation": "random",
+        "table": {
+          "a": 23,
+          "b": 37,
+          "c": 37,
+          "d": 715
+        },
+        "odds_ratio": 12.012417823228635,
+        "fisher_p": 4.097514545334984e-13
+      },
+      {
+        "model": "gemma-3-1b-it",
+        "benchmark": "commonsense_qa",
+        "perturbation": "importance",
+        "table": {
+          "a": 62,
+          "b": 54,
+          "c": 96,
+          "d": 832
+        },
+        "odds_ratio": 9.950617283950617,
+        "fisher_p": 1.3966916156542694e-25
+      },
+      {
+        "model": "gemma-3-1b-it",
+        "benchmark": "commonsense_qa",
+        "perturbation": "random",
+        "table": {
+          "a": 42,
+          "b": 60,
+          "c": 85,
+          "d": 846
+        },
+        "odds_ratio": 6.9670588235294115,
+        "fisher_p": 2.3505687078933668e-15
+      },
+      {
+        "model": "gemma-3-1b-it",
+        "benchmark": "gsm8k",
+        "perturbation": "importance",
+        "table": {
+          "a": 0,
+          "b": 4,
+          "c": 9,
+          "d": 590
+        },
+        "odds_ratio": 6.906432748538012,
+        "fisher_p": 1.0
+      },
+      {
+        "model": "gemma-3-1b-it",
+        "benchmark": "gsm8k",
+        "perturbation": "random",
+        "table": {
+          "a": 0,
+          "b": 8,
+          "c": 14,
+          "d": 610
+        },
+        "odds_ratio": 2.4766734279918863,
+        "fisher_p": 1.0
+      },
+      {
+        "model": "gemma-3-1b-it",
+        "benchmark": "mmlu",
+        "perturbation": "importance",
+        "table": {
+          "a": 50,
+          "b": 91,
+          "c": 108,
+          "d": 1442
+        },
+        "odds_ratio": 7.336182336182336,
+        "fisher_p": 1.0294083900693213e-19
+      },
+      {
+        "model": "gemma-3-1b-it",
+        "benchmark": "mmlu",
+        "perturbation": "random",
+        "table": {
+          "a": 34,
+          "b": 81,
+          "c": 101,
+          "d": 1514
+        },
+        "odds_ratio": 6.292140325143626,
+        "fisher_p": 3.929433635720319e-13
+      },
+      {
+        "model": "gemma-3-1b-it",
+        "benchmark": "mmlu_pro",
+        "perturbation": "importance",
+        "table": {
+          "a": 8,
+          "b": 16,
+          "c": 20,
+          "d": 827
+        },
+        "odds_ratio": 20.675,
+        "fisher_p": 2.055643242035069e-07
+      },
+      {
+        "model": "gemma-3-1b-it",
+        "benchmark": "mmlu_pro",
+        "perturbation": "random",
+        "table": {
+          "a": 5,
+          "b": 12,
+          "c": 20,
+          "d": 835
+        },
+        "odds_ratio": 17.395833333333332,
+        "fisher_p": 6.267379961343065e-05
+      },
+      {
+        "model": "gemma-3-4b-it",
+        "benchmark": "arc",
+        "perturbation": "importance",
+        "table": {
+          "a": 22,
+          "b": 21,
+          "c": 84,
+          "d": 1034
+        },
+        "odds_ratio": 12.895691609977325,
+        "fisher_p": 3.544849673871544e-13
+      },
+      {
+        "model": "gemma-3-4b-it",
+        "benchmark": "arc",
+        "perturbation": "random",
+        "table": {
+          "a": 11,
+          "b": 15,
+          "c": 48,
+          "d": 1090
+        },
+        "odds_ratio": 16.65277777777778,
+        "fisher_p": 9.479406440894619e-09
+      },
+      {
+        "model": "gemma-3-4b-it",
+        "benchmark": "commonsense_qa",
+        "perturbation": "importance",
+        "table": {
+          "a": 32,
+          "b": 19,
+          "c": 128,
+          "d": 991
+        },
+        "odds_ratio": 13.039473684210526,
+        "fisher_p": 6.558918096293834e-17
+      },
+      {
+        "model": "gemma-3-4b-it",
+        "benchmark": "commonsense_qa",
+        "perturbation": "random",
+        "table": {
+          "a": 25,
+          "b": 17,
+          "c": 90,
+          "d": 1058
+        },
+        "odds_ratio": 17.287581699346404,
+        "fisher_p": 2.231157167946721e-16
+      },
+      {
+        "model": "gemma-3-4b-it",
+        "benchmark": "gsm8k",
+        "perturbation": "importance",
+        "table": {
+          "a": 0,
+          "b": 14,
+          "c": 46,
+          "d": 1127
+        },
+        "odds_ratio": 0.8361142009640341,
+        "fisher_p": 1.0
+      },
+      {
+        "model": "gemma-3-4b-it",
+        "benchmark": "gsm8k",
+        "perturbation": "random",
+        "table": {
+          "a": 1,
+          "b": 13,
+          "c": 40,
+          "d": 1147
+        },
+        "odds_ratio": 2.205769230769231,
+        "fisher_p": 0.3867497672193687
+      },
+      {
+        "model": "gemma-3-4b-it",
+        "benchmark": "math",
+        "perturbation": "importance",
+        "table": {
+          "a": 0,
+          "b": 5,
+          "c": 8,
+          "d": 105
+        },
+        "odds_ratio": 1.1283422459893049,
+        "fisher_p": 1.0
+      },
+      {
+        "model": "gemma-3-4b-it",
+        "benchmark": "math",
+        "perturbation": "random",
+        "table": {
+          "a": 0,
+          "b": 3,
+          "c": 11,
+          "d": 125
+        },
+        "odds_ratio": 1.5590062111801242,
+        "fisher_p": 1.0
+      },
+      {
+        "model": "gemma-3-4b-it",
+        "benchmark": "mmlu",
+        "perturbation": "importance",
+        "table": {
+          "a": 45,
+          "b": 53,
+          "c": 218,
+          "d": 2190
+        },
+        "odds_ratio": 8.529513588367665,
+        "fisher_p": 3.467347794464528e-20
+      },
+      {
+        "model": "gemma-3-4b-it",
+        "benchmark": "mmlu",
+        "perturbation": "random",
+        "table": {
+          "a": 18,
+          "b": 39,
+          "c": 135,
+          "d": 2338
+        },
+        "odds_ratio": 7.993162393162393,
+        "fisher_p": 1.7608190850264738e-09
+      },
+      {
+        "model": "gemma-3-4b-it",
+        "benchmark": "mmlu_pro",
+        "perturbation": "importance",
+        "table": {
+          "a": 11,
+          "b": 11,
+          "c": 59,
+          "d": 910
+        },
+        "odds_ratio": 15.423728813559322,
+        "fisher_p": 3.8044849779833935e-08
+      },
+      {
+        "model": "gemma-3-4b-it",
+        "benchmark": "mmlu_pro",
+        "perturbation": "random",
+        "table": {
+          "a": 1,
+          "b": 12,
+          "c": 29,
+          "d": 968
+        },
+        "odds_ratio": 2.781609195402299,
+        "fisher_p": 0.32589783731922245
+      }
+    ]
+  },
+  "preregistered_criteria": {
+    "rank_corr_ge_0.7": false,
+    "sample_OR_gt_3": true,
+    "supports_H14_shortcut": false
+  },
+  "stratified_rank_correlation": {
+    "note": "全設定プールの rho≈0 は Simpson 型。生成課題(gsm8k/math)は DE≈0 だが CoT 除去で足場が消え noCoT_flip が高い。課題種別で 層別すると相関は復活する。noCoT_flip は DE 特異ではなく IE とも 相関(= typo 感受性全般を測る)。",
+    "all_nocot_vs_DE": {
+      "rho": -0.035761920640213406,
+      "p": 0.7861832196584656,
+      "n": 60
+    },
+    "mc_only_nocot_vs_DE": {
+      "rho": 0.7256437927209864,
+      "p": 1.1728176725096155e-07,
+      "n": 40
+    },
+    "generative_only_nocot_vs_DE": {
+      "rho": 0.6330448321895928,
+      "p": 0.002735888939740921,
+      "n": 20
+    },
+    "all_nocot_vs_IE": {
+      "rho": 0.5783711691915694,
+      "p": 1.2995526093429754e-06,
+      "n": 60
+    },
+    "mc_only_nocot_vs_IE": {
+      "rho": 0.7552887104326649,
+      "p": 1.7794566518444246e-08,
+      "n": 40
+    }
+  },
+  "sharp_prediction_gemma1b_csqa": {
+    "detail_all": [
+      {
+        "perturbation": "importance",
+        "rank": 9,
+        "of": 60,
+        "nocot_flip_rate": 0.36312849162011174,
+        "percentile_top": 0.15
+      },
+      {
+        "perturbation": "random",
+        "rank": 18,
+        "of": 60,
+        "nocot_flip_rate": 0.29608938547486036,
+        "percentile_top": 0.3
+      }
+    ],
+    "detail_mc_only": [
+      {
+        "perturbation": "importance",
+        "rank_mc": 2,
+        "of_mc": 40,
+        "percentile_top_mc": 0.05
+      },
+      {
+        "perturbation": "random",
+        "rank_mc": 5,
+        "of_mc": 40,
+        "percentile_top_mc": 0.125
+      }
+    ],
+    "top_quartile_hit_all": false,
+    "top_quartile_hit_mc": true,
+    "note": "gemma-3-1b-it×CSQA は exp01_03 で唯一 DE>IE。生成課題を除いた MC 課題内では noCoT_flip 最上位圏(importance rank2/40, random rank5/40)。"
+  },
+  "nocot_flip_ranking_top10": [
+    {
+      "model": "Mistral-7B-Instruct-v0.3",
+      "benchmark": "math",
+      "perturbation": "importance",
+      "nocot_flip_rate": 0.6,
+      "DE": 0.05172413793103448
+    },
+    {
+      "model": "Mistral-7B-Instruct-v0.3",
+      "benchmark": "math",
+      "perturbation": "random",
+      "nocot_flip_rate": 0.4888888888888889,
+      "DE": 0.01694915254237288
+    },
+    {
+      "model": "gemma-3-1b-it",
+      "benchmark": "gsm8k",
+      "perturbation": "importance",
+      "nocot_flip_rate": 0.4603174603174603,
+      "DE": 0.01568627450980392
+    },
+    {
+      "model": "gemma-3-1b-it",
+      "benchmark": "gsm8k",
+      "perturbation": "random",
+      "nocot_flip_rate": 0.4603174603174603,
+      "DE": 0.02973977695167286
+    },
+    {
+      "model": "gemma-3-4b-it",
+      "benchmark": "math",
+      "perturbation": "importance",
+      "nocot_flip_rate": 0.43103448275862066,
+      "DE": 0.05102040816326531
+    },
+    {
+      "model": "gemma-3-4b-it",
+      "benchmark": "math",
+      "perturbation": "random",
+      "nocot_flip_rate": 0.3793103448275862,
+      "DE": 0.026785714285714284
+    },
+    {
+      "model": "Llama-3.2-3B-Instruct",
+      "benchmark": "math",
+      "perturbation": "importance",
+      "nocot_flip_rate": 0.3783783783783784,
+      "DE": 0.09302325581395349
+    },
+    {
+      "model": "Llama-3.2-1B-Instruct",
+      "benchmark": "commonsense_qa",
+      "perturbation": "importance",
+      "nocot_flip_rate": 0.37329286798179057,
+      "DE": 0.16178521617852162
+    },
+    {
+      "model": "gemma-3-1b-it",
+      "benchmark": "commonsense_qa",
+      "perturbation": "importance",
+      "nocot_flip_rate": 0.36312849162011174,
+      "DE": 0.25162689804772237
+    },
+    {
+      "model": "Qwen2.5-7B-Instruct",
+      "benchmark": "math",
+      "perturbation": "importance",
+      "nocot_flip_rate": 0.35514018691588783,
+      "DE": 0.0
+    }
+  ]
+}

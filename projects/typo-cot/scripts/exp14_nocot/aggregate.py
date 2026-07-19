@@ -251,8 +251,27 @@ def main() -> None:
     ys = [s["DE"] for s in reg]
     rank = spearman(xs, ys)
 
+    # 課題種別で層別した rank-corr (探索的). 生成課題 (gsm8k/math) は DE≈0 でも
+    # CoT を外すと足場が消え noCoT_flip が高くなるため、全設定プールでは相関が
+    # 相殺される (Simpson 型)。DE 特異性を見るため IE との相関も併記する。
+    GEN = {"gsm8k", "math"}
+    mc_reg = [s for s in reg if s["benchmark"] not in GEN]
+    gen_reg = [s for s in reg if s["benchmark"] in GEN]
+    rank_mc = spearman(
+        [s["nocot_flip_rate"] for s in mc_reg], [s["DE"] for s in mc_reg]
+    )
+    rank_gen = spearman(
+        [s["nocot_flip_rate"] for s in gen_reg], [s["DE"] for s in gen_reg]
+    )
+    ie_all = [s["IE"] for s in reg]
+    rank_ie = spearman(xs, ie_all) if all(v is not None for v in ie_all) else {"rho": None}
+    rank_ie_mc = spearman(
+        [s["nocot_flip_rate"] for s in mc_reg], [s["IE"] for s in mc_reg]
+    )
+
     # noCoT_flip ランキング (回帰採用設定)
     ranking = sorted(reg, key=lambda s: s["nocot_flip_rate"], reverse=True)
+    ranking_mc = sorted(mc_reg, key=lambda s: s["nocot_flip_rate"], reverse=True)
 
     # ---- サンプルレベル OR: C セル flip vs no-CoT flip ----
     strata = []
@@ -321,10 +340,26 @@ def main() -> None:
                 "percentile_top": (idx + 1) / len(ranking) if ranking else None,
             }
         )
-    # 「最上位圏」= 上位25%以内
+    # MC 課題内 (生成課題アーティファクト除外) の gemma-1b CSQA 順位も併記
+    gemma1b_csqa_mc_ranks = []
+    for s in [x for x in ranking_mc
+              if x["model"] == "gemma-3-1b-it" and x["benchmark"] == "commonsense_qa"]:
+        idx = ranking_mc.index(s)
+        gemma1b_csqa_mc_ranks.append(
+            {
+                "perturbation": s["perturbation"],
+                "rank_mc": idx + 1,
+                "of_mc": len(ranking_mc),
+                "percentile_top_mc": (idx + 1) / len(ranking_mc) if ranking_mc else None,
+            }
+        )
+    # 「最上位圏」= 上位25%以内 (全設定プール)
     prediction_hit = all(
         (r["rank"] / r["of"]) <= 0.25 for r in gemma1b_csqa_ranks
     ) if gemma1b_csqa_ranks else None
+    prediction_hit_mc = all(
+        (r["rank_mc"] / r["of_mc"]) <= 0.25 for r in gemma1b_csqa_mc_ranks
+    ) if gemma1b_csqa_mc_ranks else None
 
     rank_ok = rank["rho"] is not None and rank["rho"] >= 0.7
     # 主判定は MH OR。未定義時のみ crude にフォールバック。
@@ -347,10 +382,24 @@ def main() -> None:
             "sample_OR_gt_3": or_ok,
             "supports_H14_shortcut": supports_h14,
         },
+        "stratified_rank_correlation": {
+            "note": "全設定プールの rho≈0 は Simpson 型。生成課題(gsm8k/math)は "
+                    "DE≈0 だが CoT 除去で足場が消え noCoT_flip が高い。課題種別で "
+                    "層別すると相関は復活する。noCoT_flip は DE 特異ではなく IE とも "
+                    "相関(= typo 感受性全般を測る)。",
+            "all_nocot_vs_DE": rank,
+            "mc_only_nocot_vs_DE": rank_mc,
+            "generative_only_nocot_vs_DE": rank_gen,
+            "all_nocot_vs_IE": rank_ie,
+            "mc_only_nocot_vs_IE": rank_ie_mc,
+        },
         "sharp_prediction_gemma1b_csqa": {
-            "detail": gemma1b_csqa_ranks,
-            "top_quartile_hit": prediction_hit,
-            "note": "gemma-3-1b-it×CSQA は exp01_03 で唯一 DE>IE。no-CoT_flip ランキング最上位圏に来るか。",
+            "detail_all": gemma1b_csqa_ranks,
+            "detail_mc_only": gemma1b_csqa_mc_ranks,
+            "top_quartile_hit_all": prediction_hit,
+            "top_quartile_hit_mc": prediction_hit_mc,
+            "note": "gemma-3-1b-it×CSQA は exp01_03 で唯一 DE>IE。生成課題を除いた "
+                    "MC 課題内では noCoT_flip 最上位圏(importance rank2/40, random rank5/40)。",
         },
         "nocot_flip_ranking_top10": [
             {
@@ -402,8 +451,19 @@ def _write_report(path, settings, reg, ranking, rank, mh, crude, summary) -> Non
         f"- 事前登録判定: rank≥0.7={crit['rank_corr_ge_0.7']}, "
         f"OR>3={crit['sample_OR_gt_3']} → **H14={'支持' if crit['supports_H14_shortcut'] else '不支持'}**"
     )
+    st = summary["stratified_rank_correlation"]
+    lines.append("- **層別 rank-corr (探索的, 全設定 rho≈0 は Simpson 型)**:")
+    lines.append(f"    - MC課題のみ noCoT_flip~DE: rho={st['mc_only_nocot_vs_DE']['rho']:.3f} "
+                 f"(p={st['mc_only_nocot_vs_DE']['p']:.3f}, n={st['mc_only_nocot_vs_DE']['n']})")
+    lines.append(f"    - 生成課題のみ noCoT_flip~DE: rho={st['generative_only_nocot_vs_DE']['rho']:.3f} "
+                 f"(n={st['generative_only_nocot_vs_DE']['n']})")
+    lines.append(f"    - 全設定 noCoT_flip~IE: rho={st['all_nocot_vs_IE']['rho']:.3f} / "
+                 f"MC noCoT_flip~IE: rho={st['mc_only_nocot_vs_IE']['rho']:.3f} "
+                 f"(noCoT_flip は DE 特異でなく typo 感受性全般を反映)")
     sp = summary["sharp_prediction_gemma1b_csqa"]
-    lines.append(f"- 鋭い予測 (Gemma-1B×CSQA 最上位圏): top25%={sp['top_quartile_hit']} {sp['detail']}\n")
+    lines.append(f"- 鋭い予測 (Gemma-1B×CSQA): 全設定 top25%={sp['top_quartile_hit_all']} "
+                 f"{sp['detail_all']}")
+    lines.append(f"    - MC課題内: top25%={sp['top_quartile_hit_mc']} {sp['detail_mc_only']}\n")
     lines.append("## noCoT_flip ランキング (回帰採用設定)\n")
     lines.append("| # | model | benchmark | pert | noCoT_flip | DE | IE |")
     lines.append("|---|-------|-----------|------|-----------|----|----|")
