@@ -24,7 +24,7 @@ generate の decode ステップ (系列長 1) では自動的に無効化する
   `analysis.metrics.rouge_l_score` = 文字単位 LCS、論文 Table 6 と同一)。
 - **生成ヘルパ**: モデルを引数注入する `generate_ids` / `generate_ids_patched`。
 
-設計の詳細はこの docstring と scripts/exp15/run_free_generation.py・コミットログを参照。
+設計・結果・防御含意 (design implication T2) は docs/dev_notes_15_patch_freegen.md を参照。
 """
 
 from collections.abc import Sequence
