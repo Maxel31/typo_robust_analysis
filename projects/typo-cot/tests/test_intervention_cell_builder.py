@@ -151,6 +151,115 @@ class TestBuildCellInputs:
         assert cells.exclude is True
         assert "no_trigger_typo" in cells.exclude_reasons
 
+    def test_dedup_off_by_default_excludes_same_answer_multitrigger(self, pair):
+        # Qwen 癖: 同一答えを2回述べる ("The answer is 18. --- The answer is 18.")
+        # 既定 (dedup 無効) では従来どおり multi_trigger で除外される (後方互換)
+        pair.cot_clean = (
+            "\nShe computes 9 * 2 = 18.\nThe answer is 18.\n--- The answer is 18.\n"
+        )
+        cells = build_cell_inputs(pair)
+        assert cells.truncation["clean"].trigger_count == 2
+        assert "multi_trigger_clean" in cells.exclude_reasons
+        assert cells.exclude is True
+
+    def test_truncation_records_trigger_answers(self, pair):
+        pair.cot_clean = (
+            "\nShe computes 9 * 2 = 18.\nThe answer is 18.\n--- The answer is 18.\n"
+        )
+        cells = build_cell_inputs(pair)
+        t = cells.truncation["clean"]
+        assert t.trigger_answers == ["18", "18"]
+        assert t.trigger_answers_identical is True
+
+    def test_truncation_different_answers_not_identical(self, pair):
+        pair.cot_clean = "Reason.\nThe answer is 3.\nWait, recompute.\nThe answer is 5.\n"
+        cells = build_cell_inputs(pair)
+        t = cells.truncation["clean"]
+        assert t.trigger_answers == ["3", "5"]
+        assert t.trigger_answers_identical is False
+
+    def test_dedup_on_keeps_same_answer_multitrigger(self, pair):
+        # dedup 有効時: 同一答えの重複は良性とみなし除外しない (n_incl 回復)
+        pair.cot_clean = (
+            "\nShe computes 9 * 2 = 18.\nThe answer is 18.\n--- The answer is 18.\n"
+        )
+        pair.cot_typo = " She computes 9 * 2 = 17.\nThe answer is 17.\n--- The answer is 17.\n"
+        cells = build_cell_inputs(pair, dedup_same_answer_triggers=True)
+        assert "multi_trigger_clean" not in cells.exclude_reasons
+        assert "multi_trigger_typo" not in cells.exclude_reasons
+        assert cells.exclude is False
+        # 切断点は最初のトリガー直前のまま (再生成不要)
+        assert cells.forced_cots["A"] == "\nShe computes 9 * 2 = 18.\n"
+        assert "The answer is" not in cells.forced_cots["A"]
+
+    def test_dedup_on_still_excludes_different_answers(self, pair):
+        # 異なる答えのトリガーは真の曖昧さ → dedup 有効でも除外を維持
+        pair.cot_clean = "Reason.\nThe answer is 3.\nWait, recompute.\nThe answer is 5.\n"
+        cells = build_cell_inputs(pair, dedup_same_answer_triggers=True)
+        assert "multi_trigger_clean" in cells.exclude_reasons
+        assert cells.exclude is True
+
+    def test_dedup_on_preserves_early_trigger_exclusion(self, pair):
+        # 同一答えでも序盤 (early_trigger) は別基準として除外を維持
+        pair.cot_clean = "The answer is 18. " + "x" * 300 + " The answer is 18."
+        cells = build_cell_inputs(pair, dedup_same_answer_triggers=True)
+        assert cells.truncation["clean"].trigger_answers_identical is True
+        assert "multi_trigger_clean" not in cells.exclude_reasons
+        assert "early_trigger_clean" in cells.exclude_reasons
+        assert cells.exclude is True
+
+    def test_strip_conclusion_removes_last_line_of_cell_c_only(self):
+        # A2 (ii): セルC (typo質問+clean CoT) の強制CoT末尾行を除去するオプション。
+        # 末尾の読み上げ行に金答え数値が載る GSM8K で、これを消しても restore が
+        # 保たれれば「丸写しでなく再導出」を支持する。
+        pair = PairRecord(
+            sample_id="gsm8k_00001",
+            model="google/gemma-3-4b-it",
+            benchmark="gsm8k",
+            question_clean="Q clean?",
+            question_typo="Q tpyo?",
+            choices_clean=None,
+            choices_typo=None,
+            subset="default",
+            correct_answer="18",
+            cot_clean="\nFirst 16 - 3 - 4 = 9 eggs.\nSo she makes 9 * 2 = 18 dollars.\nThe answer is 18.\n",
+            cot_typo="\nFirst 16 - 3 - 4 = 9 eggs.\nShe makes 9 * 2 = 17.\nThe answer is 17.\n",
+            answer_clean="18",
+            answer_typo="17",
+            is_correct_clean=True,
+        )
+        base = build_cell_inputs(pair)
+        stripped = build_cell_inputs(pair, strip_conclusion_mode="last_line")
+        # C セルは末尾行 (= 18 dollars) が消え、金答え数値がリークしなくなる
+        assert "18 dollars" in base.forced_cots["C"]
+        assert "18 dollars" not in stripped.forced_cots["C"]
+        assert "9 eggs" in stripped.forced_cots["C"]  # 前段の推論は保持
+        # A/B/D セルは不変 (C のみ剥ぐ)
+        assert stripped.forced_cots["A"] == base.forced_cots["A"]
+        assert stripped.forced_cots["B"] == base.forced_cots["B"]
+        assert stripped.forced_cots["D"] == base.forced_cots["D"]
+
+    def test_strip_conclusion_none_is_noop(self):
+        pair = PairRecord(
+            sample_id="gsm8k_00002",
+            model="google/gemma-3-4b-it",
+            benchmark="gsm8k",
+            question_clean="Q?",
+            question_typo="Q typo?",
+            choices_clean=None,
+            choices_typo=None,
+            subset="default",
+            correct_answer="18",
+            cot_clean="\nStep.\nSo 9 * 2 = 18.\nThe answer is 18.\n",
+            cot_typo="\nStep.\nSo 9 * 2 = 17.\nThe answer is 17.\n",
+            answer_clean="18",
+            answer_typo="17",
+            is_correct_clean=True,
+        )
+        a = build_cell_inputs(pair)
+        b = build_cell_inputs(pair, strip_conclusion_mode=None)
+        assert a.forced_cots == b.forced_cots
+
     def test_mmlu_prompt_uses_inline_choices_question(self):
         # MMLU 摂動データは選択肢込み質問 (choices=None) — そのまま骨格に入る
         pair = PairRecord(

@@ -1,0 +1,41 @@
+{
+  "clean_results": "/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/baseline/Mistral-7B-Instruct-v0.3_mmlu_pro/results.json",
+  "lxt_results": "/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/perturbed/Mistral-7B-Instruct-v0.3_mmlu_pro_k4_importance/results.json",
+  "matched_results": "results/exp5/perturbed/Mistral-7B-Instruct-v0.3_mmlu_pro_k4_matched_rnd/results.json",
+  "n_paired": 1400,
+  "acc": {
+    "clean": 0.3492857142857143,
+    "lxt4": 0.3242857142857143,
+    "matched_rnd4": 0.3342857142857143
+  },
+  "drop_vs_clean": {
+    "lxt4": 0.025000000000000022,
+    "matched_rnd4": 0.015000000000000013
+  },
+  "matched_vs_lxt": {
+    "n": 1400,
+    "n01": 158,
+    "n10": 144,
+    "acc_a": 0.3342857142857143,
+    "acc_b": 0.3242857142857143,
+    "risk_diff": 0.01,
+    "risk_diff_ci95": [
+      -0.014323319200846956,
+      0.034323319200846955
+    ],
+    "mcnemar_p": 0.45447581310532154
+  },
+  "matched_vs_lxt_clean_correct_only": {
+    "n": 489,
+    "n01": 85,
+    "n10": 52,
+    "acc_a": 0.7464212678936605,
+    "acc_b": 0.6789366053169734,
+    "risk_diff": 0.06748466257668712,
+    "risk_diff_ci95": [
+      0.020953844335248703,
+      0.11401548081812553
+    ],
+    "mcnemar_p": 0.00605253942455937
+  }
+}

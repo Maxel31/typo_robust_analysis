@@ -10,6 +10,13 @@ dependencies = [
     "scipy>=1.13",
     "pingouin>=0.5.5",
     "tqdm>=4.65",
+    # 実験7 校正器ラダー: rebuttal と同一バージョンに固定 (辞書同梱のため
+    # バージョンが変わると訂正結果が変わる。archive .venv は 0.9.0)
+    "pyspellchecker==0.9.0",
+    # 実験9 (inner lexicon 修復スコア): 回帰 (GLM cluster-robust SE) と Zipf 頻度
+    "statsmodels>=0.14",
+    # 実験2: matched-random 標的の頻度マッチングと置換語彙 (Zipf 頻度)
+    "wordfreq>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -17,12 +24,26 @@ dependencies = [
 lrp = [
     "typo-utils[llm]",
     "lxt>=2.1",
+    # lxt 2.1 は transformers 5.x で削除された API
+    # (pytorch_utils.find_pruneable_heads_and_indices 等) に依存するため上限を固定
+    "transformers>=4.52,<5",
+    # rebuttal 参照 (.pt スコア) とビット一致再現のため archive/JSAI2026 の
+    # uv.lock と同じ torch に固定 (torch 2.12 では bf16 カーネル差で
+    # top10 Jaccard < 1.0 になるサンプルが出る)
+    "torch==2.9.1",
     "accelerate>=0.20",
     "sentencepiece>=0.2.1",
     "protobuf>=4",
 ]
 # Appendix 分析（POS タグ付け・ワードクラウド）
 appendix = ["spacy>=3.8", "wordcloud>=1.9"]
+# 実験5（双子語統制）: 層化マッチング用の特徴量（頻度・POS・埋め込み中心性）
+matched = [
+    "wordfreq>=3.0",
+    "spacy>=3.8",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+    "sentence-transformers>=3",
+]
 # W&B アップロード（scripts/upload_to_wandb.py）
 tracking = [
     "typo-utils[tracking]",
@@ -37,6 +58,10 @@ dev = ["pytest>=8", "ipykernel>=6"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+# matched extra の en-core-web-sm (spaCy モデル) を wheel URL 直接参照で入れるため
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/typo_cot"]

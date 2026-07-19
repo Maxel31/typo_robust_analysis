@@ -1,0 +1,31 @@
+{
+  "experiment": "exp5 GPU smoke: Matched-Rnd-4 generation (1 pass)",
+  "date": "2026-07-14T19:29:47.844816",
+  "model": "google/gemma-3-4b-it",
+  "gpu_helper": "tmp/gpu-locks/run_with_gpu.sh (GSM8K on GPU 3, MMLU on GPU 4)",
+  "env_fixes_cherry_picked": [
+    "e8e2139 transformers<5 pin",
+    "9500b0d/b37f59d setup_device fix",
+    "1adaaaf torch==2.9.1 pin"
+  ],
+  "runs": {
+    "gsm8k": {
+      "n": 24,
+      "accuracy": 0.6666666666666666,
+      "output_dir": "results/smoke/exp5_perturbed/gemma-3-4b-it_gsm8k_k4_matched_rnd"
+    },
+    "mmlu": {
+      "n": 24,
+      "accuracy": 0.4583333333333333,
+      "output_dir": "results/smoke/exp5_perturbed/gemma-3-4b-it_mmlu_k4_matched_rnd"
+    }
+  },
+  "visual_check": {
+    "n_samples": 10,
+    "criterion": "matched twins disjoint from strict top-4 importance targets",
+    "result": "10/10 disjoint (results/smoke/exp5_visual_check_strict_top4.json)",
+    "note": "archive LXT perturbed lists deviate from strict top-4 due to perturb() fallback; 2/10 twins overlapped the archive list but 0/10 overlapped the strict top-4 target definition used by the sampler (rebuttal-consistent)"
+  },
+  "schema_check": "results.json entry keys and perturbed_tokens keys identical to archive outputs/perturbed/gemma-3-4b-it_gsm8k_k4_importance/results.json",
+  "verdict": "PASS"
+}
