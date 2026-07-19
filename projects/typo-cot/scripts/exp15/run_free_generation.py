@@ -275,7 +275,12 @@ def run_pair(model, tokenizer, layers, prepared: PreparedFreePair, extractor, ar
     }
 
     # --- 捕捉 (residual, 必要層のみ) ---------------------------------------
+    # sham (--noop-check) は --levels の選択によらず常に早期窓を使うため、
+    # used_layers に早期窓の層を必ず含める (さもないと --levels が early を
+    # 含まない場合に ActivationCache.values が KeyError で全ペア失敗する)。
     used_layers = sorted({li for lvl in args.levels for li in range(*windows[lvl])})
+    if args.noop_check:
+        used_layers = sorted(set(used_layers) | set(range(*windows["early"])))
     clean_cache = capture_activations(
         model, ids_clean_t, prepared.clean_positions, sites=(site,), layers=used_layers
     )
