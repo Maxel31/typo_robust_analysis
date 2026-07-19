@@ -1,0 +1,3342 @@
+{
+ "gsm8k_random": {
+  "n": 150,
+  "grid": [
+   0,
+   25,
+   50,
+   75,
+   100
+  ],
+  "recovery_rates": {
+   "0": 0.16666666666666666,
+   "25": 0.5333333333333333,
+   "50": 0.7266666666666667,
+   "75": 0.86,
+   "100": 0.9533333333333334
+  },
+  "per_case": [
+   {
+    "sample_id": "gsm8k_00003",
+    "correct_answer": "540",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00006",
+    "correct_answer": "260",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00017",
+    "correct_answer": "57500",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00041",
+    "correct_answer": "200",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00047",
+    "correct_answer": "800",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00049",
+    "correct_answer": "30",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00073",
+    "correct_answer": "255",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00074",
+    "correct_answer": "88",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00088",
+    "correct_answer": "8000",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00092",
+    "correct_answer": "4",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00097",
+    "correct_answer": "12",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00142",
+    "correct_answer": "140",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00156",
+    "correct_answer": "1400",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00184",
+    "correct_answer": "25",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00187",
+    "correct_answer": "106",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00191",
+    "correct_answer": "5",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00194",
+    "correct_answer": "10",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00199",
+    "correct_answer": "7500",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00209",
+    "correct_answer": "145",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00241",
+    "correct_answer": "6",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00244",
+    "correct_answer": "20",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00254",
+    "correct_answer": "84",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00261",
+    "correct_answer": "62",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00266",
+    "correct_answer": "118000",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "gsm8k_00275",
+    "correct_answer": "138",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00282",
+    "correct_answer": "195",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00290",
+    "correct_answer": "390",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00303",
+    "correct_answer": "1300",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00310",
+    "correct_answer": "2050",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "gsm8k_00324",
+    "correct_answer": "14",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00330",
+    "correct_answer": "31",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00341",
+    "correct_answer": "260",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00354",
+    "correct_answer": "45",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00363",
+    "correct_answer": "6",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00369",
+    "correct_answer": "1198",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00372",
+    "correct_answer": "5",
+    "curve": {
+     "0": 1,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00392",
+    "correct_answer": "34",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00393",
+    "correct_answer": "20",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00394",
+    "correct_answer": "92",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00455",
+    "correct_answer": "1920",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00456",
+    "correct_answer": "78",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00464",
+    "correct_answer": "6",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00465",
+    "correct_answer": "30",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00470",
+    "correct_answer": "3",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00479",
+    "correct_answer": "15400",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "gsm8k_00506",
+    "correct_answer": "144",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00508",
+    "correct_answer": "120",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00509",
+    "correct_answer": "4",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00527",
+    "correct_answer": "48",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00534",
+    "correct_answer": "300",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "gsm8k_00546",
+    "correct_answer": "130",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00557",
+    "correct_answer": "70",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00560",
+    "correct_answer": "45",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00566",
+    "correct_answer": "10",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00568",
+    "correct_answer": "175",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00582",
+    "correct_answer": "129200",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00586",
+    "correct_answer": "800",
+    "curve": {
+     "0": 1,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00601",
+    "correct_answer": "104",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00602",
+    "correct_answer": "5",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00609",
+    "correct_answer": "7",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00610",
+    "correct_answer": "65,960",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "gsm8k_00612",
+    "correct_answer": "30",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00615",
+    "correct_answer": "33",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00629",
+    "correct_answer": "17500",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00638",
+    "correct_answer": "12",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00647",
+    "correct_answer": "10",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00648",
+    "correct_answer": "54",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00654",
+    "correct_answer": "2",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00657",
+    "correct_answer": "330000",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00660",
+    "correct_answer": "15",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00661",
+    "correct_answer": "44",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "gsm8k_00665",
+    "correct_answer": "360",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00666",
+    "correct_answer": "120",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00671",
+    "correct_answer": "4",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "gsm8k_00675",
+    "correct_answer": "33",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00676",
+    "correct_answer": "240",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00698",
+    "correct_answer": "720",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00700",
+    "correct_answer": "135",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00702",
+    "correct_answer": "2800",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00729",
+    "correct_answer": "1000",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00736",
+    "correct_answer": "3",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00739",
+    "correct_answer": "98",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00740",
+    "correct_answer": "25",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00747",
+    "correct_answer": "350",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00774",
+    "correct_answer": "10",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00798",
+    "correct_answer": "20",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00803",
+    "correct_answer": "9",
+    "curve": {
+     "0": 1,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00806",
+    "correct_answer": "70",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00811",
+    "correct_answer": "60",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00814",
+    "correct_answer": "11",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00824",
+    "correct_answer": "52",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00827",
+    "correct_answer": "11",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00829",
+    "correct_answer": "14,000",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00837",
+    "correct_answer": "120",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00844",
+    "correct_answer": "180",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00845",
+    "correct_answer": "12",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00861",
+    "correct_answer": "30",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00870",
+    "correct_answer": "40",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00880",
+    "correct_answer": "10",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00885",
+    "correct_answer": "500",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00894",
+    "correct_answer": "26",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00895",
+    "correct_answer": "74",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00906",
+    "correct_answer": "10",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00922",
+    "correct_answer": "60",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00928",
+    "correct_answer": "60",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00945",
+    "correct_answer": "17",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00946",
+    "correct_answer": "450",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00950",
+    "correct_answer": "5",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00954",
+    "correct_answer": "34",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00959",
+    "correct_answer": "7",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_00976",
+    "correct_answer": "540",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01003",
+    "correct_answer": "480",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01005",
+    "correct_answer": "1490",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01019",
+    "correct_answer": "98",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01020",
+    "correct_answer": "22",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01021",
+    "correct_answer": "36",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01025",
+    "correct_answer": "30",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01026",
+    "correct_answer": "43200",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01027",
+    "correct_answer": "12",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01028",
+    "correct_answer": "200",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01032",
+    "correct_answer": "450",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01033",
+    "correct_answer": "2",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01035",
+    "correct_answer": "35",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01044",
+    "correct_answer": "1",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01045",
+    "correct_answer": "420",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01048",
+    "correct_answer": "7400",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01058",
+    "correct_answer": "250",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01060",
+    "correct_answer": "31",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01062",
+    "correct_answer": "482",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01089",
+    "correct_answer": "32",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01092",
+    "correct_answer": "1080",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01097",
+    "correct_answer": "480",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01124",
+    "correct_answer": "64",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01135",
+    "correct_answer": "32",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01147",
+    "correct_answer": "22",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01159",
+    "correct_answer": "50",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01163",
+    "correct_answer": "12",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01165",
+    "correct_answer": "1248",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01175",
+    "correct_answer": "16",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01178",
+    "correct_answer": "17",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01179",
+    "correct_answer": "50",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01182",
+    "correct_answer": "1800",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01201",
+    "correct_answer": "42",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01205",
+    "correct_answer": "4",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01215",
+    "correct_answer": "36",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01218",
+    "correct_answer": "225",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01221",
+    "correct_answer": "10",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01235",
+    "correct_answer": "60",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01238",
+    "correct_answer": "520",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "gsm8k_01239",
+    "correct_answer": "50",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 0,
+     "100": 1
+    }
+   }
+  ],
+  "timestamp": "2026-07-19T15:40:55.523308"
+ },
+ "mmlu_random": {
+  "n": 150,
+  "grid": [
+   0,
+   25,
+   50,
+   75,
+   100
+  ],
+  "recovery_rates": {
+   "0": 0.16,
+   "25": 0.5,
+   "50": 0.5866666666666667,
+   "75": 0.6866666666666666,
+   "100": 0.7533333333333333
+  },
+  "per_case": [
+   {
+    "sample_id": "mmlu_abstract_algebra_0002",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_abstract_algebra_0017",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_abstract_algebra_0022",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_abstract_algebra_0035",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_abstract_algebra_0053",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_abstract_algebra_0057",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_abstract_algebra_0062",
+    "correct_answer": "C",
+    "curve": {
+     "0": 1,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_abstract_algebra_0064",
+    "correct_answer": "B",
+    "curve": {
+     "0": 1,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_abstract_algebra_0069",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_abstract_algebra_0084",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_abstract_algebra_0099",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_anatomy_0054",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_anatomy_0070",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_anatomy_0075",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_anatomy_0118",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_anatomy_0121",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_anatomy_0123",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_astronomy_0022",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_astronomy_0035",
+    "correct_answer": "D",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_astronomy_0040",
+    "correct_answer": "C",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_astronomy_0045",
+    "correct_answer": "D",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_astronomy_0057",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_astronomy_0108",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_business_ethics_0006",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_business_ethics_0011",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_clinical_knowledge_0024",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_clinical_knowledge_0052",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_clinical_knowledge_0107",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_clinical_knowledge_0114",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_clinical_knowledge_0140",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_clinical_knowledge_0143",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_biology_0011",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_biology_0013",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_biology_0027",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_biology_0083",
+    "correct_answer": "C",
+    "curve": {
+     "0": 1,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_biology_0103",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_college_chemistry_0000",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_college_chemistry_0004",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_chemistry_0013",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_chemistry_0016",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_chemistry_0081",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_computer_science_0004",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_computer_science_0029",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_computer_science_0035",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_computer_science_0057",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_computer_science_0067",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_computer_science_0088",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_mathematics_0027",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_mathematics_0095",
+    "correct_answer": "D",
+    "curve": {
+     "0": 1,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_medicine_0059",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_medicine_0087",
+    "correct_answer": "A",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_medicine_0096",
+    "correct_answer": "C",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_medicine_0154",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_physics_0000",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_physics_0051",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_physics_0077",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_college_physics_0084",
+    "correct_answer": "A",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_computer_security_0000",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_computer_security_0004",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_computer_security_0022",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_computer_security_0058",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_computer_security_0068",
+    "correct_answer": "B",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_computer_security_0081",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_computer_security_0082",
+    "correct_answer": "A",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_computer_security_0090",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_conceptual_physics_0097",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_conceptual_physics_0163",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_conceptual_physics_0183",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_conceptual_physics_0188",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_econometrics_0012",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_econometrics_0017",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_econometrics_0019",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_econometrics_0069",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_econometrics_0077",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_econometrics_0094",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_econometrics_0096",
+    "correct_answer": "A",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_econometrics_0113",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_electrical_engineering_0023",
+    "correct_answer": "A",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_electrical_engineering_0026",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_electrical_engineering_0027",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_electrical_engineering_0048",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_electrical_engineering_0057",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_electrical_engineering_0077",
+    "correct_answer": "A",
+    "curve": {
+     "0": 1,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_electrical_engineering_0114",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_electrical_engineering_0119",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_elementary_mathematics_0013",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_elementary_mathematics_0174",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_elementary_mathematics_0229",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_formal_logic_0003",
+    "correct_answer": "A",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_formal_logic_0019",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_formal_logic_0028",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_formal_logic_0043",
+    "correct_answer": "A",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_formal_logic_0045",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_formal_logic_0107",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_formal_logic_0117",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_global_facts_0013",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_global_facts_0017",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_global_facts_0058",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_global_facts_0099",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_biology_0174",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_biology_0193",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_biology_0235",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_biology_0295",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_chemistry_0007",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_chemistry_0057",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_chemistry_0071",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_chemistry_0184",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_computer_science_0016",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_computer_science_0022",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_computer_science_0043",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_computer_science_0075",
+    "correct_answer": "C",
+    "curve": {
+     "0": 1,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_computer_science_0082",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_computer_science_0090",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_computer_science_0099",
+    "correct_answer": "C",
+    "curve": {
+     "0": 1,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_european_history_0071",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_geography_0006",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_geography_0039",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_geography_0057",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_geography_0117",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_geography_0137",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_geography_0183",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_geography_0186",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_geography_0194",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_government_and_politics_0024",
+    "correct_answer": "D",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_government_and_politics_0028",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_government_and_politics_0057",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_government_and_politics_0091",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_government_and_politics_0097",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_macroeconomics_0044",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_macroeconomics_0101",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_macroeconomics_0140",
+    "correct_answer": "D",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_macroeconomics_0174",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_macroeconomics_0301",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_mathematics_0039",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_mathematics_0107",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 0,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_mathematics_0114",
+    "correct_answer": "D",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_mathematics_0239",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_microeconomics_0026",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_microeconomics_0040",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_microeconomics_0057",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_microeconomics_0129",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_microeconomics_0150",
+    "correct_answer": "D",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_microeconomics_0188",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_microeconomics_0203",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 0,
+     "75": 0,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_physics_0015",
+    "correct_answer": "A",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_physics_0045",
+    "correct_answer": "B",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_physics_0103",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 0,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_physics_0124",
+    "correct_answer": "D",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 0
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_physics_0139",
+    "correct_answer": "C",
+    "curve": {
+     "0": 0,
+     "25": 1,
+     "50": 0,
+     "75": 1,
+     "100": 1
+    }
+   },
+   {
+    "sample_id": "mmlu_high_school_physics_0141",
+    "correct_answer": "B",
+    "curve": {
+     "0": 1,
+     "25": 1,
+     "50": 1,
+     "75": 1,
+     "100": 1
+    }
+   }
+  ],
+  "timestamp": "2026-07-19T15:44:06.761254"
+ }
+}

@@ -138,6 +138,7 @@ def run_conclusion_strip(wrapper, cases, benchmark, batch_size, max_new_tokens, 
         "restore_unstripped_leaked": ru_leak,
         "restore_stripped_leaked": rs_leak,
         "strip_mode": mode,
+        "max_new_tokens": max_new_tokens,
         "per_case": per,
     }
 
