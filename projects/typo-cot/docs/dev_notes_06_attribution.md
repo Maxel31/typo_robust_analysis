@@ -327,3 +327,35 @@ Jaccard@10 表 + ρ保持表を作成し本ファイルに記録する。
 - 手法間では **rollout の ρ が最大**（0.745〜0.845, 6/6 設定で最上位または同率）だが、rollout はモデル出力に依存しない注意経路指標のためJ_rollout 自体が摂動での入力トークン変化を強く反映する点に注意（vs R_C Jaccard は 0.13〜0.36 と最も低い群）。勾配系 (G×I/IG) はρ 0.55〜0.83 で AttnLRP 参照と最も近い挙動。
 - vs R_C Jaccard@10 (n=300 本番) はスモーク (n=8) の傾向を概ね再現（gemma gsm8k: IG 0.380 > G×I 0.308 > rollout 0.154）。ただし設定によっては G×I が IG を上回る（Mistral 両ベンチ, Llama mmlu）。
 - J_method@10 の絶対値は gsm8k > mmlu（全手法）で、既報の J_RC の傾向と整合。
+
+## ρ 保持表の記法補正と H6 判定（2026-07-19, 宿題1 / Track A による追記）
+
+**別エージェント（Track A: 考察 2026-07-19 フォローアップ）による追記。本 worktree は
+読み取りのみで、本節の dev_notes 追記のみ例外的に許可された作業。**
+
+上の表2 の `ρ(J_method@10|R)` は、`analyze_attribution_family.py` /
+`analyze_loo_rankings.py` の実装上 **Spearman(J_method@10, ROUGE-L)** である
+（`_spearman([j_method], [rouge_f1])`）。これは実験4/Step0 の ρ(J|R) =
+「flip を目的変数、ROUGE-L を統制した J@10 の**偏相関**（residual+Pearson,
+`reproduce.py::_partial_corr`）」とは**別統計**。記法（"|R"）が衝突していた。
+
+Track A は本 worktree の `results/{attribution_family,loo}/*/results.json` を
+読み取り、全手法（R_C / G×I / IG / rollout / LOO）の per-sample J@10 を archive
+`k4_importance/full_results.json` の flip(answer_changed)・ROUGE-L と sample_id
+結合し、実験4と同一手続きの `partial_corr(J@10, flip | ROUGE-L)` を再算出した
+（本体 `analysis/exp6_rho_preservation/`、Holm m=30）。
+
+- secondary の Spearman(J, ROUGE-L) は表2を**完全再現**（検証済: gemma×gsm8k で
+  G×I 0.590 / IG 0.610 / rollout 0.758、参照 R_C 0.490 が一致）。→ 表2 の数値自体は
+  正しい。ただし「ρ(J_method|R) が 18/18 保持」という**解釈**は Spearman(J,ROUGE) に
+  対してのみ成立し、実験4 の ρ(J|R)（flip 偏相関）の保持を意味しない。
+- 実験4 と同一の偏相関では: **LOO が全6設定で負・Holm有意**（−0.18〜−0.44）、
+  勾配系（IG/G×I）は GSM8K のみ有意・MMLU で減衰非有意、**rollout は 0/6**
+  （偏相関ほぼ0）。符号は 24 代替セル中 21 で保持。
+- **rollout の非収束が要点**: 表2 で rollout の Spearman が最大（0.745〜0.845）
+  だったのは、J_rollout が摂動での入力トークン変化を強く反映し ROUGE と機械的に
+  連動するため。ROUGE 統制後（偏相関）は flip への追加説明力が消える。上の
+  「所見」で注記した rollout の性質が、偏相関補正で定量的に顕在化した。
+- **H6 判定 = 条件付き支持**。中核（帰属フリーの LOO が ρ(J|R) 構造を全設定で
+  再現 = 修正Bの成立）は確証。詳細は本体 `docs/hypothesis_registry.md` H6 /
+  `analysis/exp6_rho_preservation/README.md`。
