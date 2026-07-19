@@ -1,0 +1,179 @@
+"""実験13: 読み出し集中度(M3測定) — 集中度指標.
+
+答え段が CoT のどれだけ狭い集合に依存するかを測る集中度メトリクス:
+
+- LOO 集中度: 1サンプルの LOO 重要度分布 (loo_word_scores の score) から
+  Gini係数 / top-1シェア / top-4シェア / 有効語数 (participation ratio) を算出。
+  負の LOO スコア (削除で答え logprob が上昇 = 重要でない) は 0 にクリップして
+  「正の重要度質量」の集中度を測る (clip_negative=True がデフォルト)。
+
+- attention 集中度代理: 答えトークン位置の行 → CoT トークン列への attention 質量の
+  分布 (answer_to_cot_distribution) の Gini。forward 1回で得られる安価な代理で、
+  全設定に適用して LOO Gini と突合し妥当性を検証する。
+
+集中度が高い (Gini/top1 が大きい) ほど答え段が少数の CoT 語に依存し、
+削除介入が効きやすい、というのが H13。
+
+入出力は in-memory の list / numpy 配列 / attention テンソルのみで、
+データファイルの読み書きは行わない (ドライバスクリプト側で JSON 入出力する)。
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+
+def _as_nonneg(values, clip_negative: bool = True) -> np.ndarray:
+    """有限化 (nan/inf→0) し、clip_negative なら負を 0 にクリップした配列を返す."""
+    a = np.asarray(list(values), dtype=float)
+    a = np.where(np.isfinite(a), a, 0.0)
+    if clip_negative:
+        a = np.clip(a, 0.0, None)
+    return a
+
+
+def gini(values, clip_negative: bool = True) -> float:
+    """非負分布の Gini係数.
+
+    一様分布=0、完全集中 (1要素に全質量) = (n-1)/n。スケール不変。
+    空配列は nan、単一要素・全ゼロ・全負(クリップ後全ゼロ)は 0。
+    ソート済み配列に対する標準式:
+        G = 2*Σ(i*x_(i)) / (n*Σx) − (n+1)/n   (x昇順, i=1..n)
+    """
+    a = _as_nonneg(values, clip_negative)
+    n = a.size
+    if n == 0:
+        return float("nan")
+    if n == 1:
+        return 0.0
+    s = a.sum()
+    if s <= 0:
+        return 0.0
+    a_sorted = np.sort(a)
+    idx = np.arange(1, n + 1)
+    g = (2.0 * float(np.sum(idx * a_sorted)) / (n * s)) - (n + 1.0) / n
+    # 数値誤差で [0,1] をわずかに外れることがあるためクリップ
+    return float(min(1.0, max(0.0, g)))
+
+
+def top1_share(values, clip_negative: bool = True) -> float:
+    """最大要素が占めるシェア max/Σ. 空・全ゼロは 0."""
+    a = _as_nonneg(values, clip_negative)
+    s = a.sum()
+    if a.size == 0 or s <= 0:
+        return 0.0
+    return float(a.max() / s)
+
+
+def topk_share(values, k: int, clip_negative: bool = True) -> float:
+    """上位 k 要素が占めるシェア. k がサイズ超過なら全和 (=1)."""
+    a = _as_nonneg(values, clip_negative)
+    s = a.sum()
+    if a.size == 0 or s <= 0:
+        return 0.0
+    top = np.sort(a)[::-1][: max(0, k)]
+    return float(top.sum() / s)
+
+
+def effective_count(values, clip_negative: bool = True) -> float:
+    """有効語数 (participation ratio / inverse Simpson): (Σx)^2 / Σx^2.
+
+    一様n語=n、完全集中=1。集中度の逆向き指標 (小さいほど集中)。
+    """
+    a = _as_nonneg(values, clip_negative)
+    s = a.sum()
+    if a.size == 0 or s <= 0:
+        return 0.0
+    ssq = float(np.sum(a * a))
+    if ssq <= 0:
+        return 0.0
+    return float((s * s) / ssq)
+
+
+def loo_sample_concentration(
+    loo_word_scores: list[dict], clip_negative: bool = True
+) -> dict:
+    """1サンプルの LOO 重要度分布から集中度メトリクスを算出する.
+
+    Args:
+        loo_word_scores: [{"word": str, "score": float}, ...] (run_loo_scoring の
+            results.json エントリの loo_word_scores)。
+        clip_negative: 負の重要度を 0 にクリップするか (デフォルト True)。
+
+    Returns:
+        {"n_words", "gini", "top1_share", "top4_share", "effective_count"}
+        空入力では gini=nan, その他 0/0.0。
+    """
+    scores = [float(w["score"]) for w in loo_word_scores]
+    return {
+        "n_words": len(scores),
+        "gini": gini(scores, clip_negative),
+        "top1_share": top1_share(scores, clip_negative),
+        "top4_share": topk_share(scores, 4, clip_negative),
+        "effective_count": effective_count(scores, clip_negative),
+    }
+
+
+def answer_to_cot_distribution(
+    attn_2d,
+    answer_positions,
+    cot_positions,
+    reduce_answer: str = "mean",
+) -> np.ndarray:
+    """head-reduce 済み [seq, seq] attention から 答え行→CoT列 の分布を取り出す.
+
+    Args:
+        attn_2d: [seq, seq] の attention 行列 (attn_2d[q, k] = query q が key k に
+            置く attention 質量)。head 方向は事前に平均済みを想定。
+        answer_positions: 答えトークンの query 位置 (複数可)。
+        cot_positions: CoT トークンの key 位置。
+        reduce_answer: 複数答え位置の集約 ("mean" | "sum")。
+
+    Returns:
+        cot_positions 上の 1次元分布 (長さ len(cot_positions))。
+    """
+    A = np.asarray(attn_2d, dtype=float)
+    ans = np.asarray(list(answer_positions), dtype=int)
+    cot = np.asarray(list(cot_positions), dtype=int)
+    if ans.size == 0 or cot.size == 0:
+        return np.zeros(cot.size, dtype=float)
+    rows = A[ans][:, cot]  # [n_ans, n_cot]
+    if reduce_answer == "sum":
+        return rows.sum(axis=0)
+    return rows.mean(axis=0)
+
+
+def attention_gini_per_layer(
+    attentions,
+    answer_positions,
+    cot_positions,
+    batch_index: int = 0,
+    reduce_answer: str = "mean",
+    clip_negative: bool = False,
+) -> list[float]:
+    """全層の 答え→CoT attention 分布の Gini を層ごとに返す.
+
+    Args:
+        attentions: HuggingFace `output_attentions=True` の戻り値と同形の
+            レイヤ列。各要素は [batch, heads, seq, seq] (numpy か torch)。
+        answer_positions / cot_positions: query / key の位置インデックス。
+        batch_index: バッチ内のどのサンプルか。
+        reduce_answer: 複数答え位置の集約。
+        clip_negative: attention は非負なので通常 False。
+
+    Returns:
+        層数と同じ長さの Gini リスト。
+    """
+    ginis: list[float] = []
+    for layer in attentions:
+        if hasattr(layer, "detach"):
+            arr = layer.detach().float().cpu().numpy()
+        else:
+            arr = np.asarray(layer)
+        # [batch, heads, seq, seq] -> head 平均 -> [seq, seq]
+        head_mean = arr[batch_index].mean(axis=0)
+        dist = answer_to_cot_distribution(
+            head_mean, answer_positions, cot_positions, reduce_answer=reduce_answer
+        )
+        ginis.append(gini(dist, clip_negative=clip_negative))
+    return ginis
