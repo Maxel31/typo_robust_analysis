@@ -149,10 +149,16 @@ def spearman(xs: list[float], ys: list[float]) -> dict:
         return {"rho": None, "p": None, "n": len(xs), "error": str(e)}
 
 
-def mantel_haenszel_or(tables: list[tuple[int, int, int, int]]) -> dict:
-    """層別 2x2 の Mantel-Haenszel 統合オッズ比 (層 = 設定)."""
+def mantel_haenszel_or(tables: list[tuple[int, int, int, int]], haldane: bool = True) -> dict:
+    """層別 2x2 の Mantel-Haenszel 統合オッズ比 (層 = 設定).
+
+    haldane=True のとき、いずれかのセルが 0 の層に 0.5 を加える連続修正
+    (Haldane-Anscombe)。全層で b*c=0 になっても MH が未定義にならないようにする。
+    """
     num = den = 0.0
     for a, b, c, d in tables:
+        if haldane and (a == 0 or b == 0 or c == 0 or d == 0):
+            a, b, c, d = a + 0.5, b + 0.5, c + 0.5, d + 0.5
         n = a + b + c + d
         if n == 0:
             continue
@@ -321,7 +327,8 @@ def main() -> None:
     ) if gemma1b_csqa_ranks else None
 
     rank_ok = rank["rho"] is not None and rank["rho"] >= 0.7
-    or_val = mh["mh_or"]
+    # 主判定は MH OR。未定義時のみ crude にフォールバック。
+    or_val = mh["mh_or"] if mh["mh_or"] is not None else crude["odds_ratio"]
     or_ok = or_val is not None and or_val > 3
     supports_h14 = bool(rank_ok and or_ok)
 
