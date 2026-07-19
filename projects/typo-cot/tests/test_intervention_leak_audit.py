@@ -6,8 +6,6 @@ GPU 不要・CPU のみ。3 点セットの共通部品を検証する:
   (iii) 回復曲線: 先頭 p% prefix を切り出す cut_prefix_by_fraction
 """
 
-import pytest
-
 from typo_cot.intervention.leak_audit import (
     LeakResult,
     answer_leak,
