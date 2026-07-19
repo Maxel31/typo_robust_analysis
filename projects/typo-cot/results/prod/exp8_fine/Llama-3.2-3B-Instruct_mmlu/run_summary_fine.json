@@ -1,0 +1,88 @@
+{
+  "config_hash": "39f2a66b6663baad",
+  "experiment": "exp8_fine",
+  "config": {
+    "model": "meta-llama/Llama-3.2-3B-Instruct",
+    "benchmark": "mmlu",
+    "baseline_dir": "/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/baseline/Llama-3.2-3B-Instruct_mmlu",
+    "perturbed_dir_lxt": "/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/perturbed/Llama-3.2-3B-Instruct_mmlu_k4_importance",
+    "perturbed_dir_rnd": "/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/perturbed/Llama-3.2-3B-Instruct_mmlu_k4_random",
+    "n_pairs": 150,
+    "single_layers": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      14,
+      20,
+      26
+    ],
+    "cumulative_layers": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11
+    ],
+    "noising_layers": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "sham_layers": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11
+    ],
+    "site": "residual",
+    "site_kind": "question_span",
+    "controls": true,
+    "other_span_offset": 2,
+    "perturb_mode": "typo",
+    "max_new_tokens": 16,
+    "shard": [
+      0,
+      1
+    ],
+    "timestamp": "2026-07-19T19:54:52.749403"
+  },
+  "n_tasks": 150,
+  "n_done": 136,
+  "n_skipped_idempotent": 0,
+  "n_excluded": 14,
+  "n_failed": 0,
+  "excluded_reasons": {
+    "no_trigger_clean": 6,
+    "prompt_boundary_mismatch": 4,
+    "no_typo_answer": 4
+  }
+}

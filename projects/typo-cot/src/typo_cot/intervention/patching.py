@@ -262,6 +262,87 @@ def layer_windows(n_layers: int, width: int, stride: int) -> list[tuple[int, int
     return windows
 
 
+def single_layer_windows(layers: Sequence[int]) -> list[tuple[int, int]]:
+    """各層 l を幅1窓 (l, l+1) にする (実験8-fine の単層スイープの位置指定).
+
+    Args:
+        layers: 単層でパッチする層 index (例: 0..11 + 検証点 14/20/26)
+
+    Returns:
+        [(l, l+1), ...] (入力順を保持)
+    """
+    windows: list[tuple[int, int]] = []
+    for layer in layers:
+        if layer < 0:
+            raise ValueError(f"層 index は非負: {layer}")
+        windows.append((layer, layer + 1))
+    return windows
+
+
+def cumulative_windows(layers: Sequence[int]) -> list[tuple[int, int]]:
+    """各終端層 l を累積窓 (0, l+1) にする (第0層から第l層まで全差替).
+
+    単層スイープ (各層の限界寄与) に対し、累積は「第0層からここまで直せば
+    何%戻るか」を測る。単層 max ≪ 累積 max なら分散書き込みの証拠。
+
+    Args:
+        layers: 累積窓の終端層 index (例: 0..11)
+
+    Returns:
+        [(0, l+1), ...] (入力順を保持)
+    """
+    windows: list[tuple[int, int]] = []
+    for layer in layers:
+        if layer < 0:
+            raise ValueError(f"層 index は非負: {layer}")
+        windows.append((0, layer + 1))
+    return windows
+
+
+def relative_depth(layer_idx: int, n_layers: int) -> float:
+    """層 index の相対深さ l/L を返す (モデル間比較のための整列軸).
+
+    Args:
+        layer_idx: 層 index (0 起点)
+        n_layers: そのモデルの総層数 L
+
+    Returns:
+        layer_idx / n_layers (0.0〜)
+    """
+    if n_layers <= 0:
+        raise ValueError(f"n_layers は正の整数: {n_layers}")
+    return layer_idx / n_layers
+
+
+def align_by_relative_depth(
+    profiles: dict[str, dict[int, float]],
+    n_layers: dict[str, int],
+) -> dict[str, list[tuple[float, float]]]:
+    """各モデルの {層 index → 値} を相対深さ軸 (l/L) で整列する.
+
+    Fig.5 差替候補 (相対深さ×回復率の重ね描き) のための整列プリミティブ。
+
+    Args:
+        profiles: model 名 → {層 index → 値}
+        n_layers: model 名 → 総層数 L
+
+    Returns:
+        model 名 → [(rel_depth, value), ...] を rel_depth 昇順にしたリスト
+
+    Raises:
+        KeyError: profiles にあるモデルの総層数が n_layers に無い場合
+    """
+    aligned: dict[str, list[tuple[float, float]]] = {}
+    for model_name, layer_values in profiles.items():
+        if model_name not in n_layers:
+            raise KeyError(f"n_layers に {model_name!r} の総層数がありません")
+        L = n_layers[model_name]
+        points = [(relative_depth(li, L), v) for li, v in layer_values.items()]
+        points.sort(key=lambda dv: dv[0])
+        aligned[model_name] = points
+    return aligned
+
+
 @dataclass(frozen=True)
 class PatchCell:
     """スイープの 1 セル (部位 × 層窓 × 方向)."""

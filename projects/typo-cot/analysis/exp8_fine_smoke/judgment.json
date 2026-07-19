@@ -1,0 +1,161 @@
+{
+  "experiment": "exp8_fine",
+  "settings": {
+    "smoke_gemma-3-4b-it_gsm8k": {
+      "n_layers": 34,
+      "stats": {
+        "n_pairs": 12,
+        "n_excluded": 4,
+        "n_error": 0
+      },
+      "H8f-1": {
+        "best_layer": 0,
+        "peak_mean": 0.1661825574632762,
+        "rel_depth": 0.0,
+        "depth_thresh": 0.2,
+        "supported": true
+      },
+      "H8f-2": {
+        "plateau_layers": [
+          0
+        ],
+        "plateau_width": 1,
+        "shape": "spike",
+        "supported": false,
+        "branch": "spike -> stronger localization claim"
+      },
+      "H8f-3": {
+        "single_max": 0.1661825574632762,
+        "cumulative_max": 0.1661825574632762,
+        "ratio_cum_over_single": 1.0,
+        "ratio_thresh": 1.2,
+        "saturation_layer": 0,
+        "saturation_rel_depth": 0.0,
+        "depth_thresh": 0.2,
+        "supported": false
+      },
+      "H8f-4": {
+        "val_means": {
+          "14": -0.018276984896815035,
+          "20": -0.10492315885787391,
+          "26": -0.06503257597403163
+        },
+        "thresh": 0.1,
+        "supported": false
+      },
+      "H8f-5": {
+        "layers": [
+          0,
+          1
+        ],
+        "band_means": {
+          "0": -0.7918263427539817,
+          "1": 0.12519958753105218
+        },
+        "mean_at_best": -0.7918263427539817,
+        "thresh": 0.5,
+        "supported": false
+      },
+      "A3": {
+        "a_other_span_early_abs_max": 0.13809057395988894,
+        "a_other_span_supported": true,
+        "b_all_positions_min": 1.0000000002561462,
+        "b_all_positions_supported": true
+      },
+      "best_early_layer": 0,
+      "sham_early_abs_max": 1.6033330740202374e-06
+    }
+  },
+  "pooled_by_model": {
+    "smoke_gemma-3-4b-it": {
+      "n_layers": 34,
+      "H8f-1": {
+        "best_layer": 0,
+        "peak_mean": 0.1661825574632762,
+        "rel_depth": 0.0,
+        "depth_thresh": 0.2,
+        "supported": true
+      },
+      "H8f-2": {
+        "plateau_layers": [
+          0
+        ],
+        "plateau_width": 1,
+        "shape": "spike",
+        "supported": false,
+        "branch": "spike -> stronger localization claim"
+      },
+      "H8f-3": {
+        "single_max": 0.1661825574632762,
+        "cumulative_max": 0.1661825574632762,
+        "ratio_cum_over_single": 1.0,
+        "ratio_thresh": 1.2,
+        "saturation_layer": 0,
+        "saturation_rel_depth": 0.0,
+        "depth_thresh": 0.2,
+        "supported": false
+      },
+      "H8f-4": {
+        "val_means": {
+          "14": -0.018276984896815035,
+          "20": -0.10492315885787391,
+          "26": -0.06503257597403163
+        },
+        "thresh": 0.1,
+        "supported": false
+      },
+      "H8f-5": {
+        "layers": [
+          0,
+          1
+        ],
+        "band_means": {
+          "0": -0.7918263427539817,
+          "1": 0.12519958753105218
+        },
+        "mean_at_best": -0.7918263427539817,
+        "thresh": 0.5,
+        "supported": false
+      },
+      "A3": {
+        "a_other_span_early_abs_max": 0.13809057395988894,
+        "a_other_span_supported": true,
+        "b_all_positions_min": 1.0000000002561462,
+        "b_all_positions_supported": true
+      },
+      "best_early_layer": 0,
+      "sham_early_abs_max": 1.6033330740202374e-06
+    }
+  },
+  "overall_supported_over_settings": {
+    "H8f-1": {
+      "supported": 1,
+      "evaluated": 1
+    },
+    "H8f-2": {
+      "supported": 0,
+      "evaluated": 1
+    },
+    "H8f-3": {
+      "supported": 0,
+      "evaluated": 1
+    },
+    "H8f-4": {
+      "supported": 0,
+      "evaluated": 1
+    },
+    "H8f-5": {
+      "supported": 0,
+      "evaluated": 1
+    },
+    "A3": {
+      "a_other_span_supported": 1,
+      "b_all_positions_supported": 1,
+      "c_semantic_isomorphic": 0,
+      "c_semantic_evaluated": 0,
+      "evaluated": 1
+    }
+  },
+  "semantic_compare": {},
+  "fig5_png": "analysis/exp8_fine_smoke/fig5_relative_depth_overlay.png"
+}
