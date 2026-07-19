@@ -13,6 +13,8 @@ flip の定義 (実験1 の DE=C セルと整合):
 
 from __future__ import annotations
 
+import math
+
 
 def join_records(
     clean: dict[str, dict],
@@ -98,8 +100,6 @@ def odds_ratio(
     Returns:
         {"odds_ratio", "log_odds_ratio", "table", "haldane_applied"}
     """
-    import math
-
     cells = [a, b, c, d]
     haldane_applied = False
     if haldane and any(x == 0 for x in cells):
