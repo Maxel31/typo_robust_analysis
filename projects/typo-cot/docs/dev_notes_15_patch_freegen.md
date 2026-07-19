@@ -90,7 +90,25 @@ flip が再現。exp8 の teacher-forcing 下 ≈0% と対照的)。
 早期/中期/後期 × denoise/noise, sham 付き, `run_with_gpu.sh` 経由, 冪等)。
 GPU プールは並行系統と共有。結果は本メモに追記予定 (下記「本番集計」節)。
 
-<!-- 本番集計 (追記予定): 設定別 ROUGE 増分・flip 減少・onset 消失表 + 3 モデル一般化の H15 最終判定 -->
+### 本番進捗 (2026-07-19 時点、リファクタ PR 作成時に確認した実態)
+
+**未完了。M3×B2 = 6 設定中 1 設定のみ生データ収集完了、集計 (aggregate.py) は未実行。**
+
+- **gemma-3-4b-it × gsm8k**: 生成完了 (`run_summary.json`: n_tasks=207, n_done=207,
+  n_failed=0, n_excluded=0。flip ペアが 207 件 (lxt4 128 + rnd4 79) しかなく上限
+  300 未満のため全数)。ただし `scripts/exp15/aggregate.py` によるセル集計・
+  H15 判定はまだ未実行 (`summary.json` / verdict 未生成)。
+- **gemma-3-4b-it × mmlu、Llama-3.2-3B-Instruct × {gsm8k,mmlu}、
+  Mistral-7B-Instruct-v0.3 × {gsm8k,mmlu}** (残り 5 設定): 起動直後に失敗
+  (`run_with_gpu.sh` パス未整備 — worktree に無く本体リポジトリ側にある問題。
+  `04363f2` で `run_queue.sh` 側は修正済みだが、この 5 設定は修正後に
+  再実行されていない)。`run_summary.json` 無し、結果ディレクトリは空。
+- したがって **3 モデルでの一般化検証・最終 H15 判定は未実施**。上記「スモーク検証」
+  節の判定 (全項目 TRUE) は n=16 のスモークのみに基づくものであり、本番規模
+  (n≤300/設定 ×6設定) での検証ではない。
+
+<!-- 本番集計 (追記予定): 残り5設定の実行 + 全設定 aggregate.py 実行後、
+     設定別 ROUGE 増分・flip 減少・onset 消失表 + 3 モデル一般化の H15 最終判定を追記 -->
 
 ## 防御的読み替え (design implication T2)
 
