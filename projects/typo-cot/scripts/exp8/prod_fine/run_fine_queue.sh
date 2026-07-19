@@ -23,7 +23,9 @@ declare -A HF_NAME=(
     [Llama-3.2-3B-Instruct]="meta-llama/Llama-3.2-3B-Instruct"
     [Mistral-7B-Instruct-v0.3]="mistralai/Mistral-7B-Instruct-v0.3"
 )
-MODELS=(gemma-3-4b-it Llama-3.2-3B-Instruct Mistral-7B-Instruct-v0.3)
+# MODELS_OVERRIDE で単一モデルに絞ると、複数インスタンスを並列起動して
+# 遊休 GPU を埋められる (ロックヘルパーが GPU 排他を保証)。
+MODELS=(${MODELS_OVERRIDE:-gemma-3-4b-it Llama-3.2-3B-Instruct Mistral-7B-Instruct-v0.3})
 BENCHMARKS=(gsm8k mmlu)
 
 for m in "${MODELS[@]}"; do
