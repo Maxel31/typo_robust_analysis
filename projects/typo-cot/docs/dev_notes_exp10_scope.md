@@ -85,3 +85,41 @@ bash $H uv run python scripts/run_inference_reasoning.py --benchmark gsm8k \
 - DeepSeek 公式推奨は temp 0.6/top_p 0.95 だが、Step 0 凍結(greedy/seed42)と
   アーカイブ整合を優先して greedy。greedy の反復ループは truncation_rate で監視。
 - mmlu の質問スパンは選択肢埋め込み時(摂動データ)は最初の改行まで(既存規約と同一)。
+
+## R1蒸留×MATH の LXT<Random 逆転の解剖 (Track C, 2026-07-19)
+
+再解析のみ(CPU, 生成再利用)。`outputs/{baseline,perturbed}/DeepSeek-R1-Distill-Qwen-7B_math*`
+の results.json を突き合わせて flip 集合と摂動語カテゴリを集計。
+
+### 事実
+
+- 精度: baseline 0.734 / LXT-4(importance) 0.650 / Random-4 0.610。
+  Random の方が有害 = **逆転**(通常は importance 標的の LXT が有害)。
+- flip 集合 (baseline 正解 367 → 摂動で誤答): LXT 68 (18.5%) < Random 87 (23.7%)。
+  重複 31、LXT のみ 37、Random のみ 56。
+- 摂動語カテゴリ (全摂動): LXT = 自然語 84.8% / latex 9.9% / 変数(単文字) 2.8% / 記号 2.5%。
+  Random = 自然語 79.6% / latex 10.4% / **変数 7.6%** / 記号 2.4%。
+  → 当初仮説「MATH の R_Q 上位語は LaTeX に偏る」は**棄却**(LXT 標的の大半は自然語)。
+- 差の源泉は**単文字の数式変数・区切り記号**。Random は全問の 28.4% でこれらを破壊
+  (LXT 18.4%; ~1.5倍)。flip 集合では Random 43.7% vs LXT 36.8% が変数/記号を含む。
+  例: `x→c`(math_00074), `k→m`(math_00108), `x→s`×2(math_00114), `$→nn`(math_00035)。
+  これらは正解を別問題に silent に書き換え、R1 は破壊後問題を忠実に解いて誤答。
+- 難易度プロキシ: Random-only flip は生成トークン長が大 (~3004 vs base-correct 2533)、
+  質問文字数は短め (133) = 記号密度の高い問題を Random が壊しやすい傾向。
+- 一般性: 逆転は R1蒸留で顕著、gemma-4B は誤差内 (0.368 vs 0.364)、
+  Qwen/Llama/Mistral は通常序列 → 長大 CoT の自己訂正が関与する現象。
+
+### 考察草稿 (experiment_details.md 実験10節へ追記予定, 4–5文)
+
+> R1蒸留×MATH では Random-4 (acc 0.610) が LXT-4 (0.650) より有害という逆転が生じた
+> (baseline 0.734、flip は Random 87 > LXT 68)。摂動語カテゴリの集計から当初仮説
+> 「R_Q 上位語が LaTeX 記法に偏る」は棄却され、LXT-4 の標的の 84.8% はむしろ自然語で、
+> 差を生むのは単文字の数式変数・区切り記号だった — Random は全問の 28.4% でこれらを破壊し
+> (LXT は 18.4%)、flip 集合でも変数/記号の関与率が高い (43.7% vs 36.8%)。変数改名
+> (x→c, k→m) や `$`→`nn` の破壊は言語的冗長性を持たず R1 の長大 CoT でも復元されないため、
+> モデルは破壊後の別問題を忠実に解いて誤答する一方、高重要度の自然語 typo は R1 の言語
+> 事前分布で自己訂正され吸収される。したがって重要度標的化の優位は、(a) 標的トークン型に
+> 対しモデルが強い誤り訂正能力を持ち(長大 CoT × 自然語の冗長性)、かつ (b) 真の脆弱性が
+> 低重要度だが構造的に不可欠なトークン(変数・記号)に宿るとき崩れる。MATH では saliency と
+> typo 脆弱性が符号反転しており、この逆転が R1蒸留で顕著・gemma-4B で誤差内・他モデルで非出現
+> なのは長大 CoT 自己訂正の関与を示唆する。
