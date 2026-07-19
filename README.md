@@ -55,3 +55,7 @@ uv run python experiments/reproduction/run.py --config configs/repro_baseline.ya
 - **再現/提案/分析の分離**: `experiments/{reproduction,proposed}` で実験、`analysis/` で可視化。
 - **設定は YAML**: `configs/*.yaml` を `typo_utils.config.load_config()`（OmegaConf）で読む。
 - **記録はローカル + W&B 併用**: 常に `results/<exp>/<run_id>/` に保存し、加えて W&B へlog（未設定時は offline）。
+
+## CI
+
+PR を作成・更新すると GitHub Actions（`.github/workflows/claude-code-review.yml`）経由で Claude Code による自動レビューが実行される。
