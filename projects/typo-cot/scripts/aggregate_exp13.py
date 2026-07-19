@@ -17,9 +17,17 @@
 import argparse
 import csv
 import json
+import logging
 from pathlib import Path
 
 from scipy.stats import spearmanr
+
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 
 MODELS = [
     "gemma-3-1b-it", "gemma-3-4b-it",
@@ -43,6 +51,8 @@ def load_deletion_rd(exp2_dir: Path, model: str, benchmark: str) -> dict:
     """exp2 の core summary から k=4 削除RD (all / content) を抽出する."""
     p = exp2_dir / f"{model}_{benchmark}_core" / "summary.json"
     if not p.exists():
+        logger.warning(
+            "exp2 summary が見つかりません (rd_*_k4 は全て None になります): %s", p)
         return {"rd_all_k4": None, "rd_content_k4": None, "exp2_summary": None}
     s = json.load(open(p, encoding="utf-8"))
     rd_all = rd_content = None
