@@ -10,12 +10,14 @@
 #   setsid nohup bash scripts/exp15/prod/run_queue.sh \
 #     > logs/exp15/prod/queue.log 2>&1 < /dev/null &
 set -u
-ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"   # .../projects/typo-cot
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"   # <worktree>/projects/typo-cot
 cd "$ROOT"
-REPO_ROOT="$(cd "$ROOT/../.." && pwd)"           # リポジトリルート
+# GPU ヘルパーと torch 入り .venv はワークツリーではなくメインリポジトリ側にある。
+# (worktree は .../typo_robust_analysis/.claude/worktrees/<name>/projects/typo-cot)
+MAIN_REPO="${MAIN_REPO:-/diskthalys/ssd14tc/sfukuhata/dev/kanolab/typo_robust_analysis}"
 ARCH=/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026
-HELPER="$REPO_ROOT/tmp/gpu-locks/run_with_gpu.sh"
-VENV="$REPO_ROOT/.venv/bin/python"
+HELPER="$MAIN_REPO/tmp/gpu-locks/run_with_gpu.sh"
+VENV="$MAIN_REPO/.venv/bin/python"
 LOGDIR="$ROOT/logs/exp15/prod"
 OUTDIR="$ROOT/results/exp15"
 mkdir -p "$LOGDIR" "$OUTDIR"
