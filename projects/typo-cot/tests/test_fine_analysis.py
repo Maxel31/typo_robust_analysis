@@ -34,8 +34,8 @@ def _plateau_single_cells():
              14: 0.0, 20: -0.01, 26: 0.0}
     cells = []
     for rep in (0.0, 0.02):  # 2 サンプル (わずかに違う値)
-        for l, m in means.items():
-            cells.append(_cell("single", l, "clean_to_pert",
+        for li, m in means.items():
+            cells.append(_cell("single", li, "clean_to_pert",
                                s2_kl_recovery=m + rep, answer_matches_donor=(m > 0.5)))
     return cells
 
@@ -102,8 +102,8 @@ class TestPlateauLayers:
         # 単層スパイク: 層3 だけ高い
         cells = []
         vals = {0: 0.05, 1: 0.05, 2: 0.05, 3: 0.9, 4: 0.05, 5: 0.05}
-        for l, m in vals.items():
-            cells.append(_cell("single", l, "clean_to_pert", s2_kl_recovery=m))
+        for li, m in vals.items():
+            cells.append(_cell("single", li, "clean_to_pert", s2_kl_recovery=m))
         summ = summarize_by_layer(
             collect_by_layer(cells, "single", "clean_to_pert", "s2_kl_recovery")
         )
@@ -114,9 +114,9 @@ class TestPlateauLayers:
 
 class TestSaturationLayer:
     def test_first_layer_reaching_fraction_of_max(self):
-        # 累積: 早期で急伸、l>=2 で飽和
+        # 累積: 早期で急伸、li>=2 で飽和
         cum = {0: 0.4, 1: 0.7, 2: 0.90, 3: 0.95, 4: 0.97, 5: 0.98}
-        summ = {l: {"mean": m, "n": 5} for l, m in cum.items()}
+        summ = {li: {"mean": m, "n": 5} for li, m in cum.items()}
         # max=0.98, 90% = 0.882 → 最初に到達するのは層2 (0.90 >= 0.882)
         assert saturation_layer(summ, frac=0.9) == 2
 
@@ -143,9 +143,9 @@ class TestJudgments:
         assert v["plateau_width"] >= 2
 
     def test_h8f3_cumulative_saturation(self):
-        single = {l: {"mean": m, "n": 4} for l, m in
+        single = {li: {"mean": m, "n": 4} for li, m in
                   {0: 0.3, 1: 0.5, 2: 0.55, 3: 0.4, 4: 0.2}.items()}
-        cumulative = {l: {"mean": m, "n": 4} for l, m in
+        cumulative = {li: {"mean": m, "n": 4} for li, m in
                       {0: 0.3, 1: 0.6, 2: 0.75, 3: 0.78, 4: 0.79}.items()}
         v = judge_h8f3_cumulative_saturation(single, cumulative, n_layers=34, frac=0.9)
         assert v["single_max"] == pytest.approx(0.55)

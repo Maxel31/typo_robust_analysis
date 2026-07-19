@@ -152,10 +152,10 @@ def run_pair_fine(model, tokenizer, layers, prepared: PreparedPair, extractor, a
     device = next(model.parameters()).device
     tok_a, tok_b = prepared.readout_tokens
 
-    single_layers = [l for l in _int_list(args.single_layers) if l < n_layers]
-    cumul_layers = [l for l in _int_list(args.cumulative_layers) if l < n_layers]
-    noising_layers = [l for l in _int_list(args.noising_layers) if l < n_layers]
-    sham_layers = [l for l in _int_list(args.sham_layers) if l < n_layers]
+    single_layers = [li for li in _int_list(args.single_layers) if li < n_layers]
+    cumul_layers = [li for li in _int_list(args.cumulative_layers) if li < n_layers]
+    noising_layers = [li for li in _int_list(args.noising_layers) if li < n_layers]
+    sham_layers = [li for li in _int_list(args.sham_layers) if li < n_layers]
 
     ids = {run: torch.tensor([prepared.input_ids[run]], device=device) for run in RUNS}
     # 捕捉位置: 摂動語スパン + プロンプト以降 (c1 位置 prompt_len-1 を含めるため全域)

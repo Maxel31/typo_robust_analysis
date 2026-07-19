@@ -3,9 +3,9 @@
 GPU 不要。粗い窓 (幅3) の最良窓 residual[0,6) を 1 層解像度に精密化する
 実験のための追加ユーティリティを検証する:
 
-- 単層窓 (l, l+1) の位置指定 (single_layer_windows)
-- 累積窓 (0, l+1) の位置指定 (cumulative_windows)
-- 相対深さ l/L の算出とモデル間整列 (relative_depth / align_by_relative_depth)
+- 単層窓 (li, li+1) の位置指定 (single_layer_windows)
+- 累積窓 (0, li+1) の位置指定 (cumulative_windows)
+- 相対深さ li/L の算出とモデル間整列 (relative_depth / align_by_relative_depth)
 - sham patch の恒等性: recipient 自身の値を摂動語スパンに書き戻すと
   単層窓・累積窓のいずれでも logits がビット不変 (アーチファクト検出の根拠)
 """
