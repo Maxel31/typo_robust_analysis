@@ -13,6 +13,7 @@ import pytest
 from typo_cot.attribution.fixed_target import (
     ANSWER_PATTERNS,
     SplicePlan,
+    compare_cot_payloads,
     find_answer_match,
     plan_run,
     plan_splice,
@@ -255,8 +256,6 @@ class TestComparePayloads:
         }
 
     def test_identical_payloads(self):
-        from typo_cot.attribution.fixed_target import compare_cot_payloads
-
         p = self._payload([("a", 1.0), ("b", 0.5), ("c", 0.1)])
         rep = compare_cot_payloads(p, p, ks=(2,))
         assert rep["top2_jaccard"] == 1.0
@@ -265,8 +264,6 @@ class TestComparePayloads:
         assert rep["max_abs_score_diff"] == 0.0
 
     def test_score_diff_reported(self):
-        from typo_cot.attribution.fixed_target import compare_cot_payloads
-
         p1 = self._payload([("a", 1.0), ("b", 0.5)])
         p2 = self._payload([("a", 1.0), ("b", 0.4)])
         rep = compare_cot_payloads(p1, p2, ks=(1,))
@@ -274,16 +271,12 @@ class TestComparePayloads:
         assert rep["top1_jaccard"] == 1.0
 
     def test_range_mismatch(self):
-        from typo_cot.attribution.fixed_target import compare_cot_payloads
-
         p1 = self._payload([("a", 1.0)], start=3, end=7)
         p2 = self._payload([("a", 1.0)], start=3, end=8)
         rep = compare_cot_payloads(p1, p2, ks=(1,))
         assert rep["cot_range_match"] is False
 
     def test_token_length_mismatch(self):
-        from typo_cot.attribution.fixed_target import compare_cot_payloads
-
         p1 = self._payload([("a", 1.0), ("b", 0.5)])
         p2 = self._payload([("a", 1.0)])
         rep = compare_cot_payloads(p1, p2, ks=(1,))

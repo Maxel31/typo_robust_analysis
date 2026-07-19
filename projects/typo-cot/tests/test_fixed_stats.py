@@ -11,7 +11,9 @@ import pytest
 from typo_cot.analysis.fixed_stats import (
     bootstrap_partial_corr_ci,
     cot_jaccard_from_scores,
+    format_meta_comparison,
     holm_adjust,
+    join_fixed_default_records,
     paired_bootstrap_delta_rho,
     partial_corr_flip,
 )
@@ -157,8 +159,6 @@ class TestJoinFixedDefaultRecords:
         }
 
     def test_join_aligned(self):
-        from typo_cot.analysis.fixed_stats import join_fixed_default_records
-
         default = [self._rec("a", True, 0.2, 0.5), self._rec("b", False, 0.9, 0.8)]
         fixed = [self._rec("b", False, 0.95, 0.81), self._rec("a", True, 0.6, 0.5)]
         out = join_fixed_default_records(default, fixed, k="top10")
@@ -170,8 +170,6 @@ class TestJoinFixedDefaultRecords:
         assert list(out["rouge_fixed"]) == [0.5, 0.81]
 
     def test_missing_ids_dropped(self):
-        from typo_cot.analysis.fixed_stats import join_fixed_default_records
-
         default = [self._rec("a", True, 0.2, 0.5), self._rec("c", False, 0.7, 0.6)]
         fixed = [self._rec("a", True, 0.6, 0.5)]
         out = join_fixed_default_records(default, fixed, k="top10")
@@ -182,11 +180,6 @@ class TestJoinFixedDefaultRecords:
 class TestDeltaRhoOwnRouge:
     def test_rouge_fixed_used_for_fixed_side(self):
         """rouge_fixed を渡すと fixed 側の偏相関はそれで統制される."""
-        from typo_cot.analysis.fixed_stats import (
-            paired_bootstrap_delta_rho,
-            partial_corr_flip,
-        )
-
         j, flip, rouge = _synthetic(n=200, seed=2)
         rng = np.random.default_rng(4)
         rouge_fixed = rng.uniform(0, 1, 200)
@@ -213,8 +206,6 @@ class TestFormatMetaComparison:
         return rows, fmt
 
     def test_group_means_and_diff(self):
-        from typo_cot.analysis.fixed_stats import format_meta_comparison
-
         rows, fmt = self._rows([0.0, 0.02], [0.3, 0.5], k="top10")
         res = format_meta_comparison(rows, fmt, k="top10", n_perm=200, seed=0)
         assert res["mean_delta_free"] == pytest.approx(0.01)
@@ -224,8 +215,6 @@ class TestFormatMetaComparison:
         assert res["n_mc"] == 2
 
     def test_separated_groups_low_p(self):
-        from typo_cot.analysis.fixed_stats import format_meta_comparison
-
         rows, fmt = self._rows(
             [0.0, 0.01, -0.01, 0.02, 0.0, 0.01],
             [0.3, 0.4, 0.35, 0.5, 0.45, 0.38],
@@ -234,16 +223,12 @@ class TestFormatMetaComparison:
         assert res["p_value"] < 0.05
 
     def test_deterministic(self):
-        from typo_cot.analysis.fixed_stats import format_meta_comparison
-
         rows, fmt = self._rows([0.0, 0.1], [0.2, 0.3])
         r1 = format_meta_comparison(rows, fmt, k="top10", n_perm=100, seed=5)
         r2 = format_meta_comparison(rows, fmt, k="top10", n_perm=100, seed=5)
         assert r1 == r2
 
     def test_unmapped_settings_ignored(self):
-        from typo_cot.analysis.fixed_stats import format_meta_comparison
-
         rows, fmt = self._rows([0.0], [0.2])
         rows.append({"setting": "unknown", "k": "top10", "delta_rho": 9.9})
         res = format_meta_comparison(rows, fmt, k="top10", n_perm=50, seed=2)
