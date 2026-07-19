@@ -59,6 +59,7 @@ def run_cells(
     generate_fn: GenerateFn,
     batch_size: int = 8,
     trigger_pattern: str | None = None,
+    dedup_same_answer_triggers: bool = False,
 ) -> list[CellOutcome]:
     """全ペアの 4 セルを teacher-forcing で流し、答えを抽出する.
 
@@ -67,6 +68,8 @@ def run_cells(
         generate_fn: プロンプトリスト → 継続テキストリスト (greedy を想定)
         batch_size: generate_fn 1 回に渡す最大プロンプト数
         trigger_pattern: 答え句の正規表現 (モデル別差し替え)
+        dedup_same_answer_triggers: 同一答えの複数トリガーを除外しない
+            (cell_builder.build_cell_inputs に委譲。既定 False で従来挙動)
 
     Returns:
         pairs と同順の CellOutcome リスト
@@ -77,7 +80,14 @@ def run_cells(
     extractor = create_extractor(pairs[0].benchmark)
 
     # 4 セル × 全サンプルのタスクを平坦化してバッチ処理
-    cell_inputs = [build_cell_inputs(p, trigger_pattern=trigger_pattern) for p in pairs]
+    cell_inputs = [
+        build_cell_inputs(
+            p,
+            trigger_pattern=trigger_pattern,
+            dedup_same_answer_triggers=dedup_same_answer_triggers,
+        )
+        for p in pairs
+    ]
     tasks: list[tuple[int, str, str]] = []  # (pair_idx, cell, full_input)
     for i, ci in enumerate(cell_inputs):
         for cell in CELLS:

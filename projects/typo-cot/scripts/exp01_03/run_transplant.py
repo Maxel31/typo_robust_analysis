@@ -84,6 +84,14 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="答え句の正規表現 (モデル別差し替え。既定: The answer is)",
     )
+    p.add_argument(
+        "--dedup-same-answer-triggers",
+        action="store_true",
+        help=(
+            "同一答えを繰り返すだけの複数トリガー (Qwen の癖) を multi_trigger 除外"
+            "しない。切断点は最初のトリガー直前で不変 (既定 False で従来挙動)"
+        ),
+    )
     p.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
     return p.parse_args()
 
@@ -217,7 +225,11 @@ def main() -> None:
     generate_fn = build_generate_fn(wrapper, args.max_new_tokens)
     logger.info("4 セル生成を開始 (batch_size=%d)", args.batch_size)
     outcomes = run_cells(
-        pairs, generate_fn, batch_size=args.batch_size, trigger_pattern=args.trigger_pattern
+        pairs,
+        generate_fn,
+        batch_size=args.batch_size,
+        trigger_pattern=args.trigger_pattern,
+        dedup_same_answer_triggers=args.dedup_same_answer_triggers,
     )
 
     table = flip_table(outcomes)

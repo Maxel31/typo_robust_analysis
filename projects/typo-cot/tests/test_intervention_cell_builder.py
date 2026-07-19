@@ -151,6 +151,63 @@ class TestBuildCellInputs:
         assert cells.exclude is True
         assert "no_trigger_typo" in cells.exclude_reasons
 
+    def test_dedup_off_by_default_excludes_same_answer_multitrigger(self, pair):
+        # Qwen 癖: 同一答えを2回述べる ("The answer is 18. --- The answer is 18.")
+        # 既定 (dedup 無効) では従来どおり multi_trigger で除外される (後方互換)
+        pair.cot_clean = (
+            "\nShe computes 9 * 2 = 18.\nThe answer is 18.\n--- The answer is 18.\n"
+        )
+        cells = build_cell_inputs(pair)
+        assert cells.truncation["clean"].trigger_count == 2
+        assert "multi_trigger_clean" in cells.exclude_reasons
+        assert cells.exclude is True
+
+    def test_truncation_records_trigger_answers(self, pair):
+        pair.cot_clean = (
+            "\nShe computes 9 * 2 = 18.\nThe answer is 18.\n--- The answer is 18.\n"
+        )
+        cells = build_cell_inputs(pair)
+        t = cells.truncation["clean"]
+        assert t.trigger_answers == ["18", "18"]
+        assert t.trigger_answers_identical is True
+
+    def test_truncation_different_answers_not_identical(self, pair):
+        pair.cot_clean = "Reason.\nThe answer is 3.\nWait, recompute.\nThe answer is 5.\n"
+        cells = build_cell_inputs(pair)
+        t = cells.truncation["clean"]
+        assert t.trigger_answers == ["3", "5"]
+        assert t.trigger_answers_identical is False
+
+    def test_dedup_on_keeps_same_answer_multitrigger(self, pair):
+        # dedup 有効時: 同一答えの重複は良性とみなし除外しない (n_incl 回復)
+        pair.cot_clean = (
+            "\nShe computes 9 * 2 = 18.\nThe answer is 18.\n--- The answer is 18.\n"
+        )
+        pair.cot_typo = " She computes 9 * 2 = 17.\nThe answer is 17.\n--- The answer is 17.\n"
+        cells = build_cell_inputs(pair, dedup_same_answer_triggers=True)
+        assert "multi_trigger_clean" not in cells.exclude_reasons
+        assert "multi_trigger_typo" not in cells.exclude_reasons
+        assert cells.exclude is False
+        # 切断点は最初のトリガー直前のまま (再生成不要)
+        assert cells.forced_cots["A"] == "\nShe computes 9 * 2 = 18.\n"
+        assert "The answer is" not in cells.forced_cots["A"]
+
+    def test_dedup_on_still_excludes_different_answers(self, pair):
+        # 異なる答えのトリガーは真の曖昧さ → dedup 有効でも除外を維持
+        pair.cot_clean = "Reason.\nThe answer is 3.\nWait, recompute.\nThe answer is 5.\n"
+        cells = build_cell_inputs(pair, dedup_same_answer_triggers=True)
+        assert "multi_trigger_clean" in cells.exclude_reasons
+        assert cells.exclude is True
+
+    def test_dedup_on_preserves_early_trigger_exclusion(self, pair):
+        # 同一答えでも序盤 (early_trigger) は別基準として除外を維持
+        pair.cot_clean = "The answer is 18. " + "x" * 300 + " The answer is 18."
+        cells = build_cell_inputs(pair, dedup_same_answer_triggers=True)
+        assert cells.truncation["clean"].trigger_answers_identical is True
+        assert "multi_trigger_clean" not in cells.exclude_reasons
+        assert "early_trigger_clean" in cells.exclude_reasons
+        assert cells.exclude is True
+
     def test_mmlu_prompt_uses_inline_choices_question(self):
         # MMLU 摂動データは選択肢込み質問 (choices=None) — そのまま骨格に入る
         pair = PairRecord(
