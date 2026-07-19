@@ -123,7 +123,8 @@ def load_c_cell_flips(exp01_dir: Path) -> dict[tuple[str, str, str], dict[str, d
         mode = tail.replace("k4_", "")
         try:
             outcomes = json.load(open(od, encoding="utf-8"))
-        except Exception:
+        except Exception as e:
+            logger.warning("outcomes 読み込み失敗 %s: %s", od.parent.name, e)
             continue
         for o in outcomes:
             ans = o.get("answers", {})
@@ -441,6 +442,11 @@ def main() -> None:
     print(json.dumps(summary["sharp_prediction_gemma1b_csqa"], ensure_ascii=False, indent=2))
 
 
+def _fmt3(v: float | None) -> str:
+    """rho/p 等を小数点以下3桁で整形する (scipy 未使用時の None を N/A にガード)."""
+    return f"{v:.3f}" if v is not None else "N/A"
+
+
 def _write_report(path, settings, reg, ranking, rank, mh, crude, summary) -> None:
     lines = ["# 実験14: no-CoT ショートカット探針 — H14 判定\n"]
     lines.append(f"- 設定数: {len(settings)} (回帰採用 n={len(reg)})")
@@ -453,12 +459,12 @@ def _write_report(path, settings, reg, ranking, rank, mh, crude, summary) -> Non
     )
     st = summary["stratified_rank_correlation"]
     lines.append("- **層別 rank-corr (探索的, 全設定 rho≈0 は Simpson 型)**:")
-    lines.append(f"    - MC課題のみ noCoT_flip~DE: rho={st['mc_only_nocot_vs_DE']['rho']:.3f} "
-                 f"(p={st['mc_only_nocot_vs_DE']['p']:.3f}, n={st['mc_only_nocot_vs_DE']['n']})")
-    lines.append(f"    - 生成課題のみ noCoT_flip~DE: rho={st['generative_only_nocot_vs_DE']['rho']:.3f} "
+    lines.append(f"    - MC課題のみ noCoT_flip~DE: rho={_fmt3(st['mc_only_nocot_vs_DE']['rho'])} "
+                 f"(p={_fmt3(st['mc_only_nocot_vs_DE']['p'])}, n={st['mc_only_nocot_vs_DE']['n']})")
+    lines.append(f"    - 生成課題のみ noCoT_flip~DE: rho={_fmt3(st['generative_only_nocot_vs_DE']['rho'])} "
                  f"(n={st['generative_only_nocot_vs_DE']['n']})")
-    lines.append(f"    - 全設定 noCoT_flip~IE: rho={st['all_nocot_vs_IE']['rho']:.3f} / "
-                 f"MC noCoT_flip~IE: rho={st['mc_only_nocot_vs_IE']['rho']:.3f} "
+    lines.append(f"    - 全設定 noCoT_flip~IE: rho={_fmt3(st['all_nocot_vs_IE']['rho'])} / "
+                 f"MC noCoT_flip~IE: rho={_fmt3(st['mc_only_nocot_vs_IE']['rho'])} "
                  f"(noCoT_flip は DE 特異でなく typo 感受性全般を反映)")
     sp = summary["sharp_prediction_gemma1b_csqa"]
     lines.append(f"- 鋭い予測 (Gemma-1B×CSQA): 全設定 top25%={sp['top_quartile_hit_all']} "
