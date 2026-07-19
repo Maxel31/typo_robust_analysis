@@ -107,11 +107,141 @@ Random-4 は `--perturbed-dir ..._k4_random`。全 25 設定は docs/v1_run_mani
 除外サンプル分だけ 99% を割り得るため、非除外限定の一致率も併記するか
 基準の母集団を明文化すること。
 
-## 残タスク / 注意
+## 本番キュー (2026-07-15)
 
-- DeepSeek-R1-Distill-Qwen-7B はアーカイブに生成ログがないため、
-  まず clean/typo の CoT 生成から必要 (別途; trigger_pattern も要調整)。
-- MATH-500 / 拡張モデルの一部もアーカイブ有無を確認のこと。
+- **スコープ**: M5 (gemma-3-1b/4b, Llama-3.2-1B/3B, Mistral-7B-v0.3) × B5
+  (gsm8k/mmlu/mmlu_pro/arc/commonsense_qa) × {k4_importance, k4_random} = 50 設定。
+  アーカイブに全 50 の baseline/perturbed ログを確認済み (計 79,618 結合ペア)。
+  mmlu (2850 ペア) のみ `--start`/`--n` で 2 分割 → **総シャード数 60**。
+  n は全量 (`--clean-correct-only` なし。clean 正解条件付けは分析側 flip_table が適用)。
+  batch_size=8 / max_new_tokens=16 (スモーク実測準拠の既定値)。
+- **TE 再現一致率の判定母集団は非除外サンプル限定** (multi_trigger 等の構造的除外は
+  アーカイブと一致し得ないため)。全件比は参考値として verify_shard.py が併記。
+- **キュー構成** (`scripts/exp01_03/`):
+  - `make_shards.py` → `shards_all.tsv` (60 行)。Qwen2.5-7B / R1蒸留 / MATH-500 は
+    基盤生成完了後に **shards_active.tsv へ行を追記するだけ**でキューが拾う
+    (worker はループ毎に一覧を再読込)。
+  - `queue_worker.sh`: 冪等スキップ (summary.json 存在)・mkdir 原子 claim・
+    stale claim 自動回収 (pid 生存確認)・進捗 JSON
+    (`results/exp01_03/queue/progress_<id>.json`)。GPU は run_with_gpu.sh 経由のみ。
+    rc=86 (PAUSED) はワーカー終了、rc=124 (ロック待ちタイムアウト) は failed に
+    せず再試行。失敗は `queue/failed/<name>` (削除で再試行)。
+  - 起動: `cd <proj> && WORKER_ID=wN setsid nohup bash scripts/exp01_03/queue_worker.sh
+    < /dev/null >> logs/exp01_03/worker_wN.log 2>&1 &`
+  - 監視: `bash scripts/exp01_03/queue_status.sh` / 停止: `touch results/exp01_03/queue/STOP`
+  - 検証: `uv run python scripts/exp01_03/verify_shard.py results/exp01_03/<shard>`
+- **段階投入**: 検証シャード 2 本 (gemma-3-4b gsm8k LXT-4/Random-4 全量) を先行実行し、
+  TE 再現率 (非除外)・flip 表・KL 集中がスモーク水準であることを確認してから
+  残り 58 シャードを shards_active.tsv に追記する。
+
+## 検証シャード結果 (2026-07-15, 本実行 gate PASS)
+
+gemma-3-4b-it × gsm8k 全量 (n=1319) × 両摂動条件。GPU 6 で各 ~11〜14 分
+(≈0.6 s/sample、スモーク実測どおり)。
+
+| 指標 | LXT-4 | Random-4 | スモーク水準 |
+|---|---|---|---|
+| TE 再現一致率 (非除外) | 99.66% (1183/1187) | 99.83% (1199/1201) | 100% (29/29) |
+| TE 再現一致率 (全件, 参考) | 96.66% | 97.35% | 96.88% |
+| flip TE / DE / IE | 9.79% / 1.34% / 9.60% | 5.71% / 1.33% / 5.81% | (n=22: TE2/DE0/IE2) |
+| headline restore rate | 93.1% | 90.0% | 1.0 |
+| KL 上位10%集中 (平均/中央値) | 93.6% / 96.0% | 88.5% / 90.3% | 93.1% / 94.6% |
+| divergence alignment | 1187/1187 | 1201/1201 | 29/29 |
+
+- **両条件で IE≈TE・DE 小 (パターンX方向)、効果量は LXT > Random** — 修正Aの
+  報告論理 (分解構造の両条件一致) と整合する第一データ点。
+- 非除外 TE 不一致の内訳 (LXT側 4件): max_new_tokens=16 到達による答え句切断 2件
+  (gsm8k_00240, 01218 — 答え句の前に一文を再掲するケース)、再トークン化境界での
+  greedy 分岐 2件 (gsm8k_00844, 01265 — "Alternatively," 継続)。~0.3% の
+  teacher-forcing 固有アーティファクトで、全セル対称 (max長は計画の ≦16 凍結値を維持)。
+
+## 本番実行完了 (2026-07-15 16:51, M5×B5×2条件 全60シャード)
+
+09:26 開始 → 16:51 全完了 (ワーカー2〜3並列、失敗 0・再実行 0)。
+`results/exp01_03/<shard>/{summary.json,outcomes.json,divergence/}`。
+
+- 生成ペア 79,618 (4セル×答えスパン)、主分析対象 (A正解×非除外) 39,275
+- **TE 再現一致率 (非除外, pooled): 98.23%** (67,251/68,462)。モデル別では
+  gemma-3-4b ≈99.7% / Llama-3B ≈99% / Mistral-7B ≈98.5% / Llama-1B ≈97.5% /
+  gemma-3-1b ≈95% (最低 mmlu_pro 92.2%)。小型モデルほど再トークン化境界の
+  greedy 分岐と max16 切断の影響が大きい (全セル対称なので分解には内的整合)
+- **divergence 68,462 プロファイル、alignment 失敗 0**
+- pooled flip: LXT-4 TE=23.9% / DE=7.4% / IE=19.7% (IE/TE=0.83, DE/TE=0.31)、
+  Random-4 TE=17.0% / DE=6.1% / IE=13.6% (IE/TE=0.80, DE/TE=0.36)
+  → **IE優位の分解構造が両摂動条件で一致、効果量は LXT > Random** (修正Aの見出し論理成立)
+- ベンチ形式差: gsm8k (自由記述) は DE ≈1〜3% で restore 90〜99% (パターンX鮮明)、
+  多肢選択は DE がやや大 (計画の予想どおり)
+- 集計テーブルは `scripts/exp01_03/verify_shard.py` を全シャードに回して再現可能
+
+## R1蒸留系 (DeepSeek-R1-Distill-Qwen-7B) 実験1+3 — 最終実験セル (2026-07-19)
+
+実験10-③「R1蒸留系は実験1・3のみ参加」。生成ログは exp-10-scope worktree
+(`outputs/{baseline,perturbed}/DeepSeek-R1-Distill-Qwen-7B_{gsm8k,math,mmlu}_*`)
+に完備。R1 の生成規約 (チャットテンプレート・<think>分離・答え抽出チェーン) は
+`src/typo_cot/models/reasoning.py` を exp/10-scope から移植して参照実装とした。
+
+### 設計判断 (R1 差分の <think> 構造への自然拡張)
+
+1. **移植点 (CoT 切断点)**: 「<think> 開始 〜 </think> 直後の答え文の答え宣言直前」。
+   forced CoT = <think>本文 + </think> + (答え文の最初の答え宣言直前まで)。基底
+   モデルの「"The answer is" 直前で切断→短スパン再生成」を <think> 構造へ写像した
+   もの。宣言直前で切るので teacher-forcing 再生成は宣言+答えの短スパンのみ
+   (max_new_tokens: gsm8k/mmlu=64, math=128)。実装: `intervention/reasoning_cells.py`
+   の `truncate_reasoning_cot` (cell_builder に `truncator=` 注入)。
+2. **答えトリガー**: 基底の "The answer is" のみでは MMLU 包含率が 47% まで落ちる
+   (R1 は Answer:/ANSWER:/The correct option is/\boxed{} も使う)。`</think>` 後の
+   答え文に対し `REASONING_ANSWER_TRIGGER` (これらを網羅) を適用。<think> 本文内の
+   推論句 ("so the answer is X") はトリガーにしない (本文は常に丸ごと移植)。
+3. **除外規則の自然拡張** (凍結規則の意図=「答えに到達し、forced prefix に答えが
+   漏れない」を <think> 構造で満たす):
+   - `no_trigger`: </think> 未生成 (CoT 途中切断) or 答え文に宣言なし。
+   - `multi_trigger`: R1 は同一答えを反復宣言する癖が強い (Qwen 先例と同様)。
+     最初の宣言直前で切れば再生成は最初の宣言を復元するので反復は曖昧でない。
+     `dedup_same_answer_triggers=True` (R1 は既定 ON) で **全宣言が同一答えなら
+     除外しない**。答えが途中で変わる真の曖昧さのみ除外。除外込みは
+     `flip_rate_sensitivity` に併記。
+   - `early_trigger`: 常に False (<think> 本文は常に丸ごと移植)。
+   - `residual`: 答え文の宣言直前プロセにのみ適用 (<think> 本文は対象外)。
+   実測 dedup 込み包含率: gsm8k≈87-92% / mmlu≈73-75% / math≈66-71%
+   (multi_diff=真の曖昧さのみ除外)。dedup 無効なら mmlu は 23% まで落ちる。
+4. **プロンプト**: チャットテンプレート (`build_full_prompt`) を `prompt_builder=`
+   注入。tokenize は `add_special_tokens=False` (テンプレートが `<｜begin▁of▁sentence｜>`
+   を内包)。生成は専用 `build_reasoning_generate_fn` (新規トークン ID のみ
+   skip_special_tokens=True でデコード。ModelWrapper.generate_batch の文字列
+   スライスは特殊トークン skip で位置ずれするため不使用)。
+5. **抽出**: 再生成スパンは `reasoning.extract_reasoning_answer` チェーン
+   (`extract_fn=` 注入。$ 記号・boxed フォールバック込み) で抽出。
+6. **divergence (実験3)**: <think> 本文全体を強制 CoT として位置別 KL/rank を計算。
+   tokenize は add_special_tokens=False。precision@k は R1 では R_C 未計算
+   (`rc_computed=False`, cot_top_k_words=[]) のため N/A (KL/onset プロファイルのみ)。
+   モデル依存を注入で隔離 (build_cell_inputs/run_cells に prompt_builder/truncator/
+   extract_fn パラメータ追加。既定 None で基底5モデルの挙動は完全不変=既存テスト
+   44件 GREEN 維持)。
+7. **reasoning モード判定**: `is_reasoning_model` がモデル名 (r1-distill/deepseek-r1)
+   から自動判定。`--reasoning` フラグでも明示可。キュー行は基底と同形式で追加のみ。
+
+### スモーク結果 (2026-07-19, gate PASS)
+
+n=16 × 3ベンチ (LXT-4)、GPU 3/4/5:
+
+| ベンチ | TE 再現 (非除外) | divergence alignment | 除外 |
+|---|---|---|---|
+| gsm8k | 10/10 = 100% | 10/10 (失敗0) | 6 (multi_diff 2, no_trigger 4) |
+| mmlu  | 12/12 = 100% | 12/12 (失敗0) | 4 (multi_diff 1, no_trigger 3) |
+| math  | 8/9 = 89%     | 9/9 (失敗0)   | 7 (multi_diff 5, no_trigger 5) |
+
+- 4セル整合: 例 gsm8k_00002 A=195000/B=70000/C=195000(DE復帰)/D=70000(IE flip)
+  — CoT 媒介 (パターンX) の signature。boxed/選択肢/数値の抽出すべて正常。
+- reasoning=True・dedup=True・max_new_tokens 64/128 が自動解決されることを確認。
+
+### 本番キュー (2026-07-19 投入)
+
+6設定 = {gsm8k, math, mmlu} × {LXT-4, Random-4}。全量 (gsm8k 1319 / math 500 /
+mmlu 5700)。mmlu は 1425×4 シャード → 総 12 シャード。`shards_active.tsv` に追記
+(基底と同形式・追加のみ)。GPU 3/4/5/6, worker 4本, run_with_gpu.sh flock 経由。
+
+## 残タスク / 注意 (基底5モデル分)
+
 - precision@10 の語タイプ対応はトークン近似 (KL 側) vs 単語 (R_C 側)。
   本実行前に offset_mapping ベースの単語集約に精緻化する余地あり。
 - LOO ランキング比較 (修正B) は未実装 (実験8 側と共有予定のため保留)。

@@ -1,0 +1,91 @@
+{
+  "cpu_smoke": {
+    "gsm8k": {
+      "dataset": "gemma-3-4b-it_gsm8k_k4_matched_rnd",
+      "smd_table": {
+        "n_targets": 5276,
+        "n_matched": 5276,
+        "smd": {
+          "char_len": -0.015210473680909508,
+          "zipf": -0.2545383996527208,
+          "split_increment": 0.031779414175929915,
+          "centrality": -0.015928896368622623
+        },
+        "class_match_rate": 0.9998104624715694,
+        "exact_len_match_rate": 0.6029188779378317,
+        "mean_len_diff": 0.494882486732373,
+        "relaxation_rates": {
+          "exact": 0.42266868840030325,
+          "no_centrality": 0.18498862774829417,
+          "caliper": 0.2670583775587566,
+          "class_len": 0.12509476876421532,
+          "any": 0.00018953752843062926,
+          "unmatched": 0.0
+        }
+      },
+      "applied_from_matched_rate": 0.9257012888551933,
+      "vs_rebuttal": {
+        "n_common": 1319,
+        "mean_token_index_jaccard": 0.2464565507780064,
+        "identical_selection_rate": 0.01819560272934041
+      },
+      "rebuttal_log_mcnemar_check(all_paired)": {
+        "acc": {
+          "clean": 0.8347232752084913,
+          "lxt4": 0.7824109173616376,
+          "matched_rnd4": 0.8119787717968158
+        },
+        "drop_vs_clean": {
+          "lxt4": 0.05231235784685373,
+          "matched_rnd4": 0.022744503411675554
+        },
+        "lxt_vs_matched_risk_diff": 0.029567854435178165,
+        "mcnemar_p": 0.005315223860548184
+      }
+    },
+    "mmlu": {
+      "dataset": "gemma-3-4b-it_mmlu_k4_matched_rnd",
+      "smd_table": {
+        "n_targets": 11398,
+        "n_matched": 11390,
+        "smd": {
+          "char_len": 0.06978333034552453,
+          "zipf": -0.16085539909928223,
+          "split_increment": 0.04350363339154785,
+          "centrality": 0.27017758663392666
+        },
+        "class_match_rate": 0.9955223880597015,
+        "exact_len_match_rate": 0.5237928007023706,
+        "mean_len_diff": 0.7519754170324846,
+        "relaxation_rates": {
+          "exact": 0.320407088962976,
+          "no_centrality": 0.1541498508510265,
+          "caliper": 0.33883137392525003,
+          "class_len": 0.18143533953325144,
+          "any": 0.004474469205123706,
+          "unmatched": 0.0007018775223723461
+        }
+      },
+      "applied_from_matched_rate": 0.9489885664028144,
+      "vs_rebuttal": {
+        "n_common": 2850,
+        "mean_token_index_jaccard": 0.30856725146198827,
+        "identical_selection_rate": 0.06
+      },
+      "rebuttal_log_mcnemar_check(all_paired)": {
+        "acc": {
+          "clean": 0.632280701754386,
+          "lxt4": 0.5859649122807018,
+          "matched_rnd4": 0.611578947368421
+        },
+        "drop_vs_clean": {
+          "lxt4": 0.0463157894736842,
+          "matched_rnd4": 0.020701754385965
+        },
+        "lxt_vs_matched_risk_diff": 0.025614035087719297,
+        "mcnemar_p": 0.005199167279199624
+      }
+    }
+  },
+  "gpu_smoke": "PENDING (SMOKE_PAUSED by user directive; GPU 3/4 occupied)"
+}

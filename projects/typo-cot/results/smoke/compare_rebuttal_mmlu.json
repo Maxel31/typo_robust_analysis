@@ -1,0 +1,43 @@
+{
+  "ours": "data/exp5/matched_rnd/gemma-3-4b-it_mmlu_k4_matched_rnd",
+  "rebuttal": "/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/datasets/rebuttal/gemma-3-4b-it_mmlu_k4_matched_random",
+  "ours_mode": "matched_rnd",
+  "rebuttal_mode": "matched_random",
+  "n_ours": 2850,
+  "n_rebuttal": 2850,
+  "n_common": 2850,
+  "mean_token_index_jaccard": 0.30856725146198827,
+  "identical_selection_rate": 0.06,
+  "ours_stats": {
+    "n_targets": 11398,
+    "n_matched": 11390,
+    "smd": {
+      "char_len": 0.06978333034552453,
+      "zipf": -0.16085539909928223,
+      "split_increment": 0.04350363339154785,
+      "centrality": 0.27017758663392666
+    },
+    "class_match_rate": 0.9955223880597015,
+    "exact_len_match_rate": 0.5237928007023706,
+    "mean_len_diff": 0.7519754170324846,
+    "relaxation_rates": {
+      "exact": 0.320407088962976,
+      "no_centrality": 0.1541498508510265,
+      "caliper": 0.33883137392525003,
+      "class_len": 0.18143533953325144,
+      "any": 0.004474469205123706,
+      "unmatched": 0.0007018775223723461
+    }
+  },
+  "rebuttal_stats": {
+    "n_samples": 2850,
+    "n_matches": 11390,
+    "class_match_rate": 0.9966637401229148,
+    "exact_len_match_rate": 0.7443371378402107,
+    "mean_len_diff": 0.44679543459174714,
+    "template_class_dist": {
+      "content": 9812,
+      "function": 1578
+    }
+  }
+}

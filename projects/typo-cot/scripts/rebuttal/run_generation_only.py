@@ -41,7 +41,15 @@ def main() -> None:
     parser.add_argument("--max_new_tokens", type=int, default=512)
     parser.add_argument("--output_dir", type=str, default="outputs/rebuttal/perturbed")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--start", type=int, default=0,
+                        help="処理開始サンプル位置 (シャード実行用)")
+    parser.add_argument("--shard", action="store_true",
+                        help="シャードモード: 出力を <experiment>/shards/ に書き、"
+                             "merge_generation_shards.py で結合する")
     args = parser.parse_args()
+
+    if args.shard and args.limit is None:
+        parser.error("--shard には --limit (シャードサイズ) が必要です")
 
     import torch
 
@@ -99,9 +107,13 @@ def main() -> None:
             )
         )
         ps_by_id[ps.sample_id] = ps
+    shard_start = args.start
     if args.limit:
-        samples = samples[: args.limit]
-    logger.info(f"サンプル数: {len(samples)}")
+        shard_end = min(shard_start + args.limit, len(samples))
+    else:
+        shard_end = len(samples)
+    samples = samples[shard_start:shard_end]
+    logger.info(f"サンプル数: {len(samples)} (範囲 [{shard_start}, {shard_end}))")
 
     logger.info(f"モデルをロード: {args.model} (GPU {args.gpu_id})")
     wrapper = create_model_wrapper(
@@ -206,15 +218,36 @@ def main() -> None:
                 f"{done}/{len(samples)} ({rate:.2f}s/sample, 残り約{eta_min:.0f}分, "
                 f"正答率 {acc:.1%})"
             )
-            tmp = output_dir / "results.json.tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(results_list, f, ensure_ascii=False)
-            tmp.replace(output_dir / "results.json")
+            if not args.shard:
+                tmp = output_dir / "results.json.tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(results_list, f, ensure_ascii=False)
+                tmp.replace(output_dir / "results.json")
 
         del gen_results, batch_prompts
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    if args.shard:
+        shard_dir = output_dir / "shards"
+        shard_dir.mkdir(parents=True, exist_ok=True)
+        shard_path = shard_dir / f"{shard_start:05d}_{shard_end:05d}.json"
+        tmp = shard_path.with_suffix(".json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(
+                {"start": shard_start, "end": shard_end,
+                 "created_at": datetime.now().isoformat(),
+                 "results": results_list},
+                f, ensure_ascii=False,
+            )
+        tmp.replace(shard_path)
+        acc = correct_count / processed_count if processed_count else 0
+        logger.info(
+            f"シャード完了: {shard_path} (accuracy={acc:.4f}, "
+            f"{correct_count}/{processed_count})"
+        )
+        return
 
     with open(output_dir / "results.json", "w", encoding="utf-8") as f:
         json.dump(results_list, f, ensure_ascii=False, indent=2)
