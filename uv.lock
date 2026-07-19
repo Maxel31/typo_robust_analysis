@@ -3418,6 +3418,7 @@ dependencies = [
     { name = "scipy" },
     { name = "tqdm" },
     { name = "typo-utils" },
+    { name = "wordfreq" },
 ]
 
 [package.optional-dependencies]
@@ -3476,6 +3477,7 @@ requires-dist = [
     { name = "typo-utils", extras = ["tracking"], marker = "extra == 'tracking'", editable = "utils" },
     { name = "watchdog", marker = "extra == 'tracking'", specifier = ">=6" },
     { name = "wordcloud", marker = "extra == 'appendix'", specifier = ">=1.9" },
+    { name = "wordfreq", specifier = ">=3.1" },
     { name = "wordfreq", marker = "extra == 'matched'", specifier = ">=3.0" },
 ]
 provides-extras = ["lrp", "appendix", "matched", "tracking"]

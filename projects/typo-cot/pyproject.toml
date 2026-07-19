@@ -10,6 +10,8 @@ dependencies = [
     "scipy>=1.13",
     "pingouin>=0.5.5",
     "tqdm>=4.65",
+    # 実験2: matched-random 標的の頻度マッチングと置換語彙 (Zipf 頻度)
+    "wordfreq>=3.1",
 ]
 
 [project.optional-dependencies]
