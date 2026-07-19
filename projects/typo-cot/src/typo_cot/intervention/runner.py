@@ -60,6 +60,9 @@ def run_cells(
     batch_size: int = 8,
     trigger_pattern: str | None = None,
     dedup_same_answer_triggers: bool = False,
+    prompt_builder=None,
+    truncator=None,
+    extract_fn: Callable[[str], str] | None = None,
 ) -> list[CellOutcome]:
     """全ペアの 4 セルを teacher-forcing で流し、答えを抽出する.
 
@@ -70,6 +73,11 @@ def run_cells(
         trigger_pattern: 答え句の正規表現 (モデル別差し替え)
         dedup_same_answer_triggers: 同一答えの複数トリガーを除外しない
             (cell_builder.build_cell_inputs に委譲。既定 False で従来挙動)
+        prompt_builder: プロンプト骨格構築関数 (R1: チャットテンプレート)。
+            build_cell_inputs へ委譲 (None なら基底の生プロンプト)。
+        truncator: CoT 切断関数 (R1: <think> 構造対応)。build_cell_inputs へ委譲。
+        extract_fn: 答えスパン → 答え文字列。None なら基底ベンチ抽出器の extract。
+            R1蒸留系は reasoning 抽出チェーンを注入する。
 
     Returns:
         pairs と同順の CellOutcome リスト
@@ -78,6 +86,9 @@ def run_cells(
         return []
 
     extractor = create_extractor(pairs[0].benchmark)
+    _extract = (
+        extract_fn if extract_fn is not None else (lambda span: extractor.extract(span).extracted_answer)
+    )
 
     # 4 セル × 全サンプルのタスクを平坦化してバッチ処理
     cell_inputs = [
@@ -85,6 +96,8 @@ def run_cells(
             p,
             trigger_pattern=trigger_pattern,
             dedup_same_answer_triggers=dedup_same_answer_triggers,
+            prompt_builder=prompt_builder,
+            truncator=truncator,
         )
         for p in pairs
     ]
@@ -107,7 +120,7 @@ def run_cells(
     outcomes: list[CellOutcome] = []
     for i, (pair, ci) in enumerate(zip(pairs, cell_inputs, strict=True)):
         gen = {cell: generated[(i, cell)] for cell in CELLS}
-        answers = {cell: extractor.extract(gen[cell]).extracted_answer for cell in CELLS}
+        answers = {cell: _extract(gen[cell]) for cell in CELLS}
 
         ans_b = answers["B"].strip()
         archive_typo = (pair.answer_typo or "").strip()

@@ -42,8 +42,24 @@ from typo_cot.intervention.divergence import (
     shuffle_null_precision,
 )
 from typo_cot.intervention.records import PairRecord
+from typo_cot.intervention.reasoning_cells import (
+    make_reasoning_extract_fn,
+    make_reasoning_prompt_builder,
+    truncate_reasoning_cot,
+)
 from typo_cot.intervention.runner import run_cells
+from typo_cot.evaluation.extractor import create_extractor
 from typo_cot.models.wrapper import ModelWrapper
+
+# R1蒸留系 (reasoning モデル) の自動判定用マーカー
+_REASONING_MARKERS = ("r1-distill", "deepseek-r1")
+
+
+def is_reasoning_model(model_name: str) -> bool:
+    """モデル名から R1蒸留系 (reasoning モデル) かを判定する."""
+    low = model_name.lower()
+    return any(m in low for m in _REASONING_MARKERS)
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -67,7 +83,20 @@ def parse_args() -> argparse.Namespace:
         help="結合済みペアの先頭 start 件を読み飛ばす (大設定のシャード分割用)",
     )
     p.add_argument("--batch-size", type=int, default=8)
-    p.add_argument("--max-new-tokens", type=int, default=16)
+    p.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=None,
+        help="答えスパン再生成の最大トークン (既定: 基底16 / reasoning 64)",
+    )
+    p.add_argument(
+        "--reasoning",
+        action="store_true",
+        help=(
+            "R1蒸留系 (DeepSeek-R1-Distill) モード: チャットテンプレート + <think> 構造対応の"
+            "切断・抽出・生成を使う。モデル名から自動判定もされる"
+        ),
+    )
     p.add_argument(
         "--clean-correct-only",
         action="store_true",
@@ -108,6 +137,45 @@ def build_generate_fn(wrapper: ModelWrapper, max_new_tokens: int):
     return generate_fn
 
 
+def build_reasoning_generate_fn(wrapper: ModelWrapper, max_new_tokens: int):
+    """R1蒸留系の teacher-forcing 生成関数.
+
+    ModelWrapper.generate_batch は add_special_tokens=True + 文字列スライスで
+    継続テキストを取り出すが、R1 はチャットテンプレートが BOS を含み特殊トークン
+    (<｜Assistant｜> 等) が skip されると文字位置がずれる。そのため専用実装で
+    (a) add_special_tokens=False でトークナイズ、(b) 新規トークン ID のみを
+    skip_special_tokens=True でデコードして答えスパンを得る。greedy。
+    """
+    tok = wrapper.tokenizer
+
+    @torch.no_grad()
+    def generate_fn(prompts: list[str]) -> list[str]:
+        tok.padding_side = "left"
+        enc = tok(prompts, return_tensors="pt", padding=True, add_special_tokens=False)
+        input_ids = enc["input_ids"].to(wrapper.device)
+        attention_mask = enc["attention_mask"].to(wrapper.device)
+        input_len = input_ids.shape[1]
+        output_ids = wrapper.model.generate(
+            input_ids,
+            attention_mask=attention_mask,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            temperature=None,
+            top_p=None,
+            top_k=None,
+            pad_token_id=tok.pad_token_id,
+        )
+        spans: list[str] = []
+        for i in range(len(prompts)):
+            gen = output_ids[i, input_len:].tolist()
+            while gen and gen[-1] == tok.pad_token_id:
+                gen.pop()
+            spans.append(tok.decode(gen, skip_special_tokens=True))
+        return spans
+
+    return generate_fn
+
+
 @torch.no_grad()
 def dump_divergence_for_pair(
     wrapper: ModelWrapper,
@@ -116,20 +184,37 @@ def dump_divergence_for_pair(
     rank_threshold: int,
     precision_k: int,
     n_shuffles: int,
+    dedup_same_answer_triggers: bool = False,
+    prompt_builder=None,
+    truncator=None,
+    add_special_tokens: bool = True,
 ) -> dict | None:
     """A セル / C セル (DE 条件) の forward で位置別 divergence を計算する.
 
     clean run = (clean質問, clean CoT), typo run = (typo質問, clean CoT)。
     CoT は同一文字列なので位置は 1:1 対応 (質問長差のオフセットのみ)。
+
+    R1蒸留系はチャットテンプレート prompt_builder / <think> 対応 truncator を
+    注入し、tokenize は add_special_tokens=False (テンプレートが BOS を内包)。
     """
-    cells = build_cell_inputs(pair, trigger_pattern=trigger_pattern)
+    cells = build_cell_inputs(
+        pair,
+        trigger_pattern=trigger_pattern,
+        dedup_same_answer_triggers=dedup_same_answer_triggers,
+        prompt_builder=prompt_builder,
+        truncator=truncator,
+    )
     tok = wrapper.tokenizer
 
     ids_full: dict[str, list[int]] = {}
     prompt_lens: dict[str, int] = {}
     for run, cell in (("clean", "A"), ("typo", "C")):
-        prompt_ids = tok(cells.prompts[cell], return_tensors=None)["input_ids"]
-        full_ids = tok(cells.full_input(cell), return_tensors=None)["input_ids"]
+        prompt_ids = tok(
+            cells.prompts[cell], return_tensors=None, add_special_tokens=add_special_tokens
+        )["input_ids"]
+        full_ids = tok(
+            cells.full_input(cell), return_tensors=None, add_special_tokens=add_special_tokens
+        )["input_ids"]
         ids_full[run] = full_ids
         prompt_lens[run] = len(prompt_ids)
 
@@ -208,6 +293,15 @@ def main() -> None:
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    reasoning = args.reasoning or is_reasoning_model(args.model)
+    if args.max_new_tokens is None:
+        args.max_new_tokens = 64 if reasoning else 16
+    logger.info(
+        "mode=%s, max_new_tokens=%d",
+        "reasoning (R1)" if reasoning else "base",
+        args.max_new_tokens,
+    )
+
     pairs = load_pair_records(
         args.baseline_dir,
         args.perturbed_dir,
@@ -222,14 +316,33 @@ def main() -> None:
     wrapper = ModelWrapper(model_name=args.model, device=device, dtype=dtype)
     _ = wrapper.model  # ロード
 
-    generate_fn = build_generate_fn(wrapper, args.max_new_tokens)
+    # reasoning モード: R1蒸留系の注入部品 (チャットテンプレート・<think> 切断・
+    # 抽出チェーン) を組み立てる。基底モデルは None のまま従来挙動。
+    prompt_builder = None
+    truncator = None
+    extract_fn = None
+    dedup = args.dedup_same_answer_triggers
+    add_special_tokens = True
+    if reasoning:
+        prompt_builder = make_reasoning_prompt_builder(wrapper.tokenizer)
+        truncator = truncate_reasoning_cot
+        extract_fn = make_reasoning_extract_fn(create_extractor(args.benchmark))
+        dedup = True  # R1 の反復宣言を良性の重複として扱う (感度分析で除外込みも報告)
+        add_special_tokens = False  # チャットテンプレートが BOS を内包
+        generate_fn = build_reasoning_generate_fn(wrapper, args.max_new_tokens)
+    else:
+        generate_fn = build_generate_fn(wrapper, args.max_new_tokens)
+
     logger.info("4 セル生成を開始 (batch_size=%d)", args.batch_size)
     outcomes = run_cells(
         pairs,
         generate_fn,
         batch_size=args.batch_size,
         trigger_pattern=args.trigger_pattern,
-        dedup_same_answer_triggers=args.dedup_same_answer_triggers,
+        dedup_same_answer_triggers=dedup,
+        prompt_builder=prompt_builder,
+        truncator=truncator,
+        extract_fn=extract_fn,
     )
 
     table = flip_table(outcomes)
@@ -260,6 +373,10 @@ def main() -> None:
                 args.divergence_rank_threshold,
                 args.precision_k,
                 args.n_shuffles,
+                dedup_same_answer_triggers=dedup,
+                prompt_builder=prompt_builder,
+                truncator=truncator,
+                add_special_tokens=add_special_tokens,
             )
             if rec is None:
                 continue
@@ -315,6 +432,8 @@ def main() -> None:
             "max_new_tokens": args.max_new_tokens,
             "clean_correct_only": args.clean_correct_only,
             "dump_divergence": args.dump_divergence,
+            "reasoning": reasoning,
+            "dedup_same_answer_triggers": dedup,
             "timestamp": datetime.now().isoformat(),
         },
         "flip_table": table,
