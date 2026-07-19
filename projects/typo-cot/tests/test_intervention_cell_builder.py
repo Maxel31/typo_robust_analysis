@@ -208,6 +208,58 @@ class TestBuildCellInputs:
         assert "early_trigger_clean" in cells.exclude_reasons
         assert cells.exclude is True
 
+    def test_strip_conclusion_removes_last_line_of_cell_c_only(self):
+        # A2 (ii): セルC (typo質問+clean CoT) の強制CoT末尾行を除去するオプション。
+        # 末尾の読み上げ行に金答え数値が載る GSM8K で、これを消しても restore が
+        # 保たれれば「丸写しでなく再導出」を支持する。
+        pair = PairRecord(
+            sample_id="gsm8k_00001",
+            model="google/gemma-3-4b-it",
+            benchmark="gsm8k",
+            question_clean="Q clean?",
+            question_typo="Q tpyo?",
+            choices_clean=None,
+            choices_typo=None,
+            subset="default",
+            correct_answer="18",
+            cot_clean="\nFirst 16 - 3 - 4 = 9 eggs.\nSo she makes 9 * 2 = 18 dollars.\nThe answer is 18.\n",
+            cot_typo="\nFirst 16 - 3 - 4 = 9 eggs.\nShe makes 9 * 2 = 17.\nThe answer is 17.\n",
+            answer_clean="18",
+            answer_typo="17",
+            is_correct_clean=True,
+        )
+        base = build_cell_inputs(pair)
+        stripped = build_cell_inputs(pair, strip_conclusion_mode="last_line")
+        # C セルは末尾行 (= 18 dollars) が消え、金答え数値がリークしなくなる
+        assert "18 dollars" in base.forced_cots["C"]
+        assert "18 dollars" not in stripped.forced_cots["C"]
+        assert "9 eggs" in stripped.forced_cots["C"]  # 前段の推論は保持
+        # A/B/D セルは不変 (C のみ剥ぐ)
+        assert stripped.forced_cots["A"] == base.forced_cots["A"]
+        assert stripped.forced_cots["B"] == base.forced_cots["B"]
+        assert stripped.forced_cots["D"] == base.forced_cots["D"]
+
+    def test_strip_conclusion_none_is_noop(self):
+        pair = PairRecord(
+            sample_id="gsm8k_00002",
+            model="google/gemma-3-4b-it",
+            benchmark="gsm8k",
+            question_clean="Q?",
+            question_typo="Q typo?",
+            choices_clean=None,
+            choices_typo=None,
+            subset="default",
+            correct_answer="18",
+            cot_clean="\nStep.\nSo 9 * 2 = 18.\nThe answer is 18.\n",
+            cot_typo="\nStep.\nSo 9 * 2 = 17.\nThe answer is 17.\n",
+            answer_clean="18",
+            answer_typo="17",
+            is_correct_clean=True,
+        )
+        a = build_cell_inputs(pair)
+        b = build_cell_inputs(pair, strip_conclusion_mode=None)
+        assert a.forced_cots == b.forced_cots
+
     def test_mmlu_prompt_uses_inline_choices_question(self):
         # MMLU 摂動データは選択肢込み質問 (choices=None) — そのまま骨格に入る
         pair = PairRecord(

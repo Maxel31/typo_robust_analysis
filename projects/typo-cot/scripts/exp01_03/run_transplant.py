@@ -122,6 +122,16 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
+    p.add_argument(
+        "--strip-conclusion-mode",
+        default=None,
+        choices=["last_line", "last_sentence"],
+        help=(
+            "A2 (ii) 結論剥ぎ: C セル (typo質問+clean CoT) の強制 CoT の末尾行/文を"
+            "除去して restore を再測定する。GSM8K の末尾読み上げ行に金答え数値が"
+            "載る「丸写し」経路を潰す検証用 (既定 None で従来挙動)"
+        ),
+    )
     return p.parse_args()
 
 
@@ -343,6 +353,7 @@ def main() -> None:
         prompt_builder=prompt_builder,
         truncator=truncator,
         extract_fn=extract_fn,
+        strip_conclusion_mode=args.strip_conclusion_mode,
     )
 
     table = flip_table(outcomes)
@@ -434,6 +445,7 @@ def main() -> None:
             "dump_divergence": args.dump_divergence,
             "reasoning": reasoning,
             "dedup_same_answer_triggers": dedup,
+            "strip_conclusion_mode": args.strip_conclusion_mode,
             "timestamp": datetime.now().isoformat(),
         },
         "flip_table": table,

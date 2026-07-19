@@ -63,6 +63,7 @@ def run_cells(
     prompt_builder=None,
     truncator=None,
     extract_fn: Callable[[str], str] | None = None,
+    strip_conclusion_mode: str | None = None,
 ) -> list[CellOutcome]:
     """全ペアの 4 セルを teacher-forcing で流し、答えを抽出する.
 
@@ -78,6 +79,8 @@ def run_cells(
         truncator: CoT 切断関数 (R1: <think> 構造対応)。build_cell_inputs へ委譲。
         extract_fn: 答えスパン → 答え文字列。None なら基底ベンチ抽出器の extract。
             R1蒸留系は reasoning 抽出チェーンを注入する。
+        strip_conclusion_mode: A2 (ii) 結論剥ぎ。C セルの clean CoT 末尾を除去する
+            (build_cell_inputs へ委譲。None なら従来挙動)。
 
     Returns:
         pairs と同順の CellOutcome リスト
@@ -98,6 +101,7 @@ def run_cells(
             dedup_same_answer_triggers=dedup_same_answer_triggers,
             prompt_builder=prompt_builder,
             truncator=truncator,
+            strip_conclusion_mode=strip_conclusion_mode,
         )
         for p in pairs
     ]

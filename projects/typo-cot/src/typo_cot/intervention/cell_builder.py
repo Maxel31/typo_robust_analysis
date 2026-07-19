@@ -189,6 +189,7 @@ def build_cell_inputs(
     dedup_same_answer_triggers: bool = False,
     prompt_builder: Callable[[str, str, list[str] | None, str | None], str] | None = None,
     truncator: Callable[[str, str, str | None], TruncationResult] | None = None,
+    strip_conclusion_mode: str | None = None,
 ) -> CellInputs:
     """4 セルの teacher-forcing 入力を構築する.
 
@@ -207,6 +208,10 @@ def build_cell_inputs(
         truncator: CoT 切断関数 (cot, benchmark, trigger_pattern) → TruncationResult。
             None なら基底の truncate_before_answer。R1蒸留系は <think> 構造対応の
             reasoning_cells.truncate_reasoning_cot を注入する。
+        strip_conclusion_mode: A2 (ii) 結論剥ぎ。None 以外 ("last_line"/"last_sentence")
+            を指定すると **C セル (typo質問 + clean CoT) の強制 CoT の末尾** を
+            leak_audit.strip_conclusion で除去する。GSM8K で末尾の読み上げ計算行に
+            金答え数値が載る事例の「丸写し」経路を潰すための介入。A/B/D は不変。
 
     Returns:
         CellInputs
@@ -229,6 +234,12 @@ def build_cell_inputs(
     for cell, (q_side, cot_side) in CELL_DEFINITIONS.items():
         prompts[cell] = prompt_by_q[q_side]
         forced_cots[cell] = trunc[cot_side].prefix
+
+    if strip_conclusion_mode:
+        # C セル (DE 条件) の clean CoT の末尾のみ剥ぐ (A2 ii)。他セルは不変。
+        from typo_cot.intervention.leak_audit import strip_conclusion
+
+        forced_cots["C"] = strip_conclusion(forced_cots["C"], mode=strip_conclusion_mode)
 
     reasons: list[str] = []
     for side in ("clean", "typo"):
