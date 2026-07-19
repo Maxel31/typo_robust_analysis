@@ -242,9 +242,8 @@ def main() -> None:
 
     pbar.close()
     n_correct = sum(1 for r in rows if r.get("is_correct"))
-    logger.info(
-        f"シャード完了: {len(rows)}件, 正答率={n_correct / len(rows):.2%}, 保存: {shard_path}"
-    )
+    accuracy = n_correct / len(rows) if rows else 0
+    logger.info(f"シャード完了: {len(rows)}件, 正答率={accuracy:.2%}, 保存: {shard_path}")
 
 
 if __name__ == "__main__":
