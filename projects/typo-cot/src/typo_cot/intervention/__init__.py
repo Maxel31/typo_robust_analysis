@@ -1,4 +1,4 @@
-"""介入実験モジュール (実験1: CoT移植 2×2 / 実験2: ターゲット単語削除LOO / 実験3: forced-decoding divergence / 実験6: AttnLRP帰属手法収束性 / 実験8: activation patching)."""
+"""介入実験モジュール (実験1: CoT移植 2×2 / 実験2: ターゲット単語削除LOO / 実験3: forced-decoding divergence / 実験6: AttnLRP帰属手法収束性 / 実験8: activation patching / 実験15: patch->free generation)."""
 
 from typo_cot.intervention.analysis import (
     bootstrap_ci,
@@ -19,6 +19,16 @@ from typo_cot.intervention.divergence import (
     positionwise_divergence,
     precision_at_k,
     shuffle_null_precision,
+)
+from typo_cot.intervention.free_generation import (
+    AlignedSpans,
+    align_span_positions,
+    cot_rouge_l,
+    cot_rouge_l_f,
+    divergence_index,
+    generate_ids,
+    generate_ids_patched,
+    locate_word_char_spans,
 )
 from typo_cot.intervention.patching import (
     DIRECTIONS,
@@ -48,6 +58,7 @@ __all__ = [
     "DIRECTIONS",
     "SITES",
     "ActivationCache",
+    "AlignedSpans",
     "CellInputs",
     "CellOutcome",
     "FirstDivergence",
@@ -57,21 +68,28 @@ __all__ = [
     "TruncationResult",
     "align_by_relative_depth",
     "align_cot_targets",
+    "align_span_positions",
     "bootstrap_ci",
     "bootstrap_flip_cis",
     "build_cell_inputs",
     "capture_activations",
+    "cot_rouge_l",
+    "cot_rouge_l_f",
     "cumulative_windows",
+    "divergence_index",
     "divergence_onset",
     "find_decoder_layers",
     "first_divergence",
     "flip_table",
+    "generate_ids",
+    "generate_ids_patched",
     "get_site_module",
     "glmm_decomposition",
     "iter_patch_cells",
     "kl_from_logits",
     "layer_windows",
     "load_pair_records",
+    "locate_word_char_spans",
     "positionwise_divergence",
     "precision_at_k",
     "relative_depth",
