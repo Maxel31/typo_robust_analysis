@@ -653,6 +653,14 @@ wheels = [
 ]
 
 [[package]]
+name = "en-core-web-sm"
+version = "3.8.0"
+source = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
+wheels = [
+    { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl", hash = "sha256:1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85" },
+]
+
+[[package]]
 name = "executing"
 version = "2.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2818,6 +2826,25 @@ wheels = [
 ]
 
 [[package]]
+name = "sentence-transformers"
+version = "5.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+    { name = "torch" },
+    { name = "tqdm" },
+    { name = "transformers" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f9/56/d2cb00765a6b15c994a7fccf20f9032f16e8193ca49147cb5155166ad744/sentence_transformers-5.6.0.tar.gz", hash = "sha256:0e7164d051e416c1853ade7c274ff52af3f9da0f4be7f0b83d734c27699e1057", size = 453194, upload-time = "2026-06-16T14:01:56.42Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/76/c1/dc1582b79e9a2eb0cddf9559cd9bcdff084f541d6fe881fdd9d98630dba7/sentence_transformers-5.6.0-py3-none-any.whl", hash = "sha256:d2075b5e687a1611005e20ab04a6846994d51adfcf39610aed066af3c0c0b81f", size = 596411, upload-time = "2026-06-16T14:01:55.103Z" },
+]
+
+[[package]]
 name = "sentencepiece"
 version = "0.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -3408,6 +3435,12 @@ lrp = [
     { name = "transformers" },
     { name = "typo-utils", extra = ["llm"] },
 ]
+matched = [
+    { name = "en-core-web-sm" },
+    { name = "sentence-transformers" },
+    { name = "spacy" },
+    { name = "wordfreq" },
+]
 tracking = [
     { name = "plotly" },
     { name = "python-dotenv" },
@@ -3424,6 +3457,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", marker = "extra == 'lrp'", specifier = ">=0.20" },
+    { name = "en-core-web-sm", marker = "extra == 'matched'", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
     { name = "lxt", marker = "extra == 'lrp'", specifier = ">=2.1" },
     { name = "pingouin", specifier = ">=0.5.5" },
     { name = "plotly", marker = "extra == 'tracking'", specifier = ">=5" },
@@ -3431,8 +3465,10 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2" },
     { name = "python-dotenv", marker = "extra == 'tracking'", specifier = ">=1" },
     { name = "scipy", specifier = ">=1.13" },
+    { name = "sentence-transformers", marker = "extra == 'matched'", specifier = ">=3" },
     { name = "sentencepiece", marker = "extra == 'lrp'", specifier = ">=0.2.1" },
     { name = "spacy", marker = "extra == 'appendix'", specifier = ">=3.8" },
+    { name = "spacy", marker = "extra == 'matched'", specifier = ">=3.8" },
     { name = "torch", marker = "extra == 'lrp'", specifier = "==2.9.1" },
     { name = "tqdm", specifier = ">=4.65" },
     { name = "transformers", marker = "extra == 'lrp'", specifier = ">=4.52,<5" },
@@ -3442,8 +3478,9 @@ requires-dist = [
     { name = "watchdog", marker = "extra == 'tracking'", specifier = ">=6" },
     { name = "wordcloud", marker = "extra == 'appendix'", specifier = ">=1.9" },
     { name = "wordfreq", specifier = ">=3.1" },
+    { name = "wordfreq", marker = "extra == 'matched'", specifier = ">=3.0" },
 ]
-provides-extras = ["lrp", "appendix", "tracking"]
+provides-extras = ["lrp", "appendix", "matched", "tracking"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -1,0 +1,41 @@
+{
+  "clean_results": "/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/baseline/gemma-3-4b-it_mmlu_pro/results.json",
+  "lxt_results": "/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/perturbed/gemma-3-4b-it_mmlu_pro_k4_importance/results.json",
+  "matched_results": "results/exp5/perturbed/gemma-3-4b-it_mmlu_pro_k4_matched_rnd/results.json",
+  "n_paired": 1400,
+  "acc": {
+    "clean": 0.37285714285714283,
+    "lxt4": 0.355,
+    "matched_rnd4": 0.36714285714285716
+  },
+  "drop_vs_clean": {
+    "lxt4": 0.01785714285714285,
+    "matched_rnd4": 0.005714285714285672
+  },
+  "matched_vs_lxt": {
+    "n": 1400,
+    "n01": 141,
+    "n10": 124,
+    "acc_a": 0.36714285714285716,
+    "acc_b": 0.355,
+    "risk_diff": 0.012142857142857143,
+    "risk_diff_ci95": [
+      -0.010638194783046253,
+      0.03492390906876054
+    ],
+    "mcnemar_p": 0.3256762723117163
+  },
+  "matched_vs_lxt_clean_correct_only": {
+    "n": 522,
+    "n01": 81,
+    "n10": 42,
+    "acc_a": 0.7931034482758621,
+    "acc_b": 0.7183908045977011,
+    "risk_diff": 0.07471264367816093,
+    "risk_diff_ci95": [
+      0.033566972444902754,
+      0.1158583149114191
+    ],
+    "mcnemar_p": 0.0005560923592546729
+  }
+}
