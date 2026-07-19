@@ -1,0 +1,271 @@
+"""実験8-fine: 1層分解プロファイルの集計と H8f-1〜5 の事前登録判定.
+
+run_patching_fine.py が出力する per-pair の cell レコード列 (kind ∈
+{single, cumulative, noising, sham_single}) を層ごとに集計し、
+主指標 s2_kl_recovery (最初の CoT 語分布の KL 回復率) の層プロファイルから
+
+    H8f-1 ピーク相対深さ l/L < 0.2
+    H8f-2 プラトー vs 単層スパイク
+    H8f-3 累積 patch の早期飽和 (>= 単層 max の 1.2倍)
+    H8f-4 検証点 (第14/20/26層) の回復 ≈ 0
+    H8f-5 noising の最良層±1 における十分性 (KL 乖離の過半再現)
+
+を判定する。すべて純関数 (GPU / モデル不要)。集計値は平均 + パーセンタイル
+bootstrap 95% CI。反証は各 judge の "supported" フラグと補助量で透明化する。
+"""
+
+from __future__ import annotations
+
+import random as _random
+from collections import defaultdict
+from collections.abc import Sequence
+
+
+# ---------------------------------------------------------------------------
+# 層プロファイル集計
+# ---------------------------------------------------------------------------
+
+
+def collect_by_layer(
+    cells: Sequence[dict],
+    kind: str,
+    direction: str,
+    field: str,
+) -> dict[int, list[float]]:
+    """cell レコード列を {層 index → 値のリスト} に集計する (None/欠損は除外)."""
+    out: dict[int, list[float]] = defaultdict(list)
+    for c in cells:
+        if c.get("kind") != kind or c.get("direction") != direction:
+            continue
+        v = c.get(field, None)
+        if v is None:
+            continue
+        out[int(c["layer"])].append(float(v))
+    return dict(out)
+
+
+def mean_ci(
+    values: Sequence[float],
+    n_boot: int = 1000,
+    seed: int = 42,
+    alpha: float = 0.05,
+) -> tuple[float | None, float | None, float | None]:
+    """連続値の平均のパーセンタイル bootstrap CI. 空なら (None, None, None)."""
+    n = len(values)
+    if n == 0:
+        return (None, None, None)
+    vals = [float(v) for v in values]
+    mean = sum(vals) / n
+    if n == 1:
+        return (mean, mean, mean)
+    rng = _random.Random(seed)
+    boot = sorted(
+        sum(vals[rng.randrange(n)] for _ in range(n)) / n for _ in range(n_boot)
+    )
+    lo_idx = int((alpha / 2) * n_boot)
+    hi_idx = min(n_boot - 1, int((1 - alpha / 2) * n_boot))
+    return (mean, boot[lo_idx], boot[hi_idx])
+
+
+def summarize_by_layer(
+    by_layer: dict[int, list[float]],
+    n_boot: int = 1000,
+    seed: int = 42,
+) -> dict[int, dict]:
+    """{層 → 値リスト} を {層 → {n, mean, ci_lo, ci_hi}} に要約する."""
+    summary: dict[int, dict] = {}
+    for layer, values in by_layer.items():
+        mean, lo, hi = mean_ci(values, n_boot=n_boot, seed=seed)
+        summary[layer] = {"n": len(values), "mean": mean, "ci_lo": lo, "ci_hi": hi}
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# プロファイル形状の解析
+# ---------------------------------------------------------------------------
+
+
+def argmax_layer(
+    summary: dict[int, dict],
+    key: str = "mean",
+    restrict: Sequence[int] | None = None,
+) -> int | None:
+    """平均が最大の層 index を返す (restrict 指定でその部分集合に限定)."""
+    layers = list(summary.keys()) if restrict is None else [l for l in restrict if l in summary]
+    layers = [l for l in layers if summary[l].get(key) is not None]
+    if not layers:
+        return None
+    return max(layers, key=lambda l: summary[l][key])
+
+
+def plateau_layers(
+    summary: dict[int, dict],
+    best_layer: int,
+    rel: float = 0.9,
+    key: str = "mean",
+) -> list[int]:
+    """best_layer を中心に、平均が max の rel 倍以上で連続する層 index を返す.
+
+    連続 (層 index が隣接) であることを要求するため、孤立ピーク (スパイク) は
+    [best_layer] のみを返す。プラトーなら複数層。
+    """
+    if best_layer not in summary or summary[best_layer].get(key) is None:
+        return []
+    peak = summary[best_layer][key]
+    thresh = rel * peak
+    plateau = [best_layer]
+    # 左に拡張
+    l = best_layer - 1
+    while l in summary and summary[l].get(key) is not None and summary[l][key] >= thresh:
+        plateau.append(l)
+        l -= 1
+    # 右に拡張
+    r = best_layer + 1
+    while r in summary and summary[r].get(key) is not None and summary[r][key] >= thresh:
+        plateau.append(r)
+        r += 1
+    return sorted(plateau)
+
+
+def saturation_layer(
+    summary: dict[int, dict],
+    frac: float = 0.9,
+    key: str = "mean",
+) -> int | None:
+    """累積プロファイルが max の frac 倍に最初に到達する層 index (層昇順)."""
+    layers = sorted(l for l in summary if summary[l].get(key) is not None)
+    if not layers:
+        return None
+    peak = max(summary[l][key] for l in layers)
+    thresh = frac * peak
+    for l in layers:
+        if summary[l][key] >= thresh:
+            return l
+    return layers[-1]
+
+
+# ---------------------------------------------------------------------------
+# H8f-1〜5 の事前登録判定 (反証も透明化)
+# ---------------------------------------------------------------------------
+
+
+def judge_h8f1_peak_depth(
+    single_summary: dict[int, dict],
+    n_layers: int,
+    restrict_early: Sequence[int] | None = None,
+    depth_thresh: float = 0.2,
+) -> dict:
+    """H8f-1: 単層回復率ピークの相対深さ l/L < 0.2 か."""
+    best = argmax_layer(single_summary, restrict=restrict_early)
+    if best is None or n_layers <= 0:
+        return {"best_layer": None, "rel_depth": None, "supported": None}
+    rel = best / n_layers
+    return {
+        "best_layer": best,
+        "peak_mean": single_summary[best]["mean"],
+        "rel_depth": rel,
+        "depth_thresh": depth_thresh,
+        "supported": bool(rel < depth_thresh),
+    }
+
+
+def judge_h8f2_plateau_vs_spike(
+    single_summary: dict[int, dict],
+    best_layer: int,
+    rel: float = 0.9,
+) -> dict:
+    """H8f-2: プラトー型 (隣接>=2層が同水準) か単層スパイクか.
+
+    プラトー → prediction supported。スパイク → 反証枝: より強い局在主張
+    (特定層の語彙統合点) に切替 (shape='spike')。
+    """
+    plat = plateau_layers(single_summary, best_layer, rel=rel)
+    width = len(plat)
+    shape = "plateau" if width >= 2 else "spike"
+    return {
+        "plateau_layers": plat,
+        "plateau_width": width,
+        "shape": shape,
+        "supported": bool(shape == "plateau"),
+        "branch": None if shape == "plateau" else "spike -> stronger localization claim",
+    }
+
+
+def judge_h8f3_cumulative_saturation(
+    single_summary: dict[int, dict],
+    cumulative_summary: dict[int, dict],
+    n_layers: int,
+    frac: float = 0.9,
+    ratio_thresh: float = 1.2,
+    depth_thresh: float = 0.2,
+) -> dict:
+    """H8f-3: 累積 patch が早期 (l/L<=0.2) で飽和し単層 max の >=1.2倍か."""
+    single_vals = [s["mean"] for s in single_summary.values() if s.get("mean") is not None]
+    cum_vals = [s["mean"] for s in cumulative_summary.values() if s.get("mean") is not None]
+    if not single_vals or not cum_vals:
+        return {"supported": None}
+    single_max = max(single_vals)
+    cum_max = max(cum_vals)
+    ratio = cum_max / single_max if abs(single_max) > 1e-9 else None
+    sat = saturation_layer(cumulative_summary, frac=frac)
+    sat_rel = sat / n_layers if (sat is not None and n_layers > 0) else None
+    supported = bool(
+        ratio is not None
+        and ratio >= ratio_thresh
+        and sat_rel is not None
+        and sat_rel <= depth_thresh
+    )
+    return {
+        "single_max": single_max,
+        "cumulative_max": cum_max,
+        "ratio_cum_over_single": ratio,
+        "ratio_thresh": ratio_thresh,
+        "saturation_layer": sat,
+        "saturation_rel_depth": sat_rel,
+        "depth_thresh": depth_thresh,
+        "supported": supported,
+    }
+
+
+def judge_h8f4_late_null(
+    single_summary: dict[int, dict],
+    val_layers: Sequence[int] = (14, 20, 26),
+    thresh: float = 0.1,
+) -> dict:
+    """H8f-4: 検証点 (第14/20/26層) が幅1でも回復 ≈ 0 か."""
+    val_means: dict[int, float] = {}
+    for l in val_layers:
+        if l in single_summary and single_summary[l].get("mean") is not None:
+            val_means[l] = single_summary[l]["mean"]
+    if not val_means:
+        return {"val_means": {}, "supported": None}
+    supported = all(abs(m) < thresh for m in val_means.values())
+    return {
+        "val_means": val_means,
+        "thresh": thresh,
+        "supported": bool(supported),
+    }
+
+
+def judge_h8f5_noising_sufficiency(
+    noising_summary: dict[int, dict],
+    best_layer: int,
+    thresh: float = 0.5,
+) -> dict:
+    """H8f-5: noising の最良層±1 で KL 乖離の過半 (recovery>=0.5) を再現するか."""
+    candidate = [best_layer - 1, best_layer, best_layer + 1]
+    layers = [
+        l for l in candidate
+        if l in noising_summary and noising_summary[l].get("mean") is not None
+    ]
+    if best_layer not in noising_summary or noising_summary[best_layer].get("mean") is None:
+        return {"layers": layers, "supported": None, "mean_at_best": None}
+    mean_at_best = noising_summary[best_layer]["mean"]
+    band_means = {l: noising_summary[l]["mean"] for l in layers}
+    return {
+        "layers": layers,
+        "band_means": band_means,
+        "mean_at_best": mean_at_best,
+        "thresh": thresh,
+        "supported": bool(mean_at_best >= thresh),
+    }
