@@ -1,0 +1,221 @@
+{
+  "hypothesis": "H16 preregistered setting-variance absorption (registry 712-736)",
+  "estimand": "A = 1 - sigma2_setting(mod)/sigma2_setting(base)",
+  "decision_rule": "A >= 0.5 -> Supported; A < 0.5 -> two-regime falsification branch",
+  "fitter": "BinomialBayesMixedGLM (VB), random intercept (1|setting)",
+  "fitter_note": "item RE (~17k 交差水準) は非現実的なため (1|setting) のみ。sigma2 は VB 事後の log-SD パラメータより exp(2*vcp_mean)。",
+  "moderators": {
+    "M1_repair": "repair_min の設定平均",
+    "M2_composition": "share_conclusion (exp12, 設定レベル R_C 組成)",
+    "M3a_readout_gini": "gini_rc = exp13 loo_gini (gsm8k/mmlu のみ, Qwen 無し)",
+    "M3b_nocot_shortcut": "nocot_flip_rate (exp14 settings.csv, 設定レベル, 全設定被覆)"
+  },
+  "coverage_note": "gini_rc が gsm8k/mmlu×5非Qwenモデルのみのため、4モデレーター complete-case は 20 設定 (gsm8k+mmlu, 3家族, 両条件, N=20,500) に限定。Qwen と arc/csqa/math 設定は gini 欠損で脱落。",
+  "primary": {
+    "label": "primary_4mod_gini_gsm8k_mmlu",
+    "moderators": [
+      "repair_setting_mean",
+      "share_conclusion",
+      "gini_rc",
+      "nocot_flip_rate"
+    ],
+    "n_settings": 20,
+    "n_samples": 20500,
+    "sigma2_setting_base": 0.34269299135975345,
+    "sigma2_setting_mod": 0.12150881341045265,
+    "A_absorption": 0.6454295346738075,
+    "base": {
+      "formula": "flip ~ 1",
+      "n": 20500,
+      "vcp_mean_logSD": -0.5354601507757872,
+      "vcp_sd": 0.15825427506066886,
+      "sigma_setting_SD": 0.5853998559615072,
+      "sigma2_setting": 0.34269299135975345,
+      "sigma2_CI95": [
+        0.18428403192926684,
+        0.6372689217705639
+      ],
+      "converged": true,
+      "fixed_effects": {
+        "Intercept": {
+          "coef": -1.3560935479148761,
+          "sd": 0.017876533031080107,
+          "z": -75.85886735180554,
+          "p": 0.0
+        }
+      }
+    },
+    "mod": {
+      "formula": "flip ~ repair_setting_mean_z + share_conclusion_z + gini_rc_z + nocot_flip_rate_z",
+      "n": 20500,
+      "vcp_mean_logSD": -1.0538842402373392,
+      "vcp_sd": 0.16034986029728002,
+      "sigma_setting_SD": 0.3485811432227117,
+      "sigma2_setting": 0.12150881341045265,
+      "sigma2_CI95": [
+        0.06480711172261919,
+        0.2278205484547629
+      ],
+      "converged": true,
+      "fixed_effects": {
+        "Intercept": {
+          "coef": -1.432319986127107,
+          "sd": 0.01787923104064568,
+          "z": -80.11082707477452,
+          "p": 0.0
+        },
+        "repair_setting_mean_z": {
+          "coef": 0.013705500525235415,
+          "sd": 0.018274507850504502,
+          "z": 0.7499791861621624,
+          "p": 0.45326724050293854
+        },
+        "share_conclusion_z": {
+          "coef": 0.05098536150058162,
+          "sd": 0.018385003102561512,
+          "z": 2.773203856216811,
+          "p": 0.005550733659347884
+        },
+        "gini_rc_z": {
+          "coef": -0.6973701257907605,
+          "sd": 0.01920807079180021,
+          "z": -36.306099313652204,
+          "p": 0.0
+        },
+        "nocot_flip_rate_z": {
+          "coef": 0.6929662376027862,
+          "sd": 0.017959274646070254,
+          "z": 38.58542459310388,
+          "p": 0.0
+        }
+      }
+    }
+  },
+  "robustness_plus_family": {
+    "label": "primary_4mod_plus_family",
+    "n_settings": 20,
+    "n_samples": 20500,
+    "sigma2_setting_base": 0.34269290720026,
+    "sigma2_setting_mod": 0.11393142828372323,
+    "A_absorption": 0.6675407459858954,
+    "mod_fixed_effects": {
+      "Intercept": {
+        "coef": -1.294664914960686,
+        "sd": 0.017879879545893596,
+        "z": -72.40904009658313,
+        "p": 0.0
+      },
+      "C(family)[T.Llama]": {
+        "coef": -0.037204741837137914,
+        "sd": 0.026103261836340968,
+        "z": -1.425290910783474,
+        "p": 0.15407312642001147
+      },
+      "C(family)[T.Mistral]": {
+        "coef": -0.5392179595684188,
+        "sd": 0.039509795504091914,
+        "z": -13.64770312497754,
+        "p": 0.0
+      },
+      "repair_setting_mean_z": {
+        "coef": 0.09595573035078489,
+        "sd": 0.018272693945801922,
+        "z": 5.251318203839907,
+        "p": 1.5101453509913654e-07
+      },
+      "share_conclusion_z": {
+        "coef": -0.17786053092337414,
+        "sd": 0.0184059766324606,
+        "z": -9.663194432709485,
+        "p": 0.0
+      },
+      "gini_rc_z": {
+        "coef": -0.7416500372743671,
+        "sd": 0.019223481398570885,
+        "z": -38.58042265588287,
+        "p": 0.0
+      },
+      "nocot_flip_rate_z": {
+        "coef": 0.7419541981857316,
+        "sd": 0.01796407400349801,
+        "z": 41.3021120955779,
+        "p": 0.0
+      }
+    }
+  },
+  "robustness_no_gini_wider": {
+    "label": "robust_3mod_nogini",
+    "moderators": [
+      "repair_setting_mean",
+      "share_conclusion",
+      "nocot_flip_rate"
+    ],
+    "n_settings": 52,
+    "n_samples": 36740,
+    "sigma2_setting_base": 0.4924629675401782,
+    "sigma2_setting_mod": 0.23088341513715305,
+    "A_absorption": 0.5311659345871198,
+    "base": {
+      "formula": "flip ~ 1",
+      "n": 36740,
+      "vcp_mean_logSD": -0.35416800700446777,
+      "vcp_sd": 0.09792089295983554,
+      "sigma_setting_SD": 0.7017570573497485,
+      "sigma2_setting": 0.4924629675401782,
+      "sigma2_CI95": [
+        0.33548235590128617,
+        0.722898746036703
+      ],
+      "converged": true,
+      "fixed_effects": {
+        "Intercept": {
+          "coef": -1.2352768938187024,
+          "sd": 0.013304824101549418,
+          "z": -92.84428598156723,
+          "p": 0.0
+        }
+      }
+    },
+    "mod": {
+      "formula": "flip ~ repair_setting_mean_z + share_conclusion_z + nocot_flip_rate_z",
+      "n": 36740,
+      "vcp_mean_logSD": -0.7329211961191942,
+      "vcp_sd": 0.09827842819743289,
+      "sigma_setting_SD": 0.48050329357576005,
+      "sigma2_setting": 0.23088341513715305,
+      "sigma2_CI95": [
+        0.1570652694927158,
+        0.3393948996972064
+      ],
+      "converged": true,
+      "fixed_effects": {
+        "Intercept": {
+          "coef": -1.439429118300013,
+          "sd": 0.013306556574097305,
+          "z": -108.17442591436631,
+          "p": 0.0
+        },
+        "repair_setting_mean_z": {
+          "coef": -0.17643158829577657,
+          "sd": 0.013517035211520563,
+          "z": -13.05253596923414,
+          "p": 0.0
+        },
+        "share_conclusion_z": {
+          "coef": 0.0907887421649439,
+          "sd": 0.013645283685173568,
+          "z": 6.653488799473726,
+          "p": 2.862265979786116e-11
+        },
+        "nocot_flip_rate_z": {
+          "coef": 0.3223149825068583,
+          "sd": 0.012957967223245602,
+          "z": 24.873884688383058,
+          "p": 0.0
+        }
+      }
+    }
+  },
+  "primary_A": 0.6454295346738075,
+  "judgment": "Supported (A>=0.5)"
+}

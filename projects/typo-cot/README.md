@@ -73,6 +73,19 @@ uv run python scripts/build_figures_tables.py \
 リバッタル実験（spellfix・matched-random 統制、fixed-target 帰属、noise floor、
 統計補強）は `scripts/rebuttal/` の 9 スクリプト。
 
+## 追加分析（analysis/）
+
+exp7（校正器ラダー・byte-identical 検証）に加え、`analysis/` 配下に統一仮説 ERDC 連鎖
+（修復→分岐→読み出し）に関する後続実験の分析コード・結果を格納。各ディレクトリの
+README に手法・判定・再現手順を記載。
+
+| ディレクトリ | 実験 | 判定 |
+|---|---|---|
+| [analysis/exp11_chain_mediation](analysis/exp11_chain_mediation/README.md) | 実験11: 連鎖媒介分析（修復→KL_sum→flip） | SUPPORTED |
+| [analysis/exp12_rc_composition](analysis/exp12_rc_composition/README.md) | 実験12: R_C 組成分析（top-10 帰属の4カテゴリ分類） | 強形は REFUTED／機構的主張は MC 領域で支持 |
+| [analysis/exp16_unified](analysis/exp16_unified/README.md) | 実験16: 統一 GLMM 吸収テスト（family 効果・設定分散） | family-dummy 版は REFUTED（抑圧）／H16(設定分散)は SUPPORTED（A=0.645） |
+| [analysis/exp17_behavioral_repair](analysis/exp17_behavioral_repair/README.md) | 実験17: 行動修復マーカー分析（R1 の自己修正マーカー） | REFUTED（マーカーは修復ではなく struggle シグナル） |
+
 ## レイアウト
 
 ```
