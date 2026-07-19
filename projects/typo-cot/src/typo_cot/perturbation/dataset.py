@@ -128,6 +128,7 @@ class PerturbedDatasetCreator:
         random_perturbation: bool = False,
         include_choices: bool = True,
         bottom_k_perturbation: bool = False,
+        target_word_list: dict[str, list[int]] | None = None,
     ) -> None:
         """初期化.
 
@@ -139,6 +140,11 @@ class PerturbedDatasetCreator:
                 （例: k=4なら上位4個以外からランダムに4個選択）
             include_choices: Trueの場合、選択肢も摂動対象に含める
             bottom_k_perturbation: Trueの場合、重要度下位k個のトークンに摂動（Anti-LRP）
+            target_word_list: sample_id -> 摂動対象トークンインデックスの順序付き
+                リスト。指定サンプルではこのリストのトークンを順に摂動する
+                （実験5 Matched-Rnd 等の外部選定標的の注入用）。摂動失敗時は
+                残りトークンをシャッフルしたバックアップで充填する。未掲載の
+                サンプルは従来の選択方法にフォールバックする。
         """
         self.baseline_dir = Path(baseline_dir)
         self.num_perturbations = num_perturbations
@@ -146,6 +152,7 @@ class PerturbedDatasetCreator:
         self.random_perturbation = random_perturbation
         self.include_choices = include_choices
         self.bottom_k_perturbation = bottom_k_perturbation
+        self.target_word_list = target_word_list
         self.generator = CharacterPerturbationGenerator(seed=seed)
 
         # 設定ファイルを読み込み
@@ -402,7 +409,21 @@ class PerturbedDatasetCreator:
             return question, []
 
         # トークン選択方法を決定
-        if self.random_perturbation:
+        if self.target_word_list is not None and sample_id in self.target_word_list:
+            # 外部で選定された標的リスト (実験5 Matched-Rnd 等)
+            token_by_index = {t[0]: t for t in question_tokens}
+            listed = [
+                token_by_index[i]
+                for i in self.target_word_list[sample_id]
+                if i in token_by_index
+            ]
+            # 摂動失敗に備え、リスト外のトークンをシャッフルして後置
+            listed_indices = {t[0] for t in listed}
+            backup = [t for t in question_tokens if t[0] not in listed_indices]
+            rng = random.Random(hash((self.seed, sample_id, "target_list_backup")))
+            rng.shuffle(backup)
+            candidate_tokens = listed + backup
+        elif self.random_perturbation:
             # ランダム選択: スコアの低い（全トークン数-k）件からランダムに選択
             # 重要度順でソート（降順: 高い順）
             sorted_by_importance = sorted(
@@ -433,6 +454,28 @@ class PerturbedDatasetCreator:
             # 重要度ベース: スコア降順でソート（上位k個を選択）
             candidate_tokens = sorted(question_tokens, key=lambda x: x[2], reverse=True)
 
+        return self._apply_candidate_perturbations(
+            question=question,
+            candidate_tokens=candidate_tokens,
+            question_char_start=question_char_start,
+            offset_mapping=offset_mapping,
+            sample_id=sample_id,
+        )
+
+    def _apply_candidate_perturbations(
+        self,
+        question: str,
+        candidate_tokens: list[tuple[int, str, float]],
+        question_char_start: int,
+        offset_mapping: list[tuple[int, int]],
+        sample_id: str,
+    ) -> tuple[str, list[PerturbedToken]]:
+        """候補トークン順序を受け取り摂動を適用する共通ループ.
+
+        選択方法 (importance/random/bottom_k/target_list/matched) に依存しない
+        適用部分。per-token seed・offset 調整・perturb() 失敗時の次候補
+        フォールバックは従来実装と同一。
+        """
         perturbed_question = question
         perturbed_tokens = []
         used_token_indices: set[int] = set()
@@ -666,7 +709,9 @@ class PerturbedDatasetCreator:
         )
 
         # 摂動モードを決定
-        if self.random_perturbation:
+        if self.target_word_list is not None:
+            perturbation_mode = "target_list"
+        elif self.random_perturbation:
             perturbation_mode = "random"
         elif self.bottom_k_perturbation:
             perturbation_mode = "bottom_k"

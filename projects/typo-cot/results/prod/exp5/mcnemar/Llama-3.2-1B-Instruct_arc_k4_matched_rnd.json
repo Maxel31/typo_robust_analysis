@@ -1,0 +1,41 @@
+{
+  "clean_results": "/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/baseline/Llama-3.2-1B-Instruct_arc/results.json",
+  "lxt_results": "/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/perturbed/Llama-3.2-1B-Instruct_arc_k4_importance/results.json",
+  "matched_results": "results/exp5/perturbed/Llama-3.2-1B-Instruct_arc_k4_matched_rnd/results.json",
+  "n_paired": 1172,
+  "acc": {
+    "clean": 0.5273037542662116,
+    "lxt4": 0.4462457337883959,
+    "matched_rnd4": 0.48464163822525597
+  },
+  "drop_vs_clean": {
+    "lxt4": 0.08105802047781568,
+    "matched_rnd4": 0.0426621160409556
+  },
+  "matched_vs_lxt": {
+    "n": 1172,
+    "n01": 212,
+    "n10": 167,
+    "acc_a": 0.48464163822525597,
+    "acc_b": 0.4462457337883959,
+    "risk_diff": 0.03839590443686007,
+    "risk_diff_ci95": [
+      0.005913522201298448,
+      0.07087828667242169
+    ],
+    "mcnemar_p": 0.02368636944450964
+  },
+  "matched_vs_lxt_clean_correct_only": {
+    "n": 618,
+    "n01": 147,
+    "n10": 79,
+    "acc_a": 0.7588996763754046,
+    "acc_b": 0.6488673139158576,
+    "risk_diff": 0.11003236245954692,
+    "risk_diff_ci95": [
+      0.06315069769831777,
+      0.15691402722077608
+    ],
+    "mcnemar_p": 7.162465033173373e-06
+  }
+}
