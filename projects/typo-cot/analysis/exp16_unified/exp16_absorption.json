@@ -1,0 +1,325 @@
+{
+  "hypothesis": "P6 family absorption by ERDC covariates",
+  "primary_fitter": "fixed-effects logit + cluster-robust SE (cluster=setting)",
+  "fitter_note": "BBGLM(VB) を交差ランダム効果 (item ~17k levels) で回すのは非現実的なため、主解析は task 指定 fallback の fixed-effects logit + cluster-robust(setting) を採用。BBGLM(1|setting) は robustness で併記。",
+  "family_reference_level": "Gemma",
+  "family_coding": "treatment (dummy vs Gemma)",
+  "continuous_covariates": "z-standardized on the complete-case sample",
+  "n_included": 45339,
+  "n_complete_case": 34190,
+  "n_excluded_from_included": 11149,
+  "complete_case_families": [
+    "Gemma",
+    "Llama",
+    "Mistral"
+  ],
+  "complete_case_benchmarks": [
+    "arc",
+    "commonsense_qa",
+    "gsm8k",
+    "mmlu"
+  ],
+  "complete_case_settings": 40,
+  "qwen_status": "Qwen は rouge_l_f1/cot_jaccard_top10/kl_sum/delta_rho が全欠損 (Step0 CoT-ROUGE 未計算, exp12 moderator 欠損) のため M1+ に投入不可。ネスト吸収テストは Gemma/Llama/Mistral の3家族に限定。",
+  "math_status": "math benchmark は全モデルで rouge 欠損のため complete-case から脱落。",
+  "nan_family_handling": "features_partial の family 列は Qwen 設定で 18701 NaN (exp12 moderator 欠損)。model からの決定論的写像で family を再構成し完全化 (Qwen 含む)。",
+  "multiple_comparison": "family-block Wald p を Holm 補正 (4段階)。効果サイズ(縮小率)中心。",
+  "models": {
+    "M0_base": {
+      "formula": "flip ~ C(family, Treatment('Gemma'))",
+      "n": 34190,
+      "n_clusters_setting": 40,
+      "converged": true,
+      "family_coef": {
+        "Llama": {
+          "coef": 0.3042842011235573,
+          "se": 0.20129418479708924,
+          "z": 1.5116393025972668,
+          "p": 0.13062564752498268
+        },
+        "Mistral": {
+          "coef": -0.19826238722055092,
+          "se": 0.20121416029708777,
+          "z": -0.9853301921088524,
+          "p": 0.3244619069673239
+        }
+      },
+      "family_block_wald": {
+        "chi2": 9.626277875204417,
+        "df": 2,
+        "p": 0.008122324172673874
+      },
+      "family_L2_logodds": 0.3631760581863749,
+      "family_range_logodds": 0.5025465883441083,
+      "included_covariates": [],
+      "family_logodds_reduction_pct_vs_M0": {
+        "Llama": 0.0,
+        "Mistral": 0.0
+      },
+      "family_L2_reduction_pct_vs_M0": 0.0,
+      "family_block_p_holm": 0.008122324172673874
+    },
+    "M1_carry": {
+      "formula": "flip ~ C(family, Treatment('Gemma')) + rouge_l_f1_z + cot_jaccard_top10_z",
+      "n": 34190,
+      "n_clusters_setting": 40,
+      "converged": true,
+      "family_coef": {
+        "Llama": {
+          "coef": 0.1972790608927139,
+          "se": 0.26184155850640606,
+          "z": 0.7534291424861321,
+          "p": 0.4511920760031015
+        },
+        "Mistral": {
+          "coef": -3.9906366290284514,
+          "se": 0.41762913863906553,
+          "z": -9.55545545033759,
+          "p": 1.2304151765019015e-21
+        }
+      },
+      "family_block_wald": {
+        "chi2": 168.54084576876173,
+        "df": 2,
+        "p": 2.5224371480369733e-37
+      },
+      "family_L2_logodds": 3.9955099465287622,
+      "family_range_logodds": 4.187915689921165,
+      "included_covariates": [
+        "rouge_l_f1",
+        "cot_jaccard_top10"
+      ],
+      "family_logodds_reduction_pct_vs_M0": {
+        "Llama": 35.16618340213891,
+        "Mistral": -1912.805699040227
+      },
+      "family_L2_reduction_pct_vs_M0": -1000.1578591059944,
+      "family_block_p_holm": 1.0089748592147893e-36
+    },
+    "M2_repair_divert": {
+      "formula": "flip ~ C(family, Treatment('Gemma')) + rouge_l_f1_z + cot_jaccard_top10_z + repair_min_z + kl_sum_z",
+      "n": 34190,
+      "n_clusters_setting": 40,
+      "converged": true,
+      "family_coef": {
+        "Llama": {
+          "coef": 0.4377388978061705,
+          "se": 0.3083607094219133,
+          "z": 1.419567683012546,
+          "p": 0.15573357938144605
+        },
+        "Mistral": {
+          "coef": -3.754991696562432,
+          "se": 0.43732233056983977,
+          "z": -8.586325083536444,
+          "p": 8.979535721481026e-18
+        }
+      },
+      "family_block_wald": {
+        "chi2": 157.66081615543743,
+        "df": 2,
+        "p": 5.812845308558163e-35
+      },
+      "family_L2_logodds": 3.7804203448697837,
+      "family_range_logodds": 4.192730594368602,
+      "included_covariates": [
+        "rouge_l_f1",
+        "cot_jaccard_top10",
+        "repair_min",
+        "kl_sum"
+      ],
+      "family_logodds_reduction_pct_vs_M0": {
+        "Llama": -43.85856912381156,
+        "Mistral": -1793.9506122183966
+      },
+      "family_L2_reduction_pct_vs_M0": -940.9332497710368,
+      "family_block_p_holm": 1.7438535925674488e-34
+    },
+    "M3_readout_enc": {
+      "formula": "flip ~ C(family, Treatment('Gemma')) + rouge_l_f1_z + cot_jaccard_top10_z + repair_min_z + kl_sum_z + delta_rho_top10_z + rq_mean_z + split_mean_z",
+      "n": 34190,
+      "n_clusters_setting": 40,
+      "converged": true,
+      "family_coef": {
+        "Llama": {
+          "coef": 0.3220610296136974,
+          "se": 0.3577517188389735,
+          "z": 0.9002361488545616,
+          "p": 0.3679945925945086
+        },
+        "Mistral": {
+          "coef": -3.434521601832159,
+          "se": 0.44835197043398833,
+          "z": -7.660324540355354,
+          "p": 1.854638118300381e-14
+        }
+      },
+      "family_block_wald": {
+        "chi2": 68.67589196082014,
+        "df": 2,
+        "p": 1.222417449970727e-15
+      },
+      "family_L2_logodds": 3.4495886624708714,
+      "family_range_logodds": 3.7565826314458564,
+      "included_covariates": [
+        "rouge_l_f1",
+        "cot_jaccard_top10",
+        "repair_min",
+        "kl_sum",
+        "delta_rho_top10",
+        "rq_mean",
+        "split_mean"
+      ],
+      "family_logodds_reduction_pct_vs_M0": {
+        "Llama": -5.842179260211304,
+        "Mistral": -1632.3112315860149
+      },
+      "family_L2_reduction_pct_vs_M0": -849.8392266542553,
+      "family_block_p_holm": 2.444834899941454e-15
+    }
+  },
+  "robustness_bbglm_setting_RE": {
+    "M0_base": {
+      "family_coef": {
+        "Llama": {
+          "coef": 0.20048752673925743,
+          "se": 0.0205281590596167,
+          "z": 9.76646401447948,
+          "p": 0.0
+        },
+        "Mistral": {
+          "coef": -0.2876159070981341,
+          "se": 0.03142452804171261,
+          "z": -9.15259273636045,
+          "p": 0.0
+        }
+      },
+      "status": "ok"
+    },
+    "M1_carry": {
+      "family_coef": {
+        "Llama": {
+          "coef": 0.1950886902236679,
+          "se": 0.025713181170227983,
+          "z": 7.587108297963202,
+          "p": 3.26405569239796e-14
+        },
+        "Mistral": {
+          "coef": -4.1992939235458415,
+          "se": 0.03949170579220798,
+          "z": -106.3335664871279,
+          "p": 0.0
+        }
+      },
+      "status": "ok"
+    },
+    "M2_repair_divert": {
+      "family_coef": {
+        "Llama": {
+          "coef": 0.3888341056665108,
+          "se": 0.025720229791802714,
+          "z": 15.117831715113057,
+          "p": 0.0
+        },
+        "Mistral": {
+          "coef": -4.016345809744677,
+          "se": 0.039732283391661696,
+          "z": -101.08519991548123,
+          "p": 0.0
+        }
+      },
+      "status": "ok"
+    },
+    "M3_readout_enc": {
+      "family_coef": {
+        "Llama": {
+          "coef": 0.31416156606614987,
+          "se": 0.025721493520413204,
+          "z": 12.213970616318356,
+          "p": 0.0
+        },
+        "Mistral": {
+          "coef": -3.8390825860799156,
+          "se": 0.039735050381273285,
+          "z": -96.61703078874754,
+          "p": 0.0
+        }
+      },
+      "status": "ok"
+    }
+  },
+  "robustness_M3_plus_gini_gsm8k_mmlu": {
+    "n": 19296,
+    "benchmarks": [
+      "gsm8k",
+      "mmlu"
+    ],
+    "n_clusters_setting": 20,
+    "M0subset_family_coef": {
+      "Llama": {
+        "coef": 0.33127767465224595,
+        "se": 0.2777597179559862,
+        "z": 1.192677171081878,
+        "p": 0.23299582965609045
+      },
+      "Mistral": {
+        "coef": -0.09902949716174934,
+        "se": 0.27591763403628494,
+        "z": -0.35890963441911194,
+        "p": 0.7196626919670409
+      }
+    },
+    "M3plusGini_family_coef": {
+      "Llama": {
+        "coef": 0.5713237246298398,
+        "se": 0.49691085511258065,
+        "z": 1.1497509437591178,
+        "p": 0.2502464653906664
+      },
+      "Mistral": {
+        "coef": -2.1372538153481853,
+        "se": 0.5939774639134856,
+        "z": -3.5982069105225882,
+        "p": 0.00032041866674895774
+      }
+    },
+    "M3plusGini_family_reduction_pct_vs_M0subset": {
+      "Llama": -72.46067826018727,
+      "Mistral": -2058.1991998377134
+    },
+    "gini_rc_z_coef": 0.3343899928103681,
+    "gini_rc_z_p": 0.010874170364323147,
+    "note": "gini_rc = exp13 loo_gini (model x benchmark, gsm8k/mmlu のみ, Qwen 無し)。gsm8k+mmlu subset に限定した頑健性チェック。"
+  },
+  "descriptive_M0_full_4family": {
+    "n": 45339,
+    "n_clusters_setting": 60,
+    "families": [
+      "Gemma",
+      "Llama",
+      "Mistral",
+      "Qwen"
+    ],
+    "family_coef": {
+      "Llama": {
+        "coef": 0.3260135329913698,
+        "se": 0.19175971564728952,
+        "z": 1.7001148123885317,
+        "p": 0.08910933162613567
+      },
+      "Mistral": {
+        "coef": -0.13815265735468255,
+        "se": 0.19578478309197447,
+        "z": -0.7056353163554192,
+        "p": 0.4804149558321841
+      },
+      "Qwen": {
+        "coef": -0.9123204577494491,
+        "se": 0.2291526012954035,
+        "z": -3.9812790803686555,
+        "p": 6.854541139426498e-05
+      }
+    },
+    "note": "全included (4家族,全benchmark)。記述用 M0。ネスト吸収テストとは N/家族集合が異なる (Qwen は carry特徴全欠損で M1+ 不可)。"
+  }
+}

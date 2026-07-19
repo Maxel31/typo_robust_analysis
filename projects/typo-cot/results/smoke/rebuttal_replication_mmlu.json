@@ -1,0 +1,41 @@
+{
+  "clean_results": "/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/baseline/gemma-3-4b-it_mmlu/results.json",
+  "lxt_results": "/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/perturbed/gemma-3-4b-it_mmlu_k4_importance/results.json",
+  "matched_results": "/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026/outputs/rebuttal/perturbed/gemma-3-4b-it_mmlu_k4_matched_random/results.json",
+  "n_paired": 2850,
+  "acc": {
+    "clean": 0.632280701754386,
+    "lxt4": 0.5859649122807018,
+    "matched_rnd4": 0.611578947368421
+  },
+  "drop_vs_clean": {
+    "lxt4": 0.0463157894736842,
+    "matched_rnd4": 0.020701754385965
+  },
+  "matched_vs_lxt": {
+    "n": 2850,
+    "n01": 369,
+    "n10": 296,
+    "acc_a": 0.611578947368421,
+    "acc_b": 0.5859649122807018,
+    "risk_diff": 0.025614035087719297,
+    "risk_diff_ci95": [
+      0.0079046848779688,
+      0.04332338529746979
+    ],
+    "mcnemar_p": 0.005199167279199624
+  },
+  "matched_vs_lxt_clean_correct_only": {
+    "n": 1802,
+    "n01": 259,
+    "n10": 139,
+    "acc_a": 0.8645948945615982,
+    "acc_b": 0.7980022197558269,
+    "risk_diff": 0.06659267480577137,
+    "risk_diff_ci95": [
+      0.04511285906455372,
+      0.08807249054698901
+    ],
+    "mcnemar_p": 1.860039895385425e-09
+  }
+}
