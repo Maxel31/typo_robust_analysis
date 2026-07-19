@@ -78,7 +78,7 @@ SITE_KIND = "question_span"  # 摂動語スパンのみ
 
 
 def _int_list(spec: str) -> list[int]:
-    """"0-11" / "0-11,14,20,26" / "14 20 26" 形式を層 index リストに展開."""
+    """ "0-11" / "0-11,14,20,26" / "14 20 26" 形式を層 index リストに展開."""
     out: list[int] = []
     for chunk in spec.replace(" ", ",").split(","):
         if not chunk:
@@ -110,19 +110,27 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--single-layers", default="0-11,14,20,26", help="単層 denoising スイープ層")
     p.add_argument("--cumulative-layers", default="0-11", help="累積 denoising 終端層")
-    p.add_argument("--noising-layers", default="0-7", help="単層 noising 層 (最良層±1 を含む早期帯)")
+    p.add_argument(
+        "--noising-layers", default="0-7", help="単層 noising 層 (最良層±1 を含む早期帯)"
+    )
     p.add_argument("--sham-layers", default="0-11", help="単層 sham 層 (アーチファクト検出)")
     p.add_argument("--max-new-tokens", type=int, default=16)
     p.add_argument("--answer-token-limit", type=int, default=16)
     p.add_argument("--trigger-pattern", default=None)
     # A3 敵対的レビュー統制
     p.add_argument(
-        "--no-controls", dest="controls", action="store_false",
+        "--no-controls",
+        dest="controls",
+        action="store_false",
         help="A3 統制 (other_span / all_positions) を無効化",
     )
-    p.add_argument("--other-span-offset", type=int, default=2, help="other_span 統制の下流オフセット")
     p.add_argument(
-        "--perturb-mode", default="typo", choices=["typo", "semantic"],
+        "--other-span-offset", type=int, default=2, help="other_span 統制の下流オフセット"
+    )
+    p.add_argument(
+        "--perturb-mode",
+        default="typo",
+        choices=["typo", "semantic"],
         help="typo=既存の摂動 / semantic=標的語を実語ランダム置換 (統制c)",
     )
     p.add_argument("--semantic-seed", type=int, default=1234, help="意味置換の乱数シード")
@@ -339,9 +347,7 @@ def run_pair_fine(model, tokenizer, layers, prepared: PreparedPair, extractor, a
             sanity_layers = [li for li in single_layers if li <= 11][::3] or single_layers[:1]
             for w in single_layer_windows(sanity_layers):
                 cells.append(
-                    run_cell(
-                        w, "clean_to_pert", "all_positions", src_pos=all_pos, dst_pos=all_pos
-                    )
+                    run_cell(w, "clean_to_pert", "all_positions", src_pos=all_pos, dst_pos=all_pos)
                 )
 
     return {

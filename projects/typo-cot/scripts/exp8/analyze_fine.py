@@ -86,16 +86,34 @@ def write_profile_csv(path: Path, summary: dict, n_layers: int) -> None:
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(
-            ["layer", "rel_depth", "n", "median", "median_lo", "median_hi", "mean", "ci_lo", "ci_hi"]
+            [
+                "layer",
+                "rel_depth",
+                "n",
+                "median",
+                "median_lo",
+                "median_hi",
+                "mean",
+                "ci_lo",
+                "ci_hi",
+            ]
         )
         for layer in sorted(summary):
             s = summary[layer]
             rel = layer / n_layers if n_layers else ""
-            w.writerow([
-                layer, rel, s["n"],
-                s.get("median"), s.get("median_lo"), s.get("median_hi"),
-                s.get("mean"), s.get("ci_lo"), s.get("ci_hi"),
-            ])
+            w.writerow(
+                [
+                    layer,
+                    rel,
+                    s["n"],
+                    s.get("median"),
+                    s.get("median_lo"),
+                    s.get("median_hi"),
+                    s.get("mean"),
+                    s.get("ci_lo"),
+                    s.get("ci_hi"),
+                ]
+            )
 
 
 def write_semantic_csv(out_dir: Path, sem_single: dict[str, dict]) -> None:
@@ -167,7 +185,9 @@ def summarize_setting(cells: list[dict], n_layers: int) -> dict:
         "H8f-3": judge_h8f3_cumulative_saturation(single, cumulative, n_layers),
         "H8f-4": judge_h8f4_late_null(single, VAL_LAYERS),
         "H8f-5": (
-            judge_h8f5_noising_sufficiency(noising, best) if best is not None else {"supported": None}
+            judge_h8f5_noising_sufficiency(noising, best)
+            if best is not None
+            else {"supported": None}
         ),
         "A3": a3,
         "best_early_layer": best,
@@ -212,7 +232,7 @@ def profile_isomorphism(typo_single: dict, sem_single: dict, layers=EARLY, stat=
     pearson = cov / (vx * vy) if vx > 0 and vy > 0 else None
     peak_t = argmax_layer(typo_single, restrict=layers)
     peak_s = argmax_layer(sem_single, restrict=layers)
-    peak_match = (peak_t is not None and peak_s is not None and abs(peak_t - peak_s) <= 1)
+    peak_match = peak_t is not None and peak_s is not None and abs(peak_t - peak_s) <= 1
     iso = bool(pearson is not None and pearson > 0.8 and peak_match)
     return {
         "pearson": pearson,
@@ -265,8 +285,13 @@ def make_overlay_png(
             xs = [p[0] for p in pts]
             ys = [p[1] for p in pts]
             ax.plot(
-                xs, ys, marker="o", ms=3, lw=1.5,
-                color=MODEL_COLORS.get(model, None), label=model,
+                xs,
+                ys,
+                marker="o",
+                ms=3,
+                lw=1.5,
+                color=MODEL_COLORS.get(model, None),
+                label=model,
             )
         ax.axvspan(0, 0.2, color="grey", alpha=0.10, label="li/L < 0.2")
         ax.axhline(0.0, color="k", lw=0.5, ls=":")
@@ -301,7 +326,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--results-dir", required=True, help="設定ディレクトリを含む結果ルート")
     p.add_argument("--out-dir", required=True, help="解析出力先")
     p.add_argument(
-        "--semantic-results-dir", default=None,
+        "--semantic-results-dir",
+        default=None,
         help="A3(c) 意味置換 run の結果ルート (typo との深さプロファイル比較に使用)",
     )
     return p.parse_args()
@@ -329,7 +355,8 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     setting_dirs = sorted(
-        d for d in results_root.iterdir()
+        d
+        for d in results_root.iterdir()
         if d.is_dir() and ((d / "lxt4").is_dir() or (d / "rnd4").is_dir())
     )
     logger.info("設定 %d 件を検出: %s", len(setting_dirs), [d.name for d in setting_dirs])
@@ -355,12 +382,16 @@ def main() -> None:
         write_profile_csv(setting_out / "sham_profile.csv", res["sham"], n_layers)
         write_profile_csv(setting_out / "flip_reversal_profile.csv", res["flip_reversal"], n_layers)
         write_profile_csv(setting_out / "a3_other_span_profile.csv", res["other_span"], n_layers)
-        write_profile_csv(setting_out / "a3_all_positions_profile.csv", res["all_positions"], n_layers)
+        write_profile_csv(
+            setting_out / "a3_all_positions_profile.csv", res["all_positions"], n_layers
+        )
         all_judgments[sd.name] = {"n_layers": n_layers, "stats": stats, **res["judgments"]}
         per_setting_single[sd.name] = res["single"]
         logger.info(
             "%s: n_pairs=%d best=%s H8f-1=%s H8f-3=%s",
-            sd.name, stats["n_pairs"], res["judgments"]["best_early_layer"],
+            sd.name,
+            stats["n_pairs"],
+            res["judgments"]["best_early_layer"],
             res["judgments"]["H8f-1"].get("supported"),
             res["judgments"]["H8f-3"].get("supported"),
         )
@@ -372,11 +403,15 @@ def main() -> None:
     for model, cells in model_cells.items():
         n_layers = model_nlayers[model]
         res = summarize_setting(cells, n_layers)
-        write_profile_csv(out_dir / f"pooled_{model}" / "single_profile.csv", res["single"], n_layers)
+        write_profile_csv(
+            out_dir / f"pooled_{model}" / "single_profile.csv", res["single"], n_layers
+        )
         write_profile_csv(
             out_dir / f"pooled_{model}" / "cumulative_profile.csv", res["cumulative"], n_layers
         )
-        write_profile_csv(out_dir / f"pooled_{model}" / "noising_profile.csv", res["noising"], n_layers)
+        write_profile_csv(
+            out_dir / f"pooled_{model}" / "noising_profile.csv", res["noising"], n_layers
+        )
         write_profile_csv(out_dir / f"pooled_{model}" / "sham_profile.csv", res["sham"], n_layers)
         model_judgments[model] = {"n_layers": n_layers, **res["judgments"]}
         per_model_single[model] = res["single"]
@@ -384,7 +419,9 @@ def main() -> None:
         per_model_nlayers[model] = n_layers
 
     png_ok = make_overlay_png(
-        per_model_single, per_model_cumulative, per_model_nlayers,
+        per_model_single,
+        per_model_cumulative,
+        per_model_nlayers,
         out_dir / "fig5_relative_depth_overlay.png",
     )
 
@@ -408,10 +445,14 @@ def main() -> None:
         overall[h] = {"supported": n_sup, "evaluated": n_tot}
     overall["A3"] = {
         "a_other_span_supported": sum(
-            1 for j in all_judgments.values() if j.get("A3", {}).get("a_other_span_supported") is True
+            1
+            for j in all_judgments.values()
+            if j.get("A3", {}).get("a_other_span_supported") is True
         ),
         "b_all_positions_supported": sum(
-            1 for j in all_judgments.values() if j.get("A3", {}).get("b_all_positions_supported") is True
+            1
+            for j in all_judgments.values()
+            if j.get("A3", {}).get("b_all_positions_supported") is True
         ),
         "c_semantic_isomorphic": sum(
             1 for c in semantic_compare.values() if c.get("isomorphic") is True

@@ -89,18 +89,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--window-stride", type=int, default=None, help="層窓の stride (既定: 幅と同じ)")
     p.add_argument("--sites", nargs="+", default=list(SITES), choices=list(SITES))
     p.add_argument("--directions", nargs="+", default=list(DIRECTIONS), choices=list(DIRECTIONS))
-    p.add_argument(
-        "--site-kinds", nargs="+", default=list(SITE_KINDS), choices=list(SITE_KINDS)
-    )
+    p.add_argument("--site-kinds", nargs="+", default=list(SITE_KINDS), choices=list(SITE_KINDS))
     p.add_argument("--max-new-tokens", type=int, default=16, help="答えスパンの生成長")
     p.add_argument("--answer-token-limit", type=int, default=16, help="答え分岐探索のトークン上限")
     p.add_argument("--noop-check", action="store_true", help="恒等パッチの no-op 検証を実行")
     p.add_argument("--num-shards", type=int, default=1)
     p.add_argument("--shard-index", type=int, default=0)
     p.add_argument("--force", action="store_true", help="既存結果を無視して再計算")
-    p.add_argument(
-        "--trigger-pattern", default=None, help="答え句の正規表現 (既定: The answer is)"
-    )
+    p.add_argument("--trigger-pattern", default=None, help="答え句の正規表現 (既定: The answer is)")
     p.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
     return p.parse_args()
 

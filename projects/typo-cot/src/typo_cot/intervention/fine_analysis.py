@@ -292,7 +292,8 @@ def judge_h8f5_noising_sufficiency(
     """H8f-5: noising の最良層±1 で KL 乖離の過半 (recovery>=0.5) を再現するか (median)."""
     candidate = [best_layer - 1, best_layer, best_layer + 1]
     layers = [
-        li for li in candidate
+        li
+        for li in candidate
         if li in noising_summary and noising_summary[li].get(stat) is not None
     ]
     if best_layer not in noising_summary or noising_summary[best_layer].get(stat) is None:

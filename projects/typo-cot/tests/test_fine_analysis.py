@@ -29,14 +29,35 @@ def _cell(kind, layer, direction, **fields):
 
 def _plateau_single_cells():
     """早期プラトー型 (層1-4 が高原、以降低下) の合成 single cells (2 ペア分)."""
-    means = {0: 0.30, 1: 0.85, 2: 0.88, 3: 0.86, 4: 0.84, 5: 0.55,
-             6: 0.30, 7: 0.15, 8: 0.10, 9: 0.05, 10: 0.02, 11: 0.01,
-             14: 0.0, 20: -0.01, 26: 0.0}
+    means = {
+        0: 0.30,
+        1: 0.85,
+        2: 0.88,
+        3: 0.86,
+        4: 0.84,
+        5: 0.55,
+        6: 0.30,
+        7: 0.15,
+        8: 0.10,
+        9: 0.05,
+        10: 0.02,
+        11: 0.01,
+        14: 0.0,
+        20: -0.01,
+        26: 0.0,
+    }
     cells = []
     for rep in (0.0, 0.02):  # 2 サンプル (わずかに違う値)
         for li, m in means.items():
-            cells.append(_cell("single", li, "clean_to_pert",
-                               s2_kl_recovery=m + rep, answer_matches_donor=(m > 0.5)))
+            cells.append(
+                _cell(
+                    "single",
+                    li,
+                    "clean_to_pert",
+                    s2_kl_recovery=m + rep,
+                    answer_matches_donor=(m > 0.5),
+                )
+            )
     return cells
 
 
@@ -46,8 +67,8 @@ class TestCollectByLayer:
             _cell("single", 0, "clean_to_pert", s2_kl_recovery=0.5),
             _cell("single", 0, "clean_to_pert", s2_kl_recovery=0.7),
             _cell("cumulative", 0, "clean_to_pert", s2_kl_recovery=0.9),  # 別 kind
-            _cell("single", 0, "pert_to_clean", s2_kl_recovery=0.1),      # 別 direction
-            _cell("single", 1, "clean_to_pert", s2_kl_recovery=None),     # None は除外
+            _cell("single", 0, "pert_to_clean", s2_kl_recovery=0.1),  # 別 direction
+            _cell("single", 1, "clean_to_pert", s2_kl_recovery=None),  # None は除外
         ]
         by = collect_by_layer(cells, "single", "clean_to_pert", "s2_kl_recovery")
         assert by[0] == [0.5, 0.7]
@@ -143,10 +164,14 @@ class TestJudgments:
         assert v["plateau_width"] >= 2
 
     def test_h8f3_cumulative_saturation(self):
-        single = {li: {"mean": m, "median": m, "n": 4} for li, m in
-                  {0: 0.3, 1: 0.5, 2: 0.55, 3: 0.4, 4: 0.2}.items()}
-        cumulative = {li: {"mean": m, "median": m, "n": 4} for li, m in
-                      {0: 0.3, 1: 0.6, 2: 0.75, 3: 0.78, 4: 0.79}.items()}
+        single = {
+            li: {"mean": m, "median": m, "n": 4}
+            for li, m in {0: 0.3, 1: 0.5, 2: 0.55, 3: 0.4, 4: 0.2}.items()
+        }
+        cumulative = {
+            li: {"mean": m, "median": m, "n": 4}
+            for li, m in {0: 0.3, 1: 0.6, 2: 0.75, 3: 0.78, 4: 0.79}.items()
+        }
         v = judge_h8f3_cumulative_saturation(single, cumulative, n_layers=34, frac=0.9)
         assert v["single_max"] == pytest.approx(0.55)
         assert v["cumulative_max"] == pytest.approx(0.79)
@@ -158,18 +183,24 @@ class TestJudgments:
 
     def test_h8f4_late_null(self):
         # 検証点 14/20/26 が ~0
-        summ = {14: {"mean": 0.01, "median": 0.01, "ci_lo": -0.02, "ci_hi": 0.04, "n": 10},
-                20: {"mean": -0.01, "median": -0.01, "ci_lo": -0.03, "ci_hi": 0.02, "n": 10},
-                26: {"mean": 0.0, "median": 0.0, "ci_lo": -0.02, "ci_hi": 0.02, "n": 10},
-                2: {"mean": 0.88, "median": 0.88, "ci_lo": 0.8, "ci_hi": 0.95, "n": 10}}
+        summ = {
+            14: {"mean": 0.01, "median": 0.01, "ci_lo": -0.02, "ci_hi": 0.04, "n": 10},
+            20: {"mean": -0.01, "median": -0.01, "ci_lo": -0.03, "ci_hi": 0.02, "n": 10},
+            26: {"mean": 0.0, "median": 0.0, "ci_lo": -0.02, "ci_hi": 0.02, "n": 10},
+            2: {"mean": 0.88, "median": 0.88, "ci_lo": 0.8, "ci_hi": 0.95, "n": 10},
+        }
         v = judge_h8f4_late_null(summ, val_layers=[14, 20, 26], thresh=0.1)
         assert v["supported"] is True
         assert all(abs(x) < 0.1 for x in v["val_means"].values())
 
     def test_h8f5_noising_sufficiency(self):
         # noising s2_kl_recovery が best±1 で >= 0.5
-        summ = {1: {"mean": 0.55, "median": 0.55, "n": 10}, 2: {"mean": 0.62, "median": 0.62, "n": 10},
-                3: {"mean": 0.58, "median": 0.58, "n": 10}, 5: {"mean": 0.2, "median": 0.2, "n": 10}}
+        summ = {
+            1: {"mean": 0.55, "median": 0.55, "n": 10},
+            2: {"mean": 0.62, "median": 0.62, "n": 10},
+            3: {"mean": 0.58, "median": 0.58, "n": 10},
+            5: {"mean": 0.2, "median": 0.2, "n": 10},
+        }
         v = judge_h8f5_noising_sufficiency(summ, best_layer=2, thresh=0.5)
         assert set(v["layers"]) == {1, 2, 3}
         assert v["supported"] is True

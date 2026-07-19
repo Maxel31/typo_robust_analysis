@@ -110,10 +110,10 @@ def test_run_pair_fine_produces_all_cell_families(rpf, tiny_model):
     )
     cells = result["cells"]
     kinds = [c["kind"] for c in cells]
-    assert kinds.count("single") == 4          # 層 0-3
-    assert kinds.count("cumulative") == 4       # (0,1)..(0,4)
-    assert kinds.count("noising") == 3          # 層 0-2
-    assert kinds.count("sham_single") == 4      # 層 0-3
+    assert kinds.count("single") == 4  # 層 0-3
+    assert kinds.count("cumulative") == 4  # (0,1)..(0,4)
+    assert kinds.count("noising") == 3  # 層 0-2
+    assert kinds.count("sham_single") == 4  # 層 0-3
     assert result["n_layers"] == 8
     assert "clean_to_pert" in result["s2_kl_unpatched"]
 

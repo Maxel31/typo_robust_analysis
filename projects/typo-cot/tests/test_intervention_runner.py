@@ -5,8 +5,6 @@ generate_fn (プロンプトリスト → 継続テキストリスト) で答え
 生成させ、抽出・照合して CellOutcome を返す。
 """
 
-import pytest
-
 from typo_cot.intervention.records import PairRecord
 from typo_cot.intervention.runner import CellOutcome, run_cells
 

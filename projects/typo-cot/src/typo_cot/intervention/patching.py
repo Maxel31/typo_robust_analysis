@@ -447,11 +447,7 @@ def select_flip_pairs(pairs: Sequence, n: int | None, seed: int = 42) -> list:
     """
     import random
 
-    flips = [
-        p
-        for p in pairs
-        if p.is_correct_clean and not p.extra.get("is_correct_typo", False)
-    ]
+    flips = [p for p in pairs if p.is_correct_clean and not p.extra.get("is_correct_typo", False)]
     flips.sort(key=lambda p: p.sample_id)
     random.Random(seed).shuffle(flips)
     return flips if n is None else flips[:n]

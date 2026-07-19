@@ -88,9 +88,7 @@ def run_cells(
         chunk = tasks[start : start + batch_size]
         outputs = generate_fn([t[2] for t in chunk])
         if len(outputs) != len(chunk):
-            raise ValueError(
-                f"generate_fn が {len(chunk)} 件に対し {len(outputs)} 件を返しました"
-            )
+            raise ValueError(f"generate_fn が {len(chunk)} 件に対し {len(outputs)} 件を返しました")
         for (pair_idx, cell, _), out in zip(chunk, outputs, strict=True):
             generated[(pair_idx, cell)] = out
 

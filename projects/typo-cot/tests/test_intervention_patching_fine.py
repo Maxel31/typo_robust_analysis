@@ -136,7 +136,7 @@ class TestShamPatchIdentity:
         cache = capture_activations(tiny_model, ids, span_positions, sites=("residual",))
         layers = find_decoder_layers(tiny_model)
 
-        for (s, e) in single_layer_windows([0, 1, 5, 7]):
+        for s, e in single_layer_windows([0, 1, 5, 7]):
             layer_indices = list(range(s, e))
             values = {li: cache.values("residual", li, span_positions) for li in layer_indices}
             with PatchInjector(layers, "residual", layer_indices, span_positions, values):
@@ -151,7 +151,7 @@ class TestShamPatchIdentity:
         cache = capture_activations(tiny_model, ids, span_positions, sites=("residual",))
         layers = find_decoder_layers(tiny_model)
 
-        for (s, e) in cumulative_windows([0, 3, 6]):
+        for s, e in cumulative_windows([0, 3, 6]):
             layer_indices = list(range(s, e))
             values = {li: cache.values("residual", li, span_positions) for li in layer_indices}
             with PatchInjector(layers, "residual", layer_indices, span_positions, values):
@@ -164,7 +164,9 @@ class TestShamPatchIdentity:
         ids_donor = _input(9)
         span_positions = [3, 4]
         base = self._logits(tiny_model, ids_recip)
-        donor_cache = capture_activations(tiny_model, ids_donor, span_positions, sites=("residual",))
+        donor_cache = capture_activations(
+            tiny_model, ids_donor, span_positions, sites=("residual",)
+        )
         layers = find_decoder_layers(tiny_model)
         (s, e) = single_layer_windows([2])[0]
         values = {2: donor_cache.values("residual", 2, span_positions)}
