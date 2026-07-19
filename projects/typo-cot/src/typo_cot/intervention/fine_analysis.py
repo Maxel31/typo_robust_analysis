@@ -10,8 +10,9 @@ run_patching_fine.py が出力する per-pair の cell レコード列 (kind ∈
     H8f-4 検証点 (第14/20/26層) の回復 ≈ 0
     H8f-5 noising の最良層±1 における十分性 (KL 乖離の過半再現)
 
-を判定する。すべて純関数 (GPU / モデル不要)。集計値は平均 + パーセンタイル
-bootstrap 95% CI。反証は各 judge の "supported" フラグと補助量で透明化する。
+を判定する。すべて純関数 (GPU / モデル不要)。主推定量は **median** (s2_kl_recovery は
+1 - KL_patched/KL_base で下に非有界の重い左裾を持ち平均が外れ値に汚染されるため; 平均も副次保持)、
+パーセンタイル bootstrap 95% CI 付き。反証は各 judge の "supported" フラグと補助量で透明化する。
 """
 
 from __future__ import annotations
