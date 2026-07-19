@@ -18,10 +18,6 @@ from pathlib import Path
 from typo_cot.perturbation.dataset import PerturbedDataset
 
 
-def token_set(sample) -> set[str]:
-    return {pt.original_token for pt in sample.perturbed_tokens}
-
-
 def index_set(sample) -> set[int]:
     return {pt.token_index for pt in sample.perturbed_tokens}
 
