@@ -1,0 +1,265 @@
+# Paper-aligned experiment contract
+
+## Canonical source and naming
+
+This document is transcribed from the final 19-page PDF:
+
+- Title: *Edited-Word Activation Patching Reverses Selected Typo-Induced Answer Changes after Tokenization*
+- Filename: `Edited-Word Activation Patching Reverses Selected Typo-Induced Answer Changes after Tokenization.pdf`
+- SHA-256: `2cfb736e4636ee8db8dc6a92a6004c6e36914538a9acadcd66073289580a39d0`
+
+The PDF is authoritative. Old experiment numbers, worktree READMEs, analysis
+notes, archived outputs, and implementation comments are secondary evidence.
+When they conflict, implementation must follow the PDF and record the mismatch
+in provenance rather than silently preserving the old behavior.
+
+Public identifiers describe operations. RQ1/RQ2/RQ3 remain only in the
+`paper_question` metadata so a reader does not need the paper's question
+numbering to understand a branch, directory, or command.
+
+## Frozen shared setup
+
+| Item | Paper specification |
+|---|---|
+| Tasks | GSM8K, MATH-500, MMLU, MMLU-Pro, ARC, and CSQA |
+| Base patching families | Gemma-3-4B, Llama-3.2-3B, Mistral-7B, and Qwen2.5-3B |
+| Extended layer scans | Ten models from 0.5B to 27B |
+| CoT-swap main pool | Five 1B–7B models × five tasks (25 settings) |
+| CoT-swap scale check | MMLU, including Gemma 12B/27B, Llama 70B, and Qwen 72B |
+| Decoding | Greedy, bfloat16, left padding, at most 512 generated tokens |
+| CoT-swap answer span | At most 16 generated tokens |
+| Few-shot prompts | GSM8K 8; MMLU/MMLU-Pro/ARC/CSQA 5; MATH-500 4 |
+| Random seed | 42 |
+| Answer extraction | Task-specific deterministic extraction; unextractable is failure |
+| Paper environment | Python ≥3.12; PyTorch 2.10.0; Transformers 4.57.6; Accelerate 1.12.0; LXT 2.1 |
+| Logged extension hardware | NVIDIA RTX PRO 6000 Blackwell Max-Q, 95 GB |
+
+For every item, the perturbation procedure attempts one character edit in each
+of up to four eligible word spans. Attribution-4 selects the four largest
+absolute AttnLRP relevances to the maximum logit immediately after the first CoT
+token. Random-4 samples within the item after excluding those top-ranked spans;
+it is not a population-random natural-typo condition. At each target, seeded
+random order chooses the first applicable operation:
+
+1. substitute a lowercase QWERTY neighbor while preserving case;
+2. duplicate the selected character;
+3. delete the selected character unless the word has one character.
+
+Clean and edited spans align at each edited word's final token. This final-token
+rule is mandatory for all activation transfer and must not be replaced by the
+older substring-based alignment.
+
+## Experiment inventory
+
+`uv run typo-cot experiments list` is the machine-readable source for status.
+The direct commands below are the stable target interface. During the staged
+refactor, a direct command is executable only when its catalog status is
+`implemented`.
+
+| Operation | Paper link | Core denominator/readout |
+|---|---|---|
+| `prepare-edited-pairs` | §3.1, Appendix A, Table 4 | Versioned clean/edited pair and alignment records |
+| `targeting-fidelity-audit` | §3.1, Appendix A | Edit landing, gold-option, and operation counts |
+| `layerwise-kl-patching` | §3.3, §4.1, Appendix B | Complete finite grids with untreated KL > 1e-9; normalized first-CoT-token KL |
+| `layerwise-answer-patching` | §3.2–3.3, §4.1 | Separate eight-setting free-generation scans, at most 300 pairs per curve |
+| `fixed-window-answer-patching` | §3.3, §4.1, Appendix B | Frozen [0,6) answer patch; [6,12) prespecified MMLU-Pro comparison |
+| `patch-coordinate-controls` | §3.3, §4.1, Appendix B | Primary 172 pairs; correct, +2 offset, cross-item, and identity controls |
+| `patch-position-controls` | §4.1, Appendix B | Same 109 pairs at edited-word, prompt-final, and question-final positions |
+| `patch-text-combination` | §3.5, §4.1, Table 2 | Descriptive patch absent/present × zero/full clean text on 172 pairs |
+| `cot-swap` | §3.4, §4.2, Appendix C | Clean-correct A denominator; restoration conditions on B≠A |
+| `answer-line-deletion` | §3.4, §4.2, Table 1 | Same eligible CoT-swap cases after final answer-line deletion |
+| `clean-prefix-scan` | §3.5, §4.3, Appendix D | Valid scans whose fresh k=0 rerun is wrong; point/stable correctness |
+| `one-token-prefix-replacement` | §3.5, §4.3, Appendix D | Eligible selected/control replacements; correct-to-wrong rate |
+| `edit-count-sensitivity` | Appendix C, Table 8 | Accuracy and conditional CoT-swap restoration at 1/2/4 edits |
+| `model-scale-cot-swap` | Appendix C, Table 9 | Same first 500 MMLU IDs across the model scale ladder |
+| `typo-warning-prompt` | §4.3, Appendix E | Paired edited-input accuracy with/without the warning |
+| `input-corrector-audit` | §4.3, Appendix E, Table 12 | Edited-word restoration, intact-word changes, and provenance controls |
+| `restoration-order-accuracy` | §4.3, Appendix E, Table 13 | Accuracy after restoring 1/2/3 words in three orders |
+
+These rates are not interchangeable. In particular, layerwise KL, layerwise
+answer generation, fixed-window answer generation, complete-text CoT swap, and
+clean-prefix scans have distinct cohorts and denominators. Reporting code must
+never pool them into stages of a single causal path.
+
+## Stable command shapes
+
+The paths are examples of the intended public layout. Each operation owns its
+arguments and output directory; no machine-specific archive or worktree path is
+implicit.
+
+### Pair preparation and input audits
+
+```bash
+uv run typo-cot prepare-edited-pairs \
+  --model google/gemma-3-4b-it --benchmark gsm8k \
+  --targeting attribution-4 --num-edits 4 \
+  --output-dir results/prepare-edited-pairs/gemma-3-4b-it/gsm8k
+
+uv run typo-cot targeting-fidelity-audit \
+  --pairs-root results/prepare-edited-pairs \
+  --output-dir results/targeting-fidelity-audit
+```
+
+### Edited-word activation patching
+
+```bash
+uv run typo-cot layerwise-kl-patching \
+  --model google/gemma-3-4b-it --benchmark gsm8k \
+  --pairs results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/pairs.jsonl \
+  --targeting attribution-4 \
+  --directions clean-to-edited edited-to-clean \
+  --output-dir results/layerwise-kl-patching/gemma-3-4b-it/gsm8k
+
+uv run typo-cot layerwise-answer-patching \
+  --model google/gemma-3-4b-it --benchmark gsm8k \
+  --pairs data/cohorts/layerwise-answer/gemma-3-4b-it_gsm8k.jsonl \
+  --directions clean-to-edited edited-to-clean --max-pairs 300 \
+  --output-dir results/layerwise-answer-patching/gemma-3-4b-it/gsm8k
+
+uv run typo-cot fixed-window-answer-patching \
+  --model google/gemma-3-4b-it --benchmark gsm8k \
+  --pairs data/cohorts/fixed-window/gemma-3-4b-it_gsm8k.jsonl \
+  --layers 0:6 --directions clean-to-edited edited-to-clean \
+  --output-dir results/fixed-window-answer-patching/gemma-3-4b-it/gsm8k
+
+uv run typo-cot patch-coordinate-controls \
+  --model google/gemma-3-4b-it --benchmark gsm8k \
+  --pairs data/cohorts/fixed-window/primary-172.jsonl --layers 0:6 \
+  --controls correct offset-2 cross-item self-copy \
+  --output-dir results/patch-coordinate-controls
+
+uv run typo-cot patch-position-controls \
+  --model google/gemma-3-4b-it --benchmark gsm8k \
+  --pairs data/cohorts/patch-position/common-109.jsonl \
+  --positions edited-word prompt-final question-final \
+  --output-dir results/patch-position-controls
+
+uv run typo-cot patch-text-combination \
+  --model google/gemma-3-4b-it --benchmark gsm8k \
+  --pairs data/cohorts/fixed-window/primary-172.jsonl --layers 0:6 \
+  --output-dir results/patch-text-combination
+```
+
+### Complete-text and prefix interventions
+
+```bash
+uv run typo-cot cot-swap \
+  --model google/gemma-3-4b-it --benchmark gsm8k \
+  --pairs data/cohorts/cot-swap/gemma-3-4b-it_gsm8k.jsonl \
+  --output-dir results/cot-swap/gemma-3-4b-it/gsm8k
+
+uv run typo-cot answer-line-deletion \
+  --model google/gemma-3-4b-it --benchmark gsm8k \
+  --pairs data/cohorts/cot-swap/gemma-3-4b-it_gsm8k.jsonl \
+  --output-dir results/answer-line-deletion/gemma-3-4b-it/gsm8k
+
+uv run typo-cot clean-prefix-scan \
+  --model google/gemma-3-4b-it --benchmark gsm8k \
+  --target-set data/cohorts/clean-prefix/primary-172.json \
+  --relative-budgets 0 .02 .05 .08 .12 .16 .20 .25 .325 .40 .50 .65 .80 1 \
+  --absolute-budgets 1 2 4 8 16 32 64 \
+  --output-dir results/clean-prefix-scan/gemma-3-4b-it/gsm8k
+
+uv run typo-cot one-token-prefix-replacement \
+  --model google/gemma-3-4b-it --benchmark gsm8k \
+  --target-set data/cohorts/clean-prefix/primary-172.json \
+  --position-control selected distant adjacent \
+  --output-dir results/one-token-prefix-replacement/gemma-3-4b-it/gsm8k
+```
+
+The prefix grid is the union of the shown absolute values and
+`round(relative_budget * clean_cot_length)`. Point correctness and
+stable-through-all-later correctness must use the same fresh-k=0-wrong
+denominator. Non-monotonicity means at least two correctness transitions across
+adjacent tested budgets.
+
+### Sensitivity, scale, and input correction
+
+```bash
+uv run typo-cot edit-count-sensitivity \
+  --model google/gemma-3-4b-it --benchmark gsm8k \
+  --edit-counts 1 2 4 --pairs-root data/cohorts/edit-count \
+  --output-dir results/edit-count-sensitivity/gemma-3-4b-it/gsm8k
+
+uv run typo-cot model-scale-cot-swap \
+  --models google/gemma-3-1b-it google/gemma-3-4b-it google/gemma-3-12b-it \
+  --benchmark mmlu --pairs-root data/cohorts/model-scale-cot-swap \
+  --output-dir results/model-scale-cot-swap/mmlu
+
+uv run typo-cot typo-warning-prompt \
+  --model google/gemma-3-4b-it --benchmark gsm8k \
+  --pairs data/cohorts/input-correction/gemma-3-4b-it_gsm8k.jsonl \
+  --output-dir results/typo-warning-prompt/gemma-3-4b-it/gsm8k
+
+uv run typo-cot input-corrector-audit \
+  --corrector pyspellchecker --model google/gemma-3-4b-it --benchmark gsm8k \
+  --pairs data/cohorts/input-correction/gemma-3-4b-it_gsm8k.jsonl \
+  --output-dir results/input-corrector-audit/pyspellchecker/gemma-3-4b-it/gsm8k
+
+uv run typo-cot restoration-order-accuracy \
+  --model google/gemma-3-4b-it --benchmark gsm8k \
+  --pairs data/cohorts/restoration-order/gemma-3-4b-it_gsm8k.jsonl \
+  --order high-relevance seeded-random low-relevance --budgets 1 2 3 \
+  --output-dir results/restoration-order-accuracy/gemma-3-4b-it/gsm8k
+```
+
+## Target package layout
+
+Each operation moves behind an importable module with a thin CLI adapter. Shared
+model loading, deterministic generation, alignment, schemas, resumable record
+I/O, and provenance live under `common`; operations must not import another git
+worktree or rely on an absolute local path.
+
+```text
+projects/typo-cot/
+├── configs/
+│   ├── paper/                    # frozen model/task/grid manifests
+│   └── smoke/                    # tiny public validation manifests
+├── data/
+│   ├── cohorts/                  # released IDs/manifests, not model caches
+│   └── fixtures/                 # small test inputs
+├── docs/
+│   ├── paper-experiments.md      # this contract
+│   └── data-provenance.md
+├── src/typo_cot/
+│   ├── cli.py
+│   └── experiments/
+│       ├── common/               # schemas, seeds, generation, alignment, I/O
+│       ├── prepare_edited_pairs/
+│       ├── layerwise_kl_patching/
+│       ├── layerwise_answer_patching/
+│       ├── fixed_window_answer_patching/
+│       ├── cot_swap/
+│       ├── clean_prefix_scan/
+│       └── ...                   # remaining operation-named modules
+├── tests/
+│   ├── unit/
+│   ├── integration/
+│   └── smoke/
+└── results/                      # ignored runtime outputs, one dir per operation
+```
+
+Every output directory must contain per-item records plus a run manifest with
+the command, resolved arguments, input hashes, model revision, dependency
+versions, seed, timestamps, and completion state. Interrupted runs must resume
+without duplicating records.
+
+## Branch and review sequence
+
+Branches and PRs are also named for operations, for example:
+
+1. `agent/paper-experiment-contract`
+2. `agent/prepare-edited-pairs`
+3. `agent/layerwise-kl-patching`
+4. `agent/layerwise-answer-patching`
+5. `agent/fixed-window-answer-patching`
+6. `agent/cot-swap`
+7. `agent/clean-prefix-scan`
+8. the remaining control and appendix operations, one per branch
+9. `agent/build-paper-artifacts`
+10. `agent/remove-legacy-experiment-code`
+
+Each PR targets `develop`. Tests are written and observed failing before the
+implementation, then unit tests, CPU integration tests, and a proportionate GPU
+smoke run must pass. No next operation starts until CI and all actionable review
+threads for the current PR are clear.

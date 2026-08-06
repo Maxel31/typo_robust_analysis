@@ -70,7 +70,9 @@ def test_get_experiment_rejects_unknown_operation() -> None:
         get_experiment("rq1")
 
 
-def test_cli_lists_machine_readable_experiment_contracts(capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_lists_machine_readable_experiment_contracts(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     assert main(["experiments", "list", "--format", "json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)

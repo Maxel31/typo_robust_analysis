@@ -1,61 +1,63 @@
-# typo_robust_analysis
+# Edited-Word Activation Patching
 
-LLM の typo（誤字）頑健性を分析・実験するためのモノレポ。
-`uv` workspace で共有パッケージ `typo_utils` を全プロジェクトから利用する。
+Reproduction code for **“Edited-Word Activation Patching Reverses Selected
+Typo-Induced Answer Changes after Tokenization.”**
 
-## ディレクトリ構成
+The public reproduction package is in [`projects/typo-cot`](projects/typo-cot).
+Experiment names describe the operation they perform—for example,
+`layerwise-kl-patching`, `cot-swap`, and `clean-prefix-scan`. Paper labels such
+as RQ1 are used only as cross-references.
 
-```
-typo_robust_analysis/
-├── pyproject.toml        # uv workspace ルート
-├── uv.lock               # 依存の一元管理
-├── utils/                # 共有パッケージ typo_utils（typo注入/データ/評価/可視化/記録）
-├── _sample_project/      # 新規プロジェクトのコピー元テンプレート
-├── projects/             # 実プロジェクト群（_sample_project をコピーして作成）
-├── datasets/             # 共有データ（大容量は gitignore / 外部参照）
-└── scripts/new_project.sh
-```
+## Source of truth
 
-各プロジェクトの中身:
+The final 19-page paper PDF is the primary source for experimental design,
+cohorts, denominators, and reported evidence. Its SHA-256 is:
 
-```
-projects/<name>/
-├── configs/              # 実験設定 YAML（model/dataset/typo 条件）
-├── experiments/
-│   ├── reproduction/     # 再現実験
-│   └── proposed/         # 提案手法の実験
-├── analysis/             # results を読み込み可視化（notebook + 図）
-├── src/<name>/           # プロジェクト固有ロジック（成熟したら utils へ昇格）
-├── results/              # 実験出力（gitignore）
-└── data/                 # 中間・ローカルデータ（gitignore）
+```text
+2cfb736e4636ee8db8dc6a92a6004c6e36914538a9acadcd66073289580a39d0
 ```
 
-## セットアップ
+If an old script, branch, result note, or README disagrees with that PDF, the
+PDF wins. The transcribed experiment contract is documented in
+[`paper-experiments.md`](projects/typo-cot/docs/paper-experiments.md).
+
+## Quick start
 
 ```bash
-uv sync                  # workspace 全体を解決し typo_utils を editable で導入
-cp .env.example .env     # W&B を使う場合は値を設定
+git clone https://github.com/Maxel31/typo_robust_analysis.git
+cd typo_robust_analysis
+git switch develop
+
+uv sync --project projects/typo-cot
+uv run --project projects/typo-cot typo-cot experiments list
+uv run --project projects/typo-cot typo-cot experiments show layerwise-kl-patching
 ```
 
-## 新規プロジェクトの開始
+The refactor is being published operation by operation. `catalogued` means the
+paper contract and future command are fixed but the public runner is not yet
+available; `implemented` means the command can run. The catalog reports this
+status explicitly, so the README does not imply that unfinished runners work.
 
-```bash
-scripts/new_project.sh repro_attention_typo
-cd projects/repro_attention_typo
-uv sync                       # この member を共有 .venv に editable で導入
-uv run python experiments/reproduction/run.py --config configs/repro_baseline.yaml
+GPU experiments will require the locked `lrp` environment after its dedicated
+environment PR lands. CPU-only catalog inspection and contract tests require no
+model download.
+
+## Repository map
+
+```text
+.
+├── README.md
+├── pyproject.toml                 # uv workspace
+├── uv.lock                        # shared environment lock
+├── projects/typo-cot/
+│   ├── README.md                  # package setup and current commands
+│   ├── configs/                   # versioned experiment configuration
+│   ├── docs/                      # paper contract and provenance
+│   ├── src/typo_cot/              # importable implementation
+│   └── tests/                     # CPU unit/contract tests
+└── utils/                         # shared utilities used by typo-cot
 ```
 
-> 実験はプロジェクトディレクトリ内で実行する（`uv run` がその member を自動で同期し、
-> `results/` がそのプロジェクト配下に作られる）。
-
-## 設計方針
-
-- **共有は uv workspace**: `typo_utils` を editable リンク。更新は全プロジェクトに即反映、lock は一元管理。
-- **再現/提案/分析の分離**: `experiments/{reproduction,proposed}` で実験、`analysis/` で可視化。
-- **設定は YAML**: `configs/*.yaml` を `typo_utils.config.load_config()`（OmegaConf）で読む。
-- **記録はローカル + W&B 併用**: 常に `results/<exp>/<run_id>/` に保存し、加えて W&B へlog（未設定時は offline）。
-
-## CI
-
-PR を作成・更新すると GitHub Actions（`.github/workflows/claude-code-review.yml`）経由で Claude Code による自動レビューが実行される。
+Changes are developed as one operation per branch and pull request, always
+against `develop`. A subsequent operation starts only after CI and all
+actionable review feedback on the current PR have been resolved.
