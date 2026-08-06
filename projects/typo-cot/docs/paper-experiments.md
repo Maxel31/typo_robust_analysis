@@ -81,11 +81,42 @@ answer generation, fixed-window answer generation, complete-text CoT swap, and
 clean-prefix scans have distinct cohorts and denominators. Reporting code must
 never pool them into stages of a single causal path.
 
+### Headline cohort invariants
+
+These counts are acceptance checks for later runner and aggregation PRs. A
+reproduction may expose additional sensitivity rows, but it must not silently
+substitute one row's denominator for another.
+
+| Analysis | Paper cohort invariant |
+|---|---|
+| Layerwise KL patching | 32 completed settings; 30 headline settings after excluding MATH cells with n=13 and n=27; 7,919 retained pairs |
+| Layerwise answer patching | Eight settings (four base models × GSM8K/MMLU), with n=94–226 per curve |
+| Fixed-window answer patching | Six planned settings; restoration n=1,241 with 800 successes; reciprocal induction n=1,458 with 871 changes |
+| Primary coordinate controls | The same 172 Gemma-3-4B/GSM8K pairs: correct coordinates 129, offset 44, cross-item donor 42 |
+| Position reachability | The same 109 pairs for all three patch positions |
+| Prespecified MMLU-Pro windows | Qwen2.5-3B n=97 and Mistral-7B n=120 |
+| Complete-text CoT swap | 19,550 clean-correct cases; 4,634 B changes; 3,539 B-to-C restorations |
+| Answer-line deletion | GSM8K n=333 and MMLU n=450 in the three-model controls |
+| Clean-prefix extensions | 2,100 deterministic targets from 5,918 capped candidates; 2,094 valid scans; 1,858 fresh k=0 errors |
+| One-token diagnostic | Primary n=153 and extensions n=1,629; distant common four-arm subset n=1,575; adjacent subset n=391 |
+
+For layerwise KL patching, the normalized restoration readout is
+
+```text
+1 - KL(p_clean || p_patched) / KL(p_clean || p_edited)
+```
+
+and the reciprocal induction calculation swaps the clean and edited roles.
+Only finite untreated denominators greater than `1e-9` and complete finite layer
+grids are valid. Early/middle/late summaries first aggregate within a pair and
+setting, then macro-average settings with equal weight.
+
 ## Stable command shapes
 
 The paths are examples of the intended public layout. Each operation owns its
 arguments and output directory; no machine-specific archive or worktree path is
-implicit.
+implicit. The examples assume `cd projects/typo-cot`; from the repository root,
+add `--project projects/typo-cot` immediately after `uv run`.
 
 ### Pair preparation and input audits
 
@@ -182,7 +213,11 @@ uv run typo-cot edit-count-sensitivity \
   --output-dir results/edit-count-sensitivity/gemma-3-4b-it/gsm8k
 
 uv run typo-cot model-scale-cot-swap \
-  --models google/gemma-3-1b-it google/gemma-3-4b-it google/gemma-3-12b-it \
+  --models google/gemma-3-1b-it google/gemma-3-4b-it \
+    google/gemma-3-12b-it google/gemma-3-27b-it \
+    meta-llama/Llama-3.2-1B-Instruct meta-llama/Llama-3.2-3B-Instruct \
+    meta-llama/Llama-3.1-70B-Instruct mistralai/Mistral-7B-Instruct-v0.3 \
+    Qwen/Qwen2.5-72B-Instruct \
   --benchmark mmlu --pairs-root data/cohorts/model-scale-cot-swap \
   --output-dir results/model-scale-cot-swap/mmlu
 
