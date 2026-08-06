@@ -8,6 +8,7 @@ time; ``status`` makes that migration state explicit.
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from typing import Literal, get_args
 
@@ -21,6 +22,8 @@ ComputeClass = Literal["cpu", "gpu"]
 ExperimentStatus = Literal["catalogued", "implemented"]
 _COMPUTE_CLASSES = frozenset(get_args(ComputeClass))
 _EXPERIMENT_STATUSES = frozenset(get_args(ExperimentStatus))
+_PUBLIC_SLUG_PATTERN = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
+_PAPER_QUESTION_SLUG_PATTERN = re.compile(r"(?:^|-)rq[1-3](?:-|$)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +45,12 @@ class ExperimentSpec:
 
     def __post_init__(self) -> None:
         """Reject values outside the public catalog schema at construction time."""
+        if _PUBLIC_SLUG_PATTERN.fullmatch(self.slug) is None or (
+            _PAPER_QUESTION_SLUG_PATTERN.search(self.slug) is not None
+        ):
+            raise ValueError(
+                f"slug must be descriptive kebab-case without RQ labels, got {self.slug!r}"
+            )
         if self.compute not in _COMPUTE_CLASSES:
             raise ValueError(f"compute must be cpu or gpu, got {self.compute!r}")
         if self.status not in _EXPERIMENT_STATUSES:
