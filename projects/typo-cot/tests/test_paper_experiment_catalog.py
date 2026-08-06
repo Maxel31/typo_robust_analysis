@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+import typo_cot.cli as cli_module
 from typo_cot.cli import main
 from typo_cot.experiments.catalog import (
     PAPER_EXPERIMENTS,
@@ -77,7 +79,8 @@ def test_cli_lists_machine_readable_experiment_contracts(
 
     payload = json.loads(capsys.readouterr().out)
     assert [item["slug"] for item in payload] == list(EXPECTED_EXPERIMENTS)
-    assert all(item["command"].startswith("uv run typo-cot ") for item in payload)
+    assert all(item["target_command"].startswith("uv run typo-cot ") for item in payload)
+    assert all("command" not in item for item in payload)
 
 
 def test_cli_shows_experiment_specific_arguments(capsys: pytest.CaptureFixture[str]) -> None:
@@ -85,7 +88,7 @@ def test_cli_shows_experiment_specific_arguments(capsys: pytest.CaptureFixture[s
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["paper_question"] == "RQ3"
-    assert payload["command"] == "uv run typo-cot clean-prefix-scan"
+    assert payload["target_command"] == "uv run typo-cot clean-prefix-scan"
     assert "--target-set" in payload["required_arguments"]
     assert "--output-dir" in payload["required_arguments"]
 
@@ -100,6 +103,25 @@ def test_cli_returns_usage_error_for_unknown_experiment(
     assert "unknown experiment" in capsys.readouterr().err
 
 
+def test_cli_text_list_aligns_catalogued_and_implemented_statuses(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    specs = (
+        PAPER_EXPERIMENTS[0],
+        replace(PAPER_EXPERIMENTS[1], status="implemented"),
+    )
+    monkeypatch.setattr(cli_module, "PAPER_EXPERIMENTS", specs)
+
+    assert main(["experiments", "list"]) == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert [line.index(spec.title) for line, spec in zip(lines, specs, strict=True)] == [
+        len(lines[0]) - len(specs[0].title),
+        len(lines[1]) - len(specs[1].title),
+    ]
+    assert lines[0].index(specs[0].title) == lines[1].index(specs[1].title)
+
+
 def test_public_experiment_guide_tracks_every_catalog_operation() -> None:
     guide = (PROJECT_ROOT / "docs" / "paper-experiments.md").read_text(encoding="utf-8")
 
@@ -107,7 +129,7 @@ def test_public_experiment_guide_tracks_every_catalog_operation() -> None:
     for spec in PAPER_EXPERIMENTS:
         assert f"`{spec.slug}`" in guide
         documented_command = re.search(
-            rf"{re.escape(spec.command)}(?P<arguments>.*?)(?=\n\nuv run typo-cot |\n```)",
+            rf"{re.escape(spec.target_command)}(?P<arguments>.*?)(?=\n\nuv run typo-cot |\n```)",
             guide,
             flags=re.DOTALL,
         )
