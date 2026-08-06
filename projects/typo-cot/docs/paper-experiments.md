@@ -255,7 +255,7 @@ projects/typo-cot/
 │   └── fixtures/                 # small test inputs
 ├── docs/
 │   ├── paper-experiments.md      # this contract
-│   └── data-provenance.md
+│   └── data_provenance.md
 ├── src/typo_cot/
 │   ├── cli.py
 │   └── experiments/
