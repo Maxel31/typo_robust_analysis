@@ -9,10 +9,16 @@ time; ``status`` makes that migration state explicit.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from typing import Literal
 
 # Contract fingerprint of the user-supplied final PDF. Change it only when the
 # canonical paper artifact is intentionally replaced and the catalog is re-audited.
 PAPER_SHA256 = "2cfb736e4636ee8db8dc6a92a6004c6e36914538a9acadcd66073289580a39d0"
+
+ComputeClass = Literal["cpu", "gpu"]
+ExperimentStatus = Literal["catalogued", "implemented"]
+_COMPUTE_CLASSES = frozenset(("cpu", "gpu"))
+_EXPERIMENT_STATUSES = frozenset(("catalogued", "implemented"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,8 +35,15 @@ class ExperimentSpec:
     readout: str
     required_arguments: tuple[str, ...]
     outputs: tuple[str, ...]
-    compute: str
-    status: str = "catalogued"
+    compute: ComputeClass
+    status: ExperimentStatus = "catalogued"
+
+    def __post_init__(self) -> None:
+        """Reject values outside the public catalog schema at construction time."""
+        if self.compute not in _COMPUTE_CLASSES:
+            raise ValueError(f"compute must be cpu or gpu, got {self.compute!r}")
+        if self.status not in _EXPERIMENT_STATUSES:
+            raise ValueError(f"status must be catalogued or implemented, got {self.status!r}")
 
     @property
     def target_command(self) -> str:

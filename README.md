@@ -46,6 +46,8 @@ model download.
 
 ```text
 .
+├── .github/workflows/              # automated PR review
+├── _sample_project/                # retained legacy project template
 ├── README.md
 ├── pyproject.toml                 # uv workspace
 ├── uv.lock                        # shared environment lock
@@ -55,8 +57,18 @@ model download.
 │   ├── docs/                      # paper contract and provenance
 │   ├── src/typo_cot/              # importable implementation
 │   └── tests/                     # CPU unit/contract tests
+├── scripts/new_project.sh         # retained legacy scaffolding helper
 └── utils/                         # shared utilities used by typo-cot
 ```
+
+## Retained workspace support
+
+`projects/typo-cot` depends on the `typo-utils` workspace member in `utils/`, so
+the repository remains a `uv` workspace during the refactor. `_sample_project/`
+and `scripts/new_project.sh` are pre-existing generic scaffolding retained for
+now; they are not part of the paper reproduction path. Pull requests are
+reviewed by `.github/workflows/claude-code-review.yml`. Any later cleanup or
+removal of these retained tools will be handled in its own reviewed PR.
 
 Changes are developed as one operation per branch and pull request, always
 against `develop`. A subsequent operation starts only after CI and all
