@@ -56,6 +56,7 @@ def _print_spec(spec: ExperimentSpec, output_format: str) -> None:
         return
 
     print(spec.title)
+    print(f"summary: {spec.summary}")
     print(f"operation: {spec.slug}")
     print(f"paper: {spec.paper_question} ({', '.join(spec.paper_sections)})")
     print(f"status: {spec.status}")
