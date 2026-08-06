@@ -41,6 +41,7 @@ EXPECTED_EXPERIMENTS = (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = PROJECT_ROOT.parents[1]
 
 
 def _documented_target_commands(markdown: str) -> dict[str, set[str]]:
@@ -90,6 +91,17 @@ def test_catalog_entries_are_public_operation_contracts(spec: ExperimentSpec) ->
 def test_catalog_slugs_are_unique() -> None:
     slugs = [spec.slug for spec in PAPER_EXPERIMENTS]
     assert len(slugs) == len(set(slugs))
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    (("compute", "cup"), ("status", "in-progress")),
+)
+def test_experiment_spec_rejects_values_outside_the_public_contract(
+    field: str, invalid_value: str
+) -> None:
+    with pytest.raises(ValueError, match=rf"{field}.*{re.escape(invalid_value)}"):
+        replace(PAPER_EXPERIMENTS[0], **{field: invalid_value})
 
 
 def test_get_experiment_rejects_unknown_operation() -> None:
@@ -157,3 +169,26 @@ def test_public_experiment_guide_tracks_every_catalog_operation() -> None:
         assert f"`{spec.slug}`" in guide
         for argument in spec.required_arguments:
             assert argument in commands[spec.slug], f"{spec.slug} example is missing {argument}"
+
+
+def test_all_public_entry_points_track_the_canonical_pdf_fingerprint() -> None:
+    public_documents = (
+        REPOSITORY_ROOT / "README.md",
+        PROJECT_ROOT / "README.md",
+        PROJECT_ROOT / "docs" / "paper-experiments.md",
+    )
+
+    for document in public_documents:
+        assert PAPER_SHA256 in document.read_text(encoding="utf-8"), document
+
+
+def test_root_readme_accounts_for_retained_workspace_support() -> None:
+    readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
+
+    for retained_path in (
+        "utils/",
+        "_sample_project/",
+        "scripts/new_project.sh",
+        ".github/workflows/claude-code-review.yml",
+    ):
+        assert retained_path in readme
