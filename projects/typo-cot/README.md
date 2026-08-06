@@ -24,9 +24,14 @@ From the repository root:
 uv sync --project projects/typo-cot
 ```
 
-GPU runners will use the separately locked LRP environment. Until the
-environment-lock PR is merged, do not treat the old optional dependency pins as
-the final paper environment.
+Pair preparation additionally needs the GPU/LRP dependencies:
+
+```bash
+uv sync --project projects/typo-cot --extra lrp
+```
+
+Until the environment-lock PR is merged, do not treat the old optional
+dependency pins as the final paper environment.
 
 ## Available commands
 
@@ -43,6 +48,39 @@ Each catalog entry includes its stable `target_command`, paper section, required
 operation-specific arguments, cohort, intervention, readout, outputs, compute
 class, and implementation status. Direct experiment runners are added in
 separate reviewed PRs; only entries marked `implemented` are runnable.
+
+## Prepare clean/edited pairs
+
+`prepare-edited-pairs` performs the paper's input-preparation operation: greedy
+clean generation, first-CoT-token AttnLRP targeting, up to four seeded
+single-character edits, greedy edited generation, deterministic answer
+extraction, and edited-word-final token alignment. Run it separately for each
+model, benchmark, and targeting condition:
+
+```bash
+uv run --project projects/typo-cot typo-cot prepare-edited-pairs \
+  --model google/gemma-3-4b-it \
+  --benchmark gsm8k \
+  --targeting attribution-4 \
+  --num-edits 4 \
+  --output-dir results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/attribution-4
+```
+
+Use `--targeting random-4` for the within-item non-top-relevance control. The
+paper defaults are `--seed 42` and `--max-new-tokens 512`; `--limit 1` is
+available for a GPU smoke run. A stopped run can be continued with `--resume`.
+The command writes:
+
+- `pairs.jsonl`: versioned per-item clean/edited generations, target-attempt
+  provenance, actual distinct edited-word spans, and clean/edited word-final
+  token indices;
+- `run.json`: frozen arguments, environment and dataset provenance, progress,
+  failures, and record counts.
+
+The target attempts and aligned words are deliberately separate. AttnLRP ranks
+tokens, and the final paper reports that some lower-ranked attempts land outside
+their intended token or share a word. The pair format preserves that behavior
+instead of silently converting targeting into a word-level selector.
 
 ## Tests
 
