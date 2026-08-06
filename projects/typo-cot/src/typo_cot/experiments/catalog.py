@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
+# Contract fingerprint of the user-supplied final PDF. Change it only when the
+# canonical paper artifact is intentionally replaced and the catalog is re-audited.
 PAPER_SHA256 = "2cfb736e4636ee8db8dc6a92a6004c6e36914538a9acadcd66073289580a39d0"
 
 

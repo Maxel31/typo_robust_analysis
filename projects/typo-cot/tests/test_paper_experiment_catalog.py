@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from dataclasses import replace
 from pathlib import Path
 
@@ -40,6 +41,30 @@ EXPECTED_EXPERIMENTS = (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _documented_target_commands(markdown: str) -> dict[str, set[str]]:
+    """Parse continued ``uv run typo-cot`` commands from Markdown bash fences."""
+    commands: dict[str, set[str]] = {}
+    for block in re.findall(r"```bash\n(.*?)\n```", markdown, flags=re.DOTALL):
+        continued: list[str] = []
+        for line in block.splitlines():
+            stripped = line.strip()
+            if continued or stripped.startswith("uv run typo-cot "):
+                continued.append(stripped.removesuffix("\\").rstrip())
+                if stripped.endswith("\\"):
+                    continue
+
+                tokens = shlex.split(" ".join(continued))
+                continued = []
+                if tokens[:3] != ["uv", "run", "typo-cot"] or len(tokens) < 4:
+                    continue
+                slug = tokens[3]
+                assert slug not in commands, f"duplicate command example: {slug}"
+                commands[slug] = set(tokens)
+
+        assert not continued, "unterminated shell continuation in documentation"
+    return commands
 
 
 def test_catalog_identifies_the_user_supplied_final_pdf() -> None:
@@ -124,17 +149,11 @@ def test_cli_text_list_aligns_catalogued_and_implemented_statuses(
 
 def test_public_experiment_guide_tracks_every_catalog_operation() -> None:
     guide = (PROJECT_ROOT / "docs" / "paper-experiments.md").read_text(encoding="utf-8")
+    commands = _documented_target_commands(guide)
 
     assert PAPER_SHA256 in guide
+    assert set(commands) == set(EXPECTED_EXPERIMENTS)
     for spec in PAPER_EXPERIMENTS:
         assert f"`{spec.slug}`" in guide
-        documented_command = re.search(
-            rf"{re.escape(spec.target_command)}(?P<arguments>.*?)(?=\n\nuv run typo-cot |\n```)",
-            guide,
-            flags=re.DOTALL,
-        )
-        assert documented_command is not None, f"missing command example: {spec.slug}"
         for argument in spec.required_arguments:
-            assert argument in documented_command.group("arguments"), (
-                f"{spec.slug} command example is missing {argument}"
-            )
+            assert argument in commands[spec.slug], f"{spec.slug} example is missing {argument}"
