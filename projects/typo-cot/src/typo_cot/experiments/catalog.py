@@ -31,14 +31,14 @@ class ExperimentSpec:
     status: str = "catalogued"
 
     @property
-    def command(self) -> str:
-        """Return the stable command prefix for the operation."""
+    def target_command(self) -> str:
+        """Return the stable command prefix, including for catalogued operations."""
         return f"uv run typo-cot {self.slug}"
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serializable representation in field order."""
         payload = asdict(self)
-        payload["command"] = self.command
+        payload["target_command"] = self.target_command
         return payload
 
 

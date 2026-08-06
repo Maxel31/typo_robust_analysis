@@ -45,8 +45,9 @@ def _print_list(output_format: str) -> None:
         return
 
     width = max(len(spec.slug) for spec in PAPER_EXPERIMENTS)
+    status_width = max(len(spec.status) for spec in PAPER_EXPERIMENTS)
     for spec in PAPER_EXPERIMENTS:
-        print(f"{spec.slug:<{width}}  {spec.status:<10}  {spec.title}")
+        print(f"{spec.slug:<{width}}  {spec.status:<{status_width}}  {spec.title}")
 
 
 def _print_spec(spec: ExperimentSpec, output_format: str) -> None:
@@ -59,7 +60,7 @@ def _print_spec(spec: ExperimentSpec, output_format: str) -> None:
     print(f"paper: {spec.paper_question} ({', '.join(spec.paper_sections)})")
     print(f"status: {spec.status}")
     print(f"compute: {spec.compute}")
-    print(f"command: {spec.command}")
+    print(f"target command: {spec.target_command}")
     print(f"required arguments: {' '.join(spec.required_arguments)}")
     print(f"cohort: {spec.cohort}")
     print(f"intervention: {spec.intervention}")

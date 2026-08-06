@@ -34,10 +34,10 @@ uv run --project projects/typo-cot typo-cot experiments show cot-swap
 uv run --project projects/typo-cot typo-cot experiments show clean-prefix-scan --format json
 ```
 
-Each catalog entry includes its stable operation command, paper section,
-required operation-specific arguments, cohort, intervention, readout, outputs,
-compute class, and implementation status. Direct experiment runners are added
-in separate reviewed PRs; only entries marked `implemented` are runnable.
+Each catalog entry includes its stable `target_command`, paper section, required
+operation-specific arguments, cohort, intervention, readout, outputs, compute
+class, and implementation status. Direct experiment runners are added in
+separate reviewed PRs; only entries marked `implemented` are runnable.
 
 ## Tests
 
