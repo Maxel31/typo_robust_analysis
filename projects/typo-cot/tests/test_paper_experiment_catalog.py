@@ -104,6 +104,15 @@ def test_experiment_spec_rejects_values_outside_the_public_contract(
         replace(PAPER_EXPERIMENTS[0], **{field: invalid_value})
 
 
+@pytest.mark.parametrize(
+    "invalid_slug",
+    ("Clean-Prefix-Scan", "clean_prefix_scan", "rq1-prefix-scan"),
+)
+def test_experiment_spec_rejects_non_public_operation_slugs(invalid_slug: str) -> None:
+    with pytest.raises(ValueError, match=rf"slug.*{re.escape(invalid_slug)}"):
+        replace(PAPER_EXPERIMENTS[0], slug=invalid_slug)
+
+
 def test_get_experiment_rejects_unknown_operation() -> None:
     with pytest.raises(KeyError, match="unknown experiment"):
         get_experiment("rq1")
