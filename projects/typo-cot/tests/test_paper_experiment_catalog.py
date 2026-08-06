@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -35,6 +36,8 @@ EXPECTED_EXPERIMENTS = (
     "input-corrector-audit",
     "restoration-order-accuracy",
 )
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_catalog_identifies_the_user_supplied_final_pdf() -> None:
@@ -93,3 +96,11 @@ def test_cli_returns_usage_error_for_unknown_experiment(
 
     assert exc_info.value.code == 2
     assert "unknown experiment" in capsys.readouterr().err
+
+
+def test_public_experiment_guide_tracks_every_catalog_operation() -> None:
+    guide = (PROJECT_ROOT / "docs" / "paper-experiments.md").read_text(encoding="utf-8")
+
+    assert PAPER_SHA256 in guide
+    for slug in EXPECTED_EXPERIMENTS:
+        assert f"`{slug}`" in guide
