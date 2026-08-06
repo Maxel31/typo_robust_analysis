@@ -130,6 +130,16 @@ def test_cli_shows_experiment_specific_arguments(capsys: pytest.CaptureFixture[s
     assert "--output-dir" in payload["required_arguments"]
 
 
+def test_cli_text_show_includes_the_operation_summary(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    spec = get_experiment("clean-prefix-scan")
+
+    assert main(["experiments", "show", spec.slug]) == 0
+
+    assert spec.summary in capsys.readouterr().out
+
+
 def test_cli_returns_usage_error_for_unknown_experiment(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
