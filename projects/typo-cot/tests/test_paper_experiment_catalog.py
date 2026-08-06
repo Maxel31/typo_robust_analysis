@@ -8,24 +8,37 @@ import re
 import pytest
 
 from typo_cot.cli import main
-from typo_cot.experiments.catalog import PAPER_EXPERIMENTS, ExperimentSpec, get_experiment
+from typo_cot.experiments.catalog import (
+    PAPER_EXPERIMENTS,
+    PAPER_SHA256,
+    ExperimentSpec,
+    get_experiment,
+)
 
 
 EXPECTED_EXPERIMENTS = (
     "prepare-edited-pairs",
+    "targeting-fidelity-audit",
     "layerwise-kl-patching",
     "layerwise-answer-patching",
     "fixed-window-answer-patching",
     "patch-coordinate-controls",
     "patch-position-controls",
+    "patch-text-combination",
     "cot-swap",
     "answer-line-deletion",
     "clean-prefix-scan",
     "one-token-prefix-replacement",
-    "input-correction",
     "edit-count-sensitivity",
     "model-scale-cot-swap",
+    "typo-warning-prompt",
+    "input-corrector-audit",
+    "restoration-order-accuracy",
 )
+
+
+def test_catalog_identifies_the_user_supplied_final_pdf() -> None:
+    assert PAPER_SHA256 == "2cfb736e4636ee8db8dc6a92a6004c6e36914538a9acadcd66073289580a39d0"
 
 
 def test_catalog_covers_the_final_paper_experiments_in_reproduction_order() -> None:
