@@ -104,5 +104,15 @@ def test_public_experiment_guide_tracks_every_catalog_operation() -> None:
     guide = (PROJECT_ROOT / "docs" / "paper-experiments.md").read_text(encoding="utf-8")
 
     assert PAPER_SHA256 in guide
-    for slug in EXPECTED_EXPERIMENTS:
-        assert f"`{slug}`" in guide
+    for spec in PAPER_EXPERIMENTS:
+        assert f"`{spec.slug}`" in guide
+        documented_command = re.search(
+            rf"{re.escape(spec.command)}(?P<arguments>.*?)(?=\n\nuv run typo-cot |\n```)",
+            guide,
+            flags=re.DOTALL,
+        )
+        assert documented_command is not None, f"missing command example: {spec.slug}"
+        for argument in spec.required_arguments:
+            assert argument in documented_command.group("arguments"), (
+                f"{spec.slug} command example is missing {argument}"
+            )

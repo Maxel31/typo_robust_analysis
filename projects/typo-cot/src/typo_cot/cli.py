@@ -9,12 +9,11 @@ from collections.abc import Sequence
 from typo_cot.experiments.catalog import PAPER_EXPERIMENTS, ExperimentSpec, get_experiment
 
 
-def _experiment_slug(value: str) -> str:
+def _experiment(value: str) -> ExperimentSpec:
     try:
-        get_experiment(value)
+        return get_experiment(value)
     except KeyError as exc:
         raise argparse.ArgumentTypeError(str(exc.args[0])) from None
-    return value
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -33,7 +32,7 @@ def _parser() -> argparse.ArgumentParser:
     list_parser.add_argument("--format", choices=("text", "json"), default="text")
 
     show_parser = actions.add_parser("show", help="Show one operation's public contract.")
-    show_parser.add_argument("slug", type=_experiment_slug)
+    show_parser.add_argument("experiment", type=_experiment)
     show_parser.add_argument("--format", choices=("text", "json"), default="text")
     return parser
 
@@ -75,7 +74,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_list(args.format)
         return 0
     if args.command == "experiments" and args.catalog_action == "show":
-        _print_spec(get_experiment(args.slug), args.format)
+        _print_spec(args.experiment, args.format)
         return 0
     raise AssertionError("argparse accepted an unhandled command")
 

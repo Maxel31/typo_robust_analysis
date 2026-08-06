@@ -13,6 +13,11 @@ notes, archived outputs, and implementation comments are secondary evidence.
 When they conflict, implementation must follow the PDF and record the mismatch
 in provenance rather than silently preserving the old behavior.
 
+The PDF itself is intentionally not added by this contract PR; the fingerprint
+anchors the user-supplied final submission without assuming publication rights
+or a permanent public URL. Once the paper artifact is public, its stable URL can
+be added without changing the experiment contract.
+
 Public identifiers describe operations. RQ1/RQ2/RQ3 remain only in the
 `paper_question` metadata so a reader does not need the paper's question
 numbering to understand a branch, directory, or command.
