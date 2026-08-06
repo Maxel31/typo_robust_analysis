@@ -9,7 +9,7 @@ time; ``status`` makes that migration state explicit.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Literal
+from typing import Literal, get_args
 
 # Contract fingerprint of the user-supplied final PDF. Change it only when the
 # canonical paper artifact is intentionally replaced and the catalog is re-audited.
@@ -19,8 +19,8 @@ PAPER_SHA256 = "2cfb736e4636ee8db8dc6a92a6004c6e36914538a9acadcd66073289580a39d0
 
 ComputeClass = Literal["cpu", "gpu"]
 ExperimentStatus = Literal["catalogued", "implemented"]
-_COMPUTE_CLASSES = frozenset(("cpu", "gpu"))
-_EXPERIMENT_STATUSES = frozenset(("catalogued", "implemented"))
+_COMPUTE_CLASSES = frozenset(get_args(ComputeClass))
+_EXPERIMENT_STATUSES = frozenset(get_args(ExperimentStatus))
 
 
 @dataclass(frozen=True, slots=True)
