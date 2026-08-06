@@ -13,6 +13,8 @@ from typing import Literal
 
 # Contract fingerprint of the user-supplied final PDF. Change it only when the
 # canonical paper artifact is intentionally replaced and the catalog is re-audited.
+# Use ``rg '<old digest>' README.md projects/typo-cot`` to find every public copy;
+# the contract tests require all documentation copies to stay synchronized.
 PAPER_SHA256 = "2cfb736e4636ee8db8dc6a92a6004c6e36914538a9acadcd66073289580a39d0"
 
 ComputeClass = Literal["cpu", "gpu"]
@@ -47,7 +49,11 @@ class ExperimentSpec:
 
     @property
     def target_command(self) -> str:
-        """Return the stable command prefix, including for catalogued operations."""
+        """Return the planned top-level runner, including before implementation.
+
+        Each operation PR implements this exact ``typo-cot <slug>`` shape.  The
+        separate ``experiments list/show`` commands only inspect this catalog.
+        """
         return f"uv run typo-cot {self.slug}"
 
     def to_dict(self) -> dict[str, object]:
