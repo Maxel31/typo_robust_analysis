@@ -669,6 +669,17 @@ def test_mmlu_pro_summary_compares_windows_on_the_same_restoration_pairs(
     assert comparison["pairs"] == 1
     assert comparison["difference"] == 1.0
     assert comparison["bootstrap_resamples"] == 10_000
+    reference = summary["historical_reference"]
+    assert reference["table"] == "Table 7"
+    assert reference["published_setting"] == {
+        "denominator": 97,
+        "early_window_successes": 51,
+        "following_window_successes": 54,
+        "difference_percentage_points": -3.1,
+        "confidence_interval_percentage_points": [-14.4, 8.2],
+    }
+    assert reference["historical_bootstrap_discrepancy"] is True
+    assert reference["induction_unextractable_discrepancy"] is False
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["comparability"]["status"] == "prespecified-mmlu-pro-window-comparison"
 
