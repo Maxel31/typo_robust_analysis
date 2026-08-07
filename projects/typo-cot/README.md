@@ -263,6 +263,80 @@ one of the four Figure 2 models on GSM8K or MMLU, requests both directions and
 300 anchors, and both targeting arms contribute to the selected and regenerated
 fixed cohorts. Every unmet condition is listed under `comparability.limitations`.
 
+## Patch fixed layer windows and regenerate answers
+
+`fixed-window-answer-patching` implements the answer intervention reported in
+Table 6. It pools up to 150 stored clean-correct/edited-wrong anchors from each
+targeting arm, greedily regenerates both untreated answers, then applies all six
+complete decoder-block output patches in `[0,6)` during one prompt prefill. Run
+one of the six planned Gemma/Llama/Mistral by GSM8K/MMLU settings on physical
+GPU 0 as follows:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+  typo-cot fixed-window-answer-patching \
+  --model google/gemma-3-4b-it \
+  --benchmark gsm8k \
+  --pairs \
+    results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/attribution-4/pairs.jsonl \
+    results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/random-4/pairs.jsonl \
+  --layers 0:6 \
+  --directions clean-to-edited edited-to-clean \
+  --gpu-id 0 \
+  --output-dir results/fixed-window-answer-patching/gemma-3-4b-it/gsm8k
+```
+
+The two directions intentionally use different fixed denominators. Restoration
+(`clean-to-edited`) includes regenerated clean-correct/edited-wrong pairs and
+succeeds when the patched edited answer equals the regenerated clean answer.
+Reciprocal induction (`edited-to-clean`) includes every regenerated
+clean-correct anchor, even when its regenerated edited answer is also correct,
+and succeeds only when an extracted patched answer differs from the regenerated
+clean answer. An unextractable patched answer is a failed readout in either
+direction and contributes zero without leaving that direction's denominator.
+
+The prespecified Table 7 MMLU-Pro depth comparison is the same operation with
+two independent six-layer windows on the same anchors:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+  typo-cot fixed-window-answer-patching \
+  --model Qwen/Qwen2.5-3B-Instruct \
+  --benchmark mmlu-pro \
+  --pairs results/prepare-edited-pairs/Qwen2.5-3B-Instruct/mmlu-pro/attribution-4/pairs.jsonl \
+  --layers 0:6 6:12 \
+  --directions clean-to-edited \
+  --gpu-id 0 \
+  --output-dir results/fixed-window-answer-patching/Qwen2.5-3B-Instruct/mmlu-pro
+```
+
+`--pairs` accepts one or both completed targeting arms. Two arms are capped at
+150 selected anchors each; one arm is capped at 300. `--layers` accepts one or
+more non-overlapping half-open decoder-block windows. `--limit 1` is available
+only for a labelled smoke run. An interrupted identical run can continue with
+`--resume`; a completed resume validates all hashes before model loading.
+
+The command writes:
+
+- `fixed_window_records.jsonl`: per-pair, per-direction, per-window generations
+  and binary events;
+- `pair_status_records.jsonl`: every selected anchor and its direction-specific
+  denominator inclusion or exclusion reason;
+- `setting_summary.json`: denominator and event counts by direction/window,
+  Wilson intervals, targeting-arm breakdowns, and the 10,000-resample paired
+  percentile comparison for the two MMLU-Pro windows;
+- `run.json`: arguments, paper/input/model/output fingerprints, protocol,
+  checkpoints, progress, failures, and comparability status.
+
+The final PDF is authoritative where the historical artifacts disagree with its
+stated protocol. In particular, the paper says an unextractable answer is a
+failed intervention readout, while the historical Table 6 induction aggregate
+counted some unextractable patched answers as changes. Fresh runs therefore
+report the paper-defined extracted-answer event and retain the published Table 6
+values only as historical reference metadata, not as forced acceptance targets.
+The offset and cross-item donor comparisons are a separate
+`patch-coordinate-controls` operation.
+
 ## Tests
 
 ```bash
@@ -270,6 +344,7 @@ uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_paper_exp
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_targeting_fidelity_audit.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_layerwise_kl_patching.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_layerwise_answer_patching.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_fixed_window_answer_patching.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 
