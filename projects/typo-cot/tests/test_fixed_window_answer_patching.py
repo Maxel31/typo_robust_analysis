@@ -600,6 +600,35 @@ def test_clean_incorrect_pair_is_excluded_from_both_directions_without_scan(
     assert first["edited-to-clean"]["exclusion_reason"] == "regenerated_clean_not_correct"
 
 
+def test_prompt_final_edited_word_remains_eligible_for_an_early_multilayer_window(
+    tmp_path: Path,
+) -> None:
+    pair = _pair("prompt-final", targeting="attribution-4")
+    pair["aligned_words"] = [_aligned_word(clean_final=2, edited_final=2)]
+    attribution = _write_pair_source(
+        tmp_path / "attribution",
+        [pair],
+        targeting="attribution-4",
+    )
+    runtime = FakeRuntime()
+
+    result = run_fixed_window_answer_patching(
+        _config((attribution,), tmp_path / "out"),
+        runtime=runtime,
+    )
+
+    assert runtime.scan_calls == [
+        (
+            "attribution-4",
+            "prompt-final",
+            (LayerWindow(0, 6),),
+            ("clean-to-edited", "edited-to-clean"),
+        )
+    ]
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert summary["population"]["selected_anchors"] == 1
+
+
 def test_mmlu_pro_summary_compares_windows_on_the_same_restoration_pairs(
     tmp_path: Path,
 ) -> None:
