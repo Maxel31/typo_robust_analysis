@@ -16,8 +16,11 @@ from typing import Any, Literal, Protocol
 
 from tqdm.auto import tqdm
 
-from typo_cot.evaluation.fallback import answers_equal
+from typo_cot.evaluation.fallback import answers_equal, extract_with_fallback
 from typo_cot.experiments.catalog import PAPER_SHA256
+from typo_cot.experiments.fixed_window_answer_patching.metrics import (
+    PAIRED_BOOTSTRAP_METHOD,
+)
 
 DIRECTION_NAMES = ("clean-to-edited", "edited-to-clean")
 _DIRECTION_ORDER = {name: index for index, name in enumerate(DIRECTION_NAMES)}
@@ -87,7 +90,9 @@ _TABLE7_REFERENCES: dict[str, dict[str, object]] = {
 
 _PROTOCOL = {
     "schema_version": "fixed-window-answer-patching-protocol/v1",
-    "source_anchor": "prepared-clean-correct-edited-wrong-with-aligned-word",
+    "source_anchor": (
+        "stored-continuations-reextracted-clean-correct-edited-wrong-with-aligned-word"
+    ),
     "targeting_pool": "one-or-both-prepared-attribution-4-and-random-4-arms",
     "selection": {
         "seed": _SELECTION_SEED,
@@ -113,7 +118,9 @@ _PROTOCOL = {
         "use_cache": True,
         "patch_application": "prompt-prefill-exactly-once-per-window-generation",
     },
-    "answer_extraction": "task-primary-then-empty-only-deterministic-fallback/v1",
+    "answer_extraction": (
+        "task-primary-then-empty-only-deterministic-fallback-exact-canonical-comparison/v1"
+    ),
     "direction_denominators": {
         "clean-to-edited": "regenerated-clean-correct-and-regenerated-edited-wrong",
         "edited-to-clean": "all-regenerated-clean-correct-anchors",
@@ -124,7 +131,7 @@ _PROTOCOL = {
     "mmlu_pro_comparison": {
         "windows": ["0:6", "6:12"],
         "direction": "clean-to-edited",
-        "method": "paired-percentile-bootstrap-binary-risk-difference/v1",
+        "method": PAIRED_BOOTSTRAP_METHOD,
         "resamples": _BOOTSTRAP_RESAMPLES,
         "seed": 42,
     },
@@ -492,7 +499,11 @@ def _validate_pair_record(
         raise ValueError(f"{context}: fixed-window answer input requires seed 42")
     if record.get("num_edits_requested") != 4:
         raise ValueError(f"{context}: fixed-window answer input requires four edits")
-    _nonempty_string(record.get("gold_answer"), field=f"{context}.gold_answer")
+    gold_answer = _nonempty_string(
+        record.get("gold_answer"),
+        field=f"{context}.gold_answer",
+    )
+    evaluation_benchmark = _evaluation_benchmark(config.benchmark)
 
     correctness: dict[str, bool] = {}
     prompt_counts: dict[str, int] = {}
@@ -507,7 +518,14 @@ def _validate_pair_record(
         correct = answer.get("is_correct")
         if not isinstance(correct, bool):
             raise ValueError(f"{context}.{side}.answer.is_correct must be boolean")
-        correctness[side] = correct
+        continuation = payload.get("continuation")
+        if not isinstance(continuation, str):
+            raise ValueError(f"{context}.{side}.continuation must be a string")
+        correctness[side] = extract_with_fallback(
+            continuation,
+            benchmark=evaluation_benchmark,
+            correct_answer=gold_answer,
+        ).is_correct
 
     aligned_words = record.get("aligned_words")
     if not isinstance(aligned_words, list):
@@ -584,7 +602,34 @@ def _load_source(
     if arguments.get("max_new_tokens") != 512:
         raise ValueError("source run must use the paper generation cap 512")
 
+    decoding = _mapping(manifest.get("decoding"), field="source run decoding")
+    expected_decoding: dict[str, object] = {
+        "strategy": "greedy",
+        "dtype": "bfloat16",
+        "padding_side": "left",
+        "max_new_tokens": 512,
+        "do_sample": False,
+        "num_beams": 1,
+        "num_return_sequences": 1,
+        "temperature": None,
+        "top_p": None,
+        "top_k": None,
+        "use_cache": True,
+        "return_dict_in_generate": False,
+        "output_scores": False,
+    }
+    for field, expected in expected_decoding.items():
+        actual = decoding.get(field)
+        if field not in decoding or actual != expected or type(actual) is not type(expected):
+            raise ValueError(
+                f"source run decoding.{field} must be {expected!r} with its exact JSON type"
+            )
+
     provenance = _mapping(manifest.get("provenance"), field="source run provenance")
+    if provenance.get("generation_protocol") != "explicit-greedy-generation/v1":
+        raise ValueError(
+            "source run provenance.generation_protocol must be explicit-greedy-generation/v1"
+        )
     model_revision = _nonempty_string(
         provenance.get("model_revision"),
         field="source run provenance.model_revision",
@@ -1171,9 +1216,9 @@ def _comparability(
     elif limitations:
         status = "partial-paper-protocol"
     elif config.benchmark == "mmlu-pro":
-        status = "prespecified-mmlu-pro-window-comparison"
+        status = "fresh-prespecified-mmlu-pro-window-run"
     else:
-        status = "fresh-paper-protocol-reproduction"
+        status = "fresh-paper-protocol-run"
     return {
         "status": status,
         "requirements": {
@@ -1182,6 +1227,7 @@ def _comparability(
             "layer_windows": expected_windows,
             "directions": expected_directions,
             "unlimited": config.limit is None,
+            "historical_cohort_identity": False,
         },
         "limitations": limitations,
         "targeting_arms": sorted(arms, key=_TARGETING_ORDER.__getitem__),
@@ -1197,7 +1243,7 @@ def _comparability(
                 for direction in config.directions
             }
         ),
-        "exact_historical_table6_ids": False,
+        "exact_historical_cohort_identity": False,
         "note": (
             "Fresh runs use final-PDF extracted-answer events. Published Table 6 "
             "values are descriptive metadata because historical induction aggregation "

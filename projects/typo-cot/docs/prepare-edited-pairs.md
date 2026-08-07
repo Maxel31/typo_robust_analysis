@@ -26,7 +26,7 @@ Each line contains these top-level groups:
 | `sample_id`, `model`, `benchmark`, `subset` | Stable item and setting identity. |
 | `targeting`, `seed`, `num_edits_requested` | Frozen edit condition. |
 | `attribution_target` | First-CoT-token identity and the selected maximum-logit target position. |
-| `clean`, `edited` | Exact prompts, editable text, generated continuation, deterministic extraction, correctness, and token counts. |
+| `clean`, `edited` | Exact prompts, editable text, generated continuation, primary/fallback extraction provenance, exact canonical correctness, and token counts. |
 | `target_attempts` | Ranked AttnLRP/token attempts and edit-landing provenance. |
 | `aligned_words` | Deduplicated actual edited words and clean/edited word-final token coordinates. |
 | `excluded_attribution_tokens` | Attribution top four excluded before within-item `random-4` sampling. Empty for `attribution-4`. |
@@ -88,6 +88,16 @@ benchmarks whose loaders do not apply a per-subset cap, the provenance value is
 paper fingerprint, full arguments, greedy/bfloat16/left-padding settings,
 package and hardware provenance, model revision, a SHA-256 fingerprint of the
 loaded benchmark records, progress counts, and per-item failures.
+
+Greedy generation is fully explicit: `do_sample=false`, `num_beams=1`,
+`num_return_sequences=1`, `temperature/top_p/top_k=null`, `use_cache=true`, and
+no score-return mode. The manifest records these values and
+`generation_protocol: explicit-greedy-generation/v1`, so downstream patching and
+resume validation reject runs whose model defaults could have changed the
+answers. The task extractor is attempted first; only an empty result invokes the
+final-paper fallback for its registered benchmark. GSM8K numeric correctness is
+exact after canonicalization and never passes through binary floating-point
+comparison; MATH-500 retains its native symbolic normalizer.
 
 Records are checkpointed individually in a hidden work directory. A failed run
 does not publish a partial `pairs.jsonl`; after the cause is fixed, rerun the

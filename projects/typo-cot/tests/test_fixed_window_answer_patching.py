@@ -781,9 +781,15 @@ def test_mmlu_pro_summary_compares_windows_on_the_same_restoration_pairs(
     tmp_path: Path,
 ) -> None:
     model = "Qwen/Qwen2.5-3B-Instruct"
+    source_pair = _pair("a", targeting="attribution-4", model=model, benchmark="mmlu-pro")
+    source_pair["gold_answer"] = "A"
+    source_pair["clean"]["continuation"] = "The answer is A."
+    source_pair["clean"]["answer"]["value"] = "A"
+    source_pair["edited"]["continuation"] = "The answer is B."
+    source_pair["edited"]["answer"]["value"] = "B"
     attribution = _write_pair_source(
         tmp_path / "attribution",
-        [_pair("a", targeting="attribution-4", model=model, benchmark="mmlu-pro")],
+        [source_pair],
         targeting="attribution-4",
         model=model,
         benchmark="mmlu-pro",
@@ -793,8 +799,8 @@ def test_mmlu_pro_summary_compares_windows_on_the_same_restoration_pairs(
         directions={
             "clean-to-edited": DirectionWindowScan(
                 patched_by_window={
-                    "0:6": _answer("2", correct=True, token=31),
-                    "6:12": _answer("3", correct=False, token=32),
+                    "0:6": _answer("A", correct=True, token=31),
+                    "6:12": _answer("B", correct=False, token=32),
                 }
             )
         },
@@ -808,7 +814,16 @@ def test_mmlu_pro_summary_compares_windows_on_the_same_restoration_pairs(
             layers=(LayerWindow(0, 6), LayerWindow(6, 12)),
             directions=("clean-to-edited",),
         ),
-        runtime=FakeRuntime(scans={("attribution-4", "a"): scan}),
+        runtime=FakeRuntime(
+            baselines={
+                ("attribution-4", "a"): BaselineScan(
+                    sample_id="a",
+                    clean=_answer("A", correct=True, token=20),
+                    edited=_answer("B", correct=False, token=30),
+                )
+            },
+            scans={("attribution-4", "a"): scan},
+        ),
     )
     summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
     comparison = summary["prespecified_mmlu_pro_window_comparison"]

@@ -222,7 +222,7 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         slug="patch-coordinate-controls",
         title="Compare edited-word patches with coordinate and donor controls",
         paper_question="RQ1",
-        paper_sections=("§3.3", "§4.1", "Appendix B", "Table 6"),
+        paper_sections=("§3.3", "§4.1", "Appendix B", "Table 7"),
         summary=(
             "Run the correct-coordinate patch beside two-token offset, matched cross-item "
             "donor, and identity self-copy controls."

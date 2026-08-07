@@ -10,6 +10,7 @@ import numpy as np
 
 DEFAULT_BOOTSTRAP_RESAMPLES = 10_000
 DEFAULT_BOOTSTRAP_SEED = 42
+PAIRED_BOOTSTRAP_METHOD = "paired-percentile-bootstrap-binary-risk-difference/v1"
 
 
 def wilson_interval(
@@ -82,7 +83,7 @@ def paired_binary_difference(
     left_successes = int(np.sum(left_array))
     right_successes = int(np.sum(right_array))
     return {
-        "method": "paired-bootstrap-binary-risk-difference/v1",
+        "method": PAIRED_BOOTSTRAP_METHOD,
         "pairs": pair_count,
         "left_successes": left_successes,
         "right_successes": right_successes,

@@ -391,6 +391,7 @@ class HuggingFaceFixedWindowAnswerPatchingRuntime:
             "runtime": "HuggingFaceFixedWindowAnswerPatchingRuntime",
             "python": platform.python_version(),
             "torch": _package_version("torch"),
+            "numpy": _package_version("numpy"),
             "transformers": _package_version("transformers"),
             "accelerate": _package_version("accelerate"),
             "lxt": _package_version("lxt"),

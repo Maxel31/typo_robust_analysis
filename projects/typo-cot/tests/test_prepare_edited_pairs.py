@@ -241,6 +241,23 @@ def test_pair_runtime_answer_uses_empty_only_fallback_and_exact_correctness() ->
     }
 
 
+def test_pair_runtime_keeps_the_math_extractor_native_comparator() -> None:
+    runtime = object.__new__(HuggingFacePairPreparationRuntime)
+    runtime.internal_benchmark = "math"
+    runtime.extractor = create_extractor("math")
+
+    answer = runtime._answer(r"Reasoning. \boxed{\frac{1}{2}}", r"\frac{1}{2}")
+
+    assert answer == {
+        "value": r"\frac{1}{2}",
+        "is_extracted": True,
+        "is_correct": True,
+        "method": "primary:boxed",
+        "primary_method": "boxed",
+        "confidence": 0.9,
+    }
+
+
 def test_cli_dispatches_experiment_specific_pair_arguments(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -891,6 +908,7 @@ def test_completed_resume_rejects_a_legacy_cohort_before_model_loading(
             "dataset_cohort_rule": "paper-model-benchmark-cohort/v1",
             "dataset_samples_per_subset": 100,
             "random_seed_algorithm": "sha256-first-64-bits/v1",
+            "generation_protocol": "explicit-greedy-generation/v1",
             "target_position": "maximum-logit-after-first-cot-token",
             "alignment": "actual-edited-word-final-token",
             "historical_compatibility_notes": [],
@@ -929,6 +947,7 @@ def test_completed_resume_ignores_environment_only_provenance_changes(
         "dataset_cohort_rule": "paper-model-benchmark-cohort/v1",
         "dataset_samples_per_subset": 100,
         "random_seed_algorithm": "sha256-first-64-bits/v1",
+        "generation_protocol": "explicit-greedy-generation/v1",
         "target_position": "maximum-logit-after-first-cot-token",
         "alignment": "actual-edited-word-final-token",
         "historical_compatibility_notes": [],

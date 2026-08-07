@@ -10,16 +10,19 @@ single-layer Figure 2 answer scan remains a separate
 Every `--pairs` value must be `pairs.jsonl` from a completed, unlimited
 `prepare-edited-pairs/v1` run with the same model, benchmark, dataset
 fingerprint, pinned model revision, paper SHA-256, seed 42, four requested edits,
-and 512-token generation cap. One Attribution-4 or Random-4 source permits up to
-300 anchors. When both sources are supplied, each arm is independently sorted
-by sample ID, shuffled with seed 42, and capped at 150 before pooling. A
-`--limit` smoke run takes a round-robin prefix of the two selected arms.
+512-token generation cap, and `explicit-greedy-generation/v1` manifest. One
+Attribution-4 or Random-4 source permits up to 300 anchors. When both sources are
+supplied, each arm is independently sorted by sample ID, shuffled with seed 42,
+and capped at 150 before pooling. A `--limit` smoke run takes a round-robin
+prefix of the two selected arms.
 
-An anchor must have been clean-correct and edited-wrong when prepared and must
-contain at least one aligned edited word. The runner deliberately does not
-exclude an edited word at the final prompt token: unlike a final-block-only
-patch, an early multi-layer patch is followed by downstream recomputation and is
-not structurally a no-op at that coordinate.
+An anchor's stored clean and edited continuations are re-extracted using the
+final-PDF primary-then-empty-only-fallback rule. It is eligible only when that
+audit finds clean-correct/edited-wrong and at least one aligned edited word; old
+stored correctness booleans are never trusted for selection. The runner
+deliberately does not exclude an edited word at the final prompt token: unlike a
+final-block-only patch, an early multi-layer patch is followed by downstream
+recomputation and is not structurally a no-op at that coordinate.
 
 Fresh untreated continuations are generated after selection. They define two
 different fixed cohorts:
@@ -91,11 +94,14 @@ comparison when applicable; and published values as historical reference
 metadata.
 
 `run.json` binds the command arguments, protocol, source files, source manifests,
-model/runtime provenance, checkpoints, outputs, and final-paper artifact with
-SHA-256 fingerprints. A run is labelled as one of:
+model/runtime provenance (including NumPy for bootstrap reproduction),
+checkpoints, outputs, and final-paper artifact with SHA-256 fingerprints. A run
+is labelled as one of:
 
-- `fresh-paper-protocol-reproduction` for a complete planned Table 6 setting;
-- `prespecified-mmlu-pro-window-comparison` for a complete Table 7 setting;
+- `fresh-paper-protocol-run` for a planned Table 6 configuration on a fresh
+  public cohort;
+- `fresh-prespecified-mmlu-pro-window-run` for a planned Table 7 configuration
+  on a fresh public cohort;
 - `partial-smoke-run`, `partial-paper-protocol`, or `non-paper-setting` with
   explicit limitations otherwise.
 

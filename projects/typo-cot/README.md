@@ -69,6 +69,12 @@ the four Attribution-4 tokens. `--num-edits` selects how many of the sampled
 targets to edit (1–4). The paper defaults are `--seed 42` and
 `--max-new-tokens 512`; `--limit 1` is available for a GPU smoke run. A stopped
 run can be continued with `--resume`.
+Both generations explicitly freeze `do_sample=false`, one beam, one returned
+sequence, no temperature/top-p/top-k sampling, cached decoding, and the requested
+token cap; model defaults cannot silently change the cohort. The primary answer
+extractor runs first, the deterministic fallback runs only for an empty result,
+and GSM8K correctness uses exact canonical strings rather than floating-point
+tolerance. MATH-500 retains its task-native symbolic comparator.
 The command writes:
 
 - `pairs.jsonl`: versioned per-item clean/edited generations, target-attempt
@@ -327,6 +333,12 @@ The command writes:
   percentile comparison for the two MMLU-Pro windows;
 - `run.json`: arguments, paper/input/model/output fingerprints, protocol,
   checkpoints, progress, failures, and comparability status.
+
+A structurally complete fresh Table 6 run is labelled
+`fresh-paper-protocol-run`; the analogous Table 7 execution is labelled
+`fresh-prespecified-mmlu-pro-window-run`. These labels mean that the published
+protocol shape was executed on a fresh public cohort, not that unpublished
+historical sample IDs or published denominators were recreated.
 
 The final PDF is authoritative where the historical artifacts disagree with its
 stated protocol. In particular, the paper says an unextractable answer is a
