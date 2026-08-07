@@ -285,14 +285,14 @@ class FakeRuntime:
 
 
 def _config(
-    pairs: tuple[Path, ...],
+    pair_paths: tuple[Path, ...],
     output_dir: Path,
     **changes: object,
 ) -> FixedWindowAnswerPatchingConfig:
     config = FixedWindowAnswerPatchingConfig(
         model="test/model",
         benchmark="gsm8k",
-        pairs=pairs,
+        pairs=pair_paths,
         layers=(LayerWindow(0, 6),),
         directions=("clean-to-edited", "edited-to-clean"),
         output_dir=output_dir,
