@@ -80,6 +80,11 @@ The target attempts and aligned words are deliberately separate. AttnLRP ranks
 tokens, and the final paper reports that some lower-ranked attempts land outside
 their intended token or share a word. The pair format preserves that behavior
 instead of silently converting targeting into a word-level selector.
+Every selected dataset item is retained in `pairs.jsonl`, including an item for
+which no eligible character edit exists. Such a record has empty
+`target_attempts` and `aligned_words`, identical clean/edited text and generation,
+and `answer_changed: false`. It remains in population-level targeting-fidelity
+denominators but is ineligible for a later edited-word activation patch.
 The complete field contract and coordinate conventions are documented in
 [`docs/prepare-edited-pairs.md`](docs/prepare-edited-pairs.md).
 

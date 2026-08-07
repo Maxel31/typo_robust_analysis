@@ -414,6 +414,137 @@ def test_attribution_targets_the_distribution_after_the_first_cot_token() -> Non
     assert relevance == pytest.approx([0.1, 0.2])
 
 
+class _SingleTokenPairTokenizer:
+    def __call__(self, text: str, **_kwargs: object) -> dict[str, object]:
+        if text == "1234":
+            return {"input_ids": [1], "offset_mapping": [(0, len(text))]}
+        return {
+            "input_ids": [3, 4],
+            "offset_mapping": [(0, len(text)), (0, len(text))],
+        }
+
+    def decode(self, token_ids: list[int], **_kwargs: object) -> str:
+        return {1: "1234", 2: " step", 3: " alpha", 4: " alpha"}[token_ids[0]]
+
+
+def _pair_runtime_for_prompt(prompt: str) -> tuple[HuggingFacePairPreparationRuntime, list[str]]:
+    runtime = object.__new__(HuggingFacePairPreparationRuntime)
+    runtime.tokenizer = _SingleTokenPairTokenizer()
+    generated_prompts: list[str] = []
+    prompt_result = SimpleNamespace(
+        question_start_in_full=0,
+        question_end_in_full=len(prompt),
+        question_with_choices_end=len(prompt),
+    )
+    runtime._prompt = lambda _sample: (prompt_result, prompt)
+
+    def generate(text: str) -> tuple[list[int], list[int], str]:
+        generated_prompts.append(text)
+        prompt_ids = runtime.tokenizer(text)["input_ids"]
+        return list(prompt_ids), [2], f"continuation:{text}"
+
+    runtime._generate = generate
+    runtime._relevance_after_first_cot = lambda prompt_ids, _generated_ids: [
+        1.0 - 0.5 * index for index in range(len(prompt_ids))
+    ]
+    runtime._answer = lambda continuation, _correct: {
+        "value": continuation,
+        "is_extracted": True,
+        "is_correct": False,
+        "method": "fixture",
+        "confidence": 1.0,
+    }
+    return runtime, generated_prompts
+
+
+def test_runtime_retains_an_item_with_no_eligible_edit() -> None:
+    runtime, generated_prompts = _pair_runtime_for_prompt("1234")
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=Path("unused"),
+    )
+    sample = SimpleNamespace(
+        sample_id="math-only",
+        question="1234",
+        choices=None,
+        correct_answer="4",
+        subset=None,
+    )
+
+    record = runtime.prepare_pair(sample, config)
+
+    assert generated_prompts == ["1234"]
+    assert record["num_candidates"] == 0
+    assert record["num_target_attempts"] == 0
+    assert record["target_attempts"] == []
+    assert record["num_aligned_words"] == 0
+    assert record["aligned_words"] == []
+    assert record["edited"]["prompt"] == record["clean"]["prompt"]
+    assert record["edited"]["continuation"] == record["clean"]["continuation"]
+    assert record["answer_changed"] is False
+
+
+def test_runtime_retains_attempts_when_edits_have_no_final_text_difference() -> None:
+    runtime, generated_prompts = _pair_runtime_for_prompt("alpha")
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=2,
+        output_dir=Path("unused"),
+    )
+    sample = SimpleNamespace(
+        sample_id="net-zero-109",
+        question="alpha",
+        choices=None,
+        correct_answer="A",
+        subset=None,
+    )
+
+    record = runtime.prepare_pair(sample, config)
+
+    assert generated_prompts == ["alpha"]
+    assert record["num_candidates"] == 2
+    assert record["num_target_attempts"] == 2
+    assert len(record["target_attempts"]) == 2
+    assert {attempt["target_token_index"] for attempt in record["target_attempts"]} == {0, 1}
+    assert [attempt["edited_token_text"] for attempt in record["target_attempts"]] == [
+        "aopha",
+        "alpha",
+    ]
+    assert record["num_aligned_words"] == 0
+    assert record["aligned_words"] == []
+    assert record["edited"]["prompt"] == record["clean"]["prompt"]
+    assert record["answer_changed"] is False
+
+
+def test_runtime_rejects_changed_text_without_an_aligned_word(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime, _ = _pair_runtime_for_prompt("alpha")
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=1,
+        output_dir=Path("unused"),
+    )
+    sample = SimpleNamespace(
+        sample_id="broken-alignment",
+        question="alpha",
+        choices=None,
+        correct_answer="A",
+        subset=None,
+    )
+    monkeypatch.setattr(runtime_module, "build_aligned_words", lambda **_kwargs: ())
+
+    with pytest.raises(PairProtocolError, match="changed.*no alignable"):
+        runtime.prepare_pair(sample, config)
+
+
 @pytest.mark.parametrize(
     ("seed", "expected"),
     (
