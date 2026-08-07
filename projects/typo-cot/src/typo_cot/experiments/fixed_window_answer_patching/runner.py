@@ -1245,7 +1245,11 @@ def _comparability(
         ),
         "exact_historical_cohort_identity": False,
         "note": (
-            "Fresh runs use final-PDF extracted-answer events. Published Table 6 "
+            "Fresh Table 7 runs use the final-PDF 10,000-resample paired percentile "
+            "bootstrap. The published interval is descriptive metadata because the "
+            "historical analyzer used different bootstrap settings."
+            if config.benchmark == "mmlu-pro"
+            else "Fresh runs use final-PDF extracted-answer events. Published Table 6 "
             "values are descriptive metadata because historical induction aggregation "
             "treated some unextractable generations differently."
         ),

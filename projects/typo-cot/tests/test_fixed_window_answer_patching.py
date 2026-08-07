@@ -846,6 +846,9 @@ def test_mmlu_pro_summary_compares_windows_on_the_same_restoration_pairs(
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["comparability"]["status"] == "fresh-prespecified-mmlu-pro-window-run"
     assert run["comparability"]["requirements"]["historical_cohort_identity"] is False
+    assert "Table 7" in run["comparability"]["note"]
+    assert "bootstrap" in run["comparability"]["note"]
+    assert "Table 6" not in run["comparability"]["note"]
 
 
 def test_complete_table6_shape_is_labelled_as_a_fresh_protocol_run(
@@ -862,6 +865,8 @@ def test_complete_table6_shape_is_labelled_as_a_fresh_protocol_run(
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["comparability"]["status"] == "fresh-paper-protocol-run"
     assert run["comparability"]["requirements"]["historical_cohort_identity"] is False
+    assert "Table 6" in run["comparability"]["note"]
+    assert "unextractable" in run["comparability"]["note"]
 
 
 def test_source_contract_fails_before_runtime_creation(
