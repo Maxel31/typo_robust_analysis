@@ -418,18 +418,27 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
             "At the maximum clean-versus-edited next-token KL position, replace the clean "
             "token with the edited-context top-1 token and compare position controls."
         ),
-        cohort="The primary and fourteen extension cohorts after the diagnostic eligibility filters.",
+        cohort=(
+            "The primary fixed-window denominator or fourteen deterministic 150-target "
+            "extensions selected from complete Attribution-4 and Random-4 preparations."
+        ),
         intervention="One-token replacement at the selected, distant-control, or adjacent position.",
         readout="Correct-to-wrong answer changes; this is not a typo-repair estimate.",
         required_arguments=(
             "--model",
             "--benchmark",
-            "--target-set",
-            "--position-control",
+            "--cohort",
+            "--position-controls",
             "--output-dir",
         ),
-        outputs=("one_token_records.jsonl", "one_token_summary.json"),
+        outputs=(
+            "one_token_records.jsonl",
+            "pair_status_records.jsonl",
+            "one_token_summary.json",
+            "run.json",
+        ),
         compute="gpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="edit-count-sensitivity",

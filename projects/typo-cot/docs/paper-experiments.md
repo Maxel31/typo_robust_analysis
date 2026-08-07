@@ -251,11 +251,24 @@ uv run --project projects/typo-cot --extra lrp typo-cot clean-prefix-scan \
   --gpu-id 0 \
   --output-dir results/clean-prefix-scan/gemma-3-1b-it/gsm8k
 
-uv run typo-cot one-token-prefix-replacement \
+CUDA_VISIBLE_DEVICES=0 \
+uv run --project projects/typo-cot --extra lrp typo-cot one-token-prefix-replacement \
   --model google/gemma-3-4b-it --benchmark gsm8k \
-  --target-set data/cohorts/clean-prefix/primary-172.json \
-  --position-control selected distant adjacent \
+  --cohort primary \
+  --fixed-window-run \
+    results/fixed-window-answer-patching/gemma-3-4b-it/gsm8k \
+  --position-controls distant --gpu-id 0 \
   --output-dir results/one-token-prefix-replacement/gemma-3-4b-it/gsm8k
+
+CUDA_VISIBLE_DEVICES=0 \
+uv run --project projects/typo-cot --extra lrp typo-cot one-token-prefix-replacement \
+  --model google/gemma-3-1b-it --benchmark gsm8k \
+  --cohort extension \
+  --pairs \
+    results/prepare-edited-pairs/gemma-3-1b-it/gsm8k/attribution-4/pairs.jsonl \
+    results/prepare-edited-pairs/gemma-3-1b-it/gsm8k/random-4/pairs.jsonl \
+  --max-pairs 150 --position-controls distant adjacent --gpu-id 0 \
+  --output-dir results/one-token-prefix-replacement/gemma-3-1b-it/gsm8k
 ```
 
 The prefix grid is the union of the shown absolute values and
@@ -340,6 +353,7 @@ projects/typo-cot/
 │       ├── fixed_window_answer_patching/
 │       ├── cot_swap/
 │       ├── clean_prefix_scan/
+│       ├── one_token_prefix_replacement/
 │       └── ...                   # remaining operation-named modules
 ├── tests/
 │   ├── unit/

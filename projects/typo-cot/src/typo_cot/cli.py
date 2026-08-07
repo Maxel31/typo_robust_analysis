@@ -20,16 +20,16 @@ from typo_cot.experiments.answer_line_deletion import (
     AnswerLineDeletionRunError,
     run_answer_line_deletion,
 )
+from typo_cot.experiments.clean_prefix_scan import (
+    CleanPrefixScanConfig,
+    CleanPrefixScanRunError,
+    run_clean_prefix_scan,
+)
 from typo_cot.experiments.cot_swap import (
     COT_SWAP_BENCHMARKS,
     CotSwapConfig,
     CotSwapRunError,
     run_cot_swap,
-)
-from typo_cot.experiments.clean_prefix_scan import (
-    CleanPrefixScanConfig,
-    CleanPrefixScanRunError,
-    run_clean_prefix_scan,
 )
 from typo_cot.experiments.fixed_window_answer_patching import (
     DIRECTION_NAMES as FIXED_WINDOW_DIRECTION_NAMES,
@@ -55,6 +55,14 @@ from typo_cot.experiments.layerwise_kl_patching import (
     LayerwiseKLPatchingConfig,
     LayerwiseKLPatchingRunError,
     run_layerwise_kl_patching,
+)
+from typo_cot.experiments.one_token_prefix_replacement import (
+    POSITION_CONTROLS as ONE_TOKEN_POSITION_CONTROLS,
+)
+from typo_cot.experiments.one_token_prefix_replacement import (
+    OneTokenPrefixReplacementConfig,
+    OneTokenPrefixReplacementRunError,
+    run_one_token_prefix_replacement,
 )
 from typo_cot.experiments.patch_coordinate_controls import (
     CONTROL_NAMES as COORDINATE_CONTROL_NAMES,
@@ -216,6 +224,31 @@ def _parser() -> argparse.ArgumentParser:
     clean_prefix.add_argument("--limit", type=_positive_int)
     clean_prefix.add_argument("--output-dir", required=True, type=Path)
     clean_prefix.add_argument("--resume", action="store_true")
+
+    one_token = commands.add_parser(
+        "one-token-prefix-replacement",
+        help="Replace one selected clean-CoT token and compare position controls.",
+    )
+    one_token.add_argument("--model", required=True, help="Hugging Face model identifier.")
+    one_token.add_argument(
+        "--benchmark",
+        required=True,
+        choices=("gsm8k", "mmlu", "arc"),
+    )
+    one_token.add_argument("--cohort", required=True, choices=("primary", "extension"))
+    one_token.add_argument("--fixed-window-run", type=Path)
+    one_token.add_argument("--pairs", nargs="+", type=Path, default=[])
+    one_token.add_argument("--max-pairs", type=_positive_int)
+    one_token.add_argument(
+        "--position-controls",
+        required=True,
+        nargs="+",
+        choices=ONE_TOKEN_POSITION_CONTROLS,
+    )
+    one_token.add_argument("--gpu-id", default="0")
+    one_token.add_argument("--limit", type=_positive_int)
+    one_token.add_argument("--output-dir", required=True, type=Path)
+    one_token.add_argument("--resume", action="store_true")
 
     targeting_audit = commands.add_parser(
         "targeting-fidelity-audit",
@@ -515,6 +548,40 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{result.executed_pairs} pair(s): {result.records_path}"
         )
         print(f"clean-prefix summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "one-token-prefix-replacement":
+        try:
+            result = run_one_token_prefix_replacement(
+                OneTokenPrefixReplacementConfig(
+                    model=args.model,
+                    benchmark=args.benchmark,
+                    cohort=args.cohort,
+                    fixed_window_run=args.fixed_window_run,
+                    pairs=tuple(args.pairs),
+                    max_pairs=args.max_pairs,
+                    position_controls=tuple(args.position_controls),
+                    output_dir=args.output_dir,
+                    gpu_id=args.gpu_id,
+                    limit=args.limit,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            OSError,
+            OneTokenPrefixReplacementRunError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            print(f"one-token-prefix-replacement: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.records} one-token record(s) for "
+            f"{result.executed_pairs} selected pair(s): {result.records_path}"
+        )
+        print(f"pair statuses: {result.pair_status_records_path}")
+        print(f"one-token summary: {result.summary_path}")
         print(f"run manifest: {result.run_path}")
         return 0
     if args.command == "targeting-fidelity-audit":
