@@ -30,6 +30,13 @@ _BENCHMARK_NAMES = {
     "csqa": "commonsense_qa",
 }
 _SAMPLES_PER_SUBSET = {"mmlu": 50, "mmlu_pro": 100}
+_HISTORICAL_COMPATIBILITY_NOTES = [
+    "stable-sha256-seeds-replace-process-random-python-hash",
+    "mistral-attnlrp-rules-target-mistral-classes",
+    "actual-word-final-alignment-replaces-token-substring-coordinates",
+    "parenthesized-choice-markers-use-recorded-choice-boundary",
+    "arc-numeric-answer-keys-normalized-to-prompt-letters",
+]
 
 
 def _package_version(name: str) -> str:
@@ -37,6 +44,41 @@ def _package_version(name: str) -> str:
         return importlib.metadata.version(name)
     except importlib.metadata.PackageNotFoundError:
         return "not-installed"
+
+
+def preload_provenance(
+    config: PrepareEditedPairsConfig,
+    *,
+    torch_module: Any | None = None,
+) -> dict[str, object]:
+    """Collect environment and protocol identity without loading model weights."""
+    if torch_module is None:
+        import torch as torch_module
+
+    gpu_names = (
+        [
+            torch_module.cuda.get_device_name(index)
+            for index in range(torch_module.cuda.device_count())
+        ]
+        if torch_module.cuda.is_available()
+        else []
+    )
+    return {
+        "python": platform.python_version(),
+        "torch": _package_version("torch"),
+        "transformers": _package_version("transformers"),
+        "accelerate": _package_version("accelerate"),
+        "lxt": _package_version("lxt"),
+        "datasets": _package_version("datasets"),
+        "cuda": torch_module.version.cuda,
+        "gpu_names": gpu_names,
+        "model": config.model,
+        "benchmark_dataset_loader": _BENCHMARK_NAMES[config.benchmark],
+        "random_seed_algorithm": "sha256-first-64-bits/v1",
+        "target_position": "maximum-logit-after-first-cot-token",
+        "alignment": "actual-edited-word-final-token",
+        "historical_compatibility_notes": list(_HISTORICAL_COMPATIBILITY_NOTES),
+    }
 
 
 def _tokenize_with_offsets(tokenizer: Any, text: str) -> tuple[list[int], list[tuple[int, int]]]:
@@ -327,34 +369,11 @@ class HuggingFacePairPreparationRuntime:
         }
 
     def provenance(self) -> dict[str, object]:
-        torch = self._torch
-        gpu_names = (
-            [torch.cuda.get_device_name(index) for index in range(torch.cuda.device_count())]
-            if torch.cuda.is_available()
-            else []
+        provenance = preload_provenance(self.config, torch_module=self._torch)
+        provenance.update(
+            {
+                "model_revision": getattr(self.wrapper.model.config, "_commit_hash", None),
+            }
         )
-        provenance: dict[str, object] = {
-            "python": platform.python_version(),
-            "torch": _package_version("torch"),
-            "transformers": _package_version("transformers"),
-            "accelerate": _package_version("accelerate"),
-            "lxt": _package_version("lxt"),
-            "datasets": _package_version("datasets"),
-            "cuda": torch.version.cuda,
-            "gpu_names": gpu_names,
-            "model": self.config.model,
-            "model_revision": getattr(self.wrapper.model.config, "_commit_hash", None),
-            "benchmark_dataset_loader": self.internal_benchmark,
-            "random_seed_algorithm": "sha256-first-64-bits/v1",
-            "target_position": "maximum-logit-after-first-cot-token",
-            "alignment": "actual-edited-word-final-token",
-            "historical_compatibility_notes": [
-                "stable-sha256-seeds-replace-process-random-python-hash",
-                "mistral-attnlrp-rules-target-mistral-classes",
-                "actual-word-final-alignment-replaces-token-substring-coordinates",
-                "parenthesized-choice-markers-use-recorded-choice-boundary",
-                "arc-numeric-answer-keys-normalized-to-prompt-letters",
-            ],
-        }
         provenance.update(self._dataset_provenance)
         return provenance

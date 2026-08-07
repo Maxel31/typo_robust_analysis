@@ -263,7 +263,7 @@ def order_candidates(
 
 
 def seeded_character_edit(text: str, seed: int) -> CharacterEdit | None:
-    """Try Table 4 operations in seeded random order and return the first valid one."""
+    """Choose one applicable Table 4 operation with the reported seeded order."""
     letter_positions = [i for i, character in enumerate(text) if _is_ascii_letter(character)]
     if not letter_positions:
         return None
@@ -274,33 +274,33 @@ def seeded_character_edit(text: str, seed: int) -> CharacterEdit | None:
     rng = random.Random(seed)
     rng.shuffle(operations)
 
-    for operation in operations:
-        character_index = rng.choice(letter_positions)
-        original_character = text[character_index]
-        if operation == "substitution":
-            neighbors = _QWERTY_NEIGHBORS.get(original_character.lower())
-            if not neighbors:
-                continue
-            new_character = rng.choice(neighbors)
-            if original_character.isupper():
-                new_character = new_character.upper()
-            edited = text[:character_index] + new_character + text[character_index + 1 :]
-        elif operation == "duplication":
-            new_character = original_character
-            edited = text[: character_index + 1] + original_character + text[character_index + 1 :]
-        else:
-            new_character = None
-            edited = text[:character_index] + text[character_index + 1 :]
+    # Substitution and duplication apply to every ASCII letter; deletion was
+    # removed above when the token has only one letter. Thus the first shuffled
+    # operation is always applicable, and no fallback loop is necessary.
+    operation = operations[0]
+    character_index = rng.choice(letter_positions)
+    original_character = text[character_index]
+    if operation == "substitution":
+        neighbors = _QWERTY_NEIGHBORS[original_character.lower()]
+        new_character = rng.choice(neighbors)
+        if original_character.isupper():
+            new_character = new_character.upper()
+        edited = text[:character_index] + new_character + text[character_index + 1 :]
+    elif operation == "duplication":
+        new_character = original_character
+        edited = text[: character_index + 1] + original_character + text[character_index + 1 :]
+    else:
+        new_character = None
+        edited = text[:character_index] + text[character_index + 1 :]
 
-        return CharacterEdit(
-            original=text,
-            edited=edited,
-            operation=operation,
-            character_index=character_index,
-            original_character=original_character,
-            new_character=new_character,
-        )
-    return None
+    return CharacterEdit(
+        original=text,
+        edited=edited,
+        operation=operation,
+        character_index=character_index,
+        original_character=original_character,
+        new_character=new_character,
+    )
 
 
 def _word_spans(text: str) -> list[CharSpan]:

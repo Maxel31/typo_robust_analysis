@@ -6,9 +6,12 @@ import json
 import os
 from dataclasses import asdict, replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import torch
 import typo_cot.cli as cli_module
+import typo_cot.experiments.prepare_edited_pairs.runtime as runtime_module
 from typo_cot.cli import main
 from typo_cot.experiments.catalog import get_experiment
 from typo_cot.experiments.prepare_edited_pairs.protocol import (
@@ -19,6 +22,7 @@ from typo_cot.experiments.prepare_edited_pairs.protocol import (
     build_aligned_words,
     eligible_candidates,
     order_candidates,
+    seeded_character_edit,
 )
 from typo_cot.experiments.prepare_edited_pairs.runner import (
     PairPreparationRunError,
@@ -26,7 +30,10 @@ from typo_cot.experiments.prepare_edited_pairs.runner import (
     PrepareEditedPairsResult,
     run_prepare_edited_pairs,
 )
-from typo_cot.experiments.prepare_edited_pairs.runtime import _tokenize_with_offsets
+from typo_cot.experiments.prepare_edited_pairs.runtime import (
+    HuggingFacePairPreparationRuntime,
+    _tokenize_with_offsets,
+)
 from typo_cot.models.wrapper import ModelWrapper
 
 
@@ -256,6 +263,51 @@ def test_runtime_offsets_exclude_tokenizer_prefix_whitespace() -> None:
     # it. Keeping that rule includes an item-initial token whose raw fast-tokenizer
     # offset also covers the separator immediately before the editable span.
     assert offsets == [(1, 6)]
+
+
+def test_attribution_targets_the_distribution_after_the_first_cot_token() -> None:
+    captured: dict[str, object] = {}
+
+    class FakeAnalyzer:
+        def compute_relevance(
+            self, input_ids: torch.Tensor, *, target_position: int
+        ) -> torch.Tensor:
+            captured["input_ids"] = input_ids.tolist()
+            captured["target_position"] = target_position
+            return torch.tensor([0.1, 0.2, 0.3, 0.4])
+
+    runtime = object.__new__(HuggingFacePairPreparationRuntime)
+    runtime._torch = torch
+    runtime.wrapper = SimpleNamespace(device=torch.device("cpu"))
+    runtime.analyzer = FakeAnalyzer()
+
+    relevance = runtime._relevance_after_first_cot([10, 11], [12, 13])
+
+    assert captured == {
+        "input_ids": [[10, 11, 12, 13]],
+        # Causal logits at the first generated token (index 2) are the
+        # distribution immediately after that token, as specified in §3.1.
+        "target_position": 2,
+    }
+    assert relevance == pytest.approx([0.1, 0.2])
+
+
+@pytest.mark.parametrize(
+    ("seed", "expected"),
+    (
+        (0, ("substitution", "fat", 0, "f")),
+        (1, ("duplication", "caat", 1, "a")),
+        (4, ("deletion", "at", 0, None)),
+    ),
+)
+def test_seeded_character_edit_preserves_the_reported_seeded_operation(
+    seed: int,
+    expected: tuple[str, str, int, str | None],
+) -> None:
+    edit = seeded_character_edit("cat", seed)
+
+    assert edit is not None
+    assert (edit.operation, edit.edited, edit.character_index, edit.new_character) == expected
 
 
 def test_attribution_order_uses_largest_absolute_relevance() -> None:
@@ -514,6 +566,29 @@ def test_completed_resume_accepts_equivalent_relative_and_absolute_output_paths(
     assert resumed.run_path.resolve() == expected.run_path.resolve()
 
 
+def test_completed_resume_rejects_a_missing_published_pairs_file(tmp_path: Path) -> None:
+    output_dir = tmp_path / "missing-pairs"
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=output_dir,
+    )
+    run_prepare_edited_pairs(config, runtime=_FakeRuntime())
+    (output_dir / "pairs.jsonl").unlink()
+
+    class RuntimeMustNotLoad(_FakeRuntime):
+        def load_samples(self, config: PrepareEditedPairsConfig) -> list[dict[str, str]]:
+            raise AssertionError("a completed run without pairs must fail before runtime access")
+
+    with pytest.raises(ValueError, match="completed.*pairs.jsonl"):
+        run_prepare_edited_pairs(
+            replace(config, resume=True),
+            runtime=RuntimeMustNotLoad(),
+        )
+
+
 def test_runner_rejects_an_empty_benchmark_selection(tmp_path: Path) -> None:
     class EmptyRuntime(_FakeRuntime):
         def load_samples(self, config: PrepareEditedPairsConfig) -> list[dict[str, str]]:
@@ -588,6 +663,34 @@ def test_runner_resumes_only_missing_records_after_an_item_failure(tmp_path: Pat
     assert json.loads((output_dir / "run.json").read_text())["status"] == "completed"
 
 
+def test_runner_stays_running_while_processing_after_an_item_failure(tmp_path: Path) -> None:
+    output_dir = tmp_path / "running-after-failure"
+    observed_statuses: list[str] = []
+
+    class ObservingRuntime(_FakeRuntime):
+        def prepare_pair(
+            self, sample: dict[str, str], config: PrepareEditedPairsConfig
+        ) -> dict[str, object]:
+            if sample["sample_id"] == "a":
+                raise RuntimeError("injected failure")
+            observed_statuses.append(json.loads((output_dir / "run.json").read_text())["status"])
+            return super().prepare_pair(sample, config)
+
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=output_dir,
+    )
+
+    with pytest.raises(PairPreparationRunError):
+        run_prepare_edited_pairs(config, runtime=ObservingRuntime())
+
+    assert observed_statuses == ["running"]
+    assert json.loads((output_dir / "run.json").read_text())["status"] == "failed"
+
+
 def test_runner_rejects_resume_when_runtime_provenance_changed(tmp_path: Path) -> None:
     class InitialRuntime(_FakeRuntime):
         def prepare_pair(
@@ -630,6 +733,48 @@ def test_runner_rejects_resume_when_runtime_provenance_changed(tmp_path: Path) -
     manifest = json.loads((output_dir / "run.json").read_text())
     assert manifest["status"] == "failed"
     assert manifest["provenance"]["model_revision"] == "revision-one"
+
+
+def test_runner_rejects_changed_environment_before_loading_the_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class InitialRuntime(_FakeRuntime):
+        def prepare_pair(
+            self, sample: dict[str, str], config: PrepareEditedPairsConfig
+        ) -> dict[str, object]:
+            if sample["sample_id"] == "b":
+                raise RuntimeError("injected failure")
+            return super().prepare_pair(sample, config)
+
+        def provenance(self) -> dict[str, str]:
+            return {"python": "old", "model": "test/model"}
+
+    output_dir = tmp_path / "preload-provenance"
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=output_dir,
+    )
+    with pytest.raises(PairPreparationRunError):
+        run_prepare_edited_pairs(config, runtime=InitialRuntime())
+
+    monkeypatch.setattr(
+        runtime_module,
+        "preload_provenance",
+        lambda config: {"python": "new", "model": config.model},
+        raising=False,
+    )
+
+    def model_must_not_load(config: PrepareEditedPairsConfig) -> None:
+        raise AssertionError("environment mismatch must fail before model loading")
+
+    monkeypatch.setattr(runtime_module, "HuggingFacePairPreparationRuntime", model_must_not_load)
+
+    with pytest.raises(ValueError, match="provenance.*before model loading"):
+        run_prepare_edited_pairs(replace(config, resume=True))
 
 
 def test_readme_starts_from_the_complete_public_command() -> None:

@@ -192,7 +192,12 @@ def run_prepare_edited_pairs(
     if config.resume and run_path.exists():
         started_at, previous_manifest = _validate_resume(run_path, config)
         previous = previous_manifest
-        if previous.get("status") == "completed" and pairs_path.exists():
+        if previous.get("status") == "completed":
+            if not pairs_path.exists():
+                raise ValueError(
+                    "completed run is missing pairs.jsonl; restore the published file or use "
+                    "a new output directory"
+                )
             counts = previous.get("counts")
             written = int(counts.get("written", 0)) if isinstance(counts, Mapping) else 0
             return PrepareEditedPairsResult(pairs_path, run_path, written)
@@ -204,8 +209,20 @@ def run_prepare_edited_pairs(
     if runtime is None:
         from typo_cot.experiments.prepare_edited_pairs.runtime import (
             HuggingFacePairPreparationRuntime,
+            preload_provenance,
         )
 
+        if previous_manifest is not None:
+            previous_provenance = previous_manifest.get("provenance")
+            current_preload_provenance = preload_provenance(config)
+            if not isinstance(previous_provenance, Mapping) or any(
+                previous_provenance.get(key) != value
+                for key, value in current_preload_provenance.items()
+            ):
+                raise ValueError(
+                    "resume provenance does not match the current environment or protocol "
+                    "before model loading"
+                )
         runtime = HuggingFacePairPreparationRuntime(config)
 
     samples = sorted(runtime.load_samples(config), key=_sample_id)
@@ -281,7 +298,7 @@ def run_prepare_edited_pairs(
             run_path,
             _manifest(
                 config=config,
-                status="running" if not failures else "failed",
+                status="running",
                 started_at=started_at,
                 discovered=len(samples),
                 written=len(existing & selected_ids),
@@ -291,6 +308,18 @@ def run_prepare_edited_pairs(
         )
 
     if failures:
+        _write_json_atomic(
+            run_path,
+            _manifest(
+                config=config,
+                status="failed",
+                started_at=started_at,
+                discovered=len(samples),
+                written=len(existing & selected_ids),
+                failures=failures,
+                provenance=provenance,
+            ),
+        )
         raise PairPreparationRunError(
             f"{len(failures)} item(s) failed; inspect run.json and rerun with --resume"
         )

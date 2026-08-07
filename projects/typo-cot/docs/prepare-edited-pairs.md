@@ -37,6 +37,12 @@ the paper run's cumulative offset rule. `landed_on_intended_token` is therefore
 an observed property, not an assertion. `intended_word_index` and
 `landed_word_index` are whitespace-word ordinals in the editable item text.
 
+For AttnLRP, the target position is the first generated CoT token's index. In a
+causal LM, logits at that index are the distribution after observing the first
+CoT token (predicting the following token). This implements the final paper's
+“maximum logit immediately after the first CoT token”; it is intentionally not
+the prompt-final logits that predict the first CoT token itself.
+
 `aligned_words` contains one row per distinct changed `landed_word_index`.
 Multiple target ranks may map to the same row. `target_ranks` preserves those
 links, while `clean_token_indices`, `edited_token_indices`, and their final
@@ -53,9 +59,14 @@ Records are checkpointed individually in a hidden work directory. A failed run
 does not publish a partial `pairs.jsonl`; after the cause is fixed, rerun the
 identical command with `--resume`. The writer validates all frozen arguments,
 model/dataset/environment provenance, and protocol identifiers before it skips
-completed records. It atomically publishes `pairs.jsonl` only when every
-selected item succeeds. Reusing a non-empty output directory without `--resume`
-is rejected.
+completed records. Environment and protocol mismatches fail before model
+weights are loaded; model revision and dataset fingerprints are checked after
+discovery but before any checkpoint is reused. The manifest remains `running`
+while pending items are processed and becomes `failed` only after the run ends.
+It atomically publishes `pairs.jsonl` only when every selected item succeeds.
+If that published file is later removed, resuming a completed run reports an
+error instead of silently regenerating every item. Reusing a non-empty output
+directory without `--resume` is rejected.
 
 ## Historical implementation differences
 
