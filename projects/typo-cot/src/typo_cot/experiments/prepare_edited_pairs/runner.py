@@ -179,17 +179,16 @@ def run_prepare_edited_pairs(
     records_dir = work_dir / "records"
 
     output_is_nonempty = output_dir.exists() and any(output_dir.iterdir())
-    if output_is_nonempty:
-        if not config.resume:
-            raise FileExistsError(
-                f"output directory is not empty: {output_dir}; pass --resume only for this run"
-            )
-        if not run_path.exists():
-            raise ValueError(f"cannot resume without the original run.json: {output_dir}")
+    if config.resume and not run_path.exists():
+        raise ValueError(f"cannot resume without the original run.json: {output_dir}")
+    if output_is_nonempty and not config.resume:
+        raise FileExistsError(
+            f"output directory is not empty: {output_dir}; pass --resume only for this run"
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     previous_manifest: dict[str, object] | None = None
-    if config.resume and run_path.exists():
+    if config.resume:
         started_at, previous_manifest = _validate_resume(run_path, config)
         previous = previous_manifest
         if previous.get("status") == "completed":

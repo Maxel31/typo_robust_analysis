@@ -66,7 +66,9 @@ while pending items are processed and becomes `failed` only after the run ends.
 It atomically publishes `pairs.jsonl` only when every selected item succeeds.
 If that published file is later removed, resuming a completed run reports an
 error instead of silently regenerating every item. Reusing a non-empty output
-directory without `--resume` is rejected.
+directory without `--resume` is rejected. Conversely, `--resume` always
+requires an existing `run.json`; a missing or empty output directory is not
+silently treated as a new run.
 
 ## Historical implementation differences
 

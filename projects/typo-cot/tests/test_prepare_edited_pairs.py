@@ -626,6 +626,35 @@ def test_runner_rejects_resume_in_nonempty_directory_without_manifest(tmp_path: 
     assert not (output_dir / "pairs.jsonl").exists()
 
 
+@pytest.mark.parametrize("create_empty_directory", (False, True))
+def test_runner_rejects_resume_without_a_manifest_before_runtime_access(
+    tmp_path: Path,
+    create_empty_directory: bool,
+) -> None:
+    output_dir = tmp_path / "missing-resume-run"
+    if create_empty_directory:
+        output_dir.mkdir()
+
+    class RuntimeMustNotLoad(_FakeRuntime):
+        def load_samples(self, config: PrepareEditedPairsConfig) -> list[dict[str, str]]:
+            raise AssertionError("resume without run.json must fail before runtime access")
+
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=output_dir,
+        resume=True,
+    )
+
+    with pytest.raises(ValueError, match="cannot resume without.*run.json"):
+        run_prepare_edited_pairs(config, runtime=RuntimeMustNotLoad())
+
+    assert not (output_dir / "run.json").exists()
+    assert not (output_dir / "pairs.jsonl").exists()
+
+
 def test_runner_resumes_only_missing_records_after_an_item_failure(tmp_path: Path) -> None:
     class FailingRuntime(_FakeRuntime):
         def prepare_pair(
