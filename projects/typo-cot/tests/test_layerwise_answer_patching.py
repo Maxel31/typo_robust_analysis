@@ -536,6 +536,19 @@ def test_prefill_patch_applies_once_skips_cached_decode_and_removes_its_hook() -
     assert patch.applications == 1
     assert layer(torch.zeros(1, 3, 1))[0][:, :, 0].tolist() == [[1.0, 1.0, 1.0]]
 
+    first_token_patch = PrefillBlockOutputPatch(
+        [layer],
+        layer_index=0,
+        positions=(0,),
+        donor_values=torch.tensor([[8.0]]),
+    )
+    with first_token_patch:
+        first_token_prefill = layer(torch.zeros(1, 3, 1))
+        first_token_decode = layer(torch.zeros(1, 1, 1))
+    assert first_token_prefill[0][:, :, 0].tolist() == [[8.0, 1.0, 1.0]]
+    assert first_token_decode[0][:, :, 0].tolist() == [[1.0]]
+    assert first_token_patch.applications == 1
+
 
 def test_prefill_patch_fails_closed_on_repeated_or_missing_prefill() -> None:
     layer = _AddBlock(1.0)
