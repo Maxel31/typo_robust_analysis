@@ -342,6 +342,8 @@ class HuggingFacePairPreparationRuntime:
             clean_token_offsets=clean_offsets,
             edited_token_offsets=edited_offsets,
         )
+        if edited_prompt != clean_prompt and not aligned_words:
+            raise PairProtocolError("edited prompt changed but produced no alignable changed word")
 
         clean_answer = self._answer(clean_continuation, sample.correct_answer)
         edited_answer = self._answer(edited_continuation, sample.correct_answer)

@@ -480,7 +480,7 @@ def test_runtime_retains_an_item_with_no_eligible_edit() -> None:
     assert record["answer_changed"] is False
 
 
-def test_runtime_retains_attempts_when_no_word_can_be_aligned(
+def test_runtime_retains_attempts_when_edits_have_no_final_text_difference(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime, generated_prompts = _pair_runtime_for_prompt("alpha")
@@ -488,7 +488,7 @@ def test_runtime_retains_attempts_when_no_word_can_be_aligned(
         model="test/model",
         benchmark="gsm8k",
         targeting="attribution-4",
-        num_edits=1,
+        num_edits=2,
         output_dir=Path("unused"),
     )
     sample = SimpleNamespace(
@@ -498,17 +498,60 @@ def test_runtime_retains_attempts_when_no_word_can_be_aligned(
         correct_answer="A",
         subset=None,
     )
-    monkeypatch.setattr(runtime_module, "build_aligned_words", lambda **_kwargs: ())
+    edits = iter(
+        (
+            CharacterEdit("alpha", "blpha", "substitution", 0, "a", "b"),
+            CharacterEdit("blpha", "alpha", "substitution", 0, "b", "a"),
+        )
+    )
+    application = apply_paper_edits(
+        editable_text="alpha",
+        editable_prompt_start=0,
+        candidate_order=(
+            CandidateToken(3, " alpha", 1.0, 0, 5, attribution_rank=1),
+            CandidateToken(3, " alpha", 0.5, 0, 5, attribution_rank=2),
+        ),
+        num_edits=2,
+        seed=42,
+        sample_id="unaligned",
+        edit_token=lambda _text, _seed: next(edits),
+    )
+    assert application.edited_text == "alpha"
+    monkeypatch.setattr(runtime_module, "apply_paper_edits", lambda **_kwargs: application)
 
     record = runtime.prepare_pair(sample, config)
 
-    assert len(generated_prompts) == 2
-    assert generated_prompts[0] == "alpha"
-    assert generated_prompts[1] != "alpha"
-    assert record["num_target_attempts"] == 1
-    assert len(record["target_attempts"]) == 1
+    assert generated_prompts == ["alpha"]
+    assert record["num_target_attempts"] == 2
+    assert len(record["target_attempts"]) == 2
     assert record["num_aligned_words"] == 0
     assert record["aligned_words"] == []
+    assert record["edited"]["prompt"] == record["clean"]["prompt"]
+    assert record["answer_changed"] is False
+
+
+def test_runtime_rejects_changed_text_without_an_aligned_word(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime, _ = _pair_runtime_for_prompt("alpha")
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=1,
+        output_dir=Path("unused"),
+    )
+    sample = SimpleNamespace(
+        sample_id="broken-alignment",
+        question="alpha",
+        choices=None,
+        correct_answer="A",
+        subset=None,
+    )
+    monkeypatch.setattr(runtime_module, "build_aligned_words", lambda **_kwargs: ())
+
+    with pytest.raises(PairProtocolError, match="changed.*no alignable"):
+        runtime.prepare_pair(sample, config)
 
 
 @pytest.mark.parametrize(
