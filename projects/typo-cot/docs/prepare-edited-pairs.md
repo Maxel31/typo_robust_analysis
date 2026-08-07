@@ -48,6 +48,23 @@ Multiple target ranks may map to the same row. `target_ranks` preserves those
 links, while `clean_token_indices`, `edited_token_indices`, and their final
 indices provide the coordinates later patching commands must use.
 
+## Paper cohort sizing
+
+The dataset loader derives its per-subset cap from both benchmark and model so
+the completed 42-setting grid has the final paper's denominators:
+
+| Benchmark/model setting | Per-subset cap | Completed items |
+|---|---:|---:|
+| MMLU with Qwen2.5-7B-Instruct or Gemma-3-12B/27B-IT | 100 | 5,700 |
+| MMLU with every other paper model | 50 | 2,850 |
+| MMLU-Pro with every paper model | 100 | 1,400 |
+
+Other benchmark loaders retain their complete paper cohorts. Model matching is
+case-insensitive and uses the final component of a Hugging Face model ID, so
+`Qwen/Qwen2.5-7B-Instruct` and `Qwen2.5-7B-Instruct` select the same rule. The
+manifest records the rule version and chosen per-subset cap; resume validation
+therefore rejects a checkpoint created under a different cohort rule.
+
 ## Run manifest and recovery
 
 `run.json` uses schema `prepare-edited-pairs-run/v1`. It records the canonical
