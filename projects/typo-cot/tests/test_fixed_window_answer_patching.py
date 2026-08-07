@@ -672,6 +672,52 @@ def test_source_contract_fails_before_runtime_creation(
     assert created is False
 
 
+def test_sources_reject_duplicate_targeting_arms_and_dataset_mismatch(
+    tmp_path: Path,
+) -> None:
+    attribution, random_pairs = _sources(tmp_path / "valid")
+    duplicate_attribution = _write_pair_source(
+        tmp_path / "duplicate-attribution",
+        [_pair("other", targeting="attribution-4")],
+        targeting="attribution-4",
+    )
+    runtime = FakeRuntime()
+    with pytest.raises(ValueError, match="duplicate targeting"):
+        run_fixed_window_answer_patching(
+            _config((attribution, duplicate_attribution), tmp_path / "duplicate-out"),
+            runtime=runtime,
+        )
+    assert runtime.baseline_calls == []
+
+    random_manifest_path = random_pairs.parent / "run.json"
+    random_manifest = json.loads(random_manifest_path.read_text(encoding="utf-8"))
+    random_manifest["provenance"]["dataset_records_sha256"] = "different-dataset"
+    _write_json(random_manifest_path, random_manifest)
+    with pytest.raises(ValueError, match="dataset fingerprints differ"):
+        run_fixed_window_answer_patching(
+            _config((attribution, random_pairs), tmp_path / "mismatch-out"),
+            runtime=runtime,
+        )
+    assert runtime.baseline_calls == []
+
+
+def test_window_outside_loaded_decoder_fails_before_baseline_generation(
+    tmp_path: Path,
+) -> None:
+    attribution, random_pairs = _sources(tmp_path)
+    runtime = FakeRuntime(n_layers=6)
+    with pytest.raises(ValueError, match="outside.*decoder"):
+        run_fixed_window_answer_patching(
+            _config(
+                (attribution, random_pairs),
+                tmp_path / "out",
+                layers=(LayerWindow(0, 6), LayerWindow(6, 12)),
+            ),
+            runtime=runtime,
+        )
+    assert runtime.baseline_calls == []
+
+
 def test_gpu_failure_keeps_checkpoints_but_publishes_no_partial_tables(
     tmp_path: Path,
 ) -> None:
@@ -715,3 +761,6 @@ def test_completed_resume_validates_outputs_without_loading_runtime(
     resumed = run_fixed_window_answer_patching(replace(config, resume=True))
     assert resumed == expected
 
+    expected.fixed_window_records_path.write_text("tampered\n", encoding="utf-8")
+    with pytest.raises(FixedWindowAnswerPatchingRunError, match="output.*hash"):
+        run_fixed_window_answer_patching(replace(config, resume=True))
