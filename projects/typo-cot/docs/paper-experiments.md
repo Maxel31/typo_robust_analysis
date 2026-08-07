@@ -155,7 +155,7 @@ uv run --extra lrp typo-cot layerwise-kl-patching \
   --gpu-id 0 \
   --output-dir results/layerwise-kl-patching/gemma-3-4b-it/gsm8k
 
-CUDA_VISIBLE_DEVICES=0 uv run --extra lrp typo-cot layerwise-answer-patching \
+uv run --extra lrp typo-cot layerwise-answer-patching \
   --model google/gemma-3-4b-it --benchmark gsm8k \
   --attribution-pairs results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/attribution-4/pairs.jsonl \
   --random-pairs results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/random-4/pairs.jsonl \
