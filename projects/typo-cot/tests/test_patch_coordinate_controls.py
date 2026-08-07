@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import typo_cot.cli as cli_module
@@ -33,6 +35,9 @@ from typo_cot.experiments.patch_coordinate_controls.runner import (
     CoordinateControlResult,
     CoordinateControlRunError,
     run_patch_coordinate_controls,
+)
+from typo_cot.experiments.patch_coordinate_controls.runtime import (
+    HuggingFaceCoordinateControlRuntime,
 )
 
 
@@ -563,6 +568,111 @@ def test_limit_is_applied_after_the_full_reference_donor_map(tmp_path: Path) -> 
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["comparability"]["status"] == "partial-smoke-run"
     assert run["counts"]["reference_pairs"] == 4
+
+
+def test_invalid_offset_or_singleton_donor_fails_before_runtime(tmp_path: Path) -> None:
+    invalid_offset_pairs = [
+        _pair(sample_id, aligned_positions=((5, 5),), prompt_token_count=8)
+        for sample_id in ("a", "b")
+    ]
+    reference = _fixed_reference(
+        tmp_path / "offset",
+        sample_ids=("a", "b"),
+        correct_events=(True, False),
+        pairs=invalid_offset_pairs,
+    )
+    runtime = _ControlRuntime()
+    with pytest.raises(ValueError, match="no valid coordinates.*refusing to change"):
+        run_patch_coordinate_controls(
+            _config(reference, tmp_path / "offset-controls"),
+            runtime=runtime,
+        )
+    assert runtime.baseline_calls == []
+
+    singleton_pairs = [
+        _pair("a"),
+        _pair("b"),
+        _pair("c", aligned_positions=((2, 2), (4, 4)), prompt_token_count=10),
+    ]
+    singleton_reference = _fixed_reference(
+        tmp_path / "singleton",
+        sample_ids=("a", "b", "c"),
+        correct_events=(True, False, False),
+        pairs=singleton_pairs,
+    )
+    with pytest.raises(ValueError, match="singleton"):
+        run_patch_coordinate_controls(
+            _config(singleton_reference, tmp_path / "singleton-controls"),
+            runtime=runtime,
+        )
+    assert runtime.baseline_calls == []
+
+
+def test_production_runtime_routes_each_control_to_the_paper_coordinates() -> None:
+    runtime = object.__new__(HuggingFaceCoordinateControlRuntime)
+    runtime.num_layers = 6
+    runtime.layers = [object()] * 6
+    runtime._torch = SimpleNamespace(inference_mode=nullcontext)
+    captures: list[tuple[str, tuple[int, ...]]] = []
+    patches: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
+
+    runtime._sample_id = lambda pair: str(pair["sample_id"])
+    runtime._gold_answer = lambda _pair: "2"
+
+    def tokenize(
+        pair: Mapping[str, object], *, side: str
+    ) -> tuple[object, object, tuple[int, ...]]:
+        sample_id = str(pair["sample_id"])
+        positions = (1,) if sample_id == "donor" else (2,) if side == "clean" else (3,)
+        tensor = SimpleNamespace(shape=(1, 8))
+        return tensor, object(), positions
+
+    runtime._tokenize_and_validate = tokenize
+
+    def capture(
+        *, input_ids: object, attention_mask: object, positions: tuple[int, ...]
+    ) -> list[str]:
+        label = "donor" if positions == (1,) else "recipient"
+        captures.append((label, positions))
+        return [f"{label}-{layer}" for layer in range(6)]
+
+    runtime._capture = capture
+
+    def window_patch(
+        *, window: LayerWindow, positions: tuple[int, ...], donor_cache: list[str]
+    ) -> object:
+        assert window == LayerWindow(0, 6)
+        assert len(donor_cache) == 6
+        patches.append((positions, tuple(range(window.start, window.stop))))
+        return object()
+
+    runtime._window_patch = window_patch
+    runtime._generate = lambda **_kwargs: _answer("3", token=30)
+    pair = _pair("recipient")
+    donor = _pair("donor")
+    scan = runtime.scan_controls(
+        pair,
+        BaselineScan(
+            sample_id="recipient",
+            clean=_answer("2", token=20),
+            edited=_answer("3", token=30),
+        ),
+        donor,
+        LayerWindow(0, 6),
+        ("offset-2", "cross-item", "self-copy"),
+    )
+
+    assert tuple(scan.generations) == ("offset-2", "cross-item", "self-copy")
+    assert captures == [
+        ("recipient", (4,)),
+        ("donor", (1,)),
+        ("recipient", (3,)),
+    ]
+    assert patches == [
+        ((5,), (0, 1, 2, 3, 4, 5)),
+        ((3,), (0, 1, 2, 3, 4, 5)),
+        ((3,), (0, 1, 2, 3, 4, 5)),
+    ]
 
 
 @pytest.mark.parametrize("target", ("fixed-output", "prepared-source"))

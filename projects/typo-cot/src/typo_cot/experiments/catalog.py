@@ -245,6 +245,7 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
             "run.json",
         ),
         compute="gpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="patch-position-controls",

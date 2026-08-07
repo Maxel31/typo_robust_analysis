@@ -16,6 +16,8 @@ from typo_cot.experiments import (
 )
 from typo_cot.experiments.fixed_window_answer_patching import (
     DIRECTION_NAMES as FIXED_WINDOW_DIRECTION_NAMES,
+)
+from typo_cot.experiments.fixed_window_answer_patching import (
     FixedWindowAnswerPatchingConfig,
     FixedWindowAnswerPatchingRunError,
     parse_layer_window,
@@ -23,15 +25,27 @@ from typo_cot.experiments.fixed_window_answer_patching import (
 )
 from typo_cot.experiments.layerwise_answer_patching import (
     DIRECTION_NAMES as ANSWER_DIRECTION_NAMES,
+)
+from typo_cot.experiments.layerwise_answer_patching import (
     LayerwiseAnswerPatchingConfig,
     LayerwiseAnswerPatchingRunError,
     run_layerwise_answer_patching,
 )
 from typo_cot.experiments.layerwise_kl_patching import (
     DIRECTION_NAMES as KL_DIRECTION_NAMES,
+)
+from typo_cot.experiments.layerwise_kl_patching import (
     LayerwiseKLPatchingConfig,
     LayerwiseKLPatchingRunError,
     run_layerwise_kl_patching,
+)
+from typo_cot.experiments.patch_coordinate_controls import (
+    CONTROL_NAMES as COORDINATE_CONTROL_NAMES,
+)
+from typo_cot.experiments.patch_coordinate_controls import (
+    CoordinateControlConfig,
+    CoordinateControlRunError,
+    run_patch_coordinate_controls,
 )
 from typo_cot.experiments.prepare_edited_pairs.runner import (
     PUBLIC_BENCHMARKS,
@@ -186,6 +200,33 @@ def _parser() -> argparse.ArgumentParser:
     fixed_window.add_argument("--gpu-id", default="0")
     fixed_window.add_argument("--limit", type=_positive_int)
     fixed_window.add_argument("--resume", action="store_true")
+
+    coordinate_controls = commands.add_parser(
+        "patch-coordinate-controls",
+        help="Compare correct edited-word patches with coordinate and donor controls.",
+    )
+    coordinate_controls.add_argument(
+        "--model", required=True, help="Hugging Face model identifier."
+    )
+    coordinate_controls.add_argument("--benchmark", required=True, choices=("gsm8k",))
+    coordinate_controls.add_argument("--fixed-window-run", required=True, type=Path)
+    coordinate_controls.add_argument(
+        "--layers",
+        required=True,
+        nargs="+",
+        type=parse_layer_window,
+        metavar="START:STOP",
+    )
+    coordinate_controls.add_argument(
+        "--controls",
+        required=True,
+        nargs="+",
+        choices=COORDINATE_CONTROL_NAMES,
+    )
+    coordinate_controls.add_argument("--output-dir", required=True, type=Path)
+    coordinate_controls.add_argument("--gpu-id", default="0")
+    coordinate_controls.add_argument("--limit", type=_positive_int)
+    coordinate_controls.add_argument("--resume", action="store_true")
     return parser
 
 
@@ -364,6 +405,36 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{result.fixed_window_records_path}"
         )
         print(f"setting summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "patch-coordinate-controls":
+        try:
+            result = run_patch_coordinate_controls(
+                CoordinateControlConfig(
+                    model=args.model,
+                    benchmark=args.benchmark,
+                    fixed_window_run=args.fixed_window_run,
+                    layers=tuple(args.layers),
+                    controls=tuple(args.controls),
+                    output_dir=args.output_dir,
+                    gpu_id=args.gpu_id,
+                    limit=args.limit,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            CoordinateControlRunError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            print(f"patch-coordinate-controls: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.records} coordinate-control record(s) for "
+            f"{result.pairs} pair(s): {result.records_path}"
+        )
+        print(f"coordinate-control summary: {result.summary_path}")
         print(f"run manifest: {result.run_path}")
         return 0
     raise AssertionError("argparse accepted an unhandled command")

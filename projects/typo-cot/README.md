@@ -399,7 +399,9 @@ The command writes `coordinate_control_records.jsonl`,
 `pair_status_records.jsonl`, `coordinate_control_summary.json`, and `run.json`.
 Use `--resume` to validate and continue an interrupted identical run. A smaller
 `--limit` is labelled as a smoke run and limits recipients only after the full
-reference cohort has fixed the donor map.
+reference cohort has fixed the donor map. See
+[`docs/patch-coordinate-controls.md`](docs/patch-coordinate-controls.md) for
+the complete reference, schema, statistic, and restart contract.
 
 ## Tests
 
@@ -409,6 +411,7 @@ uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_targeting
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_layerwise_kl_patching.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_layerwise_answer_patching.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_fixed_window_answer_patching.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_patch_coordinate_controls.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 

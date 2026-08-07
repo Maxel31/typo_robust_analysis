@@ -207,6 +207,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         "fixed-window-answer-patching",
         "layerwise-answer-patching",
         "layerwise-kl-patching",
+        "patch-coordinate-controls",
         "prepare-edited-pairs",
         "targeting-fidelity-audit",
     }
