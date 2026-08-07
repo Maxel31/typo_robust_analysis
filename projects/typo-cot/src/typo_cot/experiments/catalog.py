@@ -322,12 +322,27 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
             "Teacher-force the four A=(clean,clean), B=(edited,edited), C=(edited,clean), "
             "and D=(clean,edited) question/CoT cells and regenerate only the answer span."
         ),
-        cohort="Clean-correct pairs; restoration conditions on cases where B changes from A.",
+        cohort=(
+            "Applied-edit, answer-template-eligible pairs; change rates require regenerated "
+            "A correctness and restoration further conditions on B changing from A."
+        ),
         intervention="Supply the complete selected pre-answer CoT as fixed context.",
         readout="Both-changed, question-only, CoT-only, and B-to-C restoration rates.",
-        required_arguments=("--model", "--benchmark", "--pairs", "--output-dir"),
-        outputs=("cot_swap_records.jsonl", "cot_swap_summary.json"),
+        required_arguments=(
+            "--model",
+            "--benchmark",
+            "--pairs",
+            "--targeting",
+            "--output-dir",
+        ),
+        outputs=(
+            "cot_swap_records.jsonl",
+            "pair_status_records.jsonl",
+            "cot_swap_summary.json",
+            "run.json",
+        ),
         compute="gpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="answer-line-deletion",

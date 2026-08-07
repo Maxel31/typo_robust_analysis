@@ -54,7 +54,7 @@ def _last_nonempty_line(text: str) -> str:
     return next((line.strip() for line in reversed(text.splitlines()) if line.strip()), "")
 
 
-def _fallback_numeric(text: str) -> tuple[str, str]:
+def _fallback_numeric(text: str, *, allow_positional: bool) -> tuple[str, str]:
     for match in reversed(list(_BOXED.finditer(text))):
         candidate = match.group(1)
         candidate = re.sub(r"\\text\{[^{}]*\}|\\[,!;]|\\\$|\s", "", candidate)
@@ -73,17 +73,18 @@ def _fallback_numeric(text: str) -> tuple[str, str]:
         if numbers:
             return _clean_numeric(numbers[-1]), "N3_bold"
 
-    final_line = _last_nonempty_line(text)
-    if "=" in final_line:
-        numbers = re.findall(r"\$?(" + _NUMBER + r")", final_line.rsplit("=", 1)[1])
-        if numbers:
-            return _clean_numeric(numbers[0]), "N4_equals_tail"
-    tail = re.search(
-        r"(-?\$?\d[\d,]*(?:\.\d+)?)\s*" + _UNIT + r"?\s*[.!)*]*\s*$",
-        final_line,
-    )
-    if tail:
-        return _clean_numeric(tail.group(1)), "N5_tail_number"
+    if allow_positional:
+        final_line = _last_nonempty_line(text)
+        if "=" in final_line:
+            numbers = re.findall(r"\$?(" + _NUMBER + r")", final_line.rsplit("=", 1)[1])
+            if numbers:
+                return _clean_numeric(numbers[0]), "N4_equals_tail"
+        tail = re.search(
+            r"(-?\$?\d[\d,]*(?:\.\d+)?)\s*" + _UNIT + r"?\s*[.!)*]*\s*$",
+            final_line,
+        )
+        if tail:
+            return _clean_numeric(tail.group(1)), "N5_tail_number"
     return "", ""
 
 
@@ -105,16 +106,26 @@ def _fallback_choice(text: str, benchmark: str) -> tuple[str, str]:
     return "", ""
 
 
-def fallback_answer(text: str, *, benchmark: str) -> tuple[str, str]:
-    """Return ``(answer, rule)`` for an empty primary result."""
+def fallback_answer(
+    text: str,
+    *,
+    benchmark: str,
+    allow_positional: bool = True,
+) -> tuple[str, str]:
+    """Return ``(answer, rule)`` for an empty primary result.
+
+    ``allow_positional=False`` disables numeric rules N4/N5 when generation
+    ended only because its token budget was exhausted. Structured answer-line,
+    boxed, and bold rules remain safe to apply to such capped text.
+    """
 
     if not text:
         return "", ""
     if benchmark in _CHOICE_RANGE:
         return _fallback_choice(text, benchmark)
     if benchmark == "gsm8k":
-        return _fallback_numeric(text)
-    raise ValueError(f"no final-paper fallback is registered for {benchmark!r}")
+        return _fallback_numeric(text, allow_positional=allow_positional)
+    raise ValueError(f"no public reproduction fallback is registered for {benchmark!r}")
 
 
 def canonical_answer(value: str, *, benchmark: str) -> str:
@@ -144,6 +155,7 @@ def extract_with_fallback(
     *,
     benchmark: str,
     correct_answer: str,
+    allow_positional: bool = True,
 ) -> AnswerExtraction:
     """Apply the task extractor, then the fallback only when its value is empty."""
 
@@ -153,7 +165,11 @@ def extract_with_fallback(
     if value:
         method = f"primary:{primary.extraction_method}"
     else:
-        value, fallback_method = fallback_answer(text, benchmark=benchmark)
+        value, fallback_method = fallback_answer(
+            text,
+            benchmark=benchmark,
+            allow_positional=allow_positional,
+        )
         method = f"fallback:{fallback_method}" if value else "unextractable"
     return AnswerExtraction(
         value=value,
