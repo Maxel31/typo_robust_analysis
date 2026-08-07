@@ -6,8 +6,6 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
-import numpy as np
-
 DEFAULT_BOOTSTRAP_RESAMPLES = 10_000
 DEFAULT_BOOTSTRAP_SEED = 42
 PAIRED_BOOTSTRAP_METHOD = "paired-percentile-bootstrap-binary-risk-difference/v1"
@@ -61,6 +59,8 @@ def paired_binary_difference(
     both arms.  This retains the within-pair dependence required by the final
     paper's prespecified MMLU-Pro window comparison.
     """
+
+    import numpy as np
 
     left_events = _binary_events(left, field="left events")
     right_events = _binary_events(right, field="right events")
