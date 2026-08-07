@@ -14,6 +14,12 @@ from typo_cot.experiments import (
     ExperimentSpec,
     get_experiment,
 )
+from typo_cot.experiments.answer_line_deletion import (
+    ANSWER_LINE_DELETION_BENCHMARKS,
+    AnswerLineDeletionConfig,
+    AnswerLineDeletionRunError,
+    run_answer_line_deletion,
+)
 from typo_cot.experiments.cot_swap import (
     COT_SWAP_BENCHMARKS,
     CotSwapConfig,
@@ -157,6 +163,23 @@ def _parser() -> argparse.ArgumentParser:
     cot_swap.add_argument("--limit", type=_positive_int)
     cot_swap.add_argument("--output-dir", required=True, type=Path)
     cot_swap.add_argument("--resume", action="store_true")
+
+    answer_line_deletion = commands.add_parser(
+        "answer-line-deletion",
+        help="Delete the final non-empty line from condition C's clean pre-answer text.",
+    )
+    answer_line_deletion.add_argument(
+        "--model", required=True, help="Hugging Face model identifier."
+    )
+    answer_line_deletion.add_argument(
+        "--benchmark", required=True, choices=ANSWER_LINE_DELETION_BENCHMARKS
+    )
+    answer_line_deletion.add_argument("--cot-swap-run", required=True, type=Path)
+    answer_line_deletion.add_argument("--max-pairs", required=True, type=_positive_int)
+    answer_line_deletion.add_argument("--gpu-id", default="0")
+    answer_line_deletion.add_argument("--limit", type=_positive_int)
+    answer_line_deletion.add_argument("--output-dir", required=True, type=Path)
+    answer_line_deletion.add_argument("--resume", action="store_true")
 
     targeting_audit = commands.add_parser(
         "targeting-fidelity-audit",
@@ -394,6 +417,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{result.executed_pairs} pair(s): {result.records_path}"
         )
         print(f"setting summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "answer-line-deletion":
+        try:
+            result = run_answer_line_deletion(
+                AnswerLineDeletionConfig(
+                    model=args.model,
+                    benchmark=args.benchmark,
+                    cot_swap_run=args.cot_swap_run,
+                    max_pairs=args.max_pairs,
+                    output_dir=args.output_dir,
+                    gpu_id=args.gpu_id,
+                    limit=args.limit,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            AnswerLineDeletionRunError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            print(f"answer-line-deletion: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.records} paired control record(s) from "
+            f"{result.source_cohort_pairs} source-cohort pair(s): {result.records_path}"
+        )
+        print(f"answer-line deletion summary: {result.summary_path}")
         print(f"run manifest: {result.run_path}")
         return 0
     if args.command == "targeting-fidelity-audit":
