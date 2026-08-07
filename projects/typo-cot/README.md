@@ -637,6 +637,81 @@ local-line-only, or mediation effect. See
 [`docs/answer-line-deletion.md`](docs/answer-line-deletion.md) for the exact
 source, selection, deletion, schema, and restart contracts.
 
+## Scan clean pre-answer token prefixes
+
+`clean-prefix-scan` implements the final paper's RQ3 text intervention. Under
+the edited question, it supplies the first `k` tokenizer IDs of the clean
+pre-answer text and independently regenerates an answer at every requested
+absolute or relative budget. It has two explicit cohort modes because the PDF
+uses the fixed-window denominator for its primary Gemma-3-4B/GSM8K cell but a
+separate deterministic 150-target sample in each of fourteen extensions.
+
+Run the primary cell from its completed, unlimited fixed-window result:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+  typo-cot clean-prefix-scan \
+  --model google/gemma-3-4b-it \
+  --benchmark gsm8k \
+  --cohort primary \
+  --fixed-window-run \
+    results/fixed-window-answer-patching/gemma-3-4b-it/gsm8k \
+  --relative-budgets 0 .02 .05 .08 .12 .16 .20 .25 .325 .40 .50 .65 .80 1 \
+  --absolute-budgets 1 2 4 8 16 32 64 \
+  --gpu-id 0 \
+  --output-dir results/clean-prefix-scan/gemma-3-4b-it/gsm8k
+```
+
+Run one extension from its two completed, unlimited pair preparations:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+  typo-cot clean-prefix-scan \
+  --model google/gemma-3-1b-it \
+  --benchmark gsm8k \
+  --cohort extension \
+  --pairs \
+    results/prepare-edited-pairs/gemma-3-1b-it/gsm8k/attribution-4/pairs.jsonl \
+    results/prepare-edited-pairs/gemma-3-1b-it/gsm8k/random-4/pairs.jsonl \
+  --max-pairs 150 \
+  --relative-budgets 0 .02 .05 .08 .12 .16 .20 .25 .325 .40 .50 .65 .80 1 \
+  --absolute-budgets 1 2 4 8 16 32 64 \
+  --gpu-id 0 \
+  --output-dir results/clean-prefix-scan/gemma-3-1b-it/gsm8k
+```
+
+The relative rule `k = round(r * L_C)`, gold-answer correctness, the common
+fresh-`k=0`-wrong denominator, stable-through-later correctness, and the
+two-transition non-monotonicity definition come from the final PDF. The dense
+budget values shown above, Python ties-to-even rounding, per-arm 400 cap,
+proportional/systematic extension selection, batch size one, and exact
+pre-answer locator are submitted-producer details not printed by the PDF. They
+are versioned as `legacy-backed`, never silently promoted to paper-defined
+requirements.
+
+The operation tokenizes the complete clean text after both the clean and edited
+prompts. Matching clean/edited suffix IDs reproduce the submitted selection
+check; a second scan-time check requires the complete edited input to preserve
+the separately tokenized edited prompt. A selected target that fails that
+second check remains an invalid status and is not replaced. Valid points pass
+`edited_prompt_ids + clean_cot_ids[:k]` directly to the model, without decoding
+and retokenizing the prefix. Only newly generated IDs are decoded for answer
+extraction. Unextractable generations are wrong outcomes and stay in the
+denominator. `--limit 1` is a labelled GPU smoke run; `--resume` continues
+hash-bound point checkpoints. Absolute point correctness reports the smaller
+`L_C >= k` applicability count, while absolute stable recovery (`k* <= k`)
+keeps the common fresh-`k=0`-wrong denominator, including shorter clean CoTs.
+After successful publication the private checkpoint directory is removed and
+the completed manifest clears its checkpoint registry; completed `--resume`
+reconstructs records, statuses, and the summary without loading model weights.
+
+Each setting writes `prefix_scan_records.jsonl`,
+`pair_status_records.jsonl`, `prefix_scan_summary.json`, and `run.json`.
+Figure 3's 14-setting cluster bootstrap is a later CPU artifact-building step;
+the primary cell is not pooled into that extension aggregate. See
+[`docs/clean-prefix-scan.md`](docs/clean-prefix-scan.md) for the full source,
+selection, metric, schema, and restart contract.
+
 ## Tests
 
 ```bash
@@ -650,6 +725,7 @@ uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/te
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_patch_text_combination.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_cot_swap.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_answer_line_deletion.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_clean_prefix_scan.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 

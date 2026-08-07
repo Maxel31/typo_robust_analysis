@@ -90,6 +90,13 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/experiments/answer_line_deletion/runner.py"),
     Path("src/typo_cot/experiments/answer_line_deletion/runtime.py"),
     Path("src/typo_cot/experiments/answer_line_deletion/source.py"),
+    Path("src/typo_cot/experiments/clean_prefix_scan/__init__.py"),
+    Path("src/typo_cot/experiments/clean_prefix_scan/metrics.py"),
+    Path("src/typo_cot/experiments/clean_prefix_scan/planning.py"),
+    Path("src/typo_cot/experiments/clean_prefix_scan/protocol.py"),
+    Path("src/typo_cot/experiments/clean_prefix_scan/runner.py"),
+    Path("src/typo_cot/experiments/clean_prefix_scan/runtime.py"),
+    Path("src/typo_cot/experiments/clean_prefix_scan/source.py"),
     Path("src/typo_cot/experiments/cot_swap/__init__.py"),
     Path("src/typo_cot/experiments/cot_swap/planning.py"),
     Path("src/typo_cot/experiments/cot_swap/protocol.py"),
@@ -227,6 +234,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
     )
     assert set(subparsers.choices) == {
         "answer-line-deletion",
+        "clean-prefix-scan",
         "experiments",
         "cot-swap",
         "fixed-window-answer-patching",

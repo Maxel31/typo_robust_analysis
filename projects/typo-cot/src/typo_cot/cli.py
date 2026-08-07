@@ -26,6 +26,11 @@ from typo_cot.experiments.cot_swap import (
     CotSwapRunError,
     run_cot_swap,
 )
+from typo_cot.experiments.clean_prefix_scan import (
+    CleanPrefixScanConfig,
+    CleanPrefixScanRunError,
+    run_clean_prefix_scan,
+)
 from typo_cot.experiments.fixed_window_answer_patching import (
     DIRECTION_NAMES as FIXED_WINDOW_DIRECTION_NAMES,
 )
@@ -180,6 +185,37 @@ def _parser() -> argparse.ArgumentParser:
     answer_line_deletion.add_argument("--limit", type=_positive_int)
     answer_line_deletion.add_argument("--output-dir", required=True, type=Path)
     answer_line_deletion.add_argument("--resume", action="store_true")
+
+    clean_prefix = commands.add_parser(
+        "clean-prefix-scan",
+        help="Supply increasing clean pre-answer token prefixes under the edited question.",
+    )
+    clean_prefix.add_argument("--model", required=True, help="Hugging Face model identifier.")
+    clean_prefix.add_argument(
+        "--benchmark",
+        required=True,
+        choices=("gsm8k", "mmlu", "arc"),
+    )
+    clean_prefix.add_argument("--cohort", required=True, choices=("primary", "extension"))
+    clean_prefix.add_argument("--fixed-window-run", type=Path)
+    clean_prefix.add_argument("--pairs", nargs="+", type=Path, default=[])
+    clean_prefix.add_argument("--max-pairs", type=_positive_int)
+    clean_prefix.add_argument(
+        "--relative-budgets",
+        required=True,
+        nargs="+",
+        type=float,
+    )
+    clean_prefix.add_argument(
+        "--absolute-budgets",
+        required=True,
+        nargs="+",
+        type=_positive_int,
+    )
+    clean_prefix.add_argument("--gpu-id", default="0")
+    clean_prefix.add_argument("--limit", type=_positive_int)
+    clean_prefix.add_argument("--output-dir", required=True, type=Path)
+    clean_prefix.add_argument("--resume", action="store_true")
 
     targeting_audit = commands.add_parser(
         "targeting-fidelity-audit",
@@ -446,6 +482,39 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{result.source_cohort_pairs} source-cohort pair(s): {result.records_path}"
         )
         print(f"answer-line deletion summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "clean-prefix-scan":
+        try:
+            result = run_clean_prefix_scan(
+                CleanPrefixScanConfig(
+                    model=args.model,
+                    benchmark=args.benchmark,
+                    cohort=args.cohort,
+                    fixed_window_run=args.fixed_window_run,
+                    pairs=tuple(args.pairs),
+                    max_pairs=args.max_pairs,
+                    relative_budgets=tuple(args.relative_budgets),
+                    absolute_budgets=tuple(args.absolute_budgets),
+                    output_dir=args.output_dir,
+                    gpu_id=args.gpu_id,
+                    limit=args.limit,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            CleanPrefixScanRunError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            print(f"clean-prefix-scan: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.records} clean-prefix scan record(s) for "
+            f"{result.executed_pairs} pair(s): {result.records_path}"
+        )
+        print(f"clean-prefix summary: {result.summary_path}")
         print(f"run manifest: {result.run_path}")
         return 0
     if args.command == "targeting-fidelity-audit":

@@ -45,9 +45,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = PROJECT_ROOT.parents[1]
 
 
-def _documented_target_commands(markdown: str) -> dict[str, set[str]]:
+def _documented_target_commands(markdown: str) -> dict[str, list[set[str]]]:
     """Parse continued ``uv run [options] typo-cot`` commands from bash fences."""
-    commands: dict[str, set[str]] = {}
+    commands: dict[str, list[set[str]]] = {}
     for block in re.findall(r"```bash\n(.*?)\n```", markdown, flags=re.DOTALL):
         continued: list[str] = []
         for line in block.splitlines():
@@ -68,8 +68,9 @@ def _documented_target_commands(markdown: str) -> dict[str, set[str]]:
                 slug = tokens[executable_index + 1]
                 if slug not in EXPECTED_EXPERIMENTS:
                     continue
-                assert slug not in commands, f"duplicate command example: {slug}"
-                commands[slug] = set(tokens)
+                if slug != "clean-prefix-scan":
+                    assert slug not in commands, f"duplicate command example: {slug}"
+                commands.setdefault(slug, []).append(set(tokens))
 
         assert not continued, "unterminated shell continuation in documentation"
     return commands
@@ -172,8 +173,15 @@ def test_cli_shows_experiment_specific_arguments(capsys: pytest.CaptureFixture[s
     assert payload["target_command"] == (
         "uv run --project projects/typo-cot --extra lrp typo-cot clean-prefix-scan"
     )
-    assert "--target-set" in payload["required_arguments"]
+    assert "--cohort" in payload["required_arguments"]
+    assert "--target-set" not in payload["required_arguments"]
     assert "--output-dir" in payload["required_arguments"]
+    assert payload["outputs"] == [
+        "prefix_scan_records.jsonl",
+        "pair_status_records.jsonl",
+        "prefix_scan_summary.json",
+        "run.json",
+    ]
 
 
 def test_cli_text_show_includes_the_operation_summary(
@@ -224,7 +232,16 @@ def test_public_experiment_guide_tracks_every_catalog_operation() -> None:
     for spec in PAPER_EXPERIMENTS:
         assert f"`{spec.slug}`" in guide
         for argument in spec.required_arguments:
-            assert argument in commands[spec.slug], f"{spec.slug} example is missing {argument}"
+            assert all(argument in command for command in commands[spec.slug]), (
+                f"{spec.slug} example is missing {argument}"
+            )
+
+    prefix_commands = commands["clean-prefix-scan"]
+    assert len(prefix_commands) == 2
+    assert any({"primary", "--fixed-window-run"}.issubset(command) for command in prefix_commands)
+    assert any(
+        {"extension", "--pairs", "--max-pairs"}.issubset(command) for command in prefix_commands
+    )
 
 
 def test_all_public_entry_points_read_the_pdf_fingerprint_from_the_catalog() -> None:

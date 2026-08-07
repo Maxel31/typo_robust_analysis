@@ -385,21 +385,29 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
             "regenerate over the frozen absolute and relative budget grid."
         ),
         cohort=(
-            "The frozen primary 172 pairs and fourteen deterministic 150-target extensions; "
-            "curves condition on a valid scan whose fresh k=0 rerun is wrong."
+            "The fixed-window clean-to-edited denominator for the primary setting, or "
+            "fourteen deterministic 150-target extensions selected from completed "
+            "Attribution-4 and Random-4 pair preparations; curves condition on a valid "
+            "scan whose fresh k=0 rerun is wrong."
         ),
         intervention="Clean pre-answer prefix of k=round(r*L) tokens plus the absolute grid.",
         readout="Point correctness, stable-through-later correctness, and non-monotonicity.",
         required_arguments=(
             "--model",
             "--benchmark",
-            "--target-set",
+            "--cohort",
             "--relative-budgets",
             "--absolute-budgets",
             "--output-dir",
         ),
-        outputs=("prefix_scan_records.jsonl", "prefix_scan_summary.json"),
+        outputs=(
+            "prefix_scan_records.jsonl",
+            "pair_status_records.jsonl",
+            "prefix_scan_summary.json",
+            "run.json",
+        ),
         compute="gpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="one-token-prefix-replacement",
