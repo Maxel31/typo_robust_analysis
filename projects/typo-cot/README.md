@@ -95,6 +95,39 @@ Qwen2.5-7B-Instruct, Gemma-3-12B-IT, and Gemma-3-27B-IT, and 50 per subject
 every model. The selected cohort size and versioned selection rule are recorded
 in `run.json` provenance.
 
+## Audit targeting fidelity
+
+After preparing every four-edit model/benchmark/targeting cell, aggregate the
+paper's Appendix A input-quality checks in one CPU-only operation:
+
+```bash
+uv run --project projects/typo-cot typo-cot targeting-fidelity-audit \
+  --pairs-root results/prepare-edited-pairs \
+  --output-dir results/targeting-fidelity-audit
+```
+
+The input root may contain any directory layout; the audit discovers completed
+`prepare-edited-pairs/v1` outputs recursively and reads setting identity from
+their records and manifests rather than from machine-specific path names. It
+rejects partial, duplicate, mixed, or non-four-edit inputs instead of silently
+changing the Appendix A denominator. The command writes:
+
+- `targeting_fidelity_records.jsonl`: one validation/audit row per prepared
+  item;
+- `targeting_fidelity.csv`: per-setting and pooled target-landing, distinct-word,
+  and gold-option rates, including Attribution ranks 1--4 separately;
+- `operation_counts.json`: substitution, duplication, and deletion counts by
+  setting and targeting condition;
+- `run.json`: input/output hashes, arguments, paper fingerprint, counts, and
+  the reported Appendix A reference values used for comparison.
+
+Rates use items or edit attempts exactly as named by each column. In
+particular, the four-distinct-word rate is item-level, target fidelity is
+attempt-level, and gold-option editing is restricted to multiple-choice items.
+See
+[`docs/targeting-fidelity-audit.md`](docs/targeting-fidelity-audit.md) for the
+schemas and paper comparison rules.
+
 ## Tests
 
 ```bash
