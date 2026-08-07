@@ -185,6 +185,7 @@ def test_eligible_candidates_follow_the_paper_span_rules() -> None:
         offsets=[(0, 0), (10, 15), (16, 18), (19, 22), (23, 27), (28, 29)],
         editable_prompt_start=10,
         editable_prompt_end=29,
+        choice_list_start=19,
     )
 
     assert [(item.token_index, item.text, item.relevance) for item in candidates] == [
@@ -195,28 +196,39 @@ def test_eligible_candidates_follow_the_paper_span_rules() -> None:
 
 def test_bare_single_letter_words_are_not_treated_as_option_markers() -> None:
     candidates = eligible_candidates(
-        prompt_text="a i (A) option",
+        prompt_text="a i\n(A) option",
         token_texts=[" a", " i", " (", "A", ")", " option"],
         relevances=[1.0] * 6,
         offsets=[(0, 1), (2, 3), (4, 5), (5, 6), (6, 7), (8, 14)],
         editable_prompt_start=0,
         editable_prompt_end=14,
+        choice_list_start=3,
     )
 
     assert [item.token_index for item in candidates] == [0, 1, 5]
 
 
-def test_punctuated_single_letters_follow_the_reported_option_marker_filter() -> None:
+def test_option_markers_are_filtered_only_inside_the_choice_list() -> None:
     candidates = eligible_candidates(
-        prompt_text="A. point b: ratio (C) choice",
-        token_texts=[" A.", " point", " b:", " ratio", " (C)", " choice"],
-        relevances=[1.0] * 6,
-        offsets=[(0, 2), (3, 8), (9, 11), (12, 17), (18, 21), (22, 28)],
+        prompt_text="A. point b: ratio\n(A) first (B) second",
+        token_texts=[" A.", " point", " b:", " ratio", " (A)", " first", " (B)", " second"],
+        relevances=[1.0] * 8,
+        offsets=[
+            (0, 2),
+            (3, 8),
+            (9, 11),
+            (12, 17),
+            (18, 21),
+            (22, 27),
+            (28, 31),
+            (32, 38),
+        ],
         editable_prompt_start=0,
-        editable_prompt_end=28,
+        editable_prompt_end=38,
+        choice_list_start=17,
     )
 
-    assert [item.token_index for item in candidates] == [1, 3, 5]
+    assert [item.token_index for item in candidates] == [0, 1, 2, 3, 5, 7]
 
 
 @pytest.mark.parametrize("relevance", (float("nan"), float("inf"), float("-inf")))

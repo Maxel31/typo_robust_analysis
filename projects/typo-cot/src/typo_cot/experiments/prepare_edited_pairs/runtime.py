@@ -223,6 +223,7 @@ class HuggingFacePairPreparationRuntime:
             for token_id in token_ids
         ]
         editable_start = int(prompt_result.question_start_in_full)
+        choice_list_start = int(prompt_result.question_end_in_full)
         editable_end = int(prompt_result.question_with_choices_end)
         candidates = eligible_candidates(
             prompt_text=clean_prompt,
@@ -231,6 +232,7 @@ class HuggingFacePairPreparationRuntime:
             offsets=clean_offsets,
             editable_prompt_start=editable_start,
             editable_prompt_end=editable_end,
+            choice_list_start=choice_list_start,
         )
         ordering = order_candidates(
             candidates,
@@ -350,7 +352,7 @@ class HuggingFacePairPreparationRuntime:
                 "stable-sha256-seeds-replace-process-random-python-hash",
                 "mistral-attnlrp-rules-target-mistral-classes",
                 "actual-word-final-alignment-replaces-token-substring-coordinates",
-                "contextual-option-markers-retain-bare-single-letter-words",
+                "parenthesized-choice-markers-use-recorded-choice-boundary",
                 "arc-numeric-answer-keys-normalized-to-prompt-letters",
             ],
         }

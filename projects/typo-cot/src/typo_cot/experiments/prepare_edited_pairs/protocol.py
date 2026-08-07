@@ -25,7 +25,7 @@ Operation = Literal["substitution", "duplication", "deletion"]
 _TARGETING_VALUES = frozenset(("attribution-4", "random-4"))
 _ATTRIBUTION_TARGET_COUNT = 4
 _NUMERIC_TOKEN = re.compile(r"[\d,.]+")
-_OPTION_MARKER = re.compile(r"(?:\([A-Ja-j]\)|[A-Ja-j][.):])")
+_OPTION_MARKER = re.compile(r"\([A-Ja-j]\)")
 _WORD = re.compile(r"\S+")
 
 _QWERTY_NEIGHBORS: dict[str, tuple[str, ...]] = {
@@ -174,14 +174,23 @@ def _is_eligible_token(text: str) -> bool:
     return any(_is_ascii_letter(character) for character in text)
 
 
-def _is_option_marker_span(prompt_text: str, start: int, end: int) -> bool:
-    """Recognize the complete whitespace word around a possibly split marker token."""
+def _is_option_marker_span(
+    prompt_text: str,
+    start: int,
+    end: int,
+    choice_list_start: int | None,
+) -> bool:
+    """Recognize a possibly split marker only inside the choice-list region."""
+    if choice_list_start is None:
+        return False
     word_start = start
     while word_start > 0 and not prompt_text[word_start - 1].isspace():
         word_start -= 1
     word_end = end
     while word_end < len(prompt_text) and not prompt_text[word_end].isspace():
         word_end += 1
+    if word_start < choice_list_start:
+        return False
     return _OPTION_MARKER.fullmatch(prompt_text[word_start:word_end]) is not None
 
 
@@ -193,12 +202,17 @@ def eligible_candidates(
     offsets: Sequence[tuple[int, int]],
     editable_prompt_start: int,
     editable_prompt_end: int,
+    choice_list_start: int | None = None,
 ) -> list[CandidateToken]:
     """Return nonzero, editable tokens fully inside the item input span."""
     if not (len(token_texts) == len(relevances) == len(offsets)):
         raise PairProtocolError("token texts, relevances, and offsets must have identical lengths")
     if editable_prompt_start < 0 or editable_prompt_end <= editable_prompt_start:
         raise PairProtocolError("editable prompt span must be non-empty")
+    if choice_list_start is not None and not (
+        editable_prompt_start <= choice_list_start <= editable_prompt_end
+    ):
+        raise PairProtocolError("choice-list start must lie inside the editable prompt span")
 
     candidates: list[CandidateToken] = []
     for token_index, (text, relevance, offset) in enumerate(
@@ -215,7 +229,7 @@ def eligible_candidates(
         if (
             abs(score) <= 1e-9
             or not _is_eligible_token(text)
-            or _is_option_marker_span(prompt_text, start, end)
+            or _is_option_marker_span(prompt_text, start, end, choice_list_start)
         ):
             continue
         candidates.append(CandidateToken(token_index, text, score, start, end))
