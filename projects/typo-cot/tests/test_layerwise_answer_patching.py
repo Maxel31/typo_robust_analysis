@@ -475,6 +475,12 @@ def test_fallback_rules_and_answer_equality_match_the_canonical_answer_scan() ->
     assert answers_equal("$40.00", "40", benchmark="gsm8k") is True
     assert answers_equal("(b).", "B", benchmark="mmlu") is True
     assert answers_equal("", "B", benchmark="mmlu") is False
+    huge_integer = "9" * 400
+    assert fallback_answer(f"Final answer: {huge_integer}", benchmark="gsm8k") == (
+        huge_integer,
+        "N2_answer_line",
+    )
+    assert answers_equal(huge_integer, huge_integer, benchmark="gsm8k") is True
 
 
 def test_wilson_interval_and_binary_layer_summary_use_fixed_pair_denominator() -> None:
