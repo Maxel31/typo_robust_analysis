@@ -48,6 +48,21 @@ Multiple target ranks may map to the same row. `target_ranks` preserves those
 links, while `clean_token_indices`, `edited_token_indices`, and their final
 indices provide the coordinates later patching commands must use.
 
+Every selected dataset item produces a record, even when no character edit can
+be applied or the attempted edits leave no final text difference. The existing
+arrays and counts represent these cases without a schema exception:
+
+- no applicable edit: `num_target_attempts: 0`, `target_attempts: []`,
+  `num_aligned_words: 0`, and `aligned_words: []`;
+- attempted but no final changed word: non-empty `target_attempts` with
+  `num_aligned_words: 0` and `aligned_words: []`.
+
+When the final edited prompt equals the clean prompt, the deterministic clean
+generation and answer are reused and `answer_changed` is false. These records
+remain in the paper's item-level targeting-fidelity denominator. Downstream
+activation-patching commands must instead require at least one aligned word and
+record that exclusion explicitly.
+
 ## Paper cohort sizing
 
 The dataset loader derives its per-subset cap from both benchmark and model so
