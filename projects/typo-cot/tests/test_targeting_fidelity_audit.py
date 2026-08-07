@@ -7,17 +7,30 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from typo_cot.cli import main
 from typo_cot.experiments.catalog import PAPER_SHA256, get_experiment
 from typo_cot.experiments.prepare_edited_pairs.protocol import seeded_character_edit
+from typo_cot.experiments.prepare_edited_pairs.runner import PrepareEditedPairsConfig
+from typo_cot.experiments.prepare_edited_pairs.runtime import HuggingFacePairPreparationRuntime
 from typo_cot.experiments.targeting_fidelity_audit import (
     TargetingFidelityAuditConfig,
     TargetingFidelityAuditError,
     run_targeting_fidelity_audit,
 )
+
+
+_HISTORICAL_COMPATIBILITY_NOTES = [
+    "stable-sha256-seeds-replace-process-random-python-hash",
+    "mistral-attnlrp-rules-target-mistral-classes",
+    "actual-word-final-alignment-replaces-token-substring-coordinates",
+    "parenthesized-choice-markers-use-recorded-choice-boundary",
+    "arc-numeric-answer-keys-normalized-to-prompt-letters",
+    "model-specific-mmlu-cohort-matches-final-paper-denominators",
+]
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -356,6 +369,13 @@ def _pair(
         "num_aligned_words": len(aligned_words),
         "gold_answer": gold_answer,
         "subset": None,
+        "attribution_target": {
+            "definition": "maximum-logit-after-first-cot-token",
+            "position": 20_000,
+            "first_cot_token_id": 2,
+            "first_cot_token_text": " step",
+            "context": "complete-clean-generation",
+        },
         "clean": {
             "question": question,
             "choices": choices,
@@ -365,6 +385,7 @@ def _pair(
                 "end": editable_prompt_start + len(editable),
             },
             "prompt": clean_prompt,
+            "prompt_token_count": 20_000,
         },
         "edited": {
             "editable_text": edited_editable,
@@ -373,6 +394,7 @@ def _pair(
                 "end": editable_prompt_start + len(edited_editable),
             },
             "prompt": "PREFIX:" + edited_editable,
+            "prompt_token_count": 20_000,
         },
         "excluded_attribution_tokens": excluded_attribution_tokens,
         "target_attempts": attempts,
@@ -422,6 +444,17 @@ def _write_source(
         "arc": "arc",
         "csqa": "commonsense_qa",
     }[benchmark]
+    model_basename = model.rsplit("/", 1)[-1].lower()
+    dataset_samples_per_subset = (
+        100
+        if benchmark == "mmlu"
+        and model_basename in {"qwen2.5-7b-instruct", "gemma-3-12b-it", "gemma-3-27b-it"}
+        else 50
+        if benchmark == "mmlu"
+        else 100
+        if benchmark == "mmlu-pro"
+        else None
+    )
     _write_json(
         directory / "run.json",
         {
@@ -457,11 +490,22 @@ def _write_source(
                 "model": model,
                 "model_revision": "fixture-model-revision",
                 "benchmark_dataset_loader": benchmark_loader,
+                "dataset_cohort_rule": "paper-model-benchmark-cohort/v1",
+                "dataset_samples_per_subset": dataset_samples_per_subset,
                 "dataset_sample_count": len(rows),
                 "dataset_records_sha256": hashlib.sha256(dataset_identity).hexdigest(),
                 "random_seed_algorithm": "sha256-first-64-bits/v1",
                 "target_position": "maximum-logit-after-first-cot-token",
                 "alignment": "actual-edited-word-final-token",
+                "historical_compatibility_notes": list(_HISTORICAL_COMPATIBILITY_NOTES),
+                "python": "3.fixture",
+                "torch": "fixture-torch",
+                "transformers": "fixture-transformers",
+                "accelerate": "fixture-accelerate",
+                "lxt": "fixture-lxt",
+                "datasets": "fixture-datasets",
+                "cuda": "12.fixture",
+                "gpu_names": ["Fixture GPU 0"],
             },
         },
     )
@@ -559,6 +603,114 @@ def _fixture_inputs(root: Path) -> None:
     )
 
 
+def _producer_net_zero_pair() -> dict[str, object]:
+    """Return the producer's SHA-derived alpha -> aopha -> alpha record."""
+
+    class TwoTokenTokenizer:
+        def __call__(self, text: str, **_kwargs: object) -> dict[str, object]:
+            assert text == "alpha"
+            return {
+                "input_ids": [3, 4],
+                "offset_mapping": [(0, len(text)), (0, len(text))],
+            }
+
+        def decode(self, token_ids: list[int], **_kwargs: object) -> str:
+            return {2: " step", 3: " alpha", 4: " alpha"}[token_ids[0]]
+
+    runtime = object.__new__(HuggingFacePairPreparationRuntime)
+    runtime.tokenizer = TwoTokenTokenizer()
+    prompt_result = SimpleNamespace(
+        question_start_in_full=0,
+        question_end_in_full=len("alpha"),
+        question_with_choices_end=len("alpha"),
+    )
+    runtime._prompt = lambda _sample: (prompt_result, "alpha")
+    runtime._generate = lambda text: ([3, 4], [2], f"continuation:{text}")
+    runtime._relevance_after_first_cot = lambda _prompt_ids, _generated_ids: [1.0, 0.5]
+    runtime._answer = lambda continuation, _correct: {
+        "value": continuation,
+        "is_extracted": True,
+        "is_correct": False,
+        "method": "fixture",
+        "confidence": 1.0,
+    }
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=Path("unused"),
+    )
+    sample = SimpleNamespace(
+        sample_id="net-zero-109",
+        question="alpha",
+        choices=None,
+        correct_answer="A",
+        subset=None,
+    )
+    return runtime.prepare_pair(sample, config)
+
+
+def _producer_random_zero_attempt_pair(question: str) -> dict[str, object]:
+    """Return an actual Random-4 record whose top-four exclusion exhausts candidates."""
+    words = question.split()
+    offsets: list[tuple[int, int]] = []
+    cursor = 0
+    for word in words:
+        start = question.index(word, cursor)
+        offsets.append((start, start + len(word)))
+        cursor = start + len(word)
+    prompt_token_ids = list(range(10, 10 + len(words)))
+    decoded = {token_id: f" {word}" for token_id, word in zip(prompt_token_ids, words)}
+
+    class WordTokenizer:
+        def __call__(self, text: str, **_kwargs: object) -> dict[str, object]:
+            assert text == question
+            return {"input_ids": prompt_token_ids, "offset_mapping": offsets}
+
+        def decode(self, token_ids: list[int], **_kwargs: object) -> str:
+            return " step" if token_ids == [2] else decoded[token_ids[0]]
+
+    runtime = object.__new__(HuggingFacePairPreparationRuntime)
+    runtime.tokenizer = WordTokenizer()
+    prompt_result = SimpleNamespace(
+        question_start_in_full=0,
+        question_end_in_full=len(question),
+        question_with_choices_end=len(question),
+    )
+    runtime._prompt = lambda _sample: (prompt_result, question)
+    runtime._generate = lambda text: (
+        list(prompt_token_ids),
+        [2],
+        f"continuation:{text}",
+    )
+    runtime._relevance_after_first_cot = lambda _prompt_ids, _generated_ids: [
+        float(len(words) - index) for index in range(len(words))
+    ]
+    runtime._answer = lambda continuation, _correct: {
+        "value": continuation,
+        "is_extracted": True,
+        "is_correct": False,
+        "method": "fixture",
+        "confidence": 1.0,
+    }
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="random-4",
+        num_edits=4,
+        output_dir=Path("unused"),
+    )
+    sample = SimpleNamespace(
+        sample_id=f"random-zero-{len(words)}",
+        question=question,
+        choices=None,
+        correct_answer="4",
+        subset=None,
+    )
+    return runtime.prepare_pair(sample, config)
+
+
 def _break_cumulative_shift_invariant(manifest: dict[str, object], pair: dict[str, object]) -> None:
     del manifest
     attempt = pair["target_attempts"][0]
@@ -610,6 +762,24 @@ def _change_seed_input_but_preserve_declared_alignment(
             break
 
 
+def _append_unrecorded_edited_prompt_suffix(
+    manifest: dict[str, object], pair: dict[str, object]
+) -> None:
+    del manifest
+    pair["edited"]["prompt"] += "UNRECORDED-SUFFIX"
+
+
+def _move_target_index_to_clean_prompt_boundary(
+    manifest: dict[str, object], pair: dict[str, object]
+) -> None:
+    del manifest
+    pair["clean"]["prompt_token_count"] = pair["target_attempts"][0]["target_token_index"]
+
+
+def _replace_aligned_coordinate(pair: dict[str, object], field_name: str, value: object) -> None:
+    pair["aligned_words"][0][field_name] = value
+
+
 def test_audit_keeps_paper_denominators_separate_and_writes_provenance(
     tmp_path: Path,
 ) -> None:
@@ -636,6 +806,9 @@ def test_audit_keeps_paper_denominators_separate_and_writes_provenance(
     pooled = {row["targeting"]: row for row in csv_rows if row["row_type"] == "targeting"}
     attribution = pooled["attribution-4"]
     assert attribution["items"] == "2"
+    assert attribution["zero_attempt_items"] == "0"
+    assert attribution["zero_aligned_word_items"] == "0"
+    assert attribution["attempted_but_zero_aligned_word_items"] == "0"
     assert attribution["four_distinct_word_items"] == "1"
     assert float(attribution["four_distinct_word_rate"]) == 0.5
     assert attribution["target_attempts"] == "8"
@@ -688,6 +861,9 @@ def test_audit_keeps_paper_denominators_separate_and_writes_provenance(
         "input_files": 3,
         "items": 3,
         "settings": 2,
+        "zero_attempt_items": 0,
+        "zero_aligned_word_items": 0,
+        "attempted_but_zero_aligned_word_items": 0,
     }
     assert run["paper_reference_values"]["four_distinct_words"] == {
         "settings": 42,
@@ -713,12 +889,17 @@ def test_audit_keeps_paper_denominators_separate_and_writes_provenance(
         "cohort": "Attribution-4 CoT-swap included multiple-choice items",
         "computable_from_prepared_pairs_alone": False,
     }
-    assert run["paper_reference_values"]["sources"] == {
-        "final_pdf": "rounded published rates and 0/68,650 rank-1 result",
-        "archival_reanalysis": (
-            "exact numerators, denominators, rank 2-4 breakdowns, and cohort counts"
-        ),
-    }
+    assert run["paper_reference_values"]["sources"]["final_pdf"] == (
+        "rounded published rates and 0/68,650 rank-1 result"
+    )
+    archival_source = run["paper_reference_values"]["sources"]["archival_reanalysis"]
+    assert archival_source["artifact_id"] == "final-paper-targeting-fidelity-reanalysis/v1"
+    assert archival_source["availability"] == (
+        "author-local; not distributed with the public repository"
+    )
+    assert archival_source["artifacts"]["source_provenance.csv"] == (
+        "e74361590a00021fdc3871605fc9ee22772d8d0b493bfc564ab1daa57f8246c1"
+    )
     assert run["paper_reference_values"]["source_by_metric"]["all_evaluable_target_miss_rate"] == {
         "rounded_rate": "final_pdf",
         "exact_counts": "archival_reanalysis",
@@ -734,12 +915,18 @@ def test_audit_keeps_paper_denominators_separate_and_writes_provenance(
         "exact_per_cell_item_counts": False,
         "paired_targeting_arms": False,
         "paper_generation_cap_512": True,
+        "paper_dataset_cohort_rule": True,
+        "paper_subset_caps": True,
+        "pinned_model_revisions": True,
         "exact_arm_item_totals": False,
     }
     assert len(run["paper_comparison"]["cell_count_mismatches"]) == 3
-    assert run["paper_comparison"]["expected_cell_counts_source"] == (
-        "archival_reanalysis/source_provenance.csv"
-    )
+    assert run["paper_comparison"]["expected_cell_counts_source"] == {
+        "artifact": "source_provenance.csv",
+        "artifact_id": "final-paper-targeting-fidelity-reanalysis/v1",
+        "availability": "author-local; not distributed with the public repository",
+        "sha256": "e74361590a00021fdc3871605fc9ee22772d8d0b493bfc564ab1daa57f8246c1",
+    }
     assert run["metric_protocol"]["rank_metric"] == (
         "successful Attribution-4 application selection_rank"
     )
@@ -749,11 +936,114 @@ def test_audit_keeps_paper_denominators_separate_and_writes_provenance(
     for source in run["inputs"]:
         pairs_path = pairs_root / source["pairs_path"]
         manifest_path = pairs_root / source["manifest_path"]
+        assert source["dataset_cohort_rule"] == "paper-model-benchmark-cohort/v1"
+        assert source["random_seed_algorithm"] == "sha256-first-64-bits/v1"
+        assert source["historical_compatibility_notes"] == _HISTORICAL_COMPATIBILITY_NOTES
+        assert source["environment_versions"] == {
+            "accelerate": "fixture-accelerate",
+            "datasets": "fixture-datasets",
+            "lxt": "fixture-lxt",
+            "python": "3.fixture",
+            "torch": "fixture-torch",
+            "transformers": "fixture-transformers",
+        }
+        assert source["cuda"] == "12.fixture"
+        assert source["gpu_names"] == ["Fixture GPU 0"]
         assert source["pairs_sha256"] == hashlib.sha256(pairs_path.read_bytes()).hexdigest()
         assert source["manifest_sha256"] == hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     for output in run["outputs"]:
         path = output_dir / output["path"]
         assert output["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("question", "expected_candidates"),
+    (
+        ("1234", 0),
+        ("alpha", 1),
+        ("alpha beta gamma", 3),
+        ("alpha beta gamma delta", 4),
+    ),
+)
+def test_random_control_with_no_candidate_after_top_four_exclusion_remains_in_denominators(
+    tmp_path: Path,
+    question: str,
+    expected_candidates: int,
+) -> None:
+    pairs_root = tmp_path / "pairs"
+    row = _producer_random_zero_attempt_pair(question)
+    assert row["num_candidates"] == expected_candidates
+    assert len(row["excluded_attribution_tokens"]) == expected_candidates
+    assert row["target_attempts"] == []
+    _write_source(
+        pairs_root / "cell",
+        [row],
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="random-4",
+    )
+    output_dir = tmp_path / "audit"
+
+    run_targeting_fidelity_audit(
+        TargetingFidelityAuditConfig(pairs_root=pairs_root, output_dir=output_dir)
+    )
+
+    record = json.loads((output_dir / "targeting_fidelity_records.jsonl").read_text())
+    assert record["num_target_attempts"] == 0
+    assert record["num_distinct_edited_words"] == 0
+    assert record["four_distinct_words"] is False
+    assert record["all_attempts_faithful"] is False
+    with (output_dir / "targeting_fidelity.csv").open(newline="", encoding="utf-8") as stream:
+        setting = next(row for row in csv.DictReader(stream) if row["row_type"] == "setting")
+    assert setting["items"] == "1"
+    assert setting["zero_attempt_items"] == "1"
+    assert setting["zero_aligned_word_items"] == "1"
+    assert setting["attempted_but_zero_aligned_word_items"] == "0"
+    assert setting["target_attempts"] == "0"
+    assert setting["targeting_fidelity_rate"] == ""
+    assert setting["all_attempts_faithful_items"] == "0"
+    run = json.loads((output_dir / "run.json").read_text())
+    assert run["counts"]["items"] == 1
+    assert run["counts"]["zero_attempt_items"] == 1
+    assert run["counts"]["zero_aligned_word_items"] == 1
+    assert run["counts"]["attempted_but_zero_aligned_word_items"] == 0
+
+
+def test_sha_derived_attempts_that_cancel_remain_observable_without_aligned_words(
+    tmp_path: Path,
+) -> None:
+    pairs_root = tmp_path / "pairs"
+    row = _producer_net_zero_pair()
+    assert [attempt["edited_token_text"] for attempt in row["target_attempts"]] == [
+        "aopha",
+        "alpha",
+    ]
+    assert row["edited"]["prompt"] == row["clean"]["prompt"]
+    assert row["aligned_words"] == []
+    _write_source(
+        pairs_root / "cell",
+        [row],
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+    )
+    output_dir = tmp_path / "audit"
+
+    run_targeting_fidelity_audit(
+        TargetingFidelityAuditConfig(pairs_root=pairs_root, output_dir=output_dir)
+    )
+
+    record = json.loads((output_dir / "targeting_fidelity_records.jsonl").read_text())
+    assert record["num_target_attempts"] == 2
+    assert record["num_distinct_edited_words"] == 0
+    assert record["all_attempts_faithful"] is True
+    with (output_dir / "targeting_fidelity.csv").open(newline="", encoding="utf-8") as stream:
+        setting = next(row for row in csv.DictReader(stream) if row["row_type"] == "setting")
+    assert setting["items"] == "1"
+    assert setting["zero_attempt_items"] == "0"
+    assert setting["zero_aligned_word_items"] == "1"
+    assert setting["attempted_but_zero_aligned_word_items"] == "1"
+    assert setting["target_attempts"] == "2"
 
 
 def test_gold_option_uses_the_exact_formatted_choice_span_not_text_search(tmp_path: Path) -> None:
@@ -846,6 +1136,20 @@ def test_gold_option_uses_the_exact_formatted_choice_span_not_text_search(tmp_pa
             "random_seed_algorithm",
         ),
         (
+            lambda manifest, pair: manifest["provenance"].update(
+                dataset_cohort_rule="unversioned-cohort"
+            ),
+            "dataset_cohort_rule",
+        ),
+        (
+            lambda manifest, pair: manifest["provenance"].update(dataset_samples_per_subset=100),
+            "dataset_samples_per_subset",
+        ),
+        (
+            lambda manifest, pair: manifest["provenance"].update(historical_compatibility_notes=[]),
+            "historical_compatibility_notes",
+        ),
+        (
             lambda manifest, pair: manifest["provenance"].update(dataset_records_sha256="0" * 64),
             "dataset records SHA-256",
         ),
@@ -871,8 +1175,66 @@ def test_gold_option_uses_the_exact_formatted_choice_span_not_text_search(tmp_pa
             lambda manifest, pair: pair["target_attempts"][0].update(relevance="inf"),
             "finite relevance",
         ),
+        (
+            lambda manifest, pair: pair["target_attempts"][-1].update(attribution_rank=999),
+            "attribution_rank.*num_candidates",
+        ),
+        (
+            lambda manifest, pair: pair["attribution_target"].update(
+                definition="prompt-final-logit"
+            ),
+            "attribution_target.definition",
+        ),
+        (
+            lambda manifest, pair: pair["attribution_target"].update(context="prompt-only"),
+            "attribution_target.context",
+        ),
+        (
+            lambda manifest, pair: pair["attribution_target"].update(position=19_999),
+            "attribution_target.position",
+        ),
+        (
+            lambda manifest, pair: pair["attribution_target"].update(first_cot_token_id=-1),
+            "attribution_target.first_cot_token_id",
+        ),
+        (
+            lambda manifest, pair: pair["attribution_target"].update(first_cot_token_text=""),
+            "attribution_target.first_cot_token_text",
+        ),
+        (
+            lambda manifest, pair: _replace_aligned_coordinate(pair, "clean_token_indices", []),
+            "clean_token_indices.*non-empty",
+        ),
+        (
+            lambda manifest, pair: _replace_aligned_coordinate(
+                pair, "clean_token_indices", [201, 200]
+            ),
+            "clean_token_indices.*strictly increasing",
+        ),
+        (
+            lambda manifest, pair: _replace_aligned_coordinate(
+                pair, "clean_token_indices", ["200"]
+            ),
+            "clean_token_indices.*integer",
+        ),
+        (
+            lambda manifest, pair: _replace_aligned_coordinate(
+                pair, "edited_token_indices", [20_000]
+            ),
+            "edited_token_indices.*prompt token count",
+        ),
+        (
+            lambda manifest, pair: _replace_aligned_coordinate(pair, "clean_final_token", 201),
+            "clean_final_token.*final clean_token_indices",
+        ),
+        (
+            lambda manifest, pair: _replace_aligned_coordinate(pair, "edited_final_token", 201),
+            "edited_final_token.*final edited_token_indices",
+        ),
         (_break_cumulative_shift_invariant, "cumulative-shift"),
         (_change_seed_input_but_preserve_declared_alignment, "seeded Table 4"),
+        (_append_unrecorded_edited_prompt_suffix, "edited prompt reconstruction"),
+        (_move_target_index_to_clean_prompt_boundary, "clean prompt token count"),
     ),
 )
 def test_invalid_or_partial_input_is_rejected_without_publishing_output(
@@ -1002,14 +1364,26 @@ def test_random_control_excludes_attribution_ranks_one_through_four(
         )
 
 
-def test_paired_targeting_arms_require_matching_dataset_and_model_provenance(
+@pytest.mark.parametrize(
+    ("field_name", "replacement"),
+    (
+        ("model_revision", "other-model-revision"),
+        ("torch", "other-torch-version"),
+        ("python", "other-python-version"),
+        ("cuda", "other-cuda-version"),
+        ("gpu_names", ["Other GPU"]),
+    ),
+)
+def test_paired_targeting_arms_require_matching_dataset_model_and_environment_provenance(
     tmp_path: Path,
+    field_name: str,
+    replacement: object,
 ) -> None:
     pairs_root = tmp_path / "pairs"
     _fixture_inputs(pairs_root)
     manifest_path = pairs_root / "m-random-mmlu" / "run.json"
     manifest = json.loads(manifest_path.read_text())
-    manifest["provenance"]["model_revision"] = "other-model-revision"
+    manifest["provenance"][field_name] = replacement
     _write_json(manifest_path, manifest)
 
     with pytest.raises(TargetingFidelityAuditError, match="paired targeting provenance"):
@@ -1019,6 +1393,45 @@ def test_paired_targeting_arms_require_matching_dataset_and_model_provenance(
                 output_dir=tmp_path / "audit",
             )
         )
+
+
+def test_unpinned_model_revision_is_a_paper_comparison_failure_not_an_input_error(
+    tmp_path: Path,
+) -> None:
+    pairs_root = tmp_path / "pairs"
+    question = "alpha"
+    row = _pair(
+        "one",
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        question=question,
+        choices=None,
+        gold_answer="1",
+        attempts=[_attempt(1)],
+        aligned_words=[_aligned_word(question, "alpha", word_index=0, target_ranks=(1,))],
+    )
+    source = pairs_root / "cell"
+    _write_source(
+        source,
+        [row],
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+    )
+    manifest = json.loads((source / "run.json").read_text())
+    manifest["provenance"]["model_revision"] = None
+    _write_json(source / "run.json", manifest)
+    output_dir = tmp_path / "audit"
+
+    run_targeting_fidelity_audit(
+        TargetingFidelityAuditConfig(pairs_root=pairs_root, output_dir=output_dir)
+    )
+
+    audit = json.loads((output_dir / "run.json").read_text())
+    assert audit["paper_comparison"]["status"] == "not_comparable"
+    assert audit["paper_comparison"]["checks"]["pinned_model_revisions"] is False
+    assert "pinned_model_revisions" in audit["paper_comparison"]["reason"]
 
 
 def test_jsonl_rejects_nonstandard_constants_and_duplicate_keys(tmp_path: Path) -> None:

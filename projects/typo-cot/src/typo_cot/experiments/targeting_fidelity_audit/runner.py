@@ -68,6 +68,46 @@ _EXPECTED_PAPER_CELLS = frozenset(
     for targeting in TARGETING_CONDITIONS
 )
 _DOUBLE_MMLU_MODELS = frozenset({"qwen2.5-7b-instruct"}) | _SCALE_EXTENSION_MODELS
+_DATASET_COHORT_RULE = "paper-model-benchmark-cohort/v1"
+_RANDOM_SEED_ALGORITHM = "sha256-first-64-bits/v1"
+_TARGET_POSITION = "maximum-logit-after-first-cot-token"
+_ALIGNMENT = "actual-edited-word-final-token"
+_HISTORICAL_COMPATIBILITY_NOTES = (
+    "stable-sha256-seeds-replace-process-random-python-hash",
+    "mistral-attnlrp-rules-target-mistral-classes",
+    "actual-word-final-alignment-replaces-token-substring-coordinates",
+    "parenthesized-choice-markers-use-recorded-choice-boundary",
+    "arc-numeric-answer-keys-normalized-to-prompt-letters",
+    "model-specific-mmlu-cohort-matches-final-paper-denominators",
+)
+_ENVIRONMENT_VERSION_FIELDS = (
+    "python",
+    "torch",
+    "transformers",
+    "accelerate",
+    "lxt",
+    "datasets",
+)
+_ARCHIVAL_SOURCE_PROVENANCE_SHA256 = (
+    "e74361590a00021fdc3871605fc9ee22772d8d0b493bfc564ab1daa57f8246c1"
+)
+_ARCHIVAL_TARGETING_REFERENCE: dict[str, object] = {
+    "artifact_id": "final-paper-targeting-fidelity-reanalysis/v1",
+    "availability": "author-local; not distributed with the public repository",
+    "scope": "exact numerators, denominators, rank 2-4 breakdowns, and cohort counts",
+    "artifacts": {
+        "source_provenance.csv": (_ARCHIVAL_SOURCE_PROVENANCE_SHA256),
+        "task2_aggregates.json": (
+            "c9cffac8188efe6dceca4ee1c6493a006af0ce2a2da40dd7d9481ede79ce02d6"
+        ),
+        "task2_misalign_by_rank.csv": (
+            "ccf286f3c1e06dc29137ae235276909d9ae41ffe02bb8a3fffeadc391dc0d380"
+        ),
+        "task2_method_numbers.py": (
+            "cf4c780a6992a74c085c8e944d705b950be8ff4f01a83863c13a8225f04668f2"
+        ),
+    },
+}
 _EXPECTED_PAPER_ITEM_COUNTS = {
     (model, benchmark): (
         5700
@@ -76,6 +116,18 @@ _EXPECTED_PAPER_ITEM_COUNTS = {
     )
     for model, benchmark in _EXPECTED_PAPER_SETTINGS
 }
+
+
+def _expected_samples_per_subset(model: str, benchmark: str) -> int | None:
+    """Return the final-paper subset cap recorded by pair preparation."""
+    model_basename = model.rsplit("/", 1)[-1].lower()
+    if benchmark == "mmlu":
+        return 100 if model_basename in _DOUBLE_MMLU_MODELS else 50
+    if benchmark == "mmlu-pro":
+        return 100
+    return None
+
+
 _CSV_FIELDS = (
     "row_type",
     "model",
@@ -83,6 +135,9 @@ _CSV_FIELDS = (
     "targeting",
     "seed",
     "items",
+    "zero_attempt_items",
+    "zero_aligned_word_items",
+    "attempted_but_zero_aligned_word_items",
     "four_distinct_word_items",
     "four_distinct_word_rate",
     "target_attempts",
@@ -114,9 +169,7 @@ _CSV_FIELDS = (
 PAPER_REFERENCE_VALUES: dict[str, object] = {
     "sources": {
         "final_pdf": "rounded published rates and 0/68,650 rank-1 result",
-        "archival_reanalysis": (
-            "exact numerators, denominators, rank 2-4 breakdowns, and cohort counts"
-        ),
+        "archival_reanalysis": _ARCHIVAL_TARGETING_REFERENCE,
     },
     "source_by_metric": {
         "four_distinct_words": {
@@ -218,6 +271,15 @@ class _ManifestAudit:
     dataset_records_sha256: str
     model_revision: str | None
     dataset_loader: str
+    dataset_cohort_rule: str
+    dataset_samples_per_subset: int | None
+    random_seed_algorithm: str
+    target_position: str
+    alignment: str
+    historical_compatibility_notes: tuple[str, ...]
+    environment_versions: tuple[tuple[str, str], ...]
+    cuda: str | None
+    gpu_names: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,6 +293,7 @@ class _AuditedItem:
     cell: _Cell
     sample_id: str
     four_distinct_words: bool
+    num_distinct_edited_words: int
     attempts: tuple[dict[str, object], ...]
     gold_option_applicable: bool
     gold_option_edited: bool | None
@@ -240,6 +303,9 @@ class _AuditedItem:
 @dataclass(slots=True)
 class _Totals:
     items: int = 0
+    zero_attempt_items: int = 0
+    zero_aligned_word_items: int = 0
+    attempted_but_zero_aligned_word_items: int = 0
     four_distinct_word_items: int = 0
     target_attempts: int = 0
     faithful_target_attempts: int = 0
@@ -252,12 +318,18 @@ class _Totals:
 
     def add(self, item: _AuditedItem) -> None:
         self.items += 1
+        self.zero_attempt_items += int(not item.attempts)
+        self.zero_aligned_word_items += int(item.num_distinct_edited_words == 0)
+        self.attempted_but_zero_aligned_word_items += int(
+            bool(item.attempts) and item.num_distinct_edited_words == 0
+        )
         self.four_distinct_word_items += int(item.four_distinct_words)
         if item.gold_option_applicable:
             self.multiple_choice_items += 1
             self.gold_option_edited_items += int(item.gold_option_edited is True)
         self.all_attempts_faithful_items += int(
-            all(bool(attempt["landed_on_intended_token"]) for attempt in item.attempts)
+            bool(item.attempts)
+            and all(bool(attempt["landed_on_intended_token"]) for attempt in item.attempts)
         )
         for attempt in item.attempts:
             faithful = bool(attempt["landed_on_intended_token"])
@@ -421,9 +493,9 @@ def _validate_manifest(
 
     provenance = _mapping(manifest.get("provenance"), path=path, field_name="provenance")
     expected_protocol = {
-        "random_seed_algorithm": "sha256-first-64-bits/v1",
-        "target_position": "maximum-logit-after-first-cot-token",
-        "alignment": "actual-edited-word-final-token",
+        "random_seed_algorithm": _RANDOM_SEED_ALGORITHM,
+        "target_position": _TARGET_POSITION,
+        "alignment": _ALIGNMENT,
     }
     for field_name, expected_value in expected_protocol.items():
         if provenance.get(field_name) != expected_value:
@@ -433,6 +505,28 @@ def _validate_manifest(
             )
     if provenance.get("model") != model:
         raise _error(path, "provenance.model does not match arguments.model")
+    dataset_cohort_rule = _string(
+        provenance.get("dataset_cohort_rule"),
+        path=path,
+        field_name="provenance.dataset_cohort_rule",
+    )
+    if dataset_cohort_rule != _DATASET_COHORT_RULE:
+        raise _error(
+            path,
+            f"provenance.dataset_cohort_rule must be {_DATASET_COHORT_RULE!r}",
+        )
+    dataset_samples_per_subset = _optional_integer(
+        provenance.get("dataset_samples_per_subset"),
+        path=path,
+        field_name="provenance.dataset_samples_per_subset",
+    )
+    expected_samples_per_subset = _expected_samples_per_subset(model, benchmark)
+    if dataset_samples_per_subset != expected_samples_per_subset:
+        raise _error(
+            path,
+            "provenance.dataset_samples_per_subset does not match the final-paper "
+            f"model/benchmark cohort (expected {expected_samples_per_subset!r})",
+        )
     dataset_loader = _string(
         provenance.get("benchmark_dataset_loader"),
         path=path,
@@ -460,6 +554,54 @@ def _validate_manifest(
     ):
         raise _error(path, "provenance.model_revision must be null or a non-empty string")
     model_revision = raw_model_revision if isinstance(raw_model_revision, str) else None
+    historical_compatibility_notes = tuple(
+        _string(
+            note,
+            path=path,
+            field_name=f"provenance.historical_compatibility_notes[{index}]",
+        )
+        for index, note in enumerate(
+            _list(
+                provenance.get("historical_compatibility_notes"),
+                path=path,
+                field_name="provenance.historical_compatibility_notes",
+            )
+        )
+    )
+    if historical_compatibility_notes != _HISTORICAL_COMPATIBILITY_NOTES:
+        raise _error(
+            path,
+            "provenance.historical_compatibility_notes does not match the public-v1 protocol",
+        )
+    environment_versions = tuple(
+        (
+            field_name,
+            _string(
+                provenance.get(field_name),
+                path=path,
+                field_name=f"provenance.{field_name}",
+            ),
+        )
+        for field_name in _ENVIRONMENT_VERSION_FIELDS
+    )
+    raw_cuda = provenance.get("cuda")
+    if raw_cuda is not None and (not isinstance(raw_cuda, str) or not raw_cuda):
+        raise _error(path, "provenance.cuda must be null or a non-empty string")
+    cuda = raw_cuda if isinstance(raw_cuda, str) else None
+    gpu_names = tuple(
+        _string(
+            gpu_name,
+            path=path,
+            field_name=f"provenance.gpu_names[{index}]",
+        )
+        for index, gpu_name in enumerate(
+            _list(
+                provenance.get("gpu_names"),
+                path=path,
+                field_name="provenance.gpu_names",
+            )
+        )
+    )
 
     counts = _mapping(manifest.get("counts"), path=path, field_name="counts")
     discovered = _integer(counts.get("discovered"), path=path, field_name="counts.discovered")
@@ -479,6 +621,15 @@ def _validate_manifest(
         dataset_records_sha256=dataset_records_sha256,
         model_revision=model_revision,
         dataset_loader=dataset_loader,
+        dataset_cohort_rule=dataset_cohort_rule,
+        dataset_samples_per_subset=dataset_samples_per_subset,
+        random_seed_algorithm=_RANDOM_SEED_ALGORITHM,
+        target_position=_TARGET_POSITION,
+        alignment=_ALIGNMENT,
+        historical_compatibility_notes=historical_compatibility_notes,
+        environment_versions=environment_versions,
+        cuda=cuda,
+        gpu_names=gpu_names,
     )
 
 
@@ -604,6 +755,83 @@ def _first_ascii_letter(
     raise _error(path, f"{field_name} contains no eligible ASCII letter")
 
 
+def _validate_attribution_target(
+    record: Mapping[str, object],
+    *,
+    path: Path,
+    clean_prompt_token_count: int,
+) -> None:
+    target = _mapping(
+        record.get("attribution_target"),
+        path=path,
+        field_name="attribution_target",
+    )
+    definition = _string(
+        target.get("definition"),
+        path=path,
+        field_name="attribution_target.definition",
+    )
+    if definition != _TARGET_POSITION:
+        raise _error(path, f"attribution_target.definition must be {_TARGET_POSITION!r}")
+    context = _string(
+        target.get("context"),
+        path=path,
+        field_name="attribution_target.context",
+    )
+    if context != "complete-clean-generation":
+        raise _error(
+            path,
+            "attribution_target.context must be 'complete-clean-generation'",
+        )
+    position = _integer(
+        target.get("position"),
+        path=path,
+        field_name="attribution_target.position",
+    )
+    if position != clean_prompt_token_count:
+        raise _error(
+            path,
+            "attribution_target.position must equal the clean prompt token count",
+        )
+    first_cot_token_id = _integer(
+        target.get("first_cot_token_id"),
+        path=path,
+        field_name="attribution_target.first_cot_token_id",
+    )
+    if first_cot_token_id < 0:
+        raise _error(path, "attribution_target.first_cot_token_id must be non-negative")
+    _string(
+        target.get("first_cot_token_text"),
+        path=path,
+        field_name="attribution_target.first_cot_token_text",
+    )
+
+
+def _token_index_sequence(
+    value: object,
+    *,
+    path: Path,
+    field_name: str,
+    prompt_token_count: int,
+) -> tuple[int, ...]:
+    raw_indices = _list(value, path=path, field_name=field_name)
+    if not raw_indices:
+        raise _error(path, f"{field_name} must be non-empty")
+    indices = tuple(
+        _integer(
+            token_index,
+            path=path,
+            field_name=f"{field_name}[{index}]",
+        )
+        for index, token_index in enumerate(raw_indices)
+    )
+    if any(token_index < 0 or token_index >= prompt_token_count for token_index in indices):
+        raise _error(path, f"{field_name} must lie inside its prompt token count")
+    if any(previous >= current for previous, current in zip(indices, indices[1:], strict=False)):
+        raise _error(path, f"{field_name} must be strictly increasing")
+    return indices
+
+
 def _gold_option(
     record: Mapping[str, object],
     *,
@@ -661,6 +889,8 @@ def _validate_excluded_tokens(
     path: Path,
     cell: _Cell,
     editable_prompt_span: tuple[int, int],
+    clean_prompt_token_count: int,
+    num_candidates: int,
 ) -> set[int]:
     raw_excluded = _list(
         record.get("excluded_attribution_tokens"),
@@ -671,8 +901,13 @@ def _validate_excluded_tokens(
         if raw_excluded:
             raise _error(path, "Attribution-4 must not declare excluded attribution tokens")
         return set()
-    if len(raw_excluded) != 4:
-        raise _error(path, "Random-4 must exclude exactly the attribution top four")
+    expected_excluded = min(4, num_candidates)
+    if len(raw_excluded) != expected_excluded:
+        raise _error(
+            path,
+            "Random-4 must exclude the attribution top four, or every candidate when fewer "
+            f"than four exist (expected {expected_excluded})",
+        )
 
     editable_start, editable_end = editable_prompt_span
     token_indices: set[int] = set()
@@ -691,8 +926,16 @@ def _validate_excluded_tokens(
             path=path,
             field_name=f"{prefix}.token_index",
         )
-        if token_index < 0 or token_index in token_indices:
-            raise _error(path, "Random-4 excluded token indices must be distinct and non-negative")
+        if (
+            token_index < 0
+            or token_index >= clean_prompt_token_count
+            or token_index in token_indices
+        ):
+            raise _error(
+                path,
+                "Random-4 excluded token indices must be distinct and inside the clean "
+                "prompt token count",
+            )
         token_indices.add(token_index)
         _string(token.get("text"), path=path, field_name=f"{prefix}.text")
         _finite_number(token.get("relevance"), path=path, field_name=f"{prefix}.relevance")
@@ -743,6 +986,18 @@ def _validate_pair(
     clean = _mapping(record.get("clean"), path=item_path, field_name="clean")
     editable = _string(clean.get("editable_text"), path=item_path, field_name="clean.editable_text")
     clean_prompt = _string(clean.get("prompt"), path=item_path, field_name="clean.prompt")
+    clean_prompt_token_count = _integer(
+        clean.get("prompt_token_count"),
+        path=item_path,
+        field_name="clean.prompt_token_count",
+    )
+    if clean_prompt_token_count <= 0:
+        raise _error(item_path, "clean prompt token count must be positive")
+    _validate_attribution_target(
+        record,
+        path=item_path,
+        clean_prompt_token_count=clean_prompt_token_count,
+    )
     editable_prompt_start, editable_prompt_end = _span(
         clean.get("editable_prompt_span"),
         path=item_path,
@@ -751,11 +1006,18 @@ def _validate_pair(
     )
     if clean_prompt[editable_prompt_start:editable_prompt_end] != editable:
         raise _error(item_path, "clean editable prompt span does not match editable_text")
+    num_candidates = _integer(
+        record.get("num_candidates"), path=item_path, field_name="num_candidates"
+    )
+    if num_candidates < 0:
+        raise _error(item_path, "num_candidates must be non-negative")
     excluded_token_indices = _validate_excluded_tokens(
         record,
         path=item_path,
         cell=cell,
         editable_prompt_span=(editable_prompt_start, editable_prompt_end),
+        clean_prompt_token_count=clean_prompt_token_count,
+        num_candidates=num_candidates,
     )
     raw_attempts = _list(
         record.get("target_attempts"), path=item_path, field_name="target_attempts"
@@ -767,11 +1029,8 @@ def _validate_pair(
     )
     if declared_attempts != len(raw_attempts):
         raise _error(item_path, "num_target_attempts does not match target_attempts")
-    if not raw_attempts or len(raw_attempts) > 4:
-        raise _error(item_path, "target_attempts must contain between one and four edits")
-    num_candidates = _integer(
-        record.get("num_candidates"), path=item_path, field_name="num_candidates"
-    )
+    if len(raw_attempts) > 4:
+        raise _error(item_path, "target_attempts must contain at most four edits")
     if num_candidates < len(raw_attempts) + len(excluded_token_indices):
         raise _error(item_path, "num_candidates is smaller than recorded target provenance")
 
@@ -798,6 +1057,11 @@ def _validate_pair(
         )
         if attribution_rank <= 0:
             raise _error(item_path, "attribution ranks must be positive")
+        if attribution_rank > num_candidates:
+            raise _error(
+                item_path,
+                f"{field_prefix}.attribution_rank must not exceed num_candidates",
+            )
         if attribution_rank in seen_attribution_ranks:
             raise _error(item_path, "target attribution ranks must be distinct")
         if cell.targeting == "random-4" and attribution_rank <= 4:
@@ -816,12 +1080,14 @@ def _validate_pair(
         )
         if (
             target_token_index < 0
+            or target_token_index >= clean_prompt_token_count
             or target_token_index in seen_target_token_indices
             or target_token_index in excluded_token_indices
         ):
             raise _error(
                 item_path,
-                "target token indices must be distinct, non-negative, and not excluded",
+                "target token indices must be distinct, inside the clean prompt token count, "
+                "and not excluded",
             )
         seen_target_token_indices.add(target_token_index)
         target_token_text = _string(
@@ -1048,17 +1314,29 @@ def _validate_pair(
     if recorded_edited != current_text:
         raise _error(item_path, "replayed edited text does not match edited.editable_text")
     edited_prompt = _string(edited.get("prompt"), path=item_path, field_name="edited.prompt")
+    edited_prompt_token_count = _integer(
+        edited.get("prompt_token_count"),
+        path=item_path,
+        field_name="edited.prompt_token_count",
+    )
+    if edited_prompt_token_count <= 0:
+        raise _error(item_path, "edited prompt token count must be positive")
     edited_prompt_start, edited_prompt_end = _span(
         edited.get("editable_prompt_span"),
         path=item_path,
         field_name="edited.editable_prompt_span",
         text_length=len(edited_prompt),
     )
+    expected_edited_prompt = (
+        clean_prompt[:editable_prompt_start] + recorded_edited + clean_prompt[editable_prompt_end:]
+    )
     if (
-        edited_prompt_start != editable_prompt_start
+        (edited_prompt_start, edited_prompt_end)
+        != (editable_prompt_start, editable_prompt_start + len(recorded_edited))
         or edited_prompt[edited_prompt_start:edited_prompt_end] != recorded_edited
+        or edited_prompt != expected_edited_prompt
     ):
-        raise _error(item_path, "edited prompt coordinates do not match replayed editable text")
+        raise _error(item_path, "edited prompt reconstruction does not match the clean prompt")
 
     clean_word_spans = _word_spans(editable)
     edited_word_spans = _word_spans(recorded_edited)
@@ -1079,8 +1357,8 @@ def _validate_pair(
         raise _error(item_path, "num_aligned_words does not match aligned_words")
     if len(raw_words) != len(changed_words):
         raise _error(item_path, "aligned_words does not match the replayed changed words")
-    if not raw_words or len(raw_words) > 4:
-        raise _error(item_path, "aligned_words must contain between one and four words")
+    if len(raw_words) > 4:
+        raise _error(item_path, "aligned_words must contain at most four words")
     aligned_words: list[dict[str, object]] = []
     for index, (value, changed) in enumerate(zip(raw_words, changed_words, strict=True)):
         word = _mapping(value, path=item_path, field_name=f"aligned_words[{index}]")
@@ -1177,6 +1455,40 @@ def _validate_pair(
                 item_path,
                 "aligned target_token_indices do not match target-attempt replay",
             )
+        clean_token_indices = _token_index_sequence(
+            word.get("clean_token_indices"),
+            path=item_path,
+            field_name=f"aligned_words[{index}].clean_token_indices",
+            prompt_token_count=clean_prompt_token_count,
+        )
+        edited_token_indices = _token_index_sequence(
+            word.get("edited_token_indices"),
+            path=item_path,
+            field_name=f"aligned_words[{index}].edited_token_indices",
+            prompt_token_count=edited_prompt_token_count,
+        )
+        clean_final_token = _integer(
+            word.get("clean_final_token"),
+            path=item_path,
+            field_name=f"aligned_words[{index}].clean_final_token",
+        )
+        if clean_final_token != clean_token_indices[-1]:
+            raise _error(
+                item_path,
+                f"aligned_words[{index}].clean_final_token must equal the final "
+                "clean_token_indices entry",
+            )
+        edited_final_token = _integer(
+            word.get("edited_final_token"),
+            path=item_path,
+            field_name=f"aligned_words[{index}].edited_final_token",
+        )
+        if edited_final_token != edited_token_indices[-1]:
+            raise _error(
+                item_path,
+                f"aligned_words[{index}].edited_final_token must equal the final "
+                "edited_token_indices entry",
+            )
         aligned_words.append(
             {
                 "word_index": word_index,
@@ -1206,7 +1518,7 @@ def _validate_pair(
         "num_target_attempts": len(attempts),
         "faithful_target_attempts": faithful_count,
         "misplaced_target_attempts": len(attempts) - faithful_count,
-        "all_attempts_faithful": faithful_count == len(attempts),
+        "all_attempts_faithful": bool(attempts) and faithful_count == len(attempts),
         "num_distinct_edited_words": len(aligned_words),
         "four_distinct_words": len(aligned_words) == 4,
         "gold_option_applicable": applicable,
@@ -1219,6 +1531,7 @@ def _validate_pair(
         cell=cell,
         sample_id=sample_id,
         four_distinct_words=len(aligned_words) == 4,
+        num_distinct_edited_words=len(aligned_words),
         attempts=tuple(attempts),
         gold_option_applicable=applicable,
         gold_option_edited=gold_edited,
@@ -1246,6 +1559,9 @@ def _summary_row(
         "targeting": targeting,
         "seed": seed,
         "items": totals.items,
+        "zero_attempt_items": totals.zero_attempt_items,
+        "zero_aligned_word_items": totals.zero_aligned_word_items,
+        "attempted_but_zero_aligned_word_items": totals.attempted_but_zero_aligned_word_items,
         "four_distinct_word_items": totals.four_distinct_word_items,
         "four_distinct_word_rate": _rate(totals.four_distinct_word_items, totals.items),
         "target_attempts": totals.target_attempts,
@@ -1376,6 +1692,15 @@ def _validate_paired_sources(inputs: Sequence[_InputAudit]) -> None:
             or left.model_revision != right.model_revision
             or left.dataset_loader != right.dataset_loader
             or left.max_new_tokens != right.max_new_tokens
+            or left.dataset_cohort_rule != right.dataset_cohort_rule
+            or left.dataset_samples_per_subset != right.dataset_samples_per_subset
+            or left.random_seed_algorithm != right.random_seed_algorithm
+            or left.target_position != right.target_position
+            or left.alignment != right.alignment
+            or left.historical_compatibility_notes != right.historical_compatibility_notes
+            or left.environment_versions != right.environment_versions
+            or left.cuda != right.cuda
+            or left.gpu_names != right.gpu_names
         ):
             raise TargetingFidelityAuditError(
                 "paired targeting provenance or cohort mismatch for "
@@ -1424,6 +1749,20 @@ def _paper_comparison(
             arms == set(TARGETING_CONDITIONS) for arms in targeting_by_setting.values()
         ),
         "paper_generation_cap_512": all(source.manifest.max_new_tokens == 512 for source in inputs),
+        "paper_dataset_cohort_rule": all(
+            source.manifest.dataset_cohort_rule == _DATASET_COHORT_RULE for source in inputs
+        ),
+        "paper_subset_caps": all(
+            source.manifest.dataset_samples_per_subset
+            == _expected_samples_per_subset(
+                source.manifest.cell.model,
+                source.manifest.cell.benchmark,
+            )
+            for source in inputs
+        ),
+        "pinned_model_revisions": all(
+            source.manifest.model_revision is not None for source in inputs
+        ),
         "exact_arm_item_totals": item_counts["attribution-4"] == 68660
         and item_counts["random-4"] == 68660,
     }
@@ -1438,7 +1777,12 @@ def _paper_comparison(
             else "Failed paper-comparison preconditions: " + ", ".join(failed_checks)
         ),
         "checks": checks,
-        "expected_cell_counts_source": "archival_reanalysis/source_provenance.csv",
+        "expected_cell_counts_source": {
+            "artifact": "source_provenance.csv",
+            "artifact_id": _ARCHIVAL_TARGETING_REFERENCE["artifact_id"],
+            "availability": _ARCHIVAL_TARGETING_REFERENCE["availability"],
+            "sha256": _ARCHIVAL_SOURCE_PROVENANCE_SHA256,
+        },
         "expected_model_benchmark_settings": len(_EXPECTED_PAPER_SETTINGS),
         "observed_model_benchmark_settings": len(observed_settings),
         "expected_input_cells": len(_EXPECTED_PAPER_CELLS),
@@ -1640,6 +1984,18 @@ def run_targeting_fidelity_audit(
                 "dataset_records_sha256": manifest_audit.dataset_records_sha256,
                 "model_revision": manifest_audit.model_revision,
                 "max_new_tokens": manifest_audit.max_new_tokens,
+                "dataset_loader": manifest_audit.dataset_loader,
+                "dataset_cohort_rule": manifest_audit.dataset_cohort_rule,
+                "dataset_samples_per_subset": manifest_audit.dataset_samples_per_subset,
+                "random_seed_algorithm": manifest_audit.random_seed_algorithm,
+                "target_position": manifest_audit.target_position,
+                "alignment": manifest_audit.alignment,
+                "historical_compatibility_notes": list(
+                    manifest_audit.historical_compatibility_notes
+                ),
+                "environment_versions": dict(manifest_audit.environment_versions),
+                "cuda": manifest_audit.cuda,
+                "gpu_names": list(manifest_audit.gpu_names),
                 "pairs_path": relative_pairs,
                 "pairs_sha256": _sha256(pairs_path),
                 "manifest_path": _relative(manifest_path, pairs_root),
@@ -1695,6 +2051,14 @@ def run_targeting_fidelity_audit(
                     "input_cells": len(input_cells),
                     "settings": settings,
                     "items": len(audited_items),
+                    "zero_attempt_items": sum(not item.attempts for item in audited_items),
+                    "zero_aligned_word_items": sum(
+                        item.num_distinct_edited_words == 0 for item in audited_items
+                    ),
+                    "attempted_but_zero_aligned_word_items": sum(
+                        bool(item.attempts) and item.num_distinct_edited_words == 0
+                        for item in audited_items
+                    ),
                 },
                 "inputs": input_provenance,
                 "outputs": output_provenance,

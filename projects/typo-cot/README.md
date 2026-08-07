@@ -119,8 +119,8 @@ command writes:
 - `targeting_fidelity_records.jsonl`: one validation/audit row per prepared
   item;
 - `targeting_fidelity.csv`: per-setting and pooled target-landing, distinct-word,
-  and prepared-pair gold-option rates, including Attribution ranks 1--4
-  separately;
+  zero-attempt/zero-aligned-word counts, and prepared-pair gold-option rates,
+  including Attribution ranks 1--4 separately;
 - `operation_counts.json`: substitution, duplication, and deletion counts by
   setting and targeting condition;
 - `run.json`: input/output hashes, arguments, paper fingerprint, counts, and
@@ -129,12 +129,16 @@ command writes:
 Rates use items or edit attempts exactly as named by each column. In
 particular, the four-distinct-word rate is item-level, target fidelity is
 attempt-level, and the prepared-pair gold-option rate is restricted to
-multiple-choice inputs. The paper's 21.5% gold-option value uses the later
+multiple-choice inputs. Items with no successful target attempt remain in the
+item denominator and are not vacuously classified as all-attempts-faithful;
+attempted edits that cancel to the clean text are reported separately. The
+paper's 21.5% gold-option value uses the later
 Attribution-4 CoT-swap included cohort, so this pair-only command records that
 reference as not directly computable rather than comparing unlike denominators.
 `run.json` permits a `descriptive_only` paper comparison only after checking
 the exact 42-setting grid, archival per-cell counts, paired-arm
-sample/provenance identity, seed 42, and the 512-token generation cap;
+sample/provenance identity, paper cohort rule and subset caps, pinned model
+revisions, seed 42, and the 512-token generation cap;
 otherwise its status is `not_comparable`.
 See
 [`docs/targeting-fidelity-audit.md`](docs/targeting-fidelity-audit.md) for the
