@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import csv
+import ctypes
+import errno
 import hashlib
 import json
 import math
 import os
 import re
 import shutil
+import sys
 import tempfile
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -285,7 +288,7 @@ class _ManifestAudit:
 @dataclass(frozen=True, slots=True)
 class _InputAudit:
     manifest: _ManifestAudit
-    sample_ids: tuple[str, ...]
+    sample_ids_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,6 +345,18 @@ class _Totals:
                 if 1 <= rank <= 4:
                     self.rank_attempts[rank] += 1
                     self.rank_faithful[rank] += int(faithful)
+
+
+@dataclass(slots=True)
+class _Aggregates:
+    by_cell: dict[_Cell, _Totals] = field(default_factory=dict)
+    by_targeting: dict[str, _Totals] = field(default_factory=dict)
+    overall: _Totals = field(default_factory=_Totals)
+
+    def add(self, item: _AuditedItem) -> None:
+        self.by_cell.setdefault(item.cell, _Totals()).add(item)
+        self.by_targeting.setdefault(item.cell.targeting, _Totals()).add(item)
+        self.overall.add(item)
 
 
 def _error(path: Path, message: str) -> TargetingFidelityAuditError:
@@ -401,7 +416,9 @@ def _load_json(path: Path) -> dict[str, object]:
                 object_pairs_hook=_reject_duplicate_keys,
                 parse_constant=_reject_nonfinite_constant,
             )
-    except (OSError, json.JSONDecodeError, TargetingFidelityAuditError) as exc:
+    except TargetingFidelityAuditError as exc:
+        raise _error(path, str(exc)) from exc
+    except (OSError, json.JSONDecodeError) as exc:
         raise _error(path, f"cannot read JSON: {exc}") from exc
     if not isinstance(payload, dict):
         raise _error(path, "top-level JSON value must be an object")
@@ -1591,15 +1608,9 @@ def _summary_row(
     return row
 
 
-def _group(items: Sequence[_AuditedItem]) -> tuple[list[dict[str, object]], dict[str, object]]:
-    by_cell: dict[_Cell, _Totals] = {}
-    by_targeting: dict[str, _Totals] = {}
-    overall = _Totals()
-    for item in items:
-        by_cell.setdefault(item.cell, _Totals()).add(item)
-        by_targeting.setdefault(item.cell.targeting, _Totals()).add(item)
-        overall.add(item)
-
+def _render_aggregates(
+    aggregates: _Aggregates,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
     summary_rows = [
         _summary_row(
             row_type="setting",
@@ -1609,7 +1620,7 @@ def _group(items: Sequence[_AuditedItem]) -> tuple[list[dict[str, object]], dict
             seed=str(cell.seed),
             totals=totals,
         )
-        for cell, totals in sorted(by_cell.items())
+        for cell, totals in sorted(aggregates.by_cell.items())
     ]
     summary_rows.extend(
         _summary_row(
@@ -1618,10 +1629,10 @@ def _group(items: Sequence[_AuditedItem]) -> tuple[list[dict[str, object]], dict
             benchmark="",
             targeting=targeting,
             seed="",
-            totals=by_targeting[targeting],
+            totals=aggregates.by_targeting[targeting],
         )
         for targeting in TARGETING_CONDITIONS
-        if targeting in by_targeting
+        if targeting in aggregates.by_targeting
     )
     summary_rows.append(
         _summary_row(
@@ -1630,7 +1641,7 @@ def _group(items: Sequence[_AuditedItem]) -> tuple[list[dict[str, object]], dict
             benchmark="",
             targeting="",
             seed="",
-            totals=overall,
+            totals=aggregates.overall,
         )
     )
 
@@ -1652,17 +1663,17 @@ def _group(items: Sequence[_AuditedItem]) -> tuple[list[dict[str, object]], dict
                 "seed": cell.seed,
                 **operation_payload(totals),
             }
-            for cell, totals in sorted(by_cell.items())
+            for cell, totals in sorted(aggregates.by_cell.items())
         ],
         "by_targeting": [
             {
                 "targeting": targeting,
-                **operation_payload(by_targeting[targeting]),
+                **operation_payload(aggregates.by_targeting[targeting]),
             }
             for targeting in TARGETING_CONDITIONS
-            if targeting in by_targeting
+            if targeting in aggregates.by_targeting
         ],
-        "overall": operation_payload(overall),
+        "overall": operation_payload(aggregates.overall),
     }
     return summary_rows, operations
 
@@ -1685,7 +1696,7 @@ def _validate_paired_sources(inputs: Sequence[_InputAudit]) -> None:
         right = random_control.manifest
         if (
             left.cell.model != right.cell.model
-            or attribution.sample_ids != random_control.sample_ids
+            or attribution.sample_ids_sha256 != random_control.sample_ids_sha256
             or left.record_count != right.record_count
             or left.dataset_sample_count != right.dataset_sample_count
             or left.dataset_records_sha256 != right.dataset_records_sha256
@@ -1841,7 +1852,7 @@ def _write_json(path: Path, payload: object) -> None:
         os.fsync(stream.fileno())
 
 
-def _write_jsonl(path: Path, rows: Sequence[Mapping[str, object]]) -> None:
+def _write_jsonl(path: Path, rows: Iterable[Mapping[str, object]]) -> None:
     with path.open("w", encoding="utf-8") as stream:
         for row in rows:
             stream.write(
@@ -1856,6 +1867,92 @@ def _write_jsonl(path: Path, rows: Sequence[Mapping[str, object]]) -> None:
             stream.write("\n")
         stream.flush()
         os.fsync(stream.fileno())
+
+
+def _concatenate_jsonl(path: Path, sources: Iterable[Path]) -> None:
+    with path.open("wb") as output_stream:
+        for source in sources:
+            with source.open("rb") as input_stream:
+                shutil.copyfileobj(input_stream, output_stream)
+        output_stream.flush()
+        os.fsync(output_stream.fileno())
+
+
+def _rename_directory_noreplace(source: Path, destination: Path) -> None:
+    """Atomically publish a directory without replacing an existing path."""
+    if sys.platform.startswith("linux"):
+        libc = ctypes.CDLL(None, use_errno=True)
+        renameat2 = getattr(libc, "renameat2", None)
+        if renameat2 is not None:
+            renameat2.argtypes = (
+                ctypes.c_int,
+                ctypes.c_char_p,
+                ctypes.c_int,
+                ctypes.c_char_p,
+                ctypes.c_uint,
+            )
+            renameat2.restype = ctypes.c_int
+            status = renameat2(
+                -100,  # AT_FDCWD
+                os.fsencode(source),
+                -100,
+                os.fsencode(destination),
+                1,  # RENAME_NOREPLACE
+            )
+            if status == 0:
+                return
+            error_number = ctypes.get_errno()
+            if error_number == errno.EEXIST:
+                raise FileExistsError(
+                    error_number,
+                    os.strerror(error_number),
+                    destination,
+                )
+            if error_number not in {errno.ENOSYS, errno.EINVAL}:
+                raise OSError(
+                    error_number,
+                    os.strerror(error_number),
+                    destination,
+                )
+
+    # Windows refuses an existing rename destination. The pre-check is also a
+    # best-effort fallback for platforms without Linux's renameat2 primitive.
+    if os.path.lexists(destination):
+        raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), destination)
+    os.rename(source, destination)
+
+
+def _sample_ids_sha256(sample_ids: Iterable[str]) -> str:
+    digest = hashlib.sha256()
+    for sample_id in sample_ids:
+        digest.update(
+            json.dumps(
+                sample_id,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def _validated_payloads(
+    rows: Iterable[Mapping[str, object]],
+    *,
+    path: Path,
+    relative_path: str,
+    cell: _Cell,
+    aggregates: _Aggregates,
+) -> Iterable[Mapping[str, object]]:
+    for row in rows:
+        item = _validate_pair(
+            row,
+            path=path,
+            relative_path=relative_path,
+            cell=cell,
+        )
+        aggregates.add(item)
+        yield item.payload
 
 
 def _write_csv(path: Path, rows: Sequence[Mapping[str, object]]) -> None:
@@ -1893,13 +1990,30 @@ def run_targeting_fidelity_audit(
     if len(resolved_sources) != len(set(resolved_sources)):
         raise TargetingFidelityAuditError("the same pairs.jsonl was discovered more than once")
 
+    with tempfile.TemporaryDirectory(prefix="typo-cot-targeting-fidelity-") as spool_dir:
+        return _run_targeting_fidelity_audit_with_spool(
+            config,
+            pairs_paths=pairs_paths,
+            spool_dir=Path(spool_dir),
+        )
+
+
+def _run_targeting_fidelity_audit_with_spool(
+    config: TargetingFidelityAuditConfig,
+    *,
+    pairs_paths: Sequence[Path],
+    spool_dir: Path,
+) -> TargetingFidelityAuditResult:
+    pairs_root = config.pairs_root
+    output_dir = config.output_dir
+
     input_cells: set[_Cell] = set()
     normalized_input_cells: set[tuple[str, str, str]] = set()
     input_audits: list[_InputAudit] = []
-    pair_identities: set[tuple[_Cell, str]] = set()
-    audited_items: list[_AuditedItem] = []
+    aggregates = _Aggregates()
+    record_spools: list[tuple[_Cell, Path]] = []
     input_provenance: list[dict[str, object]] = []
-    for pairs_path in pairs_paths:
+    for source_index, pairs_path in enumerate(pairs_paths):
         manifest_path = pairs_path.with_name("run.json")
         if not manifest_path.is_file():
             raise TargetingFidelityAuditError(f"{pairs_path}: missing sibling completed run.json")
@@ -1954,24 +2068,24 @@ def run_targeting_fidelity_audit(
             raise TargetingFidelityAuditError(
                 f"{pairs_path}: dataset records SHA-256 does not match reconstructed pairs"
             )
-        for raw_row in raw_rows:
-            item = _validate_pair(
-                raw_row,
+        spool_path = spool_dir / f"{source_index:04d}.jsonl"
+
+        _write_jsonl(
+            spool_path,
+            _validated_payloads(
+                raw_rows,
                 path=pairs_path,
                 relative_path=relative_pairs,
                 cell=cell,
-            )
-            identity = (cell, item.sample_id)
-            if identity in pair_identities:
-                raise TargetingFidelityAuditError(
-                    f"{pairs_path}: duplicate pair identity for sample {item.sample_id!r}"
-                )
-            pair_identities.add(identity)
-            audited_items.append(item)
+                aggregates=aggregates,
+            ),
+        )
+        record_spools.append((cell, spool_path))
+        sample_ids_sha256 = _sample_ids_sha256(source_sample_ids)
         input_audits.append(
             _InputAudit(
                 manifest=manifest_audit,
-                sample_ids=tuple(source_sample_ids),
+                sample_ids_sha256=sample_ids_sha256,
             )
         )
         input_provenance.append(
@@ -1981,6 +2095,7 @@ def run_targeting_fidelity_audit(
                 "targeting": cell.targeting,
                 "seed": cell.seed,
                 "record_count": expected_rows,
+                "sample_ids_sha256": sample_ids_sha256,
                 "dataset_records_sha256": manifest_audit.dataset_records_sha256,
                 "model_revision": manifest_audit.model_revision,
                 "max_new_tokens": manifest_audit.max_new_tokens,
@@ -2002,19 +2117,11 @@ def run_targeting_fidelity_audit(
                 "manifest_sha256": _sha256(manifest_path),
             }
         )
+        del raw_rows, source_sample_ids
 
     _validate_paired_sources(input_audits)
-    audited_items.sort(
-        key=lambda item: (
-            item.cell.model,
-            item.cell.benchmark,
-            item.cell.targeting,
-            item.cell.seed,
-            item.sample_id,
-        )
-    )
-    summary_rows, operation_counts = _group(audited_items)
-    settings = len({(item.cell.model, item.cell.benchmark) for item in audited_items})
+    summary_rows, operation_counts = _render_aggregates(aggregates)
+    settings = len({(cell.model, cell.benchmark) for cell in input_cells})
     paper_comparison = _paper_comparison(
         input_audits,
         expected_seed=config.expected_seed,
@@ -2027,7 +2134,10 @@ def run_targeting_fidelity_audit(
         summary_name = "targeting_fidelity.csv"
         operation_name = "operation_counts.json"
         run_name = "run.json"
-        _write_jsonl(temporary_dir / records_name, [item.payload for item in audited_items])
+        _concatenate_jsonl(
+            temporary_dir / records_name,
+            (spool_path for _, spool_path in sorted(record_spools)),
+        )
         _write_csv(temporary_dir / summary_name, summary_rows)
         _write_json(temporary_dir / operation_name, operation_counts)
         output_provenance = [
@@ -2050,14 +2160,11 @@ def run_targeting_fidelity_audit(
                     "input_files": len(pairs_paths),
                     "input_cells": len(input_cells),
                     "settings": settings,
-                    "items": len(audited_items),
-                    "zero_attempt_items": sum(not item.attempts for item in audited_items),
-                    "zero_aligned_word_items": sum(
-                        item.num_distinct_edited_words == 0 for item in audited_items
-                    ),
-                    "attempted_but_zero_aligned_word_items": sum(
-                        bool(item.attempts) and item.num_distinct_edited_words == 0
-                        for item in audited_items
+                    "items": aggregates.overall.items,
+                    "zero_attempt_items": aggregates.overall.zero_attempt_items,
+                    "zero_aligned_word_items": aggregates.overall.zero_aligned_word_items,
+                    "attempted_but_zero_aligned_word_items": (
+                        aggregates.overall.attempted_but_zero_aligned_word_items
                     ),
                 },
                 "inputs": input_provenance,
@@ -2077,7 +2184,7 @@ def run_targeting_fidelity_audit(
         )
         if os.path.lexists(output_dir):
             raise FileExistsError(f"output directory already exists: {output_dir}")
-        os.rename(temporary_dir, output_dir)
+        _rename_directory_noreplace(temporary_dir, output_dir)
     except Exception:
         if temporary_dir.exists():
             shutil.rmtree(temporary_dir)
@@ -2089,7 +2196,7 @@ def run_targeting_fidelity_audit(
         summary_path=output_dir / summary_name,
         operation_counts_path=output_dir / operation_name,
         run_path=output_dir / run_name,
-        items=len(audited_items),
+        items=aggregates.overall.items,
         settings=settings,
         input_cells=len(input_cells),
     )

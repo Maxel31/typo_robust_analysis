@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import csv
+import gc
 import hashlib
 import json
 import os
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,6 +18,7 @@ from typo_cot.experiments.catalog import PAPER_SHA256, get_experiment
 from typo_cot.experiments.prepare_edited_pairs.protocol import seeded_character_edit
 from typo_cot.experiments.prepare_edited_pairs.runner import PrepareEditedPairsConfig
 from typo_cot.experiments.prepare_edited_pairs.runtime import HuggingFacePairPreparationRuntime
+from typo_cot.experiments.targeting_fidelity_audit import runner as audit_runner
 from typo_cot.experiments.targeting_fidelity_audit import (
     TargetingFidelityAuditConfig,
     TargetingFidelityAuditError,
@@ -1480,6 +1483,29 @@ def test_jsonl_rejects_nonstandard_constants_and_duplicate_keys(tmp_path: Path) 
             )
 
 
+def test_manifest_content_errors_are_not_reported_as_io_failures(tmp_path: Path) -> None:
+    pairs_root = tmp_path / "pairs"
+    _fixture_inputs(pairs_root)
+    manifest_path = pairs_root / "z-attribution-mmlu" / "run.json"
+    serialized = manifest_path.read_text(encoding="utf-8").replace(
+        '"status": "completed"',
+        '"status": "completed", "status": "duplicate"',
+        1,
+    )
+    manifest_path.write_text(serialized, encoding="utf-8")
+
+    with pytest.raises(TargetingFidelityAuditError) as error:
+        run_targeting_fidelity_audit(
+            TargetingFidelityAuditConfig(
+                pairs_root=pairs_root,
+                output_dir=tmp_path / "audit",
+            )
+        )
+
+    assert "duplicate JSON key 'status'" in str(error.value)
+    assert "cannot read JSON" not in str(error.value)
+
+
 def test_pair_rows_must_preserve_the_producer_sample_order(tmp_path: Path) -> None:
     pairs_root = tmp_path / "pairs"
     question = "alpha beta"
@@ -1589,6 +1615,23 @@ def test_a_dangling_output_symlink_is_treated_as_an_existing_target(tmp_path: Pa
     assert output_dir.is_symlink()
 
 
+def test_atomic_publish_primitive_never_replaces_an_existing_empty_directory(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "complete.txt").write_text("complete", encoding="utf-8")
+    destination = tmp_path / "destination"
+    destination.mkdir()
+
+    with pytest.raises(FileExistsError):
+        audit_runner._rename_directory_noreplace(source, destination)
+
+    assert (source / "complete.txt").read_text(encoding="utf-8") == "complete"
+    assert destination.is_dir()
+    assert not any(destination.iterdir())
+
+
 def test_machine_readable_outputs_are_deterministic_across_roots(tmp_path: Path) -> None:
     first_root = tmp_path / "first" / "pairs"
     second_root = tmp_path / "second" / "pairs"
@@ -1610,6 +1653,43 @@ def test_machine_readable_outputs_are_deterministic_across_roots(tmp_path: Path)
         "operation_counts.json",
     ):
         assert (first_output / filename).read_bytes() == (second_output / filename).read_bytes()
+
+
+def test_audit_releases_validated_items_while_streaming_cells(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pairs_root = tmp_path / "pairs"
+    _fixture_inputs(pairs_root)
+    output_dir = tmp_path / "audit"
+    original_validate_pair = audit_runner._validate_pair
+    live_items: weakref.WeakSet[object] = weakref.WeakSet()
+    peak_live_items = 0
+
+    class TrackedItem:
+        def __init__(self, item: object) -> None:
+            self._item = item
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._item, name)
+
+    def tracked_validate_pair(*args: object, **kwargs: object) -> TrackedItem:
+        nonlocal peak_live_items
+        item = TrackedItem(original_validate_pair(*args, **kwargs))
+        live_items.add(item)
+        gc.collect()
+        peak_live_items = max(peak_live_items, len(live_items))
+        return item
+
+    monkeypatch.setattr(audit_runner, "_validate_pair", tracked_validate_pair)
+
+    run_targeting_fidelity_audit(
+        TargetingFidelityAuditConfig(pairs_root=pairs_root, output_dir=output_dir)
+    )
+
+    gc.collect()
+    assert peak_live_items <= 2
+    assert not live_items
+    assert len((output_dir / "targeting_fidelity_records.jsonl").read_text().splitlines()) == 3
 
 
 def test_cli_runs_the_cpu_audit_and_catalog_marks_it_implemented(

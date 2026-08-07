@@ -140,3 +140,14 @@ even a complete public-v1 grid is labelled `descriptive_only` for the legacy
 landing rate because the two decidability protocols differ. The public output
 directory is published only after all inputs validate and all four files are
 complete.
+
+Validation retains only one input cell at a time. Each validated record is
+written immediately to a temporary per-cell JSONL spool while aggregate
+counters are updated incrementally; ordered sample cohorts are retained as
+full SHA-256 fingerprints rather than Python object lists. The final records
+file is assembled by concatenating those spools in deterministic setting order.
+The temporary workspace is removed on success or failure, and the completed
+four-file output still uses an atomic directory rename. On Linux the publish
+step uses `RENAME_NOREPLACE`, so even an empty destination created concurrently
+is not overwritten. Consequently the audit does not retain all 137,320
+paper-grid records in RAM before publication.
