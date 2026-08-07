@@ -9,16 +9,16 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-
 import typo_cot.cli as cli_module
 from typo_cot.cli import main
 from typo_cot.experiments.catalog import (
+    _PAPER_QUESTION_SLUG_PATTERN,
+    _PUBLIC_SLUG_PATTERN,
     PAPER_EXPERIMENTS,
     PAPER_SHA256,
     ExperimentSpec,
     get_experiment,
 )
-
 
 EXPECTED_EXPERIMENTS = (
     "prepare-edited-pairs",
@@ -78,8 +78,8 @@ def test_catalog_covers_the_final_paper_experiments_in_reproduction_order() -> N
 
 @pytest.mark.parametrize("spec", PAPER_EXPERIMENTS, ids=lambda spec: spec.slug)
 def test_catalog_entries_are_public_operation_contracts(spec: ExperimentSpec) -> None:
-    assert re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", spec.slug)
-    assert not re.search(r"(?:^|-)rq[123](?:-|$)", spec.slug)
+    assert _PUBLIC_SLUG_PATTERN.fullmatch(spec.slug)
+    assert not _PAPER_QUESTION_SLUG_PATTERN.search(spec.slug)
     assert spec.summary
     assert spec.paper_sections
     assert spec.required_arguments
@@ -199,6 +199,18 @@ def test_all_public_entry_points_track_the_canonical_pdf_fingerprint() -> None:
 
     for document in public_documents:
         assert PAPER_SHA256 in document.read_text(encoding="utf-8"), document
+
+
+def test_relocated_legacy_readme_relative_links_resolve() -> None:
+    readme = PROJECT_ROOT / "docs" / "legacy-development-readme.md"
+    markdown = readme.read_text(encoding="utf-8")
+    targets = re.findall(r"\[[^]]+\]\(([^)]+)\)", markdown)
+
+    for target in targets:
+        if target.startswith(("#", "http://", "https://")):
+            continue
+        relative_path = target.partition("#")[0]
+        assert (readme.parent / relative_path).exists(), target
 
 
 def test_root_readme_accounts_for_retained_workspace_support() -> None:

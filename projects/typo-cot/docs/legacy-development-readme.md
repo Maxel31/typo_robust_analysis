@@ -18,7 +18,7 @@ AttnLRP による重要度帰属（R_Q: 質問トークン→最初の CoT ト�
 JSAI2026 リポジトリ (`/home/sfukuhata/dev/kanolab/archive/2025/JSAI2026`,
 パッケージ名 `attn_perturbation`) の後継。コードは `typo_cot` にリネームして移行済み、
 実験データ（約 96GB）はアーカイブに置いたまま読み取り専用で参照する
-（[docs/data_provenance.md](docs/data_provenance.md), [configs/paths.yaml](configs/paths.yaml)）。
+（[docs/data_provenance.md](data_provenance.md), [configs/paths.yaml](../configs/paths.yaml)）。
 
 ## 初期実験マトリクス（v1, 25 設定）
 
@@ -31,7 +31,7 @@ AttnLRP 帰属（R_Q/R_C）を入力データとして再利用する。
 | ベンチマーク | gsm8k, mmlu, mmlu_pro, arc, commonsense_qa |
 | 摂動条件 | importance k=1/2/4/8, random k=4, bottom_k k=4 |
 
-正典は [docs/v1_run_manifest.md](docs/v1_run_manifest.md)（v1/v2 アナライザの差異も記載）。
+正典は [docs/v1_run_manifest.md](v1_run_manifest.md)（v1/v2 アナライザの差異も記載）。
 
 ## セットアップ
 
@@ -101,8 +101,8 @@ bash /diskthalys/ssd14tc/sfukuhata/dev/kanolab/typo_robust_analysis/tmp/gpu-lock
 | 13 | 読み出し集中度（Gini） | attention concentration と LOO 結果の順位相関 | `exp-13-readout` / `exp/13-readout` | 完了 |
 | 14 | no-CoTショートカット | CoT なし直接回答時の flip 率と DE の関係 | `exp-14-nocot` / `exp/14-nocot` | 完了 |
 | 15 | パッチ→自由生成 | 早期窓 patch 後の自由生成によるレストレーション検証 | `exp-15-patch-freegen` / `exp/15-patch-freegen` | 完了 |
-| 18 | 形式移植 | S3/DE の形式依存性検証（MC-GSM8K vs free-form-MMLU）。計画は [docs/experiments_11_18_plan.md](docs/experiments_11_18_plan.md) §3.8 | worktree 未作成 | 計画段階・未着手 |
-| 19 | サイズラダー | モデルサイズに対する DE/repair のスケーリング検証。計画は [docs/size_ladder_plan.md](docs/size_ladder_plan.md) | `exp-19-size-ladder` / `exp/19-size-ladder` | **進行中**（バックグラウンドジョブ稼働中。詳細は当該 worktree・ブランチを参照） |
+| 18 | 形式移植 | S3/DE の形式依存性検証（MC-GSM8K vs free-form-MMLU）。計画は [docs/experiments_11_18_plan.md](experiments_11_18_plan.md) §3.8 | worktree 未作成 | 計画段階・未着手 |
+| 19 | サイズラダー | モデルサイズに対する DE/repair のスケーリング検証。計画は [docs/size_ladder_plan.md](size_ladder_plan.md) | `exp-19-size-ladder` / `exp/19-size-ladder` | **進行中**（バックグラウンドジョブ稼働中。詳細は当該 worktree・ブランチを参照） |
 | 20 | 防御（D1） | 摂動に対する防御手法の効果検証 | `exp-20-defense` / `exp/20-defense` | **進行中**（バックグラウンドジョブ稼働中。詳細は当該 worktree・ブランチを参照） |
 
 実験19・20 は本 README 作成時点でバックグラウンド実行中のため、実行コマンドの記載は省略する
@@ -441,21 +441,21 @@ python scripts/exp15/aggregate.py --results-root results/exp15
 
 実験結果の数値・仮説判定は README では要約せず、以下の正典ドキュメントを直接参照する。
 
-- [docs/hypothesis_registry.md](docs/hypothesis_registry.md) — 全仮説（H1〜H18、実験1〜18に対応）の事前登録予測と Phase A/B 判定の正典
-- [docs/all_results_by_setting.md](docs/all_results_by_setting.md) — 全設定（モデル×ベンチマーク×摂動条件）の結果表
-- [docs/experiment_details.md](docs/experiment_details.md) — 各実験の詳細な実行記録・パラメータ
-- [docs/discussion_family_effects.md](docs/discussion_family_effects.md) — モデルファミリー間の効果差に関する考察
-- [docs/experiments_11_18_plan.md](docs/experiments_11_18_plan.md) — 実験11〜18（ERDC拡張）の計画・スケジュール
-- [docs/size_ladder_plan.md](docs/size_ladder_plan.md) — 実験19（サイズラダー）の計画
-- [docs/improvement_plan.md](docs/improvement_plan.md) — 論文改善計画
-- [docs/paper_outline.md](docs/paper_outline.md) — 論文アウトライン
-- [docs/followup_plan_20260719.md](docs/followup_plan_20260719.md) — 2026-07-19時点のフォローアップ計画
-- [docs/experiment_plan.md](docs/experiment_plan.md) — ARR 2026年8月再投稿の実験計画 v2（実験1〜10・実行計画・実装マッピング、初版）
-- [docs/work_items.md](docs/work_items.md) — 実験計画 v2 §5/§7 に基づくチェックボックス式の作業分解
-- [docs/v1_run_manifest.md](docs/v1_run_manifest.md) — v1 25 設定の run manifest（正典）
-- [docs/data_provenance.md](docs/data_provenance.md) — アーカイブデータの出自と参照方法
-- [docs/rebuttal_draft.md](docs/rebuttal_draft.md) — リバッタル草稿
-- [docs/implementation_reference.md](docs/implementation_reference.md) — 実装リファレンス
+- [docs/hypothesis_registry.md](hypothesis_registry.md) — 全仮説（H1〜H18、実験1〜18に対応）の事前登録予測と Phase A/B 判定の正典
+- [docs/all_results_by_setting.md](all_results_by_setting.md) — 全設定（モデル×ベンチマーク×摂動条件）の結果表
+- [docs/experiment_details.md](experiment_details.md) — 各実験の詳細な実行記録・パラメータ
+- [docs/discussion_family_effects.md](discussion_family_effects.md) — モデルファミリー間の効果差に関する考察
+- [docs/experiments_11_18_plan.md](experiments_11_18_plan.md) — 実験11〜18（ERDC拡張）の計画・スケジュール
+- [docs/size_ladder_plan.md](size_ladder_plan.md) — 実験19（サイズラダー）の計画
+- [docs/improvement_plan.md](improvement_plan.md) — 論文改善計画
+- [docs/paper_outline.md](paper_outline.md) — 論文アウトライン
+- [docs/followup_plan_20260719.md](followup_plan_20260719.md) — 2026-07-19時点のフォローアップ計画
+- [docs/experiment_plan.md](experiment_plan.md) — ARR 2026年8月再投稿の実験計画 v2（実験1〜10・実行計画・実装マッピング、初版）
+- [docs/work_items.md](work_items.md) — 実験計画 v2 §5/§7 に基づくチェックボックス式の作業分解
+- [docs/v1_run_manifest.md](v1_run_manifest.md) — v1 25 設定の run manifest（正典）
+- [docs/data_provenance.md](data_provenance.md) — アーカイブデータの出自と参照方法
+- [docs/rebuttal_draft.md](rebuttal_draft.md) — リバッタル草稿
+- [docs/implementation_reference.md](implementation_reference.md) — 実装リファレンス
 
 ## 追加分析（analysis/）
 
@@ -465,10 +465,10 @@ README に手法・判定・再現手順を記載。
 
 | ディレクトリ | 実験 | 判定 |
 |---|---|---|
-| [analysis/exp11_chain_mediation](analysis/exp11_chain_mediation/README.md) | 実験11: 連鎖媒介分析（修復→KL_sum→flip） | SUPPORTED |
-| [analysis/exp12_rc_composition](analysis/exp12_rc_composition/README.md) | 実験12: R_C 組成分析（top-10 帰属の4カテゴリ分類） | 強形は REFUTED／機構的主張は MC 領域で支持 |
-| [analysis/exp16_unified](analysis/exp16_unified/README.md) | 実験16: 統一 GLMM 吸収テスト（family 効果・設定分散） | family-dummy 版は REFUTED（抑圧）／H16(設定分散)は SUPPORTED（A=0.645） |
-| [analysis/exp17_behavioral_repair](analysis/exp17_behavioral_repair/README.md) | 実験17: 行動修復マーカー分析（R1 の自己修正マーカー） | REFUTED（マーカーは修復ではなく struggle シグナル） |
+| [analysis/exp11_chain_mediation](../analysis/exp11_chain_mediation/README.md) | 実験11: 連鎖媒介分析（修復→KL_sum→flip） | SUPPORTED |
+| [analysis/exp12_rc_composition](../analysis/exp12_rc_composition/README.md) | 実験12: R_C 組成分析（top-10 帰属の4カテゴリ分類） | 強形は REFUTED／機構的主張は MC 領域で支持 |
+| [analysis/exp16_unified](../analysis/exp16_unified/README.md) | 実験16: 統一 GLMM 吸収テスト（family 効果・設定分散） | family-dummy 版は REFUTED（抑圧）／H16(設定分散)は SUPPORTED（A=0.645） |
+| [analysis/exp17_behavioral_repair](../analysis/exp17_behavioral_repair/README.md) | 実験17: 行動修復マーカー分析（R1 の自己修正マーカー） | REFUTED（マーカーは修復ではなく struggle シグナル） |
 
 ## レイアウト
 
