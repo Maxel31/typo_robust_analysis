@@ -484,6 +484,18 @@ def test_fallback_rules_and_answer_equality_match_the_canonical_answer_scan() ->
         "N2_answer_line",
     )
     assert answers_equal(huge_integer, huge_integer, benchmark="gsm8k") is True
+    finite_large_integer = "1234567890123456789"
+    assert fallback_answer(
+        f"Final answer: {finite_large_integer}", benchmark="gsm8k"
+    ) == (
+        finite_large_integer,
+        "N2_answer_line",
+    )
+    assert answers_equal(
+        f"{finite_large_integer}.000",
+        finite_large_integer,
+        benchmark="gsm8k",
+    ) is True
 
 
 def test_wilson_interval_and_binary_layer_summary_use_fixed_pair_denominator() -> None:
@@ -718,13 +730,16 @@ def test_paper_comparability_requires_both_directions_and_both_targeting_arms(
 
     full_attribution = _write_pair_source(
         tmp_path / "full" / "attribution",
-        [paper_pair("a", targeting="attribution-4")],
+        [
+            paper_pair(f"a-{index:03d}", targeting="attribution-4")
+            for index in range(150)
+        ],
         targeting="attribution-4",
         model=paper_model,
     )
     full_random = _write_pair_source(
         tmp_path / "full" / "random",
-        [paper_pair("r", targeting="random-4")],
+        [paper_pair(f"r-{index:03d}", targeting="random-4") for index in range(150)],
         targeting="random-4",
         model=paper_model,
     )
@@ -738,10 +753,44 @@ def test_paper_comparability_requires_both_directions_and_both_targeting_arms(
     full_run = json.loads(full_result.run_path.read_text(encoding="utf-8"))
     assert full_run["comparability"]["status"] == "fresh-paper-protocol-reproduction"
     assert full_run["comparability"]["limitations"] == []
+    assert full_run["comparability"]["targeting_counts"] == {
+        "paper_cap_per_targeting": 150,
+        "selected": {"attribution-4": 150, "random-4": 150},
+        "fixed": {"attribution-4": 150, "random-4": 150},
+    }
+
+    under_cap_attribution = _write_pair_source(
+        tmp_path / "under-cap" / "attribution",
+        [paper_pair("a", targeting="attribution-4")],
+        targeting="attribution-4",
+        model=paper_model,
+    )
+    under_cap_random = _write_pair_source(
+        tmp_path / "under-cap" / "random",
+        [paper_pair("r", targeting="random-4")],
+        targeting="random-4",
+        model=paper_model,
+    )
+    under_cap_config = replace(
+        full_config,
+        attribution_pairs=under_cap_attribution,
+        random_pairs=under_cap_random,
+        output_dir=tmp_path / "under-cap" / "out",
+    )
+    under_cap_result = run_layerwise_answer_patching(
+        under_cap_config,
+        runtime=FakeRuntime(),
+    )
+    under_cap_run = json.loads(under_cap_result.run_path.read_text(encoding="utf-8"))
+    assert under_cap_run["comparability"]["status"] == "partial-paper-protocol"
+    assert under_cap_run["comparability"]["limitations"] == [
+        "selected-attribution-4-below-paper-cap-1-of-150",
+        "selected-random-4-below-paper-cap-1-of-150",
+    ]
 
     partial_result = run_layerwise_answer_patching(
         replace(
-            full_config,
+            under_cap_config,
             directions=("clean-to-edited",),
             output_dir=tmp_path / "partial-directions",
         ),
@@ -759,7 +808,7 @@ def test_paper_comparability_requires_both_directions_and_both_targeting_arms(
     )
     missing_result = run_layerwise_answer_patching(
         replace(
-            full_config,
+            under_cap_config,
             random_pairs=missing_random,
             output_dir=tmp_path / "missing-arm" / "out",
         ),
@@ -768,6 +817,40 @@ def test_paper_comparability_requires_both_directions_and_both_targeting_arms(
     missing_run = json.loads(missing_result.run_path.read_text(encoding="utf-8"))
     assert missing_run["comparability"]["status"] == "partial-paper-protocol"
     assert "no-selected-random-4-anchors" in missing_run["comparability"]["limitations"]
+
+
+def test_prompt_final_aligned_anchors_are_excluded_from_the_structural_control(
+    tmp_path: Path,
+) -> None:
+    prompt_final = _pair("a-final", targeting="attribution-4")
+    prompt_final["clean"]["prompt_token_count"] = 2
+    prompt_final["edited"]["prompt_token_count"] = 2
+    attribution, random_pairs = _sources(
+        tmp_path,
+        attribution_pairs=[
+            _pair("a-safe", targeting="attribution-4"),
+            prompt_final,
+        ],
+        random_pairs=[
+            _pair("b", targeting="random-4"),
+            _pair("r-ineligible", targeting="random-4", edited_correct=True),
+        ],
+    )
+    runtime = FakeRuntime()
+
+    result = run_layerwise_answer_patching(
+        _config(attribution, random_pairs, tmp_path / "out"),
+        runtime=runtime,
+    )
+
+    assert set(runtime.baseline_calls) == {
+        ("attribution-4", "a-safe"),
+        ("random-4", "b"),
+    }
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert summary["population"]["upstream_exclusions"]["attribution-4"] == {
+        "aligned_word_at_prompt_final_position": 1,
+    }
 
 
 def test_empty_regenerated_fixed_cohort_is_recorded_as_a_failed_run(
