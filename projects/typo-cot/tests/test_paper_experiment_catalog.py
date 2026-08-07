@@ -46,22 +46,28 @@ REPOSITORY_ROOT = PROJECT_ROOT.parents[1]
 
 
 def _documented_target_commands(markdown: str) -> dict[str, set[str]]:
-    """Parse continued ``uv run typo-cot`` commands from Markdown bash fences."""
+    """Parse continued ``uv run [options] typo-cot`` commands from bash fences."""
     commands: dict[str, set[str]] = {}
     for block in re.findall(r"```bash\n(.*?)\n```", markdown, flags=re.DOTALL):
         continued: list[str] = []
         for line in block.splitlines():
             stripped = line.strip()
-            if continued or stripped.startswith("uv run typo-cot "):
+            starts_command = stripped.startswith("uv run ") and " typo-cot " in stripped
+            if continued or starts_command:
                 continued.append(stripped.removesuffix("\\").rstrip())
                 if stripped.endswith("\\"):
                     continue
 
                 tokens = shlex.split(" ".join(continued))
                 continued = []
-                if tokens[:3] != ["uv", "run", "typo-cot"] or len(tokens) < 4:
+                if tokens[:2] != ["uv", "run"] or "typo-cot" not in tokens[2:]:
                     continue
-                slug = tokens[3]
+                executable_index = tokens.index("typo-cot", 2)
+                if executable_index + 1 >= len(tokens):
+                    continue
+                slug = tokens[executable_index + 1]
+                if slug not in EXPECTED_EXPERIMENTS:
+                    continue
                 assert slug not in commands, f"duplicate command example: {slug}"
                 commands[slug] = set(tokens)
 
@@ -130,7 +136,11 @@ def test_cli_lists_machine_readable_experiment_contracts(
 
     payload = json.loads(capsys.readouterr().out)
     assert [item["slug"] for item in payload] == list(EXPECTED_EXPERIMENTS)
-    assert all(item["target_command"].startswith("uv run typo-cot ") for item in payload)
+    for spec, item in zip(PAPER_EXPERIMENTS, payload, strict=True):
+        expected_prefix = "uv run --project projects/typo-cot"
+        if spec.compute == "gpu":
+            expected_prefix += " --extra lrp"
+        assert item["target_command"].startswith(f"{expected_prefix} typo-cot ")
     assert all("command" not in item for item in payload)
 
 
@@ -159,7 +169,9 @@ def test_cli_shows_experiment_specific_arguments(capsys: pytest.CaptureFixture[s
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["paper_question"] == "RQ3"
-    assert payload["target_command"] == "uv run typo-cot clean-prefix-scan"
+    assert payload["target_command"] == (
+        "uv run --project projects/typo-cot --extra lrp typo-cot clean-prefix-scan"
+    )
     assert "--target-set" in payload["required_arguments"]
     assert "--output-dir" in payload["required_arguments"]
 

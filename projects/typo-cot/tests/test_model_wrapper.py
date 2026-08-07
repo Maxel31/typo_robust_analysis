@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
-
 from typo_cot.models.wrapper import (
     GenerationResult,
     ModelWrapper,
@@ -100,6 +99,7 @@ class TestModelWrapper:
         assert "gpt2" in allowed
         assert "google/gemma-3-1b-pt" in allowed
         assert "mistralai/Mistral-7B-v0.3" in allowed
+        assert "Qwen/Qwen2.5-72B-Instruct" in allowed
 
     def test_is_allowed_model_true(self) -> None:
         """許可されたモデルが正しく判定されることを確認."""
@@ -229,6 +229,30 @@ class TestModelWrapper:
 
         with pytest.raises(ValueError, match="使用可能リストに含まれていません"):
             wrapper.wrap_for_lxt()
+
+    @patch.object(ModelWrapper, "_load_model")
+    @patch("lxt.efficient.core.monkey_patch")
+    def test_wrap_for_lxt_patches_mistral_classes_not_llama_classes(
+        self,
+        mock_monkey_patch: MagicMock,
+        mock_load_model: MagicMock,
+    ) -> None:
+        """Mistral must receive AttnLRP rules on its own module and layer classes."""
+        import transformers.models.mistral.modeling_mistral as mistral_module
+
+        wrapper = ModelWrapper(
+            model_name="mistralai/Mistral-7B-Instruct-v0.3",
+            device=torch.device("cpu"),
+        )
+
+        wrapper.wrap_for_lxt()
+
+        patched_module, patch_map = mock_monkey_patch.call_args.args
+        assert patched_module is mistral_module
+        assert mistral_module.MistralMLP in patch_map
+        assert mistral_module.MistralRMSNorm in patch_map
+        assert mistral_module in patch_map
+        mock_load_model.assert_called_once_with()
 
 
 class TestCreateModelWrapper:

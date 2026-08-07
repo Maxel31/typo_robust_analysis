@@ -7,7 +7,7 @@ AttnLRPによる重要度計算に対応。
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizer
@@ -81,7 +81,7 @@ class ModelWrapper:
     """
 
     # 使用可能なモデルリスト（Instruct版 + PT版）
-    ALLOWED_MODELS: list[str] = [
+    ALLOWED_MODELS: ClassVar[list[str]] = [
         # Llama 3.2 Instruct
         "meta-llama/Llama-3.2-1B-Instruct",
         "meta-llama/Llama-3.2-3B-Instruct",
@@ -105,6 +105,7 @@ class ModelWrapper:
         "Qwen/Qwen2.5-3B-Instruct",
         "Qwen/Qwen2.5-7B-Instruct",
         "Qwen/Qwen2.5-32B-Instruct",
+        "Qwen/Qwen2.5-72B-Instruct",
         # DeepSeek-R1 蒸留 (reasoning特化、実験10③。Qwen2アーキテクチャ)
         "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
         # Mistral Instruct
@@ -114,7 +115,7 @@ class ModelWrapper:
     ]
 
     # lxtでサポートされているモデルファミリー（内部判定用）
-    _SUPPORTED_FAMILIES: list[str] = [
+    _SUPPORTED_FAMILIES: ClassVar[list[str]] = [
         "llama",
         "gemma",
         "mistral",
@@ -268,24 +269,49 @@ class ModelWrapper:
         try:
             from lxt.efficient.core import monkey_patch
 
-            if "llama" in model_name_lower or "mistral" in model_name_lower:
+            if "mistral" in model_name_lower:
+                from functools import partial
+
+                import transformers.models.mistral.modeling_mistral as model_module
+                from lxt.efficient.patches import (
+                    dropout_forward,
+                    gated_mlp_forward,
+                    patch_attention,
+                    patch_method,
+                    rms_norm_forward,
+                )
+
+                # LXT 2.1 does not ship a named Mistral map. Mistral uses the
+                # same gated-MLP, RMSNorm, and eager-attention interfaces as the
+                # supplied Llama rule, but the targets must be Mistral's own
+                # classes/module. Patching Llama classes here leaves a Mistral
+                # model on ordinary Gradient×Input instead of paper-specified
+                # AttnLRP.
+                patch_map = {
+                    model_module.MistralMLP: partial(patch_method, gated_mlp_forward),
+                    model_module.MistralRMSNorm: partial(patch_method, rms_norm_forward),
+                    torch.nn.Dropout: partial(patch_method, dropout_forward),
+                    model_module: patch_attention,
+                }
+                module_name = "mistral"
+            elif "llama" in model_name_lower:
                 import transformers.models.llama.modeling_llama as model_module
-                from lxt.efficient.models.llama import attnLRP as patch_map  # noqa: N813
+                from lxt.efficient.models.llama import attnLRP as patch_map
 
                 module_name = "llama"
             elif "gpt2" in model_name_lower:
                 import transformers.models.gpt2.modeling_gpt2 as model_module
-                from lxt.efficient.models.gpt2 import attnLRP as patch_map  # noqa: N813
+                from lxt.efficient.models.gpt2 import attnLRP as patch_map
 
                 module_name = "gpt2"
             elif "gemma" in model_name_lower:
                 import transformers.models.gemma3.modeling_gemma3 as model_module
-                from lxt.efficient.models.gemma3 import attnLRP as patch_map  # noqa: N813
+                from lxt.efficient.models.gemma3 import attnLRP as patch_map
 
                 module_name = "gemma3"
             elif "qwen" in model_name_lower:
                 import transformers.models.qwen2.modeling_qwen2 as model_module
-                from lxt.efficient.models.qwen2 import attnLRP as patch_map  # noqa: N813
+                from lxt.efficient.models.qwen2 import attnLRP as patch_map
 
                 module_name = "qwen2"
         except ImportError as e:

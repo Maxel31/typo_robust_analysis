@@ -128,15 +128,16 @@ setting, then macro-average settings with equal weight.
 The paths are examples of the intended public layout. Each operation owns its
 arguments and output directory; no machine-specific archive or worktree path is
 implicit. The examples assume `cd projects/typo-cot`; from the repository root,
-add `--project projects/typo-cot` immediately after `uv run`.
+add `--project projects/typo-cot` immediately after `uv run`. Commands that use
+AttnLRP or activation patching also require `--extra lrp` before `typo-cot`.
 
 ### Pair preparation and input audits
 
 ```bash
-uv run typo-cot prepare-edited-pairs \
+uv run --extra lrp typo-cot prepare-edited-pairs \
   --model google/gemma-3-4b-it --benchmark gsm8k \
   --targeting attribution-4 --num-edits 4 \
-  --output-dir results/prepare-edited-pairs/gemma-3-4b-it/gsm8k
+  --output-dir results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/attribution-4
 
 uv run typo-cot targeting-fidelity-audit \
   --pairs-root results/prepare-edited-pairs \
@@ -148,7 +149,7 @@ uv run typo-cot targeting-fidelity-audit \
 ```bash
 uv run typo-cot layerwise-kl-patching \
   --model google/gemma-3-4b-it --benchmark gsm8k \
-  --pairs results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/pairs.jsonl \
+  --pairs results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/attribution-4/pairs.jsonl \
   --targeting attribution-4 \
   --directions clean-to-edited edited-to-clean \
   --output-dir results/layerwise-kl-patching/gemma-3-4b-it/gsm8k
