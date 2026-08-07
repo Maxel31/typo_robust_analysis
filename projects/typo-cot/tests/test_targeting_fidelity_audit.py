@@ -939,6 +939,18 @@ def test_audit_keeps_paper_denominators_separate_and_writes_provenance(
     for source in run["inputs"]:
         pairs_path = pairs_root / source["pairs_path"]
         manifest_path = pairs_root / source["manifest_path"]
+        sample_ids_digest = hashlib.sha256()
+        for line in pairs_path.read_text(encoding="utf-8").splitlines():
+            sample_id = json.loads(line)["sample_id"]
+            sample_ids_digest.update(
+                json.dumps(
+                    sample_id,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            )
+            sample_ids_digest.update(b"\n")
+        assert source["sample_ids_sha256"] == sample_ids_digest.hexdigest()
         assert source["dataset_cohort_rule"] == "paper-model-benchmark-cohort/v1"
         assert source["random_seed_algorithm"] == "sha256-first-64-bits/v1"
         assert source["historical_compatibility_notes"] == _HISTORICAL_COMPATIBILITY_NOTES
@@ -1690,6 +1702,49 @@ def test_audit_releases_validated_items_while_streaming_cells(
     assert peak_live_items <= 2
     assert not live_items
     assert len((output_dir / "targeting_fidelity_records.jsonl").read_text().splitlines()) == 3
+
+
+def test_spool_and_output_temporaries_are_removed_if_final_assembly_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pairs_root = tmp_path / "pairs"
+    _fixture_inputs(pairs_root)
+    output_dir = tmp_path / "audit"
+    spool_directories: list[Path] = []
+    original_spooled_run = audit_runner._run_targeting_fidelity_audit_with_spool
+
+    def tracked_spooled_run(
+        config: TargetingFidelityAuditConfig,
+        *,
+        pairs_paths: list[Path],
+        spool_dir: Path,
+    ) -> object:
+        spool_directories.append(spool_dir)
+        return original_spooled_run(
+            config,
+            pairs_paths=pairs_paths,
+            spool_dir=spool_dir,
+        )
+
+    def fail_final_assembly(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("injected final assembly failure")
+
+    monkeypatch.setattr(
+        audit_runner,
+        "_run_targeting_fidelity_audit_with_spool",
+        tracked_spooled_run,
+    )
+    monkeypatch.setattr(audit_runner, "_concatenate_jsonl", fail_final_assembly)
+
+    with pytest.raises(RuntimeError, match="injected final assembly failure"):
+        run_targeting_fidelity_audit(
+            TargetingFidelityAuditConfig(pairs_root=pairs_root, output_dir=output_dir)
+        )
+
+    assert len(spool_directories) == 1
+    assert not spool_directories[0].exists()
+    assert not output_dir.exists()
+    assert list(tmp_path.glob(".audit.tmp-*")) == []
 
 
 def test_cli_runs_the_cpu_audit_and_catalog_marks_it_implemented(

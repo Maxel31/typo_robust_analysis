@@ -1879,7 +1879,7 @@ def _concatenate_jsonl(path: Path, sources: Iterable[Path]) -> None:
 
 
 def _rename_directory_noreplace(source: Path, destination: Path) -> None:
-    """Atomically publish a directory without replacing an existing path."""
+    """Publish atomically, with Linux no-replace and a portable pre-check fallback."""
     if sys.platform.startswith("linux"):
         libc = ctypes.CDLL(None, use_errno=True)
         renameat2 = getattr(libc, "renameat2", None)
