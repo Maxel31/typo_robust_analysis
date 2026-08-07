@@ -124,6 +124,20 @@ def test_preload_provenance_uses_null_when_subset_cap_is_not_applied() -> None:
     assert provenance["dataset_samples_per_subset"] is None
 
 
+def test_subset_cap_allowlist_does_not_expand_with_the_loader_default_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(runtime_module._DEFAULT_SAMPLES_PER_SUBSET, "gsm8k", 123)
+
+    assert (
+        runtime_module.paper_dataset_samples_per_subset(
+            model="google/gemma-3-4b-it",
+            benchmark="gsm8k",
+        )
+        is None
+    )
+
+
 def test_protocol_only_resume_rejects_incomplete_current_provenance() -> None:
     with pytest.raises(ValueError, match="missing required protocol provenance"):
         _validate_preload_resume_provenance(

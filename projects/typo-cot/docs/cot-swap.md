@@ -88,8 +88,9 @@ continuations must pass these frozen legacy-backed checks:
 - at least one trigger is present;
 - exactly one trigger is present;
 - its first character is not within the first 25% of the continuation;
-- no earlier `The answer is`, `Answer:`/`Answer=`, or `Final Answer` fragment
-  remains in the supplied prefix.
+- no earlier `Answer:`/`Answer=` or `Final Answer` fragment remains in the
+  supplied prefix. A second `The answer is` is already rejected by the exact
+  one-trigger check.
 
 An edit-valid item failing either side is recorded in
 `pair_status_records.jsonl` with all applicable reasons and is excluded before
@@ -230,6 +231,10 @@ deterministic cell plan, and runtime fingerprints. Failed runs retain valid
 checkpoints but publish no final records or summary. A non-completed resume
 removes any crash-left public files before pending GPU work. If all selected
 checkpoints already validate, it republishes without loading model weights.
+Each checkpoint is durable immediately; the growing `run.json` registry is
+flushed at power-of-two checkpoint counts, keeping total manifest serialization
+linear while crash-left files are recovered by deterministic identity and full
+semantic validation.
 Successful finalization is committed by one atomic `run.json` replacement and
 removes only the operation-owned work directory. A completed resume revalidates
 arguments, source and output SHA-256 values, reconstructed checkpoint hashes,

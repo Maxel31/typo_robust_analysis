@@ -17,7 +17,6 @@ CELL_SIDES: dict[str, tuple[str, str]] = {
 
 _TRIGGER = re.compile(r"[Tt]he answer is")
 _RESIDUAL_PATTERNS = (
-    re.compile(r"[Tt]he answer is"),
     re.compile(r"[Aa]nswer\s*[:=]"),
     re.compile(r"[Ff]inal [Aa]nswer"),
 )
@@ -45,6 +44,12 @@ def _string(value: object, *, field: str, allow_empty: bool = False) -> str:
 def _positive_int(value: object, *, field: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise ValueError(f"{field} must be a positive integer")
+    return value
+
+
+def _target_attempt_count(value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0 or value > 4:
+        raise ValueError("num_target_attempts must be an integer from 0 through 4")
     return value
 
 
@@ -289,7 +294,7 @@ def build_cell_plan(record: Mapping[str, object]) -> CotSwapPlan:
     boundaries = {side: locate_pre_answer(continuations[side]) for side in sides}
 
     reasons: list[str] = []
-    attempts = record.get("num_target_attempts")
+    attempts = _target_attempt_count(record.get("num_target_attempts"))
     if prompts["clean"] == prompts["edited"] or attempts == 0:
         reasons.append("no-applied-edit")
     reasons.extend(_boundary_reasons(boundaries["clean"], "clean"))

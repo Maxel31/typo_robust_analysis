@@ -84,6 +84,7 @@ _ANSWER_EXTRACTION_DETAIL = {
     "max_token_cap_gate": "disable-positional-numeric-n4-n5-only/v1",
     "regex_and_cap_gate_source": "legacy-backed-detail-not-specified-by-final-pdf",
 }
+_PROGRESS_PERSISTENCE = "atomic-checkpoints-power-of-two-manifest-flush/v1"
 _PROTOCOL = {
     "schema_version": "cot-swap-protocol/v1",
     "source": "completed-unlimited-prepare-edited-pairs-v1",
@@ -108,6 +109,7 @@ _PROTOCOL = {
     "generation": dict(_GENERATION),
     "answer_extraction": _ANSWER_EXTRACTION,
     "answer_extraction_detail": dict(_ANSWER_EXTRACTION_DETAIL),
+    "progress_persistence": _PROGRESS_PERSISTENCE,
     "change_denominator": (
         "edit-valid-template-eligible-successfully-executed-regenerated-a-correct"
     ),
@@ -409,6 +411,20 @@ def _load_json(path: Path) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise ValueError(f"expected a JSON object: {path}")
     return payload
+
+
+def _load_json_with_sha256(path: Path) -> tuple[dict[str, object], str]:
+    """Parse and fingerprint the same immutable in-memory byte sequence."""
+
+    content = path.read_bytes()
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"invalid UTF-8 JSON in {path}: {exc}") from exc
+    payload = _strict_loads(text, context=str(path))
+    if not isinstance(payload, dict):
+        raise ValueError(f"expected a JSON object: {path}")
+    return payload, hashlib.sha256(content).hexdigest()
 
 
 def _serialized_json(payload: object) -> str:
@@ -1082,10 +1098,11 @@ def _checkpoint_registry_entry(
     *,
     pair: _SourcePair,
     config: CotSwapConfig,
+    sha256: str | None = None,
 ) -> dict[str, object]:
     return {
         "file": path.name,
-        "sha256": _sha256(path),
+        "sha256": sha256 if sha256 is not None else _sha256(path),
         "targeting": config.targeting,
         "sample_id": pair.sample_id,
     }
@@ -1121,11 +1138,13 @@ def _load_registered_checkpoints(
             metadata.get("file") != expected_path.name
             or metadata.get("targeting") != config.targeting
             or not expected_path.is_file()
-            or metadata.get("sha256") != _sha256(expected_path)
         ):
             raise ValueError(f"checkpoint file or checkpoint hash mismatch for {sample_id}")
+        checkpoint_payload, checkpoint_sha256 = _load_json_with_sha256(expected_path)
+        if metadata.get("sha256") != checkpoint_sha256:
+            raise ValueError(f"checkpoint file or checkpoint hash mismatch for {sample_id}")
         scans[sample_id] = _scan_from_checkpoint(
-            _load_json(expected_path),
+            checkpoint_payload,
             pair=pair,
             plan=plan,
             config=config,
@@ -1146,8 +1165,9 @@ def _load_registered_checkpoints(
         if not expected_path.is_file():
             continue
         expected_files.add(expected_path.name)
+        checkpoint_payload, checkpoint_sha256 = _load_json_with_sha256(expected_path)
         scans[pair.sample_id] = _scan_from_checkpoint(
-            _load_json(expected_path),
+            checkpoint_payload,
             pair=pair,
             plan=plan,
             config=config,
@@ -1159,6 +1179,7 @@ def _load_registered_checkpoints(
             expected_path,
             pair=pair,
             config=config,
+            sha256=checkpoint_sha256,
         )
     actual_files = {path.name for path in checkpoints_dir.glob("*.json")}
     if actual_files != expected_files:
@@ -1844,6 +1865,10 @@ def run_cot_swap(
             ),
         )
 
+    def should_flush_progress() -> bool:
+        count = len(checkpoint_registry)
+        return count > 0 and count & (count - 1) == 0
+
     write_progress("running")
     for pair, plan in tqdm(
         pending,
@@ -1853,10 +1878,9 @@ def run_cot_swap(
         total=len(selected),
         disable=None,
     ):
-        if pair.sample_id in scans:
-            continue
         if runtime is None:
             raise AssertionError("pending CoT-swap work has no runtime")
+        checkpoint_added = False
         try:
             scan = runtime.scan_pair(pair.record, plan)
             _validate_scan(
@@ -1867,24 +1891,27 @@ def run_cot_swap(
                 effective_eos_token_ids=effective_eos_token_ids,
             )
             checkpoint_path = _checkpoint_path(checkpoints_dir, config, pair.sample_id)
-            _write_json_atomic(
-                checkpoint_path,
-                _checkpoint_payload(
-                    scan,
-                    pair=pair,
-                    plan=plan,
-                    config=config,
-                    source=source,
-                    runtime_fingerprint=runtime_fingerprint,
-                ),
+            checkpoint_payload = _checkpoint_payload(
+                scan,
+                pair=pair,
+                plan=plan,
+                config=config,
+                source=source,
+                runtime_fingerprint=runtime_fingerprint,
             )
+            _write_json_atomic(checkpoint_path, checkpoint_payload)
+            checkpoint_sha256 = hashlib.sha256(
+                _serialized_json(checkpoint_payload).encode("utf-8")
+            ).hexdigest()
             identity = _checkpoint_identity(config, pair.sample_id)
             checkpoint_registry[identity] = _checkpoint_registry_entry(
                 checkpoint_path,
                 pair=pair,
                 config=config,
+                sha256=checkpoint_sha256,
             )
             scans[pair.sample_id] = scan
+            checkpoint_added = True
         except Exception as exc:
             failures.append(
                 {
@@ -1894,7 +1921,8 @@ def run_cot_swap(
                     "message": str(exc),
                 }
             )
-        write_progress("running")
+        if checkpoint_added and should_flush_progress():
+            write_progress("running")
 
     if failures:
         write_progress("failed")

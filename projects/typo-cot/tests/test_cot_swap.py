@@ -497,6 +497,15 @@ def test_cell_plan_crosses_exact_recorded_prompts_and_pre_answer_texts() -> None
     assert all(len(cell.full_input_sha256) == 64 for cell in plan.cells)
 
 
+@pytest.mark.parametrize("invalid_attempts", (None, "0", False, -1, 5))
+def test_cell_plan_rejects_invalid_target_attempt_counts(invalid_attempts: object) -> None:
+    pair = _pair("sample")
+    pair["num_target_attempts"] = invalid_attempts
+
+    with pytest.raises(ValueError, match="num_target_attempts"):
+        build_cell_plan(pair)
+
+
 @pytest.mark.parametrize(
     ("pair", "reason"),
     (
@@ -959,6 +968,32 @@ def test_resume_adopts_a_valid_checkpoint_left_before_manifest_update(tmp_path: 
     assert resumed.calls == ["b"]
 
 
+def test_registered_checkpoint_is_read_once_for_hash_and_json_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _write_pair_source(tmp_path / "prepared", [_pair("a"), _pair("b")])
+    output = tmp_path / "output"
+    config = _config(source, output)
+    with pytest.raises(CotSwapRunError):
+        run_cot_swap(config, runtime=_Runtime(failure_for="b"))
+    checkpoint = next((output / ".cot-swap-work" / "checkpoints").glob("*.json"))
+    original_open = Path.open
+    checkpoint_reads = 0
+
+    def counting_open(path: Path, *args: object, **kwargs: object) -> object:
+        nonlocal checkpoint_reads
+        if path == checkpoint:
+            checkpoint_reads += 1
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", counting_open)
+    result = run_cot_swap(replace(config, resume=True), runtime=_Runtime())
+
+    assert result.executed_pairs == 2
+    assert checkpoint_reads == 1
+
+
 @pytest.mark.parametrize(
     "failure_stage",
     (
@@ -1077,6 +1112,31 @@ def test_keyboard_interrupt_during_publication_cleans_outputs_and_is_reraised(
     failed_run = json.loads((output / "run.json").read_text(encoding="utf-8"))
     assert failed_run["status"] == "failed"
     assert failed_run["failures"][0]["error_type"] == "KeyboardInterrupt"
+
+
+def test_progress_manifest_flushes_at_power_of_two_checkpoint_counts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _write_pair_source(
+        tmp_path / "prepared",
+        [_pair(f"sample-{index:02d}") for index in range(17)],
+    )
+    output = tmp_path / "output"
+    original_write = cot_runner._write_json_atomic
+    run_status_writes: list[str] = []
+
+    def record_run_writes(path: Path, payload: object) -> None:
+        if path.name == "run.json":
+            assert isinstance(payload, Mapping)
+            run_status_writes.append(str(payload["status"]))
+        original_write(path, payload)
+
+    monkeypatch.setattr(cot_runner, "_write_json_atomic", record_run_writes)
+    result = run_cot_swap(_config(source, output), runtime=_Runtime())
+
+    assert result.executed_pairs == 17
+    assert run_status_writes == ["running"] * 6 + ["completed"]
 
 
 def test_completed_resume_validates_sources_and_outputs_without_loading_model(
