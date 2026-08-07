@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +15,7 @@ import torch
 from torch import nn
 
 import typo_cot.cli as cli_module
+from typo_cot.experiments.layerwise_answer_patching import runner as answer_runner_module
 from typo_cot.cli import main
 from typo_cot.evaluation.fallback import (
     answers_equal,
@@ -850,6 +853,10 @@ def test_balanced_seed42_anchor_selection_is_per_arm_and_input_order_independent
             "generation cap 512",
         ),
         (
+            lambda a, r, ap, rp: a["counts"].update(discovered=2),
+            "complete dataset",
+        ),
+        (
             lambda a, r, ap, rp: r["provenance"].update(model_revision="other"),
             "model revisions differ",
         ),
@@ -988,17 +995,118 @@ def test_runtime_failure_keeps_completed_targeting_keyed_checkpoints_for_resume(
     assert not (output / "answer_layer_records.jsonl").exists()
     checkpoint_files = list((output / ".layerwise-answer-patching-work/checkpoints").glob("*.json"))
     assert len(checkpoint_files) == 1
+    checkpoint = json.loads(checkpoint_files[0].read_text(encoding="utf-8"))
+    checkpoint["directions"]["clean-to-edited"]["layers"][0]["event"] = False
+    _write_json(checkpoint_files[0], checkpoint)
 
     resumed_runtime = FakeRuntime()
     result = run_layerwise_answer_patching(
         replace(config, resume=True),
         runtime=resumed_runtime,
     )
-    assert resumed_runtime.baseline_calls == [("random-4", "same-id")]
+    assert resumed_runtime.baseline_calls == [
+        ("attribution-4", "same-id"),
+        ("random-4", "same-id"),
+    ]
     assert resumed_runtime.scan_calls == [
-        ("random-4", "same-id", ("clean-to-edited", "edited-to-clean"))
+        ("attribution-4", "same-id", ("clean-to-edited", "edited-to-clean")),
+        ("random-4", "same-id", ("clean-to-edited", "edited-to-clean")),
     ]
     assert result.fixed_pairs == 2
+
+
+def test_resume_recomputes_schema_invalid_checkpoint_even_with_matching_hash(
+    tmp_path: Path,
+) -> None:
+    attribution, random_pairs = _sources(
+        tmp_path,
+        attribution_pairs=[_pair("same-id", targeting="attribution-4")],
+        random_pairs=[_pair("same-id", targeting="random-4")],
+    )
+    output = tmp_path / "out"
+    config = _config(attribution, random_pairs, output)
+    with pytest.raises(LayerwiseAnswerPatchingRunError):
+        run_layerwise_answer_patching(
+            config,
+            runtime=FakeRuntime(error_for=("random-4", "same-id")),
+        )
+
+    run_path = output / "run.json"
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    checkpoint_path = next((output / ".layerwise-answer-patching-work/checkpoints").glob("*.json"))
+    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    checkpoint["directions"]["clean-to-edited"]["layers"][0]["layer_index"] = 99
+    _write_json(checkpoint_path, checkpoint)
+    run["checkpoints"][checkpoint_path.name]["sha256"] = hashlib.sha256(
+        checkpoint_path.read_bytes()
+    ).hexdigest()
+    _write_json(run_path, run)
+
+    resumed_runtime = FakeRuntime()
+    result = run_layerwise_answer_patching(
+        replace(config, resume=True),
+        runtime=resumed_runtime,
+    )
+    assert resumed_runtime.baseline_calls == [
+        ("attribution-4", "same-id"),
+        ("random-4", "same-id"),
+    ]
+    assert result.fixed_pairs == 2
+
+
+def test_output_compilation_failure_marks_manifest_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attribution, random_pairs = _sources(tmp_path)
+    output = tmp_path / "out"
+
+    def fail_compilation(**kwargs: object) -> None:
+        raise ValueError("synthetic compilation failure")
+
+    monkeypatch.setattr(answer_runner_module, "_compile_outputs", fail_compilation)
+    with pytest.raises(LayerwiseAnswerPatchingRunError, match="output compilation failed"):
+        run_layerwise_answer_patching(
+            _config(attribution, random_pairs, output),
+            runtime=FakeRuntime(),
+        )
+
+    run = json.loads((output / "run.json").read_text(encoding="utf-8"))
+    assert run["status"] == "failed"
+    assert run["failures"][0]["error_type"] == "OutputCompilationError"
+    assert not (output / "answer_layer_records.jsonl").exists()
+    assert (output / ".layerwise-answer-patching-work").is_dir()
+
+
+def test_output_write_failure_removes_partial_public_outputs_and_marks_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attribution, random_pairs = _sources(tmp_path)
+    output = tmp_path / "out"
+    original_write = answer_runner_module._write_jsonl_atomic
+
+    def fail_second_output(path: Path, rows: Sequence[Mapping[str, object]]) -> None:
+        if path.name == "pair_status_records.jsonl":
+            raise OSError("synthetic output failure")
+        original_write(path, rows)
+
+    monkeypatch.setattr(answer_runner_module, "_write_jsonl_atomic", fail_second_output)
+    with pytest.raises(LayerwiseAnswerPatchingRunError, match="output finalization failed"):
+        run_layerwise_answer_patching(
+            _config(attribution, random_pairs, output),
+            runtime=FakeRuntime(),
+        )
+
+    run = json.loads((output / "run.json").read_text(encoding="utf-8"))
+    assert run["status"] == "failed"
+    assert run["failures"][0]["error_type"] == "OutputFinalizationError"
+    for name in (
+        "answer_layer_records.jsonl",
+        "pair_status_records.jsonl",
+        "setting_summary.json",
+    ):
+        assert not (output / name).exists()
 
 
 def test_completed_resume_verifies_outputs_before_default_runtime_loading(
