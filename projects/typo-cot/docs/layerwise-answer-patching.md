@@ -99,6 +99,13 @@ even values use the same balanced rule and are marked `partial-smoke-run`.
 `--resume` is valid only for the same arguments, source hashes, paper protocol,
 and runtime fingerprint.
 
+A completed run is labelled `fresh-paper-protocol-reproduction` only for an
+exact Figure 2 model/task setting with both directions, `--max-pairs 300`, and
+non-empty selected and regenerated fixed-cohort contributions from both
+targeting arms. Non-paper models, partial directions, reduced limits, and
+missing arm contributions remain executable but are named explicitly in
+`comparability.status` and `comparability.limitations`.
+
 ## Outputs and resume behavior
 
 The output directory contains:

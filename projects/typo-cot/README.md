@@ -258,6 +258,11 @@ the historical Figure 2 sample IDs. See
 [`docs/layerwise-answer-patching.md`](docs/layerwise-answer-patching.md) for the
 schemas and the eight-setting acceptance values.
 
+`run.json` labels a run `fresh-paper-protocol-reproduction` only when it uses
+one of the four Figure 2 models on GSM8K or MMLU, requests both directions and
+300 anchors, and both targeting arms contribute to the selected and regenerated
+fixed cohorts. Every unmet condition is listed under `comparability.limitations`.
+
 ## Tests
 
 ```bash

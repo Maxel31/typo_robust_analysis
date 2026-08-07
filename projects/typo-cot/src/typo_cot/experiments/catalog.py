@@ -171,13 +171,20 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         required_arguments=(
             "--model",
             "--benchmark",
-            "--pairs",
+            "--attribution-pairs",
+            "--random-pairs",
             "--directions",
             "--max-pairs",
             "--output-dir",
         ),
-        outputs=("answer_layer_records.jsonl", "setting_summary.json"),
+        outputs=(
+            "answer_layer_records.jsonl",
+            "pair_status_records.jsonl",
+            "setting_summary.json",
+            "run.json",
+        ),
         compute="gpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="fixed-window-answer-patching",
