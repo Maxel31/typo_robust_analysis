@@ -712,6 +712,109 @@ the primary cell is not pooled into that extension aggregate. See
 [`docs/clean-prefix-scan.md`](docs/clean-prefix-scan.md) for the full source,
 selection, metric, schema, and restart contract.
 
+## Replace one clean pre-answer token and regenerate
+
+`one-token-prefix-replacement` implements the supplementary diagnostic in
+Appendix D and Tables 10--11. Under the clean question, it supplies the clean
+pre-answer token IDs before a selected position, forces either the observed
+clean token or a typo-context top-1 token at that position, and freely
+regenerates the answer. This measures answer sensitivity under the clean
+question. It is not typo repair, a prefix-cut rule, or an RQ3 answer.
+
+Run the primary Gemma-3-4B/GSM8K cell from the same fixed 172-pair source used
+by the primary clean-prefix scan:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+  typo-cot one-token-prefix-replacement \
+  --model google/gemma-3-4b-it \
+  --benchmark gsm8k \
+  --cohort primary \
+  --fixed-window-run \
+    results/fixed-window-answer-patching/gemma-3-4b-it/gsm8k \
+  --position-controls distant \
+  --gpu-id 0 \
+  --output-dir results/one-token-prefix-replacement/gemma-3-4b-it/gsm8k
+```
+
+Run one of the fourteen extensions from the same deterministic 150-target
+selection used by `clean-prefix-scan`:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+  typo-cot one-token-prefix-replacement \
+  --model google/gemma-3-1b-it \
+  --benchmark mmlu \
+  --cohort extension \
+  --pairs \
+    results/prepare-edited-pairs/gemma-3-1b-it/mmlu/attribution-4/pairs.jsonl \
+    results/prepare-edited-pairs/gemma-3-1b-it/mmlu/random-4/pairs.jsonl \
+  --max-pairs 150 \
+  --position-controls distant \
+  --gpu-id 0 \
+  --output-dir results/one-token-prefix-replacement/gemma-3-1b-it/mmlu
+```
+
+The prespecified adjacent-position check applies only to Gemma-3-1B/GSM8K,
+Llama-3.2-3B/ARC, and Mistral-7B/MMLU. Add it to the corresponding extension
+run; the distant arms are retained so both paper tables come from one
+hash-bound record set:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+  typo-cot one-token-prefix-replacement \
+  --model google/gemma-3-1b-it \
+  --benchmark gsm8k \
+  --cohort extension \
+  --pairs \
+    results/prepare-edited-pairs/gemma-3-1b-it/gsm8k/attribution-4/pairs.jsonl \
+    results/prepare-edited-pairs/gemma-3-1b-it/gsm8k/random-4/pairs.jsonl \
+  --max-pairs 150 \
+  --position-controls distant adjacent \
+  --gpu-id 0 \
+  --output-dir results/one-token-prefix-replacement/gemma-3-1b-it/gsm8k
+```
+
+Candidate position `P` maximizes clean-versus-edited next-token KL where the
+clean token is not top-1 under the edited-question context. The distant
+control `C` is a lower-median-KL candidate at least three tokens from `P`.
+With `distant`, the runner generates both local substitutions needed by Table
+10 and all four crossings of the `P`- and `C`-derived token identities needed
+by Table 11. `adjacent` additionally applies the `P`-derived token at the
+nearest lower-KL position. The exact median-low and adjacent tie rules are
+submitted-producer details and are labelled `legacy-backed`; neither position
+rule uses generated-answer outcomes.
+
+Every arm uses direct token IDs, greedy bfloat16 generation, batch size one,
+left padding, and a 512-new-token cap. Correctness is against the canonical
+gold answer; an unextractable continuation is incorrect. Table 10, distant
+factorial, and adjacent metrics keep their distinct paired-eligibility rules.
+The summary reports the final-PDF-literal four-nonnoop factorial as
+`distant_factorial` and the stricter submitted-producer distinct/admissible
+variant as `distant_factorial_submitted_producer`, including reason-wise
+attrition. On the frozen historical extensions these contain 1,603 and 1,575
+pairs respectively; the 28-record difference is entirely `b_P == b_C`.
+The primary cell is reported separately and must not enter the fourteen-
+extension aggregate. `--limit 1` is a labelled GPU smoke run and `--resume`
+continues hash-bound per-arm checkpoints.
+
+`run.json` and `one_token_summary.json` label a limit-truncated execution
+`partial-smoke-run`. An unlimited setting is labelled
+`fresh-paper-protocol-run` only when it retains the paper-sized 172-target
+primary or 150-target extension plan and includes the prespecified adjacent
+control for the three Appendix-D settings, with every selected target passing
+the exact-boundary audit; otherwise every mismatch is listed under
+`comparability.limitations`. Fresh preparation follows the paper source
+protocol but is not labelled as proof of byte-identical historical membership.
+
+Each setting writes `one_token_records.jsonl`, `pair_status_records.jsonl`,
+`one_token_summary.json`, and `run.json`. See
+[`docs/one-token-prefix-replacement.md`](docs/one-token-prefix-replacement.md)
+for the exact source, token-position, arm, denominator, historical-reference,
+and restart contracts. The fourteen-setting clustered intervals and table
+assembly consume these integer events in the later CPU artifact-building step;
+the single-setting GPU command does not silently pool the primary cell.
+
 ## Tests
 
 ```bash
@@ -726,6 +829,7 @@ uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/te
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_cot_swap.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_answer_line_deletion.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_clean_prefix_scan.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_one_token_prefix_replacement.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 

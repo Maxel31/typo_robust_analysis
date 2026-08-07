@@ -68,7 +68,7 @@ def _documented_target_commands(markdown: str) -> dict[str, list[set[str]]]:
                 slug = tokens[executable_index + 1]
                 if slug not in EXPECTED_EXPERIMENTS:
                     continue
-                if slug != "clean-prefix-scan":
+                if slug not in {"clean-prefix-scan", "one-token-prefix-replacement"}:
                     assert slug not in commands, f"duplicate command example: {slug}"
                 commands.setdefault(slug, []).append(set(tokens))
 
@@ -241,6 +241,16 @@ def test_public_experiment_guide_tracks_every_catalog_operation() -> None:
     assert any({"primary", "--fixed-window-run"}.issubset(command) for command in prefix_commands)
     assert any(
         {"extension", "--pairs", "--max-pairs"}.issubset(command) for command in prefix_commands
+    )
+
+    one_token_commands = commands["one-token-prefix-replacement"]
+    assert len(one_token_commands) == 2
+    assert any(
+        {"primary", "--fixed-window-run"}.issubset(command) for command in one_token_commands
+    )
+    assert any(
+        {"extension", "--pairs", "--max-pairs", "adjacent"}.issubset(command)
+        for command in one_token_commands
     )
 
 
