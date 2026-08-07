@@ -13,7 +13,9 @@ import torch
 from torch import nn
 
 import typo_cot.cli as cli_module
+import typo_cot.experiments.fixed_window_answer_patching.runtime as fixed_runtime_module
 from typo_cot.cli import main
+from typo_cot.evaluation.fallback import extract_with_fallback
 from typo_cot.experiments.catalog import PAPER_SHA256, get_experiment
 from typo_cot.experiments.fixed_window_answer_patching.metrics import (
     paired_binary_difference,
@@ -150,6 +152,21 @@ def _write_pair_source(
                 "failed": 0,
             },
             "failures": [],
+            "decoding": {
+                "strategy": "greedy",
+                "dtype": "bfloat16",
+                "padding_side": "left",
+                "max_new_tokens": 512,
+                "do_sample": False,
+                "num_beams": 1,
+                "num_return_sequences": 1,
+                "temperature": None,
+                "top_p": None,
+                "top_k": None,
+                "use_cache": True,
+                "return_dict_in_generate": False,
+                "output_scores": False,
+            },
             "provenance": {
                 "model": model,
                 "model_revision": revision,
@@ -157,6 +174,7 @@ def _write_pair_source(
                 "dataset_sample_count": len(pairs),
                 "dataset_records_sha256": dataset_sha256,
                 "random_seed_algorithm": "sha256-first-64-bits/v1",
+                "generation_protocol": "explicit-greedy-generation/v1",
             },
         },
     )
@@ -323,6 +341,7 @@ def test_catalog_marks_fixed_window_operation_as_implemented() -> None:
         "setting_summary.json",
         "run.json",
     )
+    assert get_experiment("patch-coordinate-controls").paper_sections[-1] == "Table 7"
 
 
 def test_cli_dispatches_paths_windows_and_runtime_controls(
@@ -497,6 +516,28 @@ def test_paired_binary_difference_is_deterministic_and_pair_resampled() -> None:
     assert result["bootstrap_resamples"] == 10_000
     assert result["seed"] == 42
     assert result["confidence_interval"] == [-0.75, 0.75]
+    assert result["method"] == "paired-percentile-bootstrap-binary-risk-difference/v1"
+
+
+@pytest.mark.parametrize(
+    ("generated_answer", "gold_answer"),
+    (
+        ("2.0000001", "2"),
+        ("9007199254740993", "9007199254740992"),
+    ),
+)
+def test_fallback_extraction_uses_exact_numeric_correctness(
+    generated_answer: str,
+    gold_answer: str,
+) -> None:
+    extraction = extract_with_fallback(
+        f"The answer is {generated_answer}.",
+        benchmark="gsm8k",
+        correct_answer=gold_answer,
+    )
+
+    assert extraction.value == generated_answer
+    assert extraction.is_correct is False
 
 
 def test_runtime_generation_explicitly_freezes_greedy_decoding() -> None:
@@ -538,6 +579,40 @@ def test_runtime_generation_explicitly_freezes_greedy_decoding() -> None:
         "output_scores": False,
         "pad_token_id": 0,
     }
+
+
+def test_runtime_provenance_records_numpy_for_bootstrap_reproduction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = object.__new__(HuggingFaceFixedWindowAnswerPatchingRuntime)
+    runtime.config = SimpleNamespace(model="test/model")
+    runtime.revision = "revision"
+    runtime.num_layers = 12
+    runtime.device = "cuda:0"
+    runtime.model = SimpleNamespace(
+        config=SimpleNamespace(_commit_hash="revision"),
+        get_decoder=lambda: SimpleNamespace(layers=[]),
+    )
+    runtime.tokenizer = SimpleNamespace(
+        init_kwargs={"_commit_hash": "revision"},
+        padding_side="left",
+    )
+    runtime._torch = SimpleNamespace(
+        version=SimpleNamespace(cuda="12.1"),
+        cuda=SimpleNamespace(
+            get_device_name=lambda _index: "GPU 0",
+            get_device_properties=lambda _index: SimpleNamespace(total_memory=123),
+        ),
+    )
+    monkeypatch.setattr(
+        fixed_runtime_module,
+        "_package_version",
+        lambda name: f"version:{name}",
+    )
+
+    provenance = runtime.provenance()
+
+    assert provenance["numpy"] == "version:numpy"
 
 
 def test_runner_uses_direction_specific_denominators_and_unextractable_is_failure(
@@ -675,6 +750,33 @@ def test_prompt_final_edited_word_remains_eligible_for_an_early_multilayer_windo
     assert summary["population"]["selected_anchors"] == 1
 
 
+def test_source_eligibility_reextracts_stored_continuations_with_fallback(
+    tmp_path: Path,
+) -> None:
+    pair = _pair(
+        "fallback-selected",
+        targeting="attribution-4",
+        clean_correct=False,
+        edited_correct=True,
+    )
+    pair["clean"]["continuation"] = "Reasoning complete.\nFinal answer: the total is $2."
+    pair["edited"]["continuation"] = "Reasoning complete.\nFinal answer: the total is $3."
+    attribution = _write_pair_source(
+        tmp_path / "attribution",
+        [pair],
+        targeting="attribution-4",
+    )
+    runtime = FakeRuntime()
+
+    result = run_fixed_window_answer_patching(
+        _config((attribution,), tmp_path / "out"),
+        runtime=runtime,
+    )
+
+    assert result.window_records == 2
+    assert runtime.baseline_calls == [("attribution-4", "fallback-selected")]
+
+
 def test_mmlu_pro_summary_compares_windows_on_the_same_restoration_pairs(
     tmp_path: Path,
 ) -> None:
@@ -727,7 +829,24 @@ def test_mmlu_pro_summary_compares_windows_on_the_same_restoration_pairs(
     assert reference["historical_bootstrap_discrepancy"] is True
     assert reference["induction_unextractable_discrepancy"] is False
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
-    assert run["comparability"]["status"] == "prespecified-mmlu-pro-window-comparison"
+    assert run["comparability"]["status"] == "fresh-prespecified-mmlu-pro-window-run"
+    assert run["comparability"]["requirements"]["historical_cohort_identity"] is False
+
+
+def test_complete_table6_shape_is_labelled_as_a_fresh_protocol_run(
+    tmp_path: Path,
+) -> None:
+    model = "google/gemma-3-4b-it"
+    attribution, random_pairs = _sources(tmp_path, model=model)
+
+    result = run_fixed_window_answer_patching(
+        _config((attribution, random_pairs), tmp_path / "out", model=model),
+        runtime=FakeRuntime(),
+    )
+
+    run = json.loads(result.run_path.read_text(encoding="utf-8"))
+    assert run["comparability"]["status"] == "fresh-paper-protocol-run"
+    assert run["comparability"]["requirements"]["historical_cohort_identity"] is False
 
 
 def test_source_contract_fails_before_runtime_creation(
@@ -754,6 +873,36 @@ def test_source_contract_fails_before_runtime_creation(
     with pytest.raises(ValueError, match="paper SHA-256"):
         run_fixed_window_answer_patching(_config((attribution, random_pairs), tmp_path / "out"))
     assert created is False
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        (lambda manifest: manifest["decoding"].update(num_beams=2), "num_beams"),
+        (
+            lambda manifest: manifest["provenance"].pop("generation_protocol"),
+            "generation_protocol",
+        ),
+    ),
+)
+def test_source_contract_requires_the_explicit_greedy_generation_protocol(
+    tmp_path: Path,
+    mutation: object,
+    message: str,
+) -> None:
+    attribution, _ = _sources(tmp_path)
+    manifest_path = attribution.parent / "run.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    mutation(manifest)
+    _write_json(manifest_path, manifest)
+
+    runtime = FakeRuntime()
+    with pytest.raises(ValueError, match=message):
+        run_fixed_window_answer_patching(
+            _config((attribution,), tmp_path / "out"),
+            runtime=runtime,
+        )
+    assert runtime.baseline_calls == []
 
 
 def test_sources_reject_duplicate_targeting_arms_and_dataset_mismatch(

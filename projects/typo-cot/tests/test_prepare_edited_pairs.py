@@ -14,6 +14,7 @@ import typo_cot.cli as cli_module
 import typo_cot.data.loader as loader_module
 import typo_cot.experiments.prepare_edited_pairs.runtime as runtime_module
 from typo_cot.cli import main
+from typo_cot.evaluation.extractor import create_extractor
 from typo_cot.experiments.catalog import get_experiment
 from typo_cot.experiments.prepare_edited_pairs.protocol import (
     CandidateToken,
@@ -102,6 +103,7 @@ def test_preload_provenance_freezes_the_paper_cohort_rule() -> None:
 
     assert provenance["dataset_cohort_rule"] == "paper-model-benchmark-cohort/v1"
     assert provenance["dataset_samples_per_subset"] == 100
+    assert provenance["generation_protocol"] == "explicit-greedy-generation/v1"
 
 
 def test_preload_provenance_uses_null_when_subset_cap_is_not_applied() -> None:
@@ -165,6 +167,78 @@ def test_runtime_passes_the_frozen_cohort_size_to_the_dataset_loader(
 
     assert runtime.load_samples(config) == [sample]
     assert captured["samples_per_subset"] == 100
+
+
+def test_pair_runtime_generation_explicitly_freezes_greedy_decoding() -> None:
+    calls: list[dict[str, object]] = []
+
+    class Tokenizer:
+        pad_token_id = 0
+
+        def __call__(self, _prompt: str, **_kwargs: object) -> dict[str, torch.Tensor]:
+            return {
+                "input_ids": torch.tensor([[10, 11]]),
+                "attention_mask": torch.ones(1, 2, dtype=torch.long),
+            }
+
+        def decode(self, _token_ids: list[int], **_kwargs: object) -> str:
+            return "The answer is 2."
+
+    runtime = object.__new__(HuggingFacePairPreparationRuntime)
+    runtime.config = SimpleNamespace(max_new_tokens=512)
+    runtime.tokenizer = Tokenizer()
+    runtime.wrapper = SimpleNamespace(
+        device=torch.device("cpu"),
+        model=SimpleNamespace(
+            generate=lambda **kwargs: calls.append(kwargs) or torch.tensor([[10, 11, 20]])
+        ),
+    )
+    runtime._torch = torch
+
+    prompt_ids, continuation_ids, continuation = runtime._generate("prompt")
+
+    assert prompt_ids == [10, 11]
+    assert continuation_ids == [20]
+    assert continuation == "The answer is 2."
+    assert len(calls) == 1
+    assert torch.equal(calls[0].pop("input_ids"), torch.tensor([[10, 11]]))
+    assert torch.equal(
+        calls[0].pop("attention_mask"),
+        torch.ones(1, 2, dtype=torch.long),
+    )
+    assert calls[0] == {
+        "max_new_tokens": 512,
+        "do_sample": False,
+        "num_beams": 1,
+        "num_return_sequences": 1,
+        "temperature": None,
+        "top_p": None,
+        "top_k": None,
+        "use_cache": True,
+        "return_dict_in_generate": False,
+        "output_scores": False,
+        "pad_token_id": 0,
+    }
+
+
+def test_pair_runtime_answer_uses_empty_only_fallback_and_exact_correctness() -> None:
+    runtime = object.__new__(HuggingFacePairPreparationRuntime)
+    runtime.internal_benchmark = "gsm8k"
+    runtime.extractor = create_extractor("gsm8k")
+
+    answer = runtime._answer(
+        "Reasoning complete.\nFinal answer: the total is $2.",
+        "2",
+    )
+
+    assert answer == {
+        "value": "2",
+        "is_extracted": True,
+        "is_correct": True,
+        "method": "fallback:N2_answer_line",
+        "primary_method": "no_match",
+        "confidence": 1.0,
+    }
 
 
 def test_cli_dispatches_experiment_specific_pair_arguments(
