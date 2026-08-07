@@ -106,6 +106,7 @@ the transcription; the PDF fingerprint above identifies that exact artifact.
 | Fixed-window answer patching | Six planned settings; published restoration n=1,241 with 800 successes; published reciprocal induction n=1,458 with 871 reported changes | p. 6, §4.1; p. 15, Table 6 |
 | Primary coordinate controls | The same 172 Gemma-3-4B/GSM8K pairs: correct coordinates 129, offset 44, cross-item donor 42 | p. 6, §4.1; p. 15, Table 7 |
 | Position reachability | The same 109 pairs for all three patch positions | p. 13, Appendix B |
+| Patch/text crossing | The same 172 pairs in all cells: 0, 129, 168, and 171 correct | p. 7, Table 2 |
 | Prespecified MMLU-Pro windows | Qwen2.5-3B n=97 and Mistral-7B n=120 | p. 6, §4.1; p. 15, Table 7 |
 | Complete-text CoT swap | 19,550 clean-correct cases; 4,634 B changes; 3,539 B-to-C restorations | p. 12, Table 3; p. 13, Appendix C |
 | Answer-line deletion | GSM8K n=333 and MMLU n=450 in the three-model controls | p. 7, Table 1; p. 12, Table 3 |
@@ -199,10 +200,14 @@ uv run --project projects/typo-cot --extra lrp typo-cot patch-position-controls 
   --gpu-id 0 \
   --output-dir results/patch-position-controls/gemma-3-4b-it/gsm8k
 
-uv run typo-cot patch-text-combination \
+CUDA_VISIBLE_DEVICES=0 \
+uv run --project projects/typo-cot --extra lrp typo-cot patch-text-combination \
   --model google/gemma-3-4b-it --benchmark gsm8k \
-  --pairs data/cohorts/fixed-window/primary-172.jsonl --layers 0:6 \
-  --output-dir results/patch-text-combination
+  --fixed-window-run \
+    results/fixed-window-answer-patching/gemma-3-4b-it/gsm8k \
+  --layers 0:6 \
+  --gpu-id 0 \
+  --output-dir results/patch-text-combination/gemma-3-4b-it/gsm8k
 ```
 
 ### Complete-text and prefix interventions
