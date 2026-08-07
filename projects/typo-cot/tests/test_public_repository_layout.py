@@ -16,20 +16,19 @@ REPOSITORY_ROOT = PROJECT_ROOT.parents[1]
 PROJECT_PREFIX = "projects/typo-cot/"
 
 LEGACY_PROJECT_DIRECTORIES = {"analysis", "configs", "scripts"}
-LEGACY_PACKAGE_ENTRIES = {
+LEGACY_PACKAGE_DIRECTORIES = {
     "analysis",
     "attribution",
     "attribution_family",
-    "config.py",
     "defense",
     "intervention",
     "nocot",
     "perturbation",
-    "registry.py",
     "repair",
-    "sharding.py",
     "visualization",
 }
+LEGACY_PACKAGE_MODULES = {"config.py", "registry.py", "sharding.py"}
+LEGACY_PACKAGE_ENTRIES = LEGACY_PACKAGE_DIRECTORIES | LEGACY_PACKAGE_MODULES
 LEGACY_DOCUMENTS = {
     "all_results_by_setting.md",
     "architecture.drawio",
@@ -154,8 +153,32 @@ def test_public_source_tree_is_the_reviewed_runtime_closure() -> None:
 
 
 def test_retired_packages_are_not_importable() -> None:
-    for package in sorted(LEGACY_PACKAGE_ENTRIES - {"config.py", "registry.py", "sharding.py"}):
+    for package in sorted(LEGACY_PACKAGE_DIRECTORIES):
         assert importlib.util.find_spec(f"typo_cot.{package}") is None
+
+
+def test_root_guide_matches_the_reduced_project_scope() -> None:
+    root_readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "│   ├── configs/" not in root_readme
+    assert "`projects/typo-cot` depends on the `typo-utils`" not in root_readme
+
+
+def test_local_legacy_output_locations_remain_ignored() -> None:
+    local_artifacts = {
+        "projects/typo-cot/outputs/example.json",
+        "projects/typo-cot/datasets/example.json",
+        "projects/typo-cot/logs/example.log",
+    }
+    completed = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--stdin"],
+        cwd=REPOSITORY_ROOT,
+        input="\n".join(sorted(local_artifacts)),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    ignored = set(completed.stdout.splitlines())
+    assert ignored == local_artifacts
 
 
 def test_cli_only_exposes_reviewed_public_commands() -> None:
