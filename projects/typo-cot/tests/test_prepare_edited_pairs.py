@@ -416,10 +416,15 @@ def test_attribution_targets_the_distribution_after_the_first_cot_token() -> Non
 
 class _SingleTokenPairTokenizer:
     def __call__(self, text: str, **_kwargs: object) -> dict[str, object]:
-        return {"input_ids": [1 if text == "1234" else 3], "offset_mapping": [(0, len(text))]}
+        if text == "1234":
+            return {"input_ids": [1], "offset_mapping": [(0, len(text))]}
+        return {
+            "input_ids": [3, 4],
+            "offset_mapping": [(0, len(text)), (0, len(text))],
+        }
 
     def decode(self, token_ids: list[int], **_kwargs: object) -> str:
-        return {1: "1234", 2: " step", 3: " alpha"}[token_ids[0]]
+        return {1: "1234", 2: " step", 3: " alpha", 4: " alpha"}[token_ids[0]]
 
 
 def _pair_runtime_for_prompt(prompt: str) -> tuple[HuggingFacePairPreparationRuntime, list[str]]:
@@ -439,7 +444,9 @@ def _pair_runtime_for_prompt(prompt: str) -> tuple[HuggingFacePairPreparationRun
         return list(prompt_ids), [2], f"continuation:{text}"
 
     runtime._generate = generate
-    runtime._relevance_after_first_cot = lambda _prompt_ids, _generated_ids: [1.0]
+    runtime._relevance_after_first_cot = lambda prompt_ids, _generated_ids: [
+        1.0 - 0.5 * index for index in range(len(prompt_ids))
+    ]
     runtime._answer = lambda continuation, _correct: {
         "value": continuation,
         "is_extracted": True,
@@ -509,7 +516,7 @@ def test_runtime_retains_attempts_when_edits_have_no_final_text_difference(
         editable_prompt_start=0,
         candidate_order=(
             CandidateToken(3, " alpha", 1.0, 0, 5, attribution_rank=1),
-            CandidateToken(3, " alpha", 0.5, 0, 5, attribution_rank=2),
+            CandidateToken(4, " alpha", 0.5, 0, 5, attribution_rank=2),
         ),
         num_edits=2,
         seed=42,
@@ -522,8 +529,10 @@ def test_runtime_retains_attempts_when_edits_have_no_final_text_difference(
     record = runtime.prepare_pair(sample, config)
 
     assert generated_prompts == ["alpha"]
+    assert record["num_candidates"] == 2
     assert record["num_target_attempts"] == 2
     assert len(record["target_attempts"]) == 2
+    assert len({attempt["target_token_index"] for attempt in record["target_attempts"]}) == 2
     assert record["num_aligned_words"] == 0
     assert record["aligned_words"] == []
     assert record["edited"]["prompt"] == record["clean"]["prompt"]
