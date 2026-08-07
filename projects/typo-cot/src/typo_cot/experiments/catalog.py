@@ -227,19 +227,28 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
             "Run the correct-coordinate patch beside two-token offset, matched cross-item "
             "donor, and identity self-copy controls."
         ),
-        cohort="The same primary 172 Gemma-3-4B/GSM8K flip pairs.",
+        cohort=(
+            "Published: same 172 primary Gemma-3-4B/GSM8K flip pairs; public runs: "
+            "the exact clean-to-edited denominator of the referenced fixed-window run."
+        ),
         intervention="Residual layers [0,6) with an explicitly selected coordinate control.",
         readout="Free-answer restoration and paired exact McNemar comparisons.",
         required_arguments=(
             "--model",
             "--benchmark",
-            "--pairs",
+            "--fixed-window-run",
             "--layers",
             "--controls",
             "--output-dir",
         ),
-        outputs=("coordinate_control_records.jsonl", "coordinate_control_summary.json"),
+        outputs=(
+            "coordinate_control_records.jsonl",
+            "pair_status_records.jsonl",
+            "coordinate_control_summary.json",
+            "run.json",
+        ),
         compute="gpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="patch-position-controls",

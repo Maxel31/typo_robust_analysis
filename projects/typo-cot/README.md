@@ -351,6 +351,61 @@ The offset and cross-item donor comparisons are a separate
 [`docs/fixed-window-answer-patching.md`](docs/fixed-window-answer-patching.md)
 for the complete selection, schema, comparison, and resume contract.
 
+## Compare patch coordinates and donor content
+
+`patch-coordinate-controls` reproduces the primary-coordinate rows of Table 7
+for Gemma-3-4B on GSM8K. It takes a completed
+`fixed-window-answer-patching` run, keeps its exact clean-to-edited denominator
+and correct-coordinate endpoint, and evaluates a same-item +2-token coordinate
+control and a matched cross-item donor on those same pairs. The identity
+self-copy arm is an execution invariant: copying each edited state back onto
+itself must leave the greedy generation token-identical to the untreated
+edited baseline.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+  typo-cot patch-coordinate-controls \
+  --model google/gemma-3-4b-it \
+  --benchmark gsm8k \
+  --fixed-window-run \
+    results/fixed-window-answer-patching/gemma-3-4b-it/gsm8k \
+  --layers 0:6 \
+  --controls correct offset-2 cross-item self-copy \
+  --gpu-id 0 \
+  --output-dir results/patch-coordinate-controls/gemma-3-4b-it/gsm8k
+```
+
+The offset arm moves both the clean donor coordinate and edited write
+coordinate two tokens past each aligned edited-word endpoint, retaining only
+coordinate pairs that remain valid and are not edited-word endpoints. The
+cross-item arm keeps the recipient coordinates fixed but uses a different
+clean donor with the same targeting arm and number of aligned words. Donors
+are assigned deterministically by a cyclic shift of sorted sample IDs within
+each matching stratum, so no random seed silently changes the comparison.
+The final paper explicitly labels both the offset and cross-item comparisons
+as post-hoc controls; public protocol and summary metadata record
+`design_status: post-hoc` for both arms.
+
+The referenced run must be complete, include `clean-to-edited` and `[0,6)`,
+and pass its recorded input and output SHA-256 checks before model weights are
+loaded. All requested arms use residual block outputs over `[0,6)`, greedy
+decoding, and one paired denominator. Restoration means that the extracted
+patched answer equals the regenerated clean answer; an unextractable answer is
+a failure and remains in the denominator. The summary reports arm rates and
+the paper's two-sided exact McNemar comparisons of `correct` against
+`offset-2` and `cross-item`. The published 129/172, 44/172, and 42/172 values
+remain historical reference metadata: a run from newly prepared public pairs
+is labelled as a fresh protocol reproduction and does not claim the
+unpublished historical sample IDs.
+
+The command writes `coordinate_control_records.jsonl`,
+`pair_status_records.jsonl`, `coordinate_control_summary.json`, and `run.json`.
+Use `--resume` to validate and continue an interrupted identical run. A smaller
+`--limit` is labelled as a smoke run and limits recipients only after the full
+reference cohort has fixed the donor map. See
+[`docs/patch-coordinate-controls.md`](docs/patch-coordinate-controls.md) for
+the complete reference, schema, statistic, and restart contract.
+
 ## Tests
 
 ```bash
@@ -359,6 +414,7 @@ uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_targeting
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_layerwise_kl_patching.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_layerwise_answer_patching.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_fixed_window_answer_patching.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_patch_coordinate_controls.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 
