@@ -110,10 +110,18 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         ),
         cohort="Prepared pair records for each available model-benchmark-targeting setting.",
         intervention="No model intervention; validate the frozen edit records.",
-        readout="Targeting-fidelity, gold-option, and operation-count tables.",
+        readout=(
+            "Targeting-fidelity, prepared-pair gold-option flags, and operation-count tables."
+        ),
         required_arguments=("--pairs-root", "--output-dir"),
-        outputs=("targeting_fidelity.csv", "operation_counts.json"),
+        outputs=(
+            "targeting_fidelity_records.jsonl",
+            "targeting_fidelity.csv",
+            "operation_counts.json",
+            "run.json",
+        ),
         compute="cpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="layerwise-kl-patching",

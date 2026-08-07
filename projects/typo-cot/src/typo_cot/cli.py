@@ -21,6 +21,11 @@ from typo_cot.experiments.prepare_edited_pairs.runner import (
     PrepareEditedPairsConfig,
     run_prepare_edited_pairs,
 )
+from typo_cot.experiments.targeting_fidelity_audit import (
+    TargetingFidelityAuditConfig,
+    TargetingFidelityAuditError,
+    run_targeting_fidelity_audit,
+)
 
 
 def _experiment(value: str) -> ExperimentSpec:
@@ -87,6 +92,14 @@ def _parser() -> argparse.ArgumentParser:
     pairs.add_argument("--gpu-id", default="0")
     pairs.add_argument("--limit", type=_positive_int)
     pairs.add_argument("--resume", action="store_true")
+
+    targeting_audit = commands.add_parser(
+        "targeting-fidelity-audit",
+        help="Validate prepared pairs and aggregate Appendix A input-quality checks.",
+    )
+    targeting_audit.add_argument("--pairs-root", required=True, type=Path)
+    targeting_audit.add_argument("--output-dir", required=True, type=Path)
+    targeting_audit.add_argument("--expected-seed", type=int, default=42)
     return parser
 
 
@@ -161,6 +174,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"prepare-edited-pairs: error: {exc}", file=sys.stderr)
             return 1
         print(f"wrote {result.written} pair(s): {result.pairs_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "targeting-fidelity-audit":
+        try:
+            result = run_targeting_fidelity_audit(
+                TargetingFidelityAuditConfig(
+                    pairs_root=args.pairs_root,
+                    output_dir=args.output_dir,
+                    expected_seed=args.expected_seed,
+                )
+            )
+        except (FileExistsError, TargetingFidelityAuditError, ValueError) as exc:
+            print(f"targeting-fidelity-audit: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"audited {result.items} pair(s) across {result.settings} setting(s): "
+            f"{result.summary_path}"
+        )
         print(f"run manifest: {result.run_path}")
         return 0
     raise AssertionError("argparse accepted an unhandled command")
