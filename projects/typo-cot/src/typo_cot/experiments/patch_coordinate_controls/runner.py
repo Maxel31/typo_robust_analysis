@@ -33,11 +33,13 @@ _PROTOCOL = {
     ),
     "correct": "referenced-same-item-clean-edited-word-states-at-original-coordinates",
     "offset-2": {
+        "design_status": "post-hoc",
         "source": "same-item-clean",
         "offset_tokens": 2,
         "rule": "shift-both-source-and-write-coordinates-retain-valid-non-edited-pairs",
     },
     "cross-item": {
+        "design_status": "post-hoc",
         "source": "different-item-clean-edited-word-states",
         "strata": ["targeting", "aligned-word-count"],
         "assignment": "sample-id-sort-cyclic-shift-one/v1",
@@ -73,6 +75,7 @@ _HISTORICAL_REFERENCE = {
     "setting": {"model": "google/gemma-3-4b-it", "benchmark": "gsm8k"},
     "correct": {"successes": 129, "total": 172, "rate": 0.75},
     "offset-2": {
+        "design_status": "post-hoc",
         "successes": 44,
         "total": 172,
         "rate": 44 / 172,
@@ -80,6 +83,7 @@ _HISTORICAL_REFERENCE = {
         "mcnemar_p_value": 5.0749031687767575e-20,
     },
     "cross-item": {
+        "design_status": "post-hoc",
         "successes": 42,
         "total": 172,
         "rate": 42 / 172,
@@ -789,6 +793,9 @@ def _reference_metadata(reference: _Reference) -> dict[str, object]:
         "direction": "clean-to-edited",
         "window": "0:6",
         "full_denominator": len(reference.pairs),
+        "denominator_by_targeting": dict(
+            sorted(Counter(pair.source.targeting for pair in reference.pairs).items())
+        ),
         "denominator_sha256": reference.denominator_sha256,
         "historical_cohort_identity": False,
     }
@@ -808,6 +815,27 @@ def _comparability(
     reference_comparability = _mapping(
         reference.manifest.get("comparability"), field="fixed-window comparability"
     )
+    reference_arguments = _mapping(
+        reference.manifest.get("arguments"), field="fixed-window arguments"
+    )
+    expected_targetings = {"attribution-4", "random-4"}
+    source_targetings = set(reference.sources.by_targeting)
+    denominator_targeting_counts = Counter(pair.source.targeting for pair in reference.pairs)
+    denominator_targetings = set(denominator_targeting_counts)
+    source_has_both_targetings = source_targetings == expected_targetings
+    denominator_has_both_targetings = denominator_targetings == expected_targetings
+    reference_is_complete = bool(
+        reference_comparability.get("status") == "fresh-paper-protocol-run"
+        and reference_arguments.get("limit") is None
+        and source_has_both_targetings
+        and denominator_has_both_targetings
+    )
+    if not reference_is_complete:
+        limitations.append("reference-fixed-window-run-is-not-complete-paper-protocol")
+    if not denominator_has_both_targetings:
+        limitations.append(
+            "reference-fixed-window-denominator-does-not-contain-both-targeting-arms"
+        )
     if reference_comparability.get("exact_historical_cohort_identity") is not False:
         limitations.append("reference-historical-identity-claim-is-not-explicitly-false")
     if config.limit is not None:
@@ -826,10 +854,14 @@ def _comparability(
             "window_0:6": config.layers == (_PAPER_WINDOW,),
             "all_arms": set(config.controls) == set(CONTROL_NAMES),
             "unlimited": config.limit is None,
+            "both_targeting_arms_in_source": source_has_both_targetings,
+            "both_targeting_arms_in_denominator": denominator_has_both_targetings,
+            "complete_fixed_window_reference": reference_is_complete,
             "historical_cohort_identity": False,
         },
         "limitations": limitations,
         "reference_fixed_window_status": reference_comparability.get("status"),
+        "reference_denominator_by_targeting": dict(sorted(denominator_targeting_counts.items())),
         "exact_historical_cohort_identity": False,
         "note": (
             "This label describes a fresh run of the final-PDF protocol on the exact "
@@ -843,6 +875,16 @@ def _runtime_fingerprint(provenance: Mapping[str, object]) -> str:
     return _canonical_sha256(provenance)
 
 
+def _paired_runtime_provenance(provenance: Mapping[str, object]) -> dict[str, object]:
+    """Remove only operation-specific labels before paired-runtime comparison."""
+
+    return {
+        key: value
+        for key, value in provenance.items()
+        if key not in {"operation", "runtime", "coordinate_controls"}
+    }
+
+
 def _validate_runtime(
     runtime: CoordinateControlRuntime,
     *,
@@ -853,6 +895,10 @@ def _validate_runtime(
         raise TypeError("runtime num_layers must be a positive integer")
     if runtime.num_layers <= 0 or config.layers[0].stop > runtime.num_layers:
         raise ValueError("coordinate-control window is outside the runtime decoder")
+    if runtime.num_layers != reference.num_layers:
+        raise ValueError(
+            "coordinate-control runtime decoder depth does not match the fixed-window reference"
+        )
     provenance = dict(runtime.provenance())
     if provenance.get("num_decoder_layers") != runtime.num_layers:
         raise ValueError("runtime provenance num_decoder_layers does not match runtime")
@@ -869,6 +915,11 @@ def _validate_runtime(
     ):
         if generation.get(field) != expected or type(generation.get(field)) is not type(expected):
             raise ValueError(f"runtime generation.{field} must be {expected!r}")
+    if _paired_runtime_provenance(provenance) != _paired_runtime_provenance(reference.runtime):
+        raise ValueError(
+            "coordinate-control runtime provenance differs from the fixed-window reference; "
+            "correct and control arms must use the same execution environment"
+        )
     return provenance, _runtime_fingerprint(provenance)
 
 
@@ -1392,6 +1443,9 @@ def _compile_outputs(
         "protocol": _PROTOCOL,
         "population": {
             "reference_pairs": len(reference.pairs),
+            "reference_by_targeting": dict(
+                sorted(Counter(pair.source.targeting for pair in reference.pairs).items())
+            ),
             "reference_denominator_sha256": reference.denominator_sha256,
             "executed_pairs": len(plans.selected),
             "executed_by_targeting": dict(sorted(targeting_counts.items())),

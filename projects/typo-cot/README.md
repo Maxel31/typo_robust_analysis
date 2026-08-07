@@ -382,6 +382,9 @@ cross-item arm keeps the recipient coordinates fixed but uses a different
 clean donor with the same targeting arm and number of aligned words. Donors
 are assigned deterministically by a cyclic shift of sorted sample IDs within
 each matching stratum, so no random seed silently changes the comparison.
+The final paper explicitly labels both the offset and cross-item comparisons
+as post-hoc controls; public protocol and summary metadata record
+`design_status: post-hoc` for both arms.
 
 The referenced run must be complete, include `clean-to-edited` and `[0,6)`,
 and pass its recorded input and output SHA-256 checks before model weights are

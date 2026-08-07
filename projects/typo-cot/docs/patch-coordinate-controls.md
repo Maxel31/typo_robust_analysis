@@ -14,6 +14,11 @@ clean-correct/edited-wrong pairs for all three answer arms:
 - same-item +2-token coordinates: 44/172 restored (25.6%);
 - matched cross-item clean donor: 42/172 restored (24.4%).
 
+The final paper explicitly classifies the offset and cross-item comparisons as
+post-hoc controls. Their protocol and historical-reference metadata therefore
+record `design_status: post-hoc`; this implementation does not present them as
+prespecified confirmatory analyses.
+
 The exact historical sample IDs and model revision were not published. In
 addition, the archived historical runner used an older substring locator whose
 coordinates disagree with the corrected public aligner on many recoverable
@@ -59,7 +64,17 @@ Before loading model weights, the command validates:
 - every prepared-pair file and sibling run hash recorded by the reference;
 - the selected-pair order, source-record hashes, regenerated baselines,
   direction inclusion flags, correct-patch events, and summary aggregates;
+- both targeting arms in the prepared sources and in the actual included
+  clean-to-edited denominator;
 - every +2 coordinate plan and the full cross-item donor map.
+
+After model loading but before generation, the decoder depth and normalized
+runtime provenance must also equal the fixed-window reference. The comparison
+includes package versions, model/tokenizer revisions, adapter, dtype, device,
+GPU, and generation/extraction settings; only operation-specific class labels
+are ignored. Thus the referenced `correct` arm cannot be paired with controls
+from a materially different execution environment merely because their
+untreated answer tokens happen to match.
 
 `--limit N` is a smoke-only option. It limits recipients after the full
 reference denominator has fixed the donor map, so the donor for a retained

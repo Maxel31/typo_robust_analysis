@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 import typo_cot.cli as cli_module
 from typo_cot.cli import main
+from typo_cot.experiments.patch_coordinate_controls import runner as coordinate_runner
 from typo_cot.experiments.catalog import PAPER_SHA256, get_experiment
 from typo_cot.experiments.fixed_window_answer_patching import LayerWindow
 from typo_cot.experiments.fixed_window_answer_patching.runner import (
@@ -269,21 +270,25 @@ class _ControlRuntime:
         answers: Mapping[str, Mapping[str, str]] | None = None,
         baseline_mismatch_for: str | None = None,
         failure_for: str | None = None,
+        num_layers: int = 12,
+        provenance_changes: Mapping[str, object] | None = None,
     ) -> None:
         self.answers = {sample_id: dict(values) for sample_id, values in (answers or {}).items()}
         self.baseline_mismatch_for = baseline_mismatch_for
         self.failure_for = failure_for
+        self.num_layers = num_layers
+        self.provenance_changes = dict(provenance_changes or {})
         self.baseline_calls: list[str] = []
         self.control_calls: list[tuple[str, str | None, tuple[str, ...]]] = []
 
     def provenance(self) -> dict[str, object]:
-        return {
+        payload = {
             "runtime": "coordinate-fixture",
             "requested_revision": "source-revision",
             "model_revision": "source-revision",
             "tokenizer_revision": "source-revision",
             "decoder_adapter": "fixture.layers",
-            "num_decoder_layers": 12,
+            "num_decoder_layers": self.num_layers,
             "dtype": "bfloat16",
             "device": "cuda:0",
             "generation": {
@@ -294,6 +299,8 @@ class _ControlRuntime:
             },
             "answer_extraction": "primary-then-empty-only-fallback/v1",
         }
+        payload.update(self.provenance_changes)
+        return payload
 
     def regenerate_baseline(self, pair: dict[str, object]) -> BaselineScan:
         sample_id = str(pair["sample_id"])
@@ -365,6 +372,8 @@ def test_catalog_and_cli_expose_the_completed_coordinate_control_operation(
         "coordinate_control_summary.json",
         "run.json",
     )
+    assert "Published: same 172" in spec.cohort
+    assert "public runs" in spec.cohort
 
     captured: list[CoordinateControlConfig] = []
 
@@ -550,9 +559,68 @@ def test_runner_preserves_one_denominator_and_reports_paired_events(tmp_path: Pa
         "total": 172,
         "rate": 0.75,
     }
+    assert summary["protocol"]["offset-2"]["design_status"] == "post-hoc"
+    assert summary["protocol"]["cross-item"]["design_status"] == "post-hoc"
+    assert summary["historical_reference"]["offset-2"]["design_status"] == "post-hoc"
+    assert summary["historical_reference"]["cross-item"]["design_status"] == "post-hoc"
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["paper_sha256"] == PAPER_SHA256
     assert run["reference"]["historical_cohort_identity"] is False
+    assert run["protocol"]["offset-2"]["design_status"] == "post-hoc"
+
+
+def test_primary_label_requires_both_targeting_arms_in_the_actual_denominator(
+    tmp_path: Path,
+) -> None:
+    config = _config(
+        tmp_path / "fixed",
+        tmp_path / "controls",
+        model="google/gemma-3-4b-it",
+    )
+    reference = SimpleNamespace(
+        manifest={
+            "arguments": {"limit": None},
+            "comparability": {
+                "status": "fresh-paper-protocol-run",
+                "exact_historical_cohort_identity": False,
+            },
+        },
+        sources=SimpleNamespace(by_targeting={"attribution-4": object(), "random-4": object()}),
+        pairs=(SimpleNamespace(source=SimpleNamespace(targeting="attribution-4")),),
+    )
+
+    comparability = coordinate_runner._comparability(config, reference)
+
+    assert comparability["status"] == "partial-paper-protocol"
+    assert comparability["requirements"]["both_targeting_arms_in_denominator"] is False
+    assert (
+        "reference-fixed-window-denominator-does-not-contain-both-targeting-arms"
+        in comparability["limitations"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("runtime", "message"),
+    (
+        (_ControlRuntime(provenance_changes={"torch": "different"}), "provenance differs"),
+        (_ControlRuntime(num_layers=13), "decoder depth"),
+    ),
+)
+def test_runtime_must_match_reference_provenance_and_depth_before_replay(
+    tmp_path: Path,
+    runtime: _ControlRuntime,
+    message: str,
+) -> None:
+    reference = _fixed_reference(tmp_path)
+
+    with pytest.raises(ValueError, match=message):
+        run_patch_coordinate_controls(
+            _config(reference, tmp_path / "controls"),
+            runtime=runtime,
+        )
+
+    assert runtime.baseline_calls == []
+    assert runtime.control_calls == []
 
 
 def test_limit_is_applied_after_the_full_reference_donor_map(tmp_path: Path) -> None:
