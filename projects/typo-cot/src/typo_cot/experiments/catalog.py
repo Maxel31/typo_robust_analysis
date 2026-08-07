@@ -22,7 +22,7 @@ ExperimentStatus = Literal["catalogued", "implemented"]
 _COMPUTE_CLASSES = frozenset(get_args(ComputeClass))
 _EXPERIMENT_STATUSES = frozenset(get_args(ExperimentStatus))
 _PUBLIC_SLUG_PATTERN = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
-_PAPER_QUESTION_SLUG_PATTERN = re.compile(r"(?:^|-)rq[1-3](?:-|$)")
+_PAPER_QUESTION_SLUG_PATTERN = re.compile(r"(?:^|-)rq[0-9]+(?:-|$)")
 
 
 @dataclass(frozen=True, slots=True)

@@ -111,7 +111,7 @@ def test_experiment_spec_rejects_values_outside_the_public_contract(
 
 @pytest.mark.parametrize(
     "invalid_slug",
-    ("Clean-Prefix-Scan", "clean_prefix_scan", "rq1-prefix-scan"),
+    ("Clean-Prefix-Scan", "clean_prefix_scan", "rq1-prefix-scan", "rq4-future-scan"),
 )
 def test_experiment_spec_rejects_non_public_operation_slugs(invalid_slug: str) -> None:
     with pytest.raises(ValueError, match=rf"slug.*{re.escape(invalid_slug)}"):
