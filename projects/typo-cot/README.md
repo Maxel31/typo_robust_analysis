@@ -95,10 +95,60 @@ Qwen2.5-7B-Instruct, Gemma-3-12B-IT, and Gemma-3-27B-IT, and 50 per subject
 every model. The selected cohort size and versioned selection rule are recorded
 in `run.json` provenance.
 
+## Audit targeting fidelity
+
+After preparing every four-edit model/benchmark/targeting cell, aggregate the
+paper's Appendix A input-quality checks in one CPU-only operation:
+
+```bash
+uv run --project projects/typo-cot typo-cot targeting-fidelity-audit \
+  --pairs-root results/prepare-edited-pairs \
+  --output-dir results/targeting-fidelity-audit
+```
+
+The input root may contain any directory layout; the audit discovers completed
+`prepare-edited-pairs/v1` outputs recursively and reads setting identity from
+their records and manifests rather than from machine-specific path names. It
+rejects partial, duplicate, mixed, or non-four-edit inputs instead of silently
+changing the Appendix A denominator. It expects the paper seed 42 by default;
+use `--expected-seed` only for a separately labelled sensitivity run. The
+audit independently replays cumulative landing offsets and every SHA-seeded
+character edit instead of trusting recorded landing/operation flags. The
+command writes:
+
+- `targeting_fidelity_records.jsonl`: one validation/audit row per prepared
+  item;
+- `targeting_fidelity.csv`: per-setting and pooled target-landing, distinct-word,
+  zero-attempt/zero-aligned-word counts, and prepared-pair gold-option rates,
+  including Attribution ranks 1--4 separately;
+- `operation_counts.json`: substitution, duplication, and deletion counts by
+  setting and targeting condition;
+- `run.json`: input/output hashes, arguments, paper fingerprint, counts, and
+  the reported Appendix A reference values used for comparison.
+
+Rates use items or edit attempts exactly as named by each column. In
+particular, the four-distinct-word rate is item-level, target fidelity is
+attempt-level, and the prepared-pair gold-option rate is restricted to
+multiple-choice inputs. Items with no successful target attempt remain in the
+item denominator and are not vacuously classified as all-attempts-faithful;
+attempted edits that cancel to the clean text are reported separately. The
+paper's 21.5% gold-option value uses the later
+Attribution-4 CoT-swap included cohort, so this pair-only command records that
+reference as not directly computable rather than comparing unlike denominators.
+`run.json` permits a `descriptive_only` paper comparison only after checking
+the exact 42-setting grid, archival per-cell counts, paired-arm
+sample/provenance identity, paper cohort rule and subset caps, pinned model
+revisions, seed 42, and the 512-token generation cap;
+otherwise its status is `not_comparable`.
+See
+[`docs/targeting-fidelity-audit.md`](docs/targeting-fidelity-audit.md) for the
+schemas and paper comparison rules.
+
 ## Tests
 
 ```bash
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_paper_experiment_catalog.py
+uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_targeting_fidelity_audit.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 

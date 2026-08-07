@@ -88,6 +88,8 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/experiments/prepare_edited_pairs/protocol.py"),
     Path("src/typo_cot/experiments/prepare_edited_pairs/runner.py"),
     Path("src/typo_cot/experiments/prepare_edited_pairs/runtime.py"),
+    Path("src/typo_cot/experiments/targeting_fidelity_audit/__init__.py"),
+    Path("src/typo_cot/experiments/targeting_fidelity_audit/runner.py"),
     Path("src/typo_cot/lrp/__init__.py"),
     Path("src/typo_cot/lrp/analyzer.py"),
     Path("src/typo_cot/models/__init__.py"),
@@ -131,9 +133,7 @@ def test_legacy_experiment_bundles_are_not_tracked() -> None:
 
 
 def test_results_directory_contains_only_its_placeholder() -> None:
-    tracked_results = {
-        path for path in _tracked_existing_paths() if path.parts[0] == "results"
-    }
+    tracked_results = {path for path in _tracked_existing_paths() if path.parts[0] == "results"}
     assert tracked_results == {Path("results/.gitkeep")}
 
 
@@ -186,7 +186,11 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
     subparsers = next(
         action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
     )
-    assert set(subparsers.choices) == {"experiments", "prepare-edited-pairs"}
+    assert set(subparsers.choices) == {
+        "experiments",
+        "prepare-edited-pairs",
+        "targeting-fidelity-audit",
+    }
 
 
 def test_legacy_development_documents_are_not_tracked() -> None:
