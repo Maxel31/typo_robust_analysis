@@ -63,7 +63,10 @@ primary result invokes the deterministic fallback. A still-empty result stays
 in the denominator and contributes zero in either direction, following the
 final PDF's explicit rule that unextractable answers are failures.
 The final block is an audited structural no-op because an edited-word output at
-that depth cannot propagate to the prompt-final generation position.
+that depth cannot propagate to the prompt-final generation position. Prepared
+anchors whose aligned word-final coordinate is itself the prompt-final token
+are excluded before model loading and reported as an upstream exclusion, since
+they do not satisfy that structural-control premise.
 
 ## Input requirements
 

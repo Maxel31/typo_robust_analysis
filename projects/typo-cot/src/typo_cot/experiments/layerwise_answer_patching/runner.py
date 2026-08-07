@@ -30,7 +30,9 @@ _MAX_PAPER_ANCHORS = 300
 _BOOTSTRAP_RESAMPLES = 2_000
 _PROTOCOL = {
     "schema_version": "layerwise-answer-patching-protocol/v1",
-    "source_anchor": "prepared-clean-correct-edited-wrong-with-aligned-word",
+    "source_anchor": (
+        "prepared-clean-correct-edited-wrong-with-aligned-word-before-prompt-final-token"
+    ),
     "targeting_pool": "attribution-4-and-random-4-balanced-before-current-flip-recheck",
     "selection": {
         "seed": _SELECTION_SEED,
@@ -222,6 +224,7 @@ class _SourcePair:
     prepared_clean_correct: bool
     prepared_edited_wrong: bool
     aligned_count: int
+    structural_noop_eligible: bool
 
     @property
     def key(self) -> tuple[str, str]:
@@ -364,7 +367,7 @@ def _validate_pair_record(
     targeting: str,
     path: Path,
     line_number: int,
-) -> tuple[str, bool, bool, int]:
+) -> tuple[str, bool, bool, int, bool]:
     context = f"{path}:{line_number}"
     if record.get("schema_version") != "prepare-edited-pairs/v1":
         raise ValueError(f"{context}: unknown pair schema")
@@ -416,7 +419,18 @@ def _validate_pair_record(
     for side, side_positions in positions.items():
         if len(side_positions) != len(set(side_positions)):
             raise ValueError(f"{context}: duplicate {side} aligned final-token coordinate")
-    return sample_id, correctness["clean"], not correctness["edited"], len(aligned_words)
+    structural_noop_eligible = all(
+        position < prompt_counts[side] - 1
+        for side, side_positions in positions.items()
+        for position in side_positions
+    )
+    return (
+        sample_id,
+        correctness["clean"],
+        not correctness["edited"],
+        len(aligned_words),
+        structural_noop_eligible,
+    )
 
 
 def _load_source(
@@ -488,7 +502,13 @@ def _load_source(
             payload = _strict_loads(line, context=f"{path}:{line_number}")
             if not isinstance(payload, dict):
                 raise ValueError(f"pair record must be an object at {path}:{line_number}")
-            sample_id, clean_correct, edited_wrong, aligned_count = _validate_pair_record(
+            (
+                sample_id,
+                clean_correct,
+                edited_wrong,
+                aligned_count,
+                structural_noop_eligible,
+            ) = _validate_pair_record(
                 payload,
                 config=config,
                 targeting=targeting,
@@ -507,6 +527,7 @@ def _load_source(
                     prepared_clean_correct=clean_correct,
                     prepared_edited_wrong=edited_wrong,
                     aligned_count=aligned_count,
+                    structural_noop_eligible=structural_noop_eligible,
                 )
             )
     if not source_pairs:
@@ -561,7 +582,10 @@ def _select_anchors(sources: _Sources, *, max_pairs: int) -> tuple[_SourcePair, 
         eligible = [
             pair
             for pair in sources.by_targeting[targeting].pairs
-            if pair.prepared_clean_correct and pair.prepared_edited_wrong and pair.aligned_count
+            if pair.prepared_clean_correct
+            and pair.prepared_edited_wrong
+            and pair.aligned_count
+            and pair.structural_noop_eligible
         ]
         eligible.sort(key=lambda pair: pair.sample_id)
         random.Random(_SELECTION_SEED).shuffle(eligible)
@@ -726,6 +750,19 @@ def _comparability(
     fixed_by_targeting: Mapping[str, int] | None = None,
 ) -> dict[str, object]:
     selected_counts = Counter(pair.targeting for pair in selected)
+    paper_cap_per_targeting = _MAX_PAPER_ANCHORS // len(_TARGETING_NAMES)
+    fixed_counts = (
+        None
+        if fixed_by_targeting is None
+        else {
+            targeting: fixed_by_targeting.get(targeting, 0)
+            for targeting in _TARGETING_NAMES
+        }
+    )
+    selected_quotas_filled = all(
+        selected_counts[targeting] == paper_cap_per_targeting
+        for targeting in _TARGETING_NAMES
+    )
     requirements: dict[str, bool | None] = {
         "paper_model": config.model in _PAPER_MODELS,
         "paper_benchmark": config.benchmark in {"gsm8k", "mmlu"},
@@ -734,10 +771,19 @@ def _comparability(
         "selected_from_both_targeting_arms": all(
             selected_counts[targeting] > 0 for targeting in _TARGETING_NAMES
         ),
+        "selected_targeting_quotas_filled": selected_quotas_filled,
         "fixed_cohort_from_both_targeting_arms": (
             None
             if fixed_by_targeting is None
             else all(fixed_by_targeting.get(targeting, 0) > 0 for targeting in _TARGETING_NAMES)
+        ),
+        "fixed_cohort_matches_selected_anchors": (
+            None
+            if fixed_counts is None
+            else all(
+                fixed_counts[targeting] == selected_counts[targeting]
+                for targeting in _TARGETING_NAMES
+            )
         ),
     }
     limitations: list[str] = []
@@ -750,8 +796,29 @@ def _comparability(
     for targeting in _TARGETING_NAMES:
         if selected_counts[targeting] == 0:
             limitations.append(f"no-selected-{targeting}-anchors")
+        elif (
+            requirements["paper_model"]
+            and requirements["paper_benchmark"]
+            and requirements["max_pairs_300"]
+            and selected_counts[targeting] < paper_cap_per_targeting
+        ):
+            limitations.append(
+                f"selected-{targeting}-below-paper-cap-"
+                f"{selected_counts[targeting]}-of-{paper_cap_per_targeting}"
+            )
         if fixed_by_targeting is not None and fixed_by_targeting.get(targeting, 0) == 0:
             limitations.append(f"no-fixed-{targeting}-anchors")
+        elif (
+            fixed_counts is not None
+            and requirements["paper_model"]
+            and requirements["paper_benchmark"]
+            and requirements["max_pairs_300"]
+            and fixed_counts[targeting] != selected_counts[targeting]
+        ):
+            limitations.append(
+                f"fixed-{targeting}-below-selected-"
+                f"{fixed_counts[targeting]}-of-{selected_counts[targeting]}"
+            )
 
     if not requirements["max_pairs_300"]:
         status = "partial-smoke-run"
@@ -767,6 +834,13 @@ def _comparability(
         "status": status,
         "requirements": requirements,
         "limitations": limitations,
+        "targeting_counts": {
+            "paper_cap_per_targeting": paper_cap_per_targeting,
+            "selected": {
+                targeting: selected_counts[targeting] for targeting in _TARGETING_NAMES
+            },
+            "fixed": fixed_counts,
+        },
         "exact_historical_figure2_ids": False,
         "historical_qwen_targeting_discrepancy": True,
         "historical_unextractable_induction_discrepancy": True,
@@ -1146,6 +1220,8 @@ def _compile_outputs(
                 counts["prepared_edited_not_wrong"] += 1
             elif not pair.aligned_count:
                 counts["no_aligned_words"] += 1
+            elif not pair.structural_noop_eligible:
+                counts["aligned_word_at_prompt_final_position"] += 1
             else:
                 eligible_count += 1
         prepared_eligible[targeting] = eligible_count

@@ -7,7 +7,6 @@ replace a non-empty primary answer.
 
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass
 
@@ -42,15 +41,13 @@ class AnswerExtraction:
 
 def _clean_numeric(value: str) -> str:
     cleaned = value.replace(",", "").replace("$", "").strip().rstrip(".")
-    try:
-        number = float(cleaned)
-    except (OverflowError, ValueError):
+    match = re.fullmatch(r"(?P<sign>-?)(?P<integer>\d+)(?:\.(?P<fraction>\d+))?", cleaned)
+    if match is None:
         return cleaned
-    if not math.isfinite(number):
-        return cleaned
-    if number == int(number) and "e" not in cleaned.lower():
-        return str(int(number))
-    return repr(number)
+    integer = match.group("integer").lstrip("0") or "0"
+    fraction = (match.group("fraction") or "").rstrip("0")
+    sign = "-" if match.group("sign") and (integer != "0" or fraction) else ""
+    return f"{sign}{integer}{f'.{fraction}' if fraction else ''}"
 
 
 def _last_nonempty_line(text: str) -> str:
