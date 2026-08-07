@@ -203,12 +203,73 @@ than an undocumented recreation of old teacher-forcing gates. See
 [`docs/layerwise-kl-patching.md`](docs/layerwise-kl-patching.md) for the complete
 contract.
 
+## Scan layerwise free-answer patches
+
+`layerwise-answer-patching` implements the separate free-generation scan shown
+on the right of Figure 2. It pools the two target-selection arms without losing
+their provenance: up to 150 seed-42 shuffled clean-correct/edited-wrong anchor
+pairs are selected from each completed pair-preparation run, for at most 300
+anchors in one model/benchmark setting. The command then greedily regenerates
+both untreated answers in the patching process and freezes the pairs that are
+still clean-correct and edited-wrong as one denominator for every layer and
+both directions.
+
+Run one of the paper's eight settings on physical GPU 0 as follows:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+  typo-cot layerwise-answer-patching \
+  --model google/gemma-3-4b-it \
+  --benchmark gsm8k \
+  --attribution-pairs results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/attribution-4/pairs.jsonl \
+  --random-pairs results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/random-4/pairs.jsonl \
+  --directions clean-to-edited edited-to-clean \
+  --max-pairs 300 \
+  --gpu-id 0 \
+  --output-dir results/layerwise-answer-patching/gemma-3-4b-it/gsm8k
+```
+
+Each layer starts an independent greedy continuation of at most 512 tokens.
+Only the initial prompt prefill is patched; later decode steps consume the
+patched key/value cache. `clean-to-edited` succeeds when the patched edited
+answer returns to the regenerated clean answer. `edited-to-clean` succeeds
+when the patched clean answer changes from that answer. The task-specific
+primary extractor is always tried first, and the paper's deterministic
+fallback is invoked only for an empty primary result. An answer that remains
+unextractable is a failed readout in either direction, so it contributes zero
+without being removed from the fixed denominator.
+
+The command writes:
+
+- `answer_layer_records.jsonl`: per-pair, per-direction, per-layer generated
+  answers and binary events;
+- `pair_status_records.jsonl`: every selected anchor and its fixed-cohort
+  inclusion or exclusion reason;
+- `setting_summary.json`: fixed denominator, layer profiles, peaks, Wilson
+  intervals, and paired binary MCB sets;
+- `run.json`: arguments, source/model/output fingerprints, protocol, progress,
+  failures, and comparability status.
+
+`--max-pairs 300` is the paper run. Smaller values are labelled partial smoke
+runs. An interrupted identical run can continue with `--resume`; a completed
+resume validates hashes and returns without loading model weights. Fresh public
+pair preparation follows the final-PDF protocol but does not claim to recreate
+the historical Figure 2 sample IDs. See
+[`docs/layerwise-answer-patching.md`](docs/layerwise-answer-patching.md) for the
+schemas and the eight-setting acceptance values.
+
+`run.json` labels a run `fresh-paper-protocol-reproduction` only when it uses
+one of the four Figure 2 models on GSM8K or MMLU, requests both directions and
+300 anchors, and both targeting arms contribute to the selected and regenerated
+fixed cohorts. Every unmet condition is listed under `comparability.limitations`.
+
 ## Tests
 
 ```bash
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_paper_experiment_catalog.py
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_targeting_fidelity_audit.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_layerwise_kl_patching.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_layerwise_answer_patching.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 

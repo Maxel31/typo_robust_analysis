@@ -14,8 +14,14 @@ from typo_cot.experiments import (
     ExperimentSpec,
     get_experiment,
 )
+from typo_cot.experiments.layerwise_answer_patching import (
+    DIRECTION_NAMES as ANSWER_DIRECTION_NAMES,
+    LayerwiseAnswerPatchingConfig,
+    LayerwiseAnswerPatchingRunError,
+    run_layerwise_answer_patching,
+)
 from typo_cot.experiments.layerwise_kl_patching import (
-    DIRECTION_NAMES,
+    DIRECTION_NAMES as KL_DIRECTION_NAMES,
     LayerwiseKLPatchingConfig,
     LayerwiseKLPatchingRunError,
     run_layerwise_kl_patching,
@@ -119,12 +125,31 @@ def _parser() -> argparse.ArgumentParser:
         "--directions",
         required=True,
         nargs="+",
-        choices=DIRECTION_NAMES,
+        choices=KL_DIRECTION_NAMES,
     )
     layerwise_kl.add_argument("--output-dir", required=True, type=Path)
     layerwise_kl.add_argument("--gpu-id", default="0")
     layerwise_kl.add_argument("--limit", type=_positive_int)
     layerwise_kl.add_argument("--resume", action="store_true")
+
+    layerwise_answer = commands.add_parser(
+        "layerwise-answer-patching",
+        help="Patch aligned edited-word block outputs and freely regenerate answers.",
+    )
+    layerwise_answer.add_argument("--model", required=True, help="Hugging Face model identifier.")
+    layerwise_answer.add_argument("--benchmark", required=True, choices=("gsm8k", "mmlu"))
+    layerwise_answer.add_argument("--attribution-pairs", required=True, type=Path)
+    layerwise_answer.add_argument("--random-pairs", required=True, type=Path)
+    layerwise_answer.add_argument(
+        "--directions",
+        required=True,
+        nargs="+",
+        choices=ANSWER_DIRECTION_NAMES,
+    )
+    layerwise_answer.add_argument("--max-pairs", required=True, type=_positive_int)
+    layerwise_answer.add_argument("--output-dir", required=True, type=Path)
+    layerwise_answer.add_argument("--gpu-id", default="0")
+    layerwise_answer.add_argument("--resume", action="store_true")
     return parser
 
 
@@ -240,6 +265,36 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"wrote {result.layer_records} layer record(s) from "
             f"{result.included_grids} complete grid(s): {result.layer_records_path}"
+        )
+        print(f"setting summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "layerwise-answer-patching":
+        try:
+            result = run_layerwise_answer_patching(
+                LayerwiseAnswerPatchingConfig(
+                    model=args.model,
+                    benchmark=args.benchmark,
+                    attribution_pairs=args.attribution_pairs,
+                    random_pairs=args.random_pairs,
+                    directions=tuple(args.directions),
+                    max_pairs=args.max_pairs,
+                    output_dir=args.output_dir,
+                    gpu_id=args.gpu_id,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            LayerwiseAnswerPatchingRunError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            print(f"layerwise-answer-patching: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.layer_records} layer record(s) for "
+            f"{result.fixed_pairs} fixed pair(s): {result.answer_layer_records_path}"
         )
         print(f"setting summary: {result.summary_path}")
         print(f"run manifest: {result.run_path}")
