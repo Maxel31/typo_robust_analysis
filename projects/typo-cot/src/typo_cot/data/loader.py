@@ -8,6 +8,7 @@ import random
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import ClassVar
 
 from datasets import load_dataset
 
@@ -45,12 +46,10 @@ class BaseBenchmarkLoader(ABC):
     @abstractmethod
     def load(self) -> list[Sample]:
         """データを読み込んでSampleのリストを返す."""
-        pass
 
     @abstractmethod
     def get_subsets(self) -> list[str]:
         """利用可能なサブセット名のリストを返す."""
-        pass
 
 
 class MMLULoader(BaseBenchmarkLoader):
@@ -60,7 +59,7 @@ class MMLULoader(BaseBenchmarkLoader):
     """
 
     # MMLUの全57サブセット
-    SUBSETS: list[str] = [
+    SUBSETS: ClassVar[list[str]] = [
         "abstract_algebra",
         "anatomy",
         "astronomy",
@@ -207,7 +206,7 @@ class MMLUProLoader(BaseBenchmarkLoader):
     """
 
     # MMLU-Proの全14カテゴリ
-    CATEGORIES: list[str] = [
+    CATEGORIES: ClassVar[list[str]] = [
         "biology",
         "business",
         "chemistry",
@@ -490,7 +489,18 @@ class ARCLoader(BaseBenchmarkLoader):
             sample_id = f"arc_{item['id']}"
             # choices は {'label': [...], 'text': [...]} 形式
             choices = item["choices"]["text"]
-            correct_answer = item["answerKey"]  # "A", "B", "C", "D"
+            labels = [str(label) for label in item["choices"]["label"]]
+            answer_key = str(item["answerKey"])
+            try:
+                answer_index = labels.index(answer_key)
+            except ValueError as exc:
+                raise ValueError(
+                    f"ARC answerKey {answer_key!r} is absent from labels for {item['id']!r}"
+                ) from exc
+            # Public prompts relabel choices in their stored order as (A), (B), ...;
+            # ARC answerKey can instead be numeric ("1"-"4"). Keep gold answers
+            # in the same coordinate system as generation and extraction.
+            correct_answer = chr(ord("A") + answer_index)
 
             samples.append(
                 Sample(
@@ -624,7 +634,7 @@ class BBHLoader(BaseBenchmarkLoader):
         for subtask in self.subsets:
             try:
                 ds = load_dataset("lukaemon/bbh", subtask, split=self.split)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - skip any unavailable Hub subtask
                 logger.warning(f"BBH subtask '{subtask}' を読み込めません: {e}")
                 continue
             n = min(self.samples_per_subset, len(ds))
@@ -722,7 +732,7 @@ class StrategyQALoader(BaseBenchmarkLoader):
     def load(self) -> list[Sample]:
         try:
             ds = load_dataset("ChilleD/StrategyQA", split=self.split)
-        except Exception:
+        except Exception:  # noqa: BLE001 - retry any primary Hub-loading failure
             # フォールバック: HF Hub 上の別ミラー
             ds = load_dataset("voidful/StrategyQA", split=self.split)
         if self.num_samples is not None and len(ds) > self.num_samples:

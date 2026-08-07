@@ -105,6 +105,7 @@ class ModelWrapper:
         "Qwen/Qwen2.5-3B-Instruct",
         "Qwen/Qwen2.5-7B-Instruct",
         "Qwen/Qwen2.5-32B-Instruct",
+        "Qwen/Qwen2.5-72B-Instruct",
         # DeepSeek-R1 蒸留 (reasoning特化、実験10③。Qwen2アーキテクチャ)
         "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
         # Mistral Instruct

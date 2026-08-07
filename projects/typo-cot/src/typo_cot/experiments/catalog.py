@@ -57,12 +57,13 @@ class ExperimentSpec:
 
     @property
     def target_command(self) -> str:
-        """Return the planned top-level runner, including before implementation.
+        """Return the repository-root runner, including before implementation.
 
         Each operation PR implements this exact ``typo-cot <slug>`` shape.  The
         separate ``experiments list/show`` commands only inspect this catalog.
         """
-        return f"uv run typo-cot {self.slug}"
+        extra = " --extra lrp" if self.compute == "gpu" else ""
+        return f"uv run --project projects/typo-cot{extra} typo-cot {self.slug}"
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-serializable representation in field order."""

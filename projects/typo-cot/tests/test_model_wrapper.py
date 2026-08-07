@@ -99,6 +99,7 @@ class TestModelWrapper:
         assert "gpt2" in allowed
         assert "google/gemma-3-1b-pt" in allowed
         assert "mistralai/Mistral-7B-v0.3" in allowed
+        assert "Qwen/Qwen2.5-72B-Instruct" in allowed
 
     def test_is_allowed_model_true(self) -> None:
         """許可されたモデルが正しく判定されることを確認."""

@@ -154,9 +154,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 resume=args.resume,
             )
         )
-        if result is not None:
-            print(f"wrote {result.written} pair(s): {result.pairs_path}")
-            print(f"run manifest: {result.run_path}")
+        print(f"wrote {result.written} pair(s): {result.pairs_path}")
+        print(f"run manifest: {result.run_path}")
         return 0
     raise AssertionError("argparse accepted an unhandled command")
 

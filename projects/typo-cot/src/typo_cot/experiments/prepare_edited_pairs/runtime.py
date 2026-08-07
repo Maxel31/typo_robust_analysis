@@ -351,6 +351,7 @@ class HuggingFacePairPreparationRuntime:
                 "mistral-attnlrp-rules-target-mistral-classes",
                 "actual-word-final-alignment-replaces-token-substring-coordinates",
                 "contextual-option-markers-retain-bare-single-letter-words",
+                "arc-numeric-answer-keys-normalized-to-prompt-letters",
             ],
         }
         provenance.update(self._dataset_provenance)

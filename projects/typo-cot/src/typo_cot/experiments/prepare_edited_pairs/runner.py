@@ -57,7 +57,7 @@ class PrepareEditedPairsConfig:
     def public_arguments(self) -> dict[str, object]:
         """Return stable manifest arguments, excluding the transport-only resume flag."""
         payload = asdict(self)
-        payload["output_dir"] = str(self.output_dir)
+        payload["output_dir"] = str(self.output_dir.resolve())
         payload.pop("resume")
         return payload
 
@@ -154,14 +154,16 @@ def _manifest(
     }
 
 
-def _validate_resume(run_path: Path, config: PrepareEditedPairsConfig) -> str:
+def _validate_resume(
+    run_path: Path, config: PrepareEditedPairsConfig
+) -> tuple[str, dict[str, object]]:
     previous = _load_json(run_path)
     if previous.get("schema_version") != "prepare-edited-pairs-run/v1":
         raise ValueError(f"cannot resume an unknown run schema: {run_path}")
     if previous.get("arguments") != config.public_arguments():
         raise ValueError("resume arguments do not match the existing run.json")
     started_at = previous.get("started_at")
-    return started_at if isinstance(started_at, str) else _now()
+    return (started_at if isinstance(started_at, str) else _now()), previous
 
 
 def run_prepare_edited_pairs(
@@ -186,9 +188,10 @@ def run_prepare_edited_pairs(
             raise ValueError(f"cannot resume without the original run.json: {output_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    previous_manifest: dict[str, object] | None = None
     if config.resume and run_path.exists():
-        started_at = _validate_resume(run_path, config)
-        previous = _load_json(run_path)
+        started_at, previous_manifest = _validate_resume(run_path, config)
+        previous = previous_manifest
         if previous.get("status") == "completed" and pairs_path.exists():
             counts = previous.get("counts")
             written = int(counts.get("written", 0)) if isinstance(counts, Mapping) else 0
@@ -214,6 +217,15 @@ def run_prepare_edited_pairs(
     if len(sample_ids) != len(set(sample_ids)):
         raise ValueError("dataset returned duplicate sample IDs")
 
+    provenance = dict(runtime.provenance())
+    if previous_manifest is not None:
+        previous_provenance = previous_manifest.get("provenance")
+        if not isinstance(previous_provenance, Mapping) or dict(previous_provenance) != provenance:
+            raise ValueError(
+                "resume provenance does not match the original model, dataset, environment, "
+                "or protocol"
+            )
+
     records_dir.mkdir(parents=True, exist_ok=True)
     existing: set[str] = set()
     for path in records_dir.glob("*.json"):
@@ -222,7 +234,6 @@ def run_prepare_edited_pairs(
         if isinstance(sample_id, str):
             existing.add(sample_id)
 
-    provenance = runtime.provenance()
     _write_json_atomic(
         run_path,
         _manifest(

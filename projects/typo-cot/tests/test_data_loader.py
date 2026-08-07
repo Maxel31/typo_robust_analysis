@@ -3,8 +3,8 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from typo_cot.data.loader import (
+    ARCLoader,
     GSM8KLoader,
     MMLULoader,
     MMLUProLoader,
@@ -190,6 +190,32 @@ class TestGSM8KLoader:
         assert samples[0].sample_id == "gsm8k_00000"
         assert samples[0].correct_answer == "5"
         assert samples[0].choices is None
+
+
+class TestARCLoader:
+    """ARCLoaderのテスト."""
+
+    @patch("typo_cot.data.loader.load_dataset")
+    def test_load_normalizes_numeric_answer_labels_to_prompt_letters(
+        self, mock_load_dataset: MagicMock
+    ) -> None:
+        """数値answerKeyを再ラベル付け後の選択肢文字へ変換することを確認."""
+        mock_load_dataset.return_value = [
+            {
+                "id": "numeric-key",
+                "question": "Which option is correct?",
+                "choices": {
+                    "label": ["1", "2", "3", "4"],
+                    "text": ["first", "second", "third", "fourth"],
+                },
+                "answerKey": "2",
+            }
+        ]
+
+        samples = ARCLoader().load()
+
+        assert samples[0].choices == ["first", "second", "third", "fourth"]
+        assert samples[0].correct_answer == "B"
 
 
 class TestSQuADv2Loader:

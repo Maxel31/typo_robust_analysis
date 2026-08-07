@@ -351,6 +351,8 @@ def apply_paper_edits(
     for candidate in candidate_order:
         if len(attempts) >= num_edits:
             break
+        if candidate.attribution_rank is None or candidate.attribution_rank <= 0:
+            raise PairProtocolError("candidate attribution_rank must be a positive integer")
         intended_start = candidate.prompt_start - editable_prompt_start
         intended_end = candidate.prompt_end - editable_prompt_start
         if (
@@ -382,12 +384,11 @@ def apply_paper_edits(
             editable_text, _first_letter_position(editable_text, intended_span)
         )
         landed_word = _word_index_at(current_text, affected_position)
-        attribution_rank = candidate.attribution_rank or len(attempts) + 1
 
         attempts.append(
             EditAttempt(
                 selection_rank=len(attempts) + 1,
-                attribution_rank=attribution_rank,
+                attribution_rank=candidate.attribution_rank,
                 target_token_index=candidate.token_index,
                 target_token_text=candidate.text,
                 relevance=candidate.relevance,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -22,22 +23,34 @@ from typo_cot.experiments.prepare_edited_pairs.protocol import (
 from typo_cot.experiments.prepare_edited_pairs.runner import (
     PairPreparationRunError,
     PrepareEditedPairsConfig,
+    PrepareEditedPairsResult,
     run_prepare_edited_pairs,
 )
 from typo_cot.experiments.prepare_edited_pairs.runtime import _tokenize_with_offsets
+from typo_cot.models.wrapper import ModelWrapper
 
 
 def test_catalog_marks_pair_preparation_as_implemented() -> None:
     assert get_experiment("prepare-edited-pairs").status == "implemented"
 
 
+def test_pair_preparation_allows_the_documented_qwen_72b_scale_model() -> None:
+    assert "Qwen/Qwen2.5-72B-Instruct" in ModelWrapper.get_allowed_models()
+
+
 def test_cli_dispatches_experiment_specific_pair_arguments(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     captured: list[PrepareEditedPairsConfig] = []
 
-    def fake_run(config: PrepareEditedPairsConfig) -> None:
+    def fake_run(config: PrepareEditedPairsConfig) -> PrepareEditedPairsResult:
         captured.append(config)
+        return PrepareEditedPairsResult(
+            pairs_path=config.output_dir / "pairs.jsonl",
+            run_path=config.output_dir / "run.json",
+            written=2,
+        )
 
     monkeypatch.setattr(cli_module, "run_prepare_edited_pairs", fake_run)
 
@@ -74,6 +87,10 @@ def test_cli_dispatches_experiment_specific_pair_arguments(
             gpu_id="3",
             limit=1,
         )
+    ]
+    assert capsys.readouterr().out.splitlines() == [
+        "wrote 2 pair(s): results/pairs/pairs.jsonl",
+        "run manifest: results/pairs/run.json",
     ]
 
 
@@ -268,6 +285,26 @@ def test_edit_attempts_preserve_the_reported_cumulative_shift_behavior() -> None
     assert result.attempts[1].selection_rank == 2
 
 
+def test_apply_paper_edits_rejects_a_candidate_without_an_attribution_rank() -> None:
+    with pytest.raises(PairProtocolError, match="attribution_rank"):
+        apply_paper_edits(
+            editable_text="beta",
+            editable_prompt_start=0,
+            candidate_order=[CandidateToken(3, "beta", 1.0, 0, 4)],
+            num_edits=1,
+            seed=42,
+            sample_id="sample-1",
+            edit_token=lambda text, _seed: CharacterEdit(
+                original=text,
+                edited="beeta",
+                operation="duplication",
+                character_index=1,
+                original_character="e",
+                new_character="e",
+            ),
+        )
+
+
 class _OffsetTokenizer:
     """Whitespace tokenizer with an intentional edited-word split."""
 
@@ -385,6 +422,34 @@ def test_completed_resume_returns_without_accessing_runtime(tmp_path: Path) -> N
     assert resumed == expected
 
 
+def test_completed_resume_accepts_equivalent_relative_and_absolute_output_paths(
+    tmp_path: Path,
+) -> None:
+    absolute_output = tmp_path / "completed-path-form"
+    relative_output = Path(os.path.relpath(absolute_output, start=Path.cwd()))
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=relative_output,
+    )
+    expected = run_prepare_edited_pairs(config, runtime=_FakeRuntime())
+
+    class RuntimeMustNotLoad(_FakeRuntime):
+        def load_samples(self, config: PrepareEditedPairsConfig) -> list[dict[str, str]]:
+            raise AssertionError("completed resume must not load a model or dataset")
+
+    resumed = run_prepare_edited_pairs(
+        replace(config, output_dir=absolute_output, resume=True),
+        runtime=RuntimeMustNotLoad(),
+    )
+
+    assert resumed.written == expected.written
+    assert resumed.pairs_path.resolve() == expected.pairs_path.resolve()
+    assert resumed.run_path.resolve() == expected.run_path.resolve()
+
+
 def test_runner_rejects_an_empty_benchmark_selection(tmp_path: Path) -> None:
     class EmptyRuntime(_FakeRuntime):
         def load_samples(self, config: PrepareEditedPairsConfig) -> list[dict[str, str]]:
@@ -457,6 +522,50 @@ def test_runner_resumes_only_missing_records_after_an_item_failure(tmp_path: Pat
     rows = [json.loads(line) for line in result.pairs_path.read_text().splitlines()]
     assert [row["sample_id"] for row in rows] == ["a", "b"]
     assert json.loads((output_dir / "run.json").read_text())["status"] == "completed"
+
+
+def test_runner_rejects_resume_when_runtime_provenance_changed(tmp_path: Path) -> None:
+    class InitialRuntime(_FakeRuntime):
+        def prepare_pair(
+            self, sample: dict[str, str], config: PrepareEditedPairsConfig
+        ) -> dict[str, object]:
+            if sample["sample_id"] == "b":
+                raise RuntimeError("injected failure")
+            return super().prepare_pair(sample, config)
+
+        def provenance(self) -> dict[str, str]:
+            return {
+                "model_revision": "revision-one",
+                "dataset_records_sha256": "dataset-one",
+            }
+
+    class ChangedRuntime(_FakeRuntime):
+        def provenance(self) -> dict[str, str]:
+            return {
+                "model_revision": "revision-two",
+                "dataset_records_sha256": "dataset-one",
+            }
+
+    output_dir = tmp_path / "changed-provenance"
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=output_dir,
+    )
+    with pytest.raises(PairPreparationRunError):
+        run_prepare_edited_pairs(config, runtime=InitialRuntime())
+
+    with pytest.raises(ValueError, match="provenance"):
+        run_prepare_edited_pairs(
+            replace(config, resume=True),
+            runtime=ChangedRuntime(),
+        )
+
+    manifest = json.loads((output_dir / "run.json").read_text())
+    assert manifest["status"] == "failed"
+    assert manifest["provenance"]["model_revision"] == "revision-one"
 
 
 def test_readme_starts_from_the_complete_public_command() -> None:

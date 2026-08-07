@@ -52,13 +52,14 @@ loaded benchmark records, progress counts, and per-item failures.
 Records are checkpointed individually in a hidden work directory. A failed run
 does not publish a partial `pairs.jsonl`; after the cause is fixed, rerun the
 identical command with `--resume`. The writer validates all frozen arguments,
-skips completed records, and atomically publishes `pairs.jsonl` only when every
-selected item succeeds. Reusing a non-empty output directory without
-`--resume` is rejected.
+model/dataset/environment provenance, and protocol identifiers before it skips
+completed records. It atomically publishes `pairs.jsonl` only when every
+selected item succeeds. Reusing a non-empty output directory without `--resume`
+is rejected.
 
 ## Historical implementation differences
 
-The final paper is the protocol authority. Four behaviors in the exploratory
+The final paper is the protocol authority. Five behaviors in the exploratory
 code were not portable or did not implement that protocol exactly, so fresh
 outputs intentionally differ from some archived machine-local artifacts:
 
@@ -75,6 +76,10 @@ outputs intentionally differ from some archived machine-local artifacts:
   from A through J, including ordinary words such as `a` and variables such as
   `i`. The public implementation excludes only contextual markers such as
   `(A)`, `A.`, `A)`, or `A:`, even when the tokenizer splits the marker.
+- ARC can encode its answer key as a numeric source label while the public
+  prompt relabels choices as `(A)`–`(D)`. The loader now maps through the
+  source choice order so stored gold answers and extracted letters use the
+  same coordinate system.
 
 These differences are also listed under `historical_compatibility_notes` in
 the run provenance. Do not combine newly generated pairs with archived pairs
