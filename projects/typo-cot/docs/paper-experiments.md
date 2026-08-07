@@ -227,12 +227,29 @@ uv run --project projects/typo-cot --extra lrp typo-cot answer-line-deletion \
   --max-pairs 150 --gpu-id 0 \
   --output-dir results/answer-line-deletion/gemma-3-4b-it/gsm8k
 
-uv run typo-cot clean-prefix-scan \
+CUDA_VISIBLE_DEVICES=0 \
+uv run --project projects/typo-cot --extra lrp typo-cot clean-prefix-scan \
   --model google/gemma-3-4b-it --benchmark gsm8k \
-  --target-set data/cohorts/clean-prefix/primary-172.json \
+  --cohort primary \
+  --fixed-window-run \
+    results/fixed-window-answer-patching/gemma-3-4b-it/gsm8k \
   --relative-budgets 0 .02 .05 .08 .12 .16 .20 .25 .325 .40 .50 .65 .80 1 \
   --absolute-budgets 1 2 4 8 16 32 64 \
+  --gpu-id 0 \
   --output-dir results/clean-prefix-scan/gemma-3-4b-it/gsm8k
+
+CUDA_VISIBLE_DEVICES=0 \
+uv run --project projects/typo-cot --extra lrp typo-cot clean-prefix-scan \
+  --model google/gemma-3-1b-it --benchmark gsm8k \
+  --cohort extension \
+  --pairs \
+    results/prepare-edited-pairs/gemma-3-1b-it/gsm8k/attribution-4/pairs.jsonl \
+    results/prepare-edited-pairs/gemma-3-1b-it/gsm8k/random-4/pairs.jsonl \
+  --max-pairs 150 \
+  --relative-budgets 0 .02 .05 .08 .12 .16 .20 .25 .325 .40 .50 .65 .80 1 \
+  --absolute-budgets 1 2 4 8 16 32 64 \
+  --gpu-id 0 \
+  --output-dir results/clean-prefix-scan/gemma-3-1b-it/gsm8k
 
 uv run typo-cot one-token-prefix-replacement \
   --model google/gemma-3-4b-it --benchmark gsm8k \
@@ -242,10 +259,24 @@ uv run typo-cot one-token-prefix-replacement \
 ```
 
 The prefix grid is the union of the shown absolute values and
-`round(relative_budget * clean_cot_length)`. Point correctness and
-stable-through-all-later correctness must use the same fresh-k=0-wrong
+`round(relative_budget * clean_cot_length)`. Relative point correctness and
+stable-through-all-later correctness use the same fresh-k=0-wrong denominator.
+At an absolute budget `a`, exact point correctness uses only rows with
+`L_C >= a`, while stable recovery (`k* <= a`) keeps the common fresh-k=0-wrong
 denominator. Non-monotonicity means at least two correctness transitions across
-adjacent tested budgets.
+adjacent tested budgets. The primary source is the hash-verified clean-to-edited
+denominator of the referenced fixed-window run. Extensions instead revalidate
+the completed Attribution-4 and Random-4 pair preparations and deterministically
+select at most 150 targets without importing CoT-swap's different template and
+answer-span cohort.
+
+The relative rule, denominator, and outcome definitions are paper-defined. The
+exact dense budget values, Python ties-to-even rounding, per-arm 400 cap,
+proportional/systematic selection, batch size one, and pre-answer locator are
+submitted-producer details that remain explicitly `legacy-backed`. The command
+writes `prefix_scan_records.jsonl`, `pair_status_records.jsonl`,
+`prefix_scan_summary.json`, and `run.json`; the later paper-artifact builder,
+not this setting runner, performs Figure 3's 14-setting clustered bootstrap.
 
 ### Sensitivity, scale, and input correction
 
