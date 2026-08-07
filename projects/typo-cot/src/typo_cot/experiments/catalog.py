@@ -254,23 +254,33 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         slug="patch-position-controls",
         title="Measure patch reachability from alternative prompt positions",
         paper_question="RQ1",
-        paper_sections=("§4.1", "Appendix B"),
+        paper_sections=("§3.3", "§4.1", "Appendix B", "Table 5"),
         summary=(
             "Repeat the layer scan at edited-word, prompt-final, and question-final positions "
             "to characterize where a patch can reach the readout."
         ),
-        cohort="The common 109-pair subset of the primary answer-patching cohort.",
+        cohort=(
+            "Gemma-3-4B/GSM8K Attribution-4 layerwise-KL complete-grid cohort; "
+            "published n=109 and held common across all requested positions."
+        ),
         intervention="Single-layer residual patch at each explicitly named prompt position.",
         readout="Layerwise normalized first-CoT-token KL restoration.",
         required_arguments=(
             "--model",
             "--benchmark",
-            "--pairs",
+            "--layerwise-kl-run",
             "--positions",
+            "--gpu-id",
             "--output-dir",
         ),
-        outputs=("position_control_records.jsonl", "position_control_summary.json"),
+        outputs=(
+            "position_control_records.jsonl",
+            "pair_status_records.jsonl",
+            "position_control_summary.json",
+            "run.json",
+        ),
         compute="gpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="patch-text-combination",

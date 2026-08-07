@@ -105,6 +105,10 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/experiments/patch_coordinate_controls/planning.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/runner.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/runtime.py"),
+    Path("src/typo_cot/experiments/patch_position_controls/__init__.py"),
+    Path("src/typo_cot/experiments/patch_position_controls/planning.py"),
+    Path("src/typo_cot/experiments/patch_position_controls/runner.py"),
+    Path("src/typo_cot/experiments/patch_position_controls/runtime.py"),
     Path("src/typo_cot/experiments/prepare_edited_pairs/__init__.py"),
     Path("src/typo_cot/experiments/prepare_edited_pairs/protocol.py"),
     Path("src/typo_cot/experiments/prepare_edited_pairs/runner.py"),
@@ -213,6 +217,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         "layerwise-answer-patching",
         "layerwise-kl-patching",
         "patch-coordinate-controls",
+        "patch-position-controls",
         "prepare-edited-pairs",
         "targeting-fidelity-audit",
     }
