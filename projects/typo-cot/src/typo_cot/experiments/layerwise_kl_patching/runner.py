@@ -867,6 +867,8 @@ def run_layerwise_kl_patching(
     runtime_provenance = dict(runtime.provenance())
     if runtime_provenance.get("num_decoder_layers") != runtime.num_layers:
         raise ValueError("runtime provenance num_decoder_layers does not match runtime")
+    if runtime_provenance.get("requested_revision") != source.model_revision:
+        raise ValueError("runtime requested revision does not match pair preparation")
     if runtime_provenance.get("model_revision") != source.model_revision:
         raise ValueError("runtime model revision does not match pair preparation")
     if runtime_provenance.get("tokenizer_revision") != source.model_revision:

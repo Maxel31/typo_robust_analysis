@@ -27,6 +27,7 @@ class HuggingFaceLayerwiseKLPatchingRuntime:
     def __init__(self, config: LayerwiseKLPatchingConfig, *, revision: str) -> None:
         if not revision:
             raise ValueError("layerwise-kl-patching requires a pinned source revision")
+        self.revision = revision
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None and visible != config.gpu_id:
             raise ValueError(
@@ -284,7 +285,15 @@ class HuggingFaceLayerwiseKLPatchingRuntime:
     def provenance(self) -> dict[str, object]:
         torch = self._torch
         model_revision = getattr(self.model.config, "_commit_hash", None)
-        tokenizer_revision = getattr(self.tokenizer, "init_kwargs", {}).get("_commit_hash")
+        tokenizer_metadata_revision = getattr(self.tokenizer, "init_kwargs", {}).get(
+            "_commit_hash"
+        )
+        tokenizer_revision = tokenizer_metadata_revision or self.revision
+        tokenizer_revision_source = (
+            "tokenizer-init-metadata"
+            if tokenizer_metadata_revision
+            else "explicit-load-revision"
+        )
         layer_container = getattr(self.model.get_decoder(), "layers", None)
         adapter = (
             f"{type(self.model.get_decoder()).__module__}."
@@ -299,8 +308,10 @@ class HuggingFaceLayerwiseKLPatchingRuntime:
             "accelerate": _package_version("accelerate"),
             "lxt": _package_version("lxt"),
             "model": self.config.model,
+            "requested_revision": self.revision,
             "model_revision": model_revision,
             "tokenizer_revision": tokenizer_revision,
+            "tokenizer_revision_source": tokenizer_revision_source,
             "decoder_adapter": adapter,
             "num_decoder_layers": self.num_layers,
             "dtype": "bfloat16",
