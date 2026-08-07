@@ -49,6 +49,7 @@ model download.
 .
 ├── .github/workflows/              # automated PR review
 ├── _sample_project/                # retained legacy project template
+├── datasets/                       # shared dataset storage and local caches
 ├── README.md
 ├── pyproject.toml                 # uv workspace
 ├── uv.lock                        # shared environment lock

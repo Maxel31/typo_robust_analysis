@@ -244,6 +244,7 @@ def test_root_readme_accounts_for_retained_workspace_support() -> None:
     readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
 
     for retained_path in (
+        "datasets/",
         "utils/",
         "_sample_project/",
         "scripts/new_project.sh",
