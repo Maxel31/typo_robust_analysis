@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from typo_cot.experiments import (
 from typo_cot.experiments.prepare_edited_pairs.runner import (
     PUBLIC_BENCHMARKS,
     TARGETING_CONDITIONS,
+    PairPreparationRunError,
     PrepareEditedPairsConfig,
     run_prepare_edited_pairs,
 )
@@ -140,20 +142,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_spec(args.experiment, args.format)
         return 0
     if args.command == "prepare-edited-pairs":
-        result = run_prepare_edited_pairs(
-            PrepareEditedPairsConfig(
-                model=args.model,
-                benchmark=args.benchmark,
-                targeting=args.targeting,
-                num_edits=args.num_edits,
-                output_dir=args.output_dir,
-                seed=args.seed,
-                max_new_tokens=args.max_new_tokens,
-                gpu_id=args.gpu_id,
-                limit=args.limit,
-                resume=args.resume,
+        try:
+            result = run_prepare_edited_pairs(
+                PrepareEditedPairsConfig(
+                    model=args.model,
+                    benchmark=args.benchmark,
+                    targeting=args.targeting,
+                    num_edits=args.num_edits,
+                    output_dir=args.output_dir,
+                    seed=args.seed,
+                    max_new_tokens=args.max_new_tokens,
+                    gpu_id=args.gpu_id,
+                    limit=args.limit,
+                    resume=args.resume,
+                )
             )
-        )
+        except (FileExistsError, ValueError, PairPreparationRunError) as exc:
+            print(f"prepare-edited-pairs: error: {exc}", file=sys.stderr)
+            return 1
         print(f"wrote {result.written} pair(s): {result.pairs_path}")
         print(f"run manifest: {result.run_path}")
         return 0

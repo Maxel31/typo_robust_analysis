@@ -94,6 +94,45 @@ def test_cli_dispatches_experiment_specific_pair_arguments(
     ]
 
 
+@pytest.mark.parametrize(
+    "error",
+    (
+        FileExistsError("output directory is not empty"),
+        ValueError("resume arguments do not match"),
+        PairPreparationRunError("one or more items failed"),
+    ),
+    ids=("existing-output", "invalid-resume", "item-failure"),
+)
+def test_cli_reports_known_pair_preparation_failures_without_a_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    error: Exception,
+) -> None:
+    def fake_run(config: PrepareEditedPairsConfig) -> PrepareEditedPairsResult:
+        raise error
+
+    monkeypatch.setattr(cli_module, "run_prepare_edited_pairs", fake_run)
+
+    exit_code = main(
+        [
+            "prepare-edited-pairs",
+            "--model",
+            "test/model",
+            "--benchmark",
+            "gsm8k",
+            "--targeting",
+            "attribution-4",
+            "--num-edits",
+            "4",
+            "--output-dir",
+            "results/pairs",
+        ]
+    )
+
+    assert exit_code == 1
+    assert capsys.readouterr().err == f"prepare-edited-pairs: error: {error}\n"
+
+
 @pytest.mark.parametrize("value", ("rq1", "importance", "population-random"))
 def test_cli_rejects_non_paper_targeting_names(value: str) -> None:
     with pytest.raises(SystemExit) as exc_info:
@@ -165,6 +204,19 @@ def test_bare_single_letter_words_are_not_treated_as_option_markers() -> None:
     )
 
     assert [item.token_index for item in candidates] == [0, 1, 5]
+
+
+def test_punctuated_single_letters_follow_the_reported_option_marker_filter() -> None:
+    candidates = eligible_candidates(
+        prompt_text="A. point b: ratio (C) choice",
+        token_texts=[" A.", " point", " b:", " ratio", " (C)", " choice"],
+        relevances=[1.0] * 6,
+        offsets=[(0, 2), (3, 8), (9, 11), (12, 17), (18, 21), (22, 28)],
+        editable_prompt_start=0,
+        editable_prompt_end=28,
+    )
+
+    assert [item.token_index for item in candidates] == [1, 3, 5]
 
 
 @pytest.mark.parametrize("relevance", (float("nan"), float("inf"), float("-inf")))

@@ -74,8 +74,11 @@ outputs intentionally differ from some archived machine-local artifacts:
   changed; `aligned_words` stores those exact clean and edited coordinates.
 - The exploratory option-label filter discarded every bare one-letter token
   from A through J, including ordinary words such as `a` and variables such as
-  `i`. The public implementation excludes only contextual markers such as
-  `(A)`, `A.`, `A)`, or `A:`, even when the tokenizer splits the marker.
+  `i`. The public implementation makes those bare letters eligible while
+  retaining the reported run's punctuated marker filter for `(A)`, `A.`, `A)`,
+  and `A:`, even when the tokenizer splits the marker. The final paper does not
+  define a narrower question-versus-option context rule, so the public protocol
+  does not introduce one after observing the results.
 - ARC can encode its answer key as a numeric source label while the public
   prompt relabels choices as `(A)`–`(D)`. The loader now maps through the
   source choice order so stored gold answers and extracted letters use the
