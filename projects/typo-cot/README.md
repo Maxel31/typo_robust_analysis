@@ -512,6 +512,80 @@ checkpoints, and completed output hashes before reuse. See
 [`docs/patch-text-combination.md`](docs/patch-text-combination.md) for the full
 cell, boundary, provenance, and restart contracts.
 
+## Cross clean and edited questions with complete pre-answer text
+
+`cot-swap` implements the final paper's descriptive RQ2 four-cell crossing for
+one model, benchmark, and targeting arm. It consumes a completed
+`prepare-edited-pairs` output so the same freely generated clean and edited
+continuations supply both sides of the crossing:
+
+```text
+A = clean question  + clean pre-answer text
+B = edited question + edited pre-answer text
+C = edited question + clean pre-answer text
+D = clean question  + edited pre-answer text
+```
+
+Each supplied pre-answer sequence is fixed context. Only the answer span is
+regenerated, greedily, for at most 16 tokens. Run each model/benchmark/targeting
+cell separately on physical GPU 0:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+  typo-cot cot-swap \
+  --model google/gemma-3-4b-it \
+  --benchmark gsm8k \
+  --pairs results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/attribution-4/pairs.jsonl \
+  --targeting attribution-4 \
+  --gpu-id 0 \
+  --output-dir results/cot-swap/gemma-3-4b-it/gsm8k/attribution-4
+```
+
+Use the same command with `--targeting random-4` and its corresponding pair
+file for the control arm. `--limit 1` is available only for a labelled smoke
+run. `--resume` validates the original source, deterministic four-cell plan,
+runtime, checkpoints, and finalized output hashes before reusing them.
+
+The denominator pipeline first requires applied-edit validity, then both
+answer-template boundaries, successful A--D execution, and finally a correct
+regenerated A answer. Zero-edit records are reported separately because their
+typo-induced restoration is undefined; they are not folded into the historical
+14.0% template exclusion. B, C, and D are compared with the extracted A answer,
+not directly with gold. Restoration further conditions on `B != A` and succeeds
+when `C == A`. An unextractable B, C, or D answer is a failed equality and
+remains in the relevant denominator.
+
+The task-specific primary `.extract()` runs first and every non-empty result is
+preserved. The fallback runs only for an empty primary, symmetrically in A, B,
+C, and D. Its exact regexes and the cap-aware N4/N5 gate are legacy-backed
+details not specified by the final PDF. EOS versus 16-token-cap termination and
+extraction method are recorded per cell. The versioned runtime uses a one-pair,
+four-cell batch and decodes generated token IDs only, preventing `--resume`
+from mixing a different batch/decode policy.
+
+The final PDF reports the historical Attribution-4 pool as 19,550 A-correct
+cases, 4,634 B changes, and 3,539 C restorations (76.4%). Those values are
+reference metadata, not forced acceptance targets. The archived aggregation
+used for the printed values did not rescue empty A answers, whereas Appendix A
+states that the fallback applies to every condition. This public command follows
+the final-PDF rule and labels fresh or partial provenance explicitly; it does not
+silently reproduce the asymmetric historical calculation.
+
+The command writes `cot_swap_records.jsonl`, `pair_status_records.jsonl`,
+`cot_swap_summary.json`, and `run.json`. This PR deliberately emits one setting
+summary; the five-model task pools for Table 1 are a separate CPU artifact-
+building operation so raw GPU settings cannot be silently mixed. Complete text
+contains answer-near content, so these crossed conditions are an upper-bound
+diagnostic rather than direct, indirect, total, mediation, or deployable repair
+effects. See [`docs/cot-swap.md`](docs/cot-swap.md) for the boundary rule,
+schemas, published references, and comparability contract.
+
+This command implements the five 1B--7B headline models. The separate
+Appendix C/Table 9 12B--72B ladder remains the catalogued
+`model-scale-cot-swap` operation; it is not represented as completed by this
+single-visible-GPU runner. The documented command and repository validation use
+physical GPU 0; `--gpu-id` can explicitly select another single visible device.
+
 ## Tests
 
 ```bash
@@ -523,6 +597,7 @@ uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/te
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_patch_coordinate_controls.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_patch_position_controls.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_patch_text_combination.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_cot_swap.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 

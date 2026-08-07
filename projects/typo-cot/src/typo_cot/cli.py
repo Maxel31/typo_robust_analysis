@@ -14,6 +14,12 @@ from typo_cot.experiments import (
     ExperimentSpec,
     get_experiment,
 )
+from typo_cot.experiments.cot_swap import (
+    COT_SWAP_BENCHMARKS,
+    CotSwapConfig,
+    CotSwapRunError,
+    run_cot_swap,
+)
 from typo_cot.experiments.fixed_window_answer_patching import (
     DIRECTION_NAMES as FIXED_WINDOW_DIRECTION_NAMES,
 )
@@ -138,6 +144,19 @@ def _parser() -> argparse.ArgumentParser:
     pairs.add_argument("--gpu-id", default="0")
     pairs.add_argument("--limit", type=_positive_int)
     pairs.add_argument("--resume", action="store_true")
+
+    cot_swap = commands.add_parser(
+        "cot-swap",
+        help="Cross clean/edited questions and complete pre-answer CoTs in four cells.",
+    )
+    cot_swap.add_argument("--model", required=True, help="Hugging Face model identifier.")
+    cot_swap.add_argument("--benchmark", required=True, choices=COT_SWAP_BENCHMARKS)
+    cot_swap.add_argument("--pairs", required=True, type=Path)
+    cot_swap.add_argument("--targeting", required=True, choices=TARGETING_CONDITIONS)
+    cot_swap.add_argument("--gpu-id", default="0")
+    cot_swap.add_argument("--limit", type=_positive_int)
+    cot_swap.add_argument("--output-dir", required=True, type=Path)
+    cot_swap.add_argument("--resume", action="store_true")
 
     targeting_audit = commands.add_parser(
         "targeting-fidelity-audit",
@@ -351,6 +370,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"prepare-edited-pairs: error: {exc}", file=sys.stderr)
             return 1
         print(f"wrote {result.written} pair(s): {result.pairs_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "cot-swap":
+        try:
+            result = run_cot_swap(
+                CotSwapConfig(
+                    model=args.model,
+                    benchmark=args.benchmark,
+                    pairs=args.pairs,
+                    targeting=args.targeting,
+                    output_dir=args.output_dir,
+                    gpu_id=args.gpu_id,
+                    limit=args.limit,
+                    resume=args.resume,
+                )
+            )
+        except (FileExistsError, CotSwapRunError, RuntimeError, ValueError) as exc:
+            print(f"cot-swap: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.records} CoT-swap record(s) for "
+            f"{result.executed_pairs} pair(s): {result.records_path}"
+        )
+        print(f"setting summary: {result.summary_path}")
         print(f"run manifest: {result.run_path}")
         return 0
     if args.command == "targeting-fidelity-audit":

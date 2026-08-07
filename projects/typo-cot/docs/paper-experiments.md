@@ -213,10 +213,12 @@ uv run --project projects/typo-cot --extra lrp typo-cot patch-text-combination \
 ### Complete-text and prefix interventions
 
 ```bash
-uv run typo-cot cot-swap \
+CUDA_VISIBLE_DEVICES=0 \
+uv run --project projects/typo-cot --extra lrp typo-cot cot-swap \
   --model google/gemma-3-4b-it --benchmark gsm8k \
-  --pairs data/cohorts/cot-swap/gemma-3-4b-it_gsm8k.jsonl \
-  --output-dir results/cot-swap/gemma-3-4b-it/gsm8k
+  --pairs results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/attribution-4/pairs.jsonl \
+  --targeting attribution-4 --gpu-id 0 \
+  --output-dir results/cot-swap/gemma-3-4b-it/gsm8k/attribution-4
 
 uv run typo-cot answer-line-deletion \
   --model google/gemma-3-4b-it --benchmark gsm8k \

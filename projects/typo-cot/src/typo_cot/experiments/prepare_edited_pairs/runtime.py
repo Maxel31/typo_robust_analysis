@@ -31,6 +31,7 @@ _BENCHMARK_NAMES = {
     "csqa": "commonsense_qa",
 }
 _DEFAULT_SAMPLES_PER_SUBSET = {"mmlu": 50, "mmlu_pro": 100}
+_SUBSET_CAP_BENCHMARKS = frozenset({"mmlu", "mmlu-pro"})
 _MMLU_100_PER_SUBJECT_PAPER_MODELS = frozenset(
     {
         "qwen2.5-7b-instruct",
@@ -56,17 +57,39 @@ _HISTORICAL_COMPATIBILITY_NOTES = [
 
 def _paper_samples_per_subset(config: PrepareEditedPairsConfig) -> int:
     """Return the final paper's model/benchmark-specific subset cap."""
-    model_basename = config.model.rsplit("/", 1)[-1].lower()
-    if config.benchmark == "mmlu" and model_basename in _MMLU_100_PER_SUBJECT_PAPER_MODELS:
+    return (
+        paper_dataset_samples_per_subset(
+            model=config.model,
+            benchmark=config.benchmark,
+        )
+        or 50
+    )
+
+
+def paper_dataset_samples_per_subset(*, model: str, benchmark: str) -> int | None:
+    """Return the subset cap recorded for a final-paper pair-preparation setting."""
+
+    if benchmark not in _BENCHMARK_NAMES:
+        raise ValueError(f"unsupported benchmark: {benchmark!r}")
+    if benchmark not in _SUBSET_CAP_BENCHMARKS:
+        return None
+    internal_benchmark = _BENCHMARK_NAMES[benchmark]
+    if internal_benchmark not in _DEFAULT_SAMPLES_PER_SUBSET:
+        return None
+    model_basename = model.rsplit("/", 1)[-1].lower()
+    if benchmark == "mmlu" and model_basename in _MMLU_100_PER_SUBJECT_PAPER_MODELS:
         return 100
-    return _DEFAULT_SAMPLES_PER_SUBSET.get(_BENCHMARK_NAMES[config.benchmark], 50)
+    return _DEFAULT_SAMPLES_PER_SUBSET[internal_benchmark]
 
 
 def _recorded_samples_per_subset(config: PrepareEditedPairsConfig) -> int | None:
     """Return the applied subset cap, or null when that loader ignores the cap."""
-    if config.benchmark not in {"mmlu", "mmlu-pro"}:
+    if config.benchmark not in _SUBSET_CAP_BENCHMARKS:
         return None
-    return _paper_samples_per_subset(config)
+    return paper_dataset_samples_per_subset(
+        model=config.model,
+        benchmark=config.benchmark,
+    )
 
 
 def _package_version(name: str) -> str:
