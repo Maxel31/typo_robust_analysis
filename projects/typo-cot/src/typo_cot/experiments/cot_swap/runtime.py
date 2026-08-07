@@ -10,6 +10,7 @@ import platform
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
+import typo_cot.experiments.cot_swap.protocol as cot_swap_protocol
 from typo_cot.evaluation.fallback import extract_with_fallback
 from typo_cot.experiments.cot_swap.planning import CELL_ORDER, CellPlan, CotSwapPlan
 
@@ -21,42 +22,13 @@ if TYPE_CHECKING:
         CotSwapScan,
     )
 
-_BENCHMARK_NAMES = {
-    "gsm8k": "gsm8k",
-    "mmlu": "mmlu",
-    "mmlu-pro": "mmlu_pro",
-    "arc": "arc",
-    "csqa": "commonsense_qa",
-}
-_GENERATION = {
-    "do_sample": False,
-    "num_beams": 1,
-    "num_return_sequences": 1,
-    "temperature": None,
-    "top_p": None,
-    "top_k": None,
-    "max_new_tokens": 16,
-    "use_cache": True,
-    "return_dict_in_generate": False,
-    "output_scores": False,
-    "padding_side": "left",
-}
-_TEXT_INTERVENTION = {
-    "boundary": "submitted-first-[Tt]he-answer-is-filter/v1",
-    "assembly": "recorded-prompt-plus-decoded-pre-answer-text-retokenized/v1",
-}
-_ANSWER_EXTRACTION = "primary-then-empty-only-fallback-symmetric-a-b-c-d-cap-aware/v2"
-_IMPLEMENTATION = "huggingface-cot-swap-four-cell-batch/v1"
-_BATCHING = {
-    "policy": "one-pair-four-cells/v1",
-    "batch_size": 4,
-    "cell_order": list(CELL_ORDER),
-}
-_ANSWER_SPAN_DECODING = {
-    "source": "generated-token-ids-only/v1",
-    "skip_special_tokens": True,
-    "clean_up_tokenization_spaces": False,
-}
+_ANSWER_EXTRACTION = cot_swap_protocol.ANSWER_EXTRACTION
+_ANSWER_SPAN_DECODING = cot_swap_protocol.ANSWER_SPAN_DECODING
+_BATCHING = cot_swap_protocol.BATCHING
+_BENCHMARK_NAMES = cot_swap_protocol.BENCHMARK_DATASET_NAMES
+_GENERATION = cot_swap_protocol.GENERATION
+_IMPLEMENTATION = cot_swap_protocol.IMPLEMENTATION
+_TEXT_INTERVENTION = cot_swap_protocol.TEXT_INTERVENTION
 
 
 def _package_version(name: str) -> str:
@@ -131,7 +103,7 @@ class HuggingFaceCotSwapRuntime:
         self.model = self.wrapper.model
         self.model.eval()
         self.tokenizer = self.wrapper.tokenizer
-        self.tokenizer.padding_side = "left"
+        self.tokenizer.padding_side = str(_GENERATION["padding_side"])
         self.device = next(self.model.parameters()).device
         (
             self.effective_eos_token_ids,
@@ -265,20 +237,15 @@ class HuggingFaceCotSwapRuntime:
 
         input_ids = input_ids.to(self.device)
         attention_mask = attention_mask.to(self.device)
+        generation_arguments = {
+            key: value for key, value in _GENERATION.items() if key != "padding_side"
+        }
+        max_new_tokens = int(_GENERATION["max_new_tokens"])
         with self._torch.inference_mode():
             output_ids = self.model.generate(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
-                max_new_tokens=16,
-                do_sample=False,
-                num_beams=1,
-                num_return_sequences=1,
-                temperature=None,
-                top_p=None,
-                top_k=None,
-                use_cache=True,
-                return_dict_in_generate=False,
-                output_scores=False,
+                **generation_arguments,
                 pad_token_id=self.tokenizer.pad_token_id,
                 eos_token_id=list(self.effective_eos_token_ids),
             )
@@ -287,7 +254,7 @@ class HuggingFaceCotSwapRuntime:
             or output_ids.ndim != 2
             or int(output_ids.shape[0]) != len(CELL_ORDER)
             or int(output_ids.shape[1]) <= int(input_ids.shape[1])
-            or int(output_ids.shape[1]) > int(input_ids.shape[1]) + 16
+            or int(output_ids.shape[1]) > int(input_ids.shape[1]) + max_new_tokens
         ):
             raise ValueError("generation must return a non-empty answer span for every cell")
 
@@ -311,9 +278,10 @@ class HuggingFaceCotSwapRuntime:
                 None,
             )
             if eos_index is None:
-                if len(raw_continuation) != 16:
+                if len(raw_continuation) != max_new_tokens:
                     raise ValueError(
-                        f"cell {cell.cell} stopped without EOS before the 16-token cap"
+                        f"cell {cell.cell} stopped without EOS before the "
+                        f"{max_new_tokens}-token cap"
                     )
                 continuation = raw_continuation
                 stop_reason = "max_new_tokens"

@@ -17,6 +17,7 @@ from typing import Literal, Protocol
 
 from tqdm.auto import tqdm
 
+import typo_cot.experiments.cot_swap.protocol as cot_swap_protocol
 from typo_cot.evaluation.fallback import answers_equal, extract_with_fallback
 from typo_cot.experiments.catalog import PAPER_SHA256
 from typo_cot.experiments.cot_swap.planning import (
@@ -31,47 +32,19 @@ from typo_cot.experiments.prepare_edited_pairs.runtime import (
     paper_dataset_samples_per_subset,
 )
 
-COT_SWAP_BENCHMARKS = ("gsm8k", "mmlu", "mmlu-pro", "arc", "csqa")
+_ANSWER_EXTRACTION = cot_swap_protocol.ANSWER_EXTRACTION
+_ANSWER_SPAN_DECODING = cot_swap_protocol.ANSWER_SPAN_DECODING
+_BATCHING = cot_swap_protocol.BATCHING
+_BENCHMARK_NAMES = cot_swap_protocol.BENCHMARK_DATASET_NAMES
+_GENERATION = cot_swap_protocol.GENERATION
+_IMPLEMENTATION = cot_swap_protocol.IMPLEMENTATION
+_TEXT_INTERVENTION = cot_swap_protocol.TEXT_INTERVENTION
+
+COT_SWAP_BENCHMARKS = tuple(_BENCHMARK_NAMES)
 TARGETING_CONDITIONS = ("attribution-4", "random-4")
-_SOURCE_DATASETS = {
-    "gsm8k": "gsm8k",
-    "mmlu": "mmlu",
-    "mmlu-pro": "mmlu_pro",
-    "arc": "arc",
-    "csqa": "commonsense_qa",
-}
 _GPU_ID = re.compile(r"0|[1-9][0-9]*")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
-_ANSWER_EXTRACTION = "primary-then-empty-only-fallback-symmetric-a-b-c-d-cap-aware/v2"
-_TEXT_INTERVENTION = {
-    "boundary": "submitted-first-[Tt]he-answer-is-filter/v1",
-    "assembly": "recorded-prompt-plus-decoded-pre-answer-text-retokenized/v1",
-}
-_GENERATION = {
-    "do_sample": False,
-    "num_beams": 1,
-    "num_return_sequences": 1,
-    "temperature": None,
-    "top_p": None,
-    "top_k": None,
-    "max_new_tokens": 16,
-    "use_cache": True,
-    "return_dict_in_generate": False,
-    "output_scores": False,
-    "padding_side": "left",
-}
-_IMPLEMENTATION = "huggingface-cot-swap-four-cell-batch/v1"
-_BATCHING = {
-    "policy": "one-pair-four-cells/v1",
-    "batch_size": 4,
-    "cell_order": list(CELL_ORDER),
-}
-_ANSWER_SPAN_DECODING = {
-    "source": "generated-token-ids-only/v1",
-    "skip_special_tokens": True,
-    "clean_up_tokenization_spaces": False,
-}
 _EDIT_VALIDITY = {
     "policy": "stored-prompts-differ-and-positive-target-attempts/v1",
     "requires_prompt_difference": True,
@@ -187,6 +160,10 @@ _POOLED_REFERENCE = {
 
 class CotSwapRunError(RuntimeError):
     """Raised after a run records failures or detects published-state corruption."""
+
+
+class _CompletedOutputIntegrityError(CotSwapRunError):
+    """Raised when a completed run's public output set fails byte-level checks."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -506,14 +483,6 @@ def _positive_int(value: object, *, field: str) -> int:
     return value
 
 
-def _evaluation_benchmark(benchmark: str) -> str:
-    if benchmark == "mmlu-pro":
-        return "mmlu_pro"
-    if benchmark == "csqa":
-        return "commonsense_qa"
-    return benchmark
-
-
 def _validate_pair_record(
     record: dict[str, object],
     *,
@@ -639,7 +608,7 @@ def _load_source(config: CotSwapConfig) -> _Source:
     expected_source_provenance = {
         "model": (config.model, "model"),
         "benchmark_dataset_loader": (
-            _SOURCE_DATASETS[config.benchmark],
+            _BENCHMARK_NAMES[config.benchmark],
             "benchmark dataset loader",
         ),
         "dataset_cohort_rule": (
@@ -924,7 +893,7 @@ def _validate_generation(
     expected_correct = answers_equal(
         generation.value,
         gold_answer,
-        benchmark=_evaluation_benchmark(benchmark),
+        benchmark=_BENCHMARK_NAMES[benchmark],
     )
     if generation.is_correct is not expected_correct:
         raise ValueError(f"{field}.is_correct does not match canonical gold equality")
@@ -932,7 +901,7 @@ def _validate_generation(
         raise ValueError(f"{field} extraction methods must not be empty")
     expected_extraction = extract_with_fallback(
         generation.text,
-        benchmark=_evaluation_benchmark(benchmark),
+        benchmark=_BENCHMARK_NAMES[benchmark],
         correct_answer=gold_answer,
         allow_positional=generation.stop_reason == "eos_token",
     )
@@ -1188,7 +1157,7 @@ def _load_registered_checkpoints(
 
 
 def _events(scan: CotSwapScan, *, benchmark: str) -> dict[str, object]:
-    extraction_benchmark = _evaluation_benchmark(benchmark)
+    extraction_benchmark = _BENCHMARK_NAMES[benchmark]
     answers = {cell: scan.generations[cell].value for cell in CELL_ORDER}
 
     def same(cell: str) -> bool:
@@ -1217,7 +1186,7 @@ def _record(
     config: CotSwapConfig,
     source: _Source,
 ) -> dict[str, object]:
-    extraction_benchmark = _evaluation_benchmark(config.benchmark)
+    extraction_benchmark = _BENCHMARK_NAMES[config.benchmark]
     answer_a = scan.generations["A"].value
     cells: dict[str, object] = {}
     for cell_plan in plan.cells:
@@ -1535,12 +1504,12 @@ def _validate_output_hashes(manifest: Mapping[str, object], output_dir: Path) ->
         "cot_swap_summary.json",
     }
     if set(outputs) != expected:
-        raise CotSwapRunError("completed output registry is incomplete")
+        raise _CompletedOutputIntegrityError("completed output registry is incomplete")
     for name in expected:
         metadata = _mapping(outputs[name], field=f"completed output {name}")
         path = output_dir / name
         if not path.is_file() or metadata.get("sha256") != _sha256(path):
-            raise CotSwapRunError(f"completed output hash mismatch: {name}")
+            raise _CompletedOutputIntegrityError(f"completed output hash mismatch: {name}")
 
 
 def _load_jsonl(path: Path) -> list[dict[str, object]]:
@@ -1734,7 +1703,7 @@ def _validate_completed_semantics(
         if outputs != expected_output_metadata:
             raise ValueError("completed output registry metadata does not match public outputs")
     except (KeyError, TypeError, ValueError, CotSwapRunError) as exc:
-        if isinstance(exc, CotSwapRunError) and "output hash" in str(exc):
+        if isinstance(exc, _CompletedOutputIntegrityError):
             raise
         raise CotSwapRunError(f"completed run validation failed: {exc}") from exc
     return CotSwapResult(

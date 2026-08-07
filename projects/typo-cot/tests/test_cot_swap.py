@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 from collections.abc import Mapping
 from dataclasses import replace
@@ -47,6 +48,24 @@ def _write_jsonl(path: Path, rows: list[Mapping[str, object]]) -> None:
 
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def test_runner_and_runtime_share_one_protocol_constant_source() -> None:
+    protocol = importlib.import_module("typo_cot.experiments.cot_swap.protocol")
+    aliases = (
+        ("BENCHMARK_DATASET_NAMES", "_BENCHMARK_NAMES", "_BENCHMARK_NAMES"),
+        ("GENERATION", "_GENERATION", "_GENERATION"),
+        ("TEXT_INTERVENTION", "_TEXT_INTERVENTION", "_TEXT_INTERVENTION"),
+        ("ANSWER_EXTRACTION", "_ANSWER_EXTRACTION", "_ANSWER_EXTRACTION"),
+        ("IMPLEMENTATION", "_IMPLEMENTATION", "_IMPLEMENTATION"),
+        ("BATCHING", "_BATCHING", "_BATCHING"),
+        ("ANSWER_SPAN_DECODING", "_ANSWER_SPAN_DECODING", "_ANSWER_SPAN_DECODING"),
+    )
+
+    for protocol_name, runner_name, runtime_name in aliases:
+        shared = getattr(protocol, protocol_name)
+        assert getattr(cot_runner, runner_name) is shared
+        assert getattr(cot_runtime, runtime_name) is shared
 
 
 def _answer_payload(value: str, *, correct: bool) -> dict[str, object]:
@@ -1159,6 +1178,42 @@ def test_completed_resume_validates_sources_and_outputs_without_loading_model(
         run_cot_swap(replace(config, resume=True))
 
 
+def test_completed_output_registry_error_is_a_typed_integrity_failure(tmp_path: Path) -> None:
+    source = _write_pair_source(tmp_path / "prepared", [_pair("a")])
+    output = tmp_path / "output"
+    config = _config(source, output)
+    result = run_cot_swap(config, runtime=_Runtime())
+    run = json.loads(result.run_path.read_text(encoding="utf-8"))
+    del run["outputs"][result.records_path.name]
+    _write_json(result.run_path, run)
+
+    with pytest.raises(
+        cot_runner._CompletedOutputIntegrityError,
+        match="^completed output registry is incomplete$",
+    ):
+        run_cot_swap(replace(config, resume=True))
+
+
+def test_completed_validation_does_not_dispatch_on_output_hash_message_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _write_pair_source(tmp_path / "prepared", [_pair("a")])
+    output = tmp_path / "output"
+    config = _config(source, output)
+    run_cot_swap(config, runtime=_Runtime())
+
+    def raise_non_integrity_error(*_args: object, **_kwargs: object) -> None:
+        raise CotSwapRunError("synthetic output hash wording")
+
+    monkeypatch.setattr(cot_runner, "_validate_output_hashes", raise_non_integrity_error)
+    with pytest.raises(
+        CotSwapRunError,
+        match="^completed run validation failed: synthetic output hash wording$",
+    ):
+        run_cot_swap(replace(config, resume=True))
+
+
 def test_completed_resume_rejects_semantic_tampering_even_with_updated_hash(
     tmp_path: Path,
 ) -> None:
@@ -1384,8 +1439,11 @@ def test_runtime_scan_builds_and_extracts_all_cells_in_paper_order() -> None:
     assert list(scan.generations) == list(CELL_ORDER)
 
 
-def test_runtime_batch_trims_each_row_at_its_own_eos_and_preserves_a_16_token_cap() -> None:
+def test_runtime_batch_trims_each_row_at_its_own_eos_and_preserves_a_16_token_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     torch = pytest.importorskip("torch")
+    monkeypatch.setitem(cot_runtime._GENERATION, "top_k", 7)
     plan = build_cell_plan(_pair("a"))
     prompt_ids_by_text: dict[str, list[int]] = {}
     full_ids_by_text: dict[str, list[int]] = {}
@@ -1465,6 +1523,7 @@ def test_runtime_batch_trims_each_row_at_its_own_eos_and_preserves_a_16_token_ca
     assert generate_kwargs["eos_token_id"] == [98, 99]
     assert generate_kwargs["max_new_tokens"] == 16
     assert generate_kwargs["do_sample"] is False
+    assert generate_kwargs["top_k"] == 7
     assert all(skip is True and cleanup is False for _, skip, cleanup in tokenizer.decoded)
 
 
