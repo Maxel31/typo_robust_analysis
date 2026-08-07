@@ -60,7 +60,8 @@ newly generated token positions.
 Every layer independently generates at most 512 new tokens with greedy
 decoding. The task-specific primary answer extractor runs first. Only an empty
 primary result invokes the deterministic fallback. A still-empty result stays
-in the denominator: it contributes zero to restoration and one to induction.
+in the denominator and contributes zero in either direction, following the
+final PDF's explicit rule that unextractable answers are failures.
 The final block is an audited structural no-op because an edited-word output at
 that depth cannot propagate to the prompt-final generation position.
 
@@ -120,3 +121,13 @@ documented historical alignment and process-random hash defects. Consequently,
 they reproduce the public protocol but do not by themselves claim the exact
 historical Figure 2 IDs or rates; exact historical comparisons require the
 released frozen source records.
+
+Two discrepancies in those historical records are preserved as provenance,
+not copied into the default paper-first protocol. The Qwen2.5-3B Figure 2
+archives contain Attribution-4 only despite the caption saying both rules are
+pooled. Also, the final plotting audit treated a still-unextractable
+edited-to-clean continuation as an induced change, whereas the PDF says every
+unextractable answer is a failure. The public runner therefore requires both
+source arms and scores an unextractable result as zero in both directions. It
+records both differences in `run.json`; a future exact-archive replay must be
+explicitly labelled and must not silently replace this default.

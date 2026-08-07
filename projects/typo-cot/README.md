@@ -236,8 +236,8 @@ answer returns to the regenerated clean answer. `edited-to-clean` succeeds
 when the patched clean answer changes from that answer. The task-specific
 primary extractor is always tried first, and the paper's deterministic
 fallback is invoked only for an empty primary result. An answer that remains
-unextractable is a restoration failure and an induction event, so it is never
-removed from the fixed denominator.
+unextractable is a failed readout in either direction, so it contributes zero
+without being removed from the fixed denominator.
 
 The command writes:
 

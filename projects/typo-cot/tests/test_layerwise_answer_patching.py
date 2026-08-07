@@ -606,7 +606,7 @@ def test_runner_rechecks_baselines_and_uses_one_fixed_denominator_for_both_direc
         ("clean-to-edited", 1, False),
         ("clean-to-edited", 2, False),
         ("edited-to-clean", 0, True),
-        ("edited-to-clean", 1, True),
+        ("edited-to-clean", 1, False),
         ("edited-to-clean", 2, False),
     ]
     assert rows[1]["patched_answer"]["is_extracted"] is False
@@ -637,6 +637,7 @@ def test_runner_rechecks_baselines_and_uses_one_fixed_denominator_for_both_direc
     assert run["comparability"]["status"] == "fresh-paper-protocol-reproduction"
     assert run["comparability"]["exact_historical_figure2_ids"] is False
     assert run["comparability"]["historical_qwen_targeting_discrepancy"] is True
+    assert run["comparability"]["historical_unextractable_induction_discrepancy"] is True
     assert set(run["outputs"]) == {
         "answer_layer_records.jsonl",
         "pair_status_records.jsonl",
