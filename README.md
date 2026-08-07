@@ -62,8 +62,8 @@ model download.
 ├── uv.lock                        # shared environment lock
 ├── projects/typo-cot/
 │   ├── README.md                  # package setup and current commands
-│   ├── configs/                   # versioned experiment configuration
 │   ├── docs/                      # paper contract and provenance
+│   ├── results/                   # ignored local outputs (.gitkeep only)
 │   ├── src/typo_cot/              # importable implementation
 │   └── tests/                     # CPU unit/contract tests
 ├── scripts/new_project.sh         # retained legacy scaffolding helper
@@ -72,12 +72,14 @@ model download.
 
 ## Retained workspace support
 
-`projects/typo-cot` depends on the `typo-utils` workspace member in `utils/`, so
-the repository remains a `uv` workspace during the refactor. `_sample_project/`
-and `scripts/new_project.sh` are pre-existing generic scaffolding retained for
-now; they are not part of the paper reproduction path. Pull requests are
-reviewed by `.github/workflows/claude-code-review.yml`. Any later cleanup or
-removal of these retained tools will be handled in its own reviewed PR.
+The repository-level development environment still includes the `typo-utils`
+workspace member in `utils/`; the public `projects/typo-cot` package itself no
+longer depends on it. The repository remains a `uv` workspace during the
+refactor. `_sample_project/` and `scripts/new_project.sh` are pre-existing
+generic scaffolding retained for now; they are not part of the paper
+reproduction path. Pull requests are reviewed by
+`.github/workflows/claude-code-review.yml`. Any later cleanup or removal of
+these retained tools will be handled in its own reviewed PR.
 
 Changes are developed as one operation per branch and pull request, always
 against `develop`. A subsequent operation starts only after CI and all

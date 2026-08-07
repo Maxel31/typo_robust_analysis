@@ -240,18 +240,6 @@ def test_all_public_entry_points_read_the_pdf_fingerprint_from_the_catalog() -> 
         assert "typo-cot experiments source" in contents, document
 
 
-def test_relocated_legacy_readme_relative_links_resolve() -> None:
-    readme = PROJECT_ROOT / "docs" / "legacy-development-readme.md"
-    markdown = readme.read_text(encoding="utf-8")
-    targets = re.findall(r"\[[^]]+\]\(([^)]+)\)", markdown)
-
-    for target in targets:
-        if target.startswith(("#", "http://", "https://")):
-            continue
-        relative_path = target.partition("#")[0]
-        assert (readme.parent / relative_path).exists(), target
-
-
 def test_root_readme_accounts_for_retained_workspace_support() -> None:
     readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
 

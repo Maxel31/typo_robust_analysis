@@ -30,9 +30,6 @@ Pair preparation additionally needs the GPU/LRP dependencies:
 uv sync --project projects/typo-cot --extra lrp
 ```
 
-Until the environment-lock PR is merged, do not treat the old optional
-dependency pins as the final paper environment.
-
 ## Available commands
 
 The experiment catalog is implemented and does not require a GPU:
@@ -90,15 +87,18 @@ The complete field contract and coordinate conventions are documented in
 
 ```bash
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_paper_experiment_catalog.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 
 The contract tests enforce the final-PDF fingerprint, complete operation list,
 descriptive names, unique command slugs, CLI JSON schema, and documentation
-coverage.
+coverage. The full suite also exercises pair preparation and its model, dataset,
+prompt, answer-extraction, and AttnLRP adapters without downloading model
+weights.
 
-## Historical material
+## Repository scope
 
-The former Step0/Exp1–20 development README is retained at
-[`docs/legacy-development-readme.md`](docs/legacy-development-readme.md) for
-provenance only. It describes intermediate experiments and machine-specific
-paths and is not a reproduction specification.
+Only the public experiment catalog, implemented runners, their runtime
+dependencies, and tests are tracked here. Intermediate Exp1–20 scripts,
+machine-specific configuration, and archived outputs are deliberately excluded
+because they are not the paper's reproduction interface.

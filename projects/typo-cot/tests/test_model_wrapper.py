@@ -26,18 +26,20 @@ class TestSetupDevice:
         ):
             mock_props.return_value.total_memory = 40 * 1024**3  # 40GB
 
-            device = setup_device("0")
+            device, use_multi_gpu = setup_device("0")
 
             assert device.type == "cuda"
+            assert use_multi_gpu is False
 
     @patch("torch.cuda.is_available")
     def test_setup_device_without_cuda(self, mock_cuda_available: MagicMock) -> None:
         """CUDAが利用できない場合のデバイス設定を確認."""
         mock_cuda_available.return_value = False
 
-        device = setup_device("0")
+        device, use_multi_gpu = setup_device("0")
 
         assert device.type == "cpu"
+        assert use_multi_gpu is False
 
     @patch("torch.cuda.is_available")
     def test_setup_device_respects_existing_cuda_visible_devices(
@@ -96,7 +98,7 @@ class TestModelWrapper:
         """使用可能なモデルリストが定義されていることを確認."""
         allowed = ModelWrapper.get_allowed_models()
         assert "meta-llama/Llama-3.2-1B" in allowed
-        assert "gpt2" in allowed
+        assert "gpt2" not in allowed
         assert "google/gemma-3-1b-pt" in allowed
         assert "mistralai/Mistral-7B-v0.3" in allowed
         assert "Qwen/Qwen2.5-72B-Instruct" in allowed
@@ -117,9 +119,9 @@ class TestModelWrapper:
         assert wrapper.is_supported_for_lxt() is True
 
     def test_is_supported_for_lxt_gpt2(self) -> None:
-        """GPT-2モデルがlxtでサポートされていることを確認."""
+        """GPT-2 is outside the paper's supported model families."""
         wrapper = ModelWrapper(model_name="gpt2")
-        assert wrapper.is_supported_for_lxt() is True
+        assert wrapper.is_supported_for_lxt() is False
 
     def test_is_supported_for_lxt_unsupported(self) -> None:
         """サポートされていないモデルを確認."""
@@ -266,7 +268,7 @@ class TestCreateModelWrapper:
         mock_setup_device: MagicMock,
     ) -> None:
         """lxtラップ付きでモデルラッパーが作成されることを確認."""
-        mock_setup_device.return_value = torch.device("cpu")
+        mock_setup_device.return_value = (torch.device("cpu"), False)
         mock_wrap.return_value = MagicMock()
 
         wrapper = create_model_wrapper(
@@ -284,7 +286,7 @@ class TestCreateModelWrapper:
         mock_setup_device: MagicMock,
     ) -> None:
         """lxtラップなしでモデルラッパーが作成されることを確認."""
-        mock_setup_device.return_value = torch.device("cpu")
+        mock_setup_device.return_value = (torch.device("cpu"), False)
 
         wrapper = create_model_wrapper(
             model_name="gpt2",

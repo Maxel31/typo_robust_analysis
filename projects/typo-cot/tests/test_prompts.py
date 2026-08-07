@@ -147,11 +147,11 @@ class TestMMLUPromptTemplate:
         assert "(D) 6" in result.user_prompt
         assert result.subject == "elementary_mathematics"
 
-    def test_generate_requires_choices(self) -> None:
-        """選択肢がない場合にエラーが発生することを確認."""
+    def test_generate_accepts_preformatted_choices(self) -> None:
+        """Preformatted archived questions remain supported without a choices list."""
         template = MMLUPromptTemplate()
-        with pytest.raises(ValueError, match="選択肢が必要"):
-            template.generate(question="What is 2+2?")
+        result = template.generate(question="What is 2+2?\n(A) 3 (B) 4 (C) 5 (D) 6")
+        assert "(B) 4" in result.user_prompt
 
     def test_system_prompt_contains_subject(self) -> None:
         """システムプロンプトにサブジェクトが含まれることを確認."""
@@ -240,11 +240,11 @@ class TestMMLUProPromptTemplate:
         assert "(A) O(1)" in result.user_prompt
         assert "(E) O(n²)" in result.user_prompt
 
-    def test_generate_requires_choices(self) -> None:
-        """選択肢がない場合にエラーが発生することを確認."""
+    def test_generate_accepts_preformatted_choices(self) -> None:
+        """Preformatted archived questions remain supported without a choices list."""
         template = MMLUProPromptTemplate()
-        with pytest.raises(ValueError, match="選択肢が必要"):
-            template.generate(question="Test question?")
+        result = template.generate(question="Test question?\n(A) one (B) two")
+        assert "(A) one" in result.user_prompt
 
     def test_supports_ten_choices(self) -> None:
         """10個の選択肢をサポートすることを確認."""
