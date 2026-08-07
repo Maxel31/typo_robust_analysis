@@ -129,6 +129,26 @@ def test_cli_lists_machine_readable_experiment_contracts(
     assert all("command" not in item for item in payload)
 
 
+def test_cli_reports_the_canonical_paper_fingerprint(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["experiments", "source", "--format", "json"]) == 0
+
+    assert json.loads(capsys.readouterr().out) == {
+        "sha256": PAPER_SHA256,
+    }
+
+
+def test_cli_text_list_handles_an_empty_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(cli_module, "PAPER_EXPERIMENTS", ())
+
+    assert main(["experiments", "list"]) == 0
+    assert capsys.readouterr().out == ""
+
+
 def test_cli_shows_experiment_specific_arguments(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["experiments", "show", "clean-prefix-scan", "--format", "json"]) == 0
 
@@ -182,7 +202,7 @@ def test_public_experiment_guide_tracks_every_catalog_operation() -> None:
     guide = (PROJECT_ROOT / "docs" / "paper-experiments.md").read_text(encoding="utf-8")
     commands = _documented_target_commands(guide)
 
-    assert PAPER_SHA256 in guide
+    assert "typo-cot experiments source" in guide
     assert set(commands) == set(EXPECTED_EXPERIMENTS)
     for spec in PAPER_EXPERIMENTS:
         assert f"`{spec.slug}`" in guide
@@ -190,7 +210,7 @@ def test_public_experiment_guide_tracks_every_catalog_operation() -> None:
             assert argument in commands[spec.slug], f"{spec.slug} example is missing {argument}"
 
 
-def test_all_public_entry_points_track_the_canonical_pdf_fingerprint() -> None:
+def test_all_public_entry_points_read_the_pdf_fingerprint_from_the_catalog() -> None:
     public_documents = (
         REPOSITORY_ROOT / "README.md",
         PROJECT_ROOT / "README.md",
@@ -198,7 +218,9 @@ def test_all_public_entry_points_track_the_canonical_pdf_fingerprint() -> None:
     )
 
     for document in public_documents:
-        assert PAPER_SHA256 in document.read_text(encoding="utf-8"), document
+        contents = document.read_text(encoding="utf-8")
+        assert PAPER_SHA256 not in contents, document
+        assert "typo-cot experiments source" in contents, document
 
 
 def test_relocated_legacy_readme_relative_links_resolve() -> None:

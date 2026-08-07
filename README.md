@@ -11,10 +11,11 @@ as RQ1 are used only as cross-references.
 ## Source of truth
 
 The final 19-page paper PDF is the primary source for experimental design,
-cohorts, denominators, and reported evidence. Its SHA-256 is:
+cohorts, denominators, and reported evidence. Its canonical SHA-256 is emitted
+from the experiment catalog's single source of truth:
 
-```text
-2cfb736e4636ee8db8dc6a92a6004c6e36914538a9acadcd66073289580a39d0
+```bash
+uv run --project projects/typo-cot typo-cot experiments source
 ```
 
 If an old script, branch, result note, or README disagrees with that PDF, the

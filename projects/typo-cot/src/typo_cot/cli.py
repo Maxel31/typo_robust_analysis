@@ -6,7 +6,12 @@ import argparse
 import json
 from collections.abc import Sequence
 
-from typo_cot.experiments.catalog import PAPER_EXPERIMENTS, ExperimentSpec, get_experiment
+from typo_cot.experiments.catalog import (
+    PAPER_EXPERIMENTS,
+    PAPER_SHA256,
+    ExperimentSpec,
+    get_experiment,
+)
 
 
 def _experiment(value: str) -> ExperimentSpec:
@@ -31,6 +36,11 @@ def _parser() -> argparse.ArgumentParser:
     list_parser = actions.add_parser("list", help="List operations in reproduction order.")
     list_parser.add_argument("--format", choices=("text", "json"), default="text")
 
+    source_parser = actions.add_parser(
+        "source", help="Show the canonical paper artifact fingerprint."
+    )
+    source_parser.add_argument("--format", choices=("text", "json"), default="text")
+
     show_parser = actions.add_parser("show", help="Show one operation's public contract.")
     show_parser.add_argument("experiment", type=_experiment)
     show_parser.add_argument("--format", choices=("text", "json"), default="text")
@@ -44,10 +54,17 @@ def _print_list(output_format: str) -> None:
         )
         return
 
-    width = max(len(spec.slug) for spec in PAPER_EXPERIMENTS)
-    status_width = max(len(spec.status) for spec in PAPER_EXPERIMENTS)
+    width = max((len(spec.slug) for spec in PAPER_EXPERIMENTS), default=0)
+    status_width = max((len(spec.status) for spec in PAPER_EXPERIMENTS), default=0)
     for spec in PAPER_EXPERIMENTS:
         print(f"{spec.slug:<{width}}  {spec.status:<{status_width}}  {spec.title}")
+
+
+def _print_source(output_format: str) -> None:
+    if output_format == "json":
+        print(json.dumps({"sha256": PAPER_SHA256}, indent=2))
+        return
+    print(f"paper sha256: {PAPER_SHA256}")
 
 
 def _print_spec(spec: ExperimentSpec, output_format: str) -> None:
@@ -74,6 +91,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "experiments" and args.catalog_action == "list":
         _print_list(args.format)
+        return 0
+    if args.command == "experiments" and args.catalog_action == "source":
+        _print_source(args.format)
         return 0
     if args.command == "experiments" and args.catalog_action == "show":
         _print_spec(args.experiment, args.format)

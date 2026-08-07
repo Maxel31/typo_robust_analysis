@@ -4,9 +4,14 @@ This package contains the public reproduction interface for **“Edited-Word
 Activation Patching Reverses Selected Typo-Induced Answer Changes after
 Tokenization.”**
 
-The final paper, identified by SHA-256
-`2cfb736e4636ee8db8dc6a92a6004c6e36914538a9acadcd66073289580a39d0`,
-is the primary experimental specification. See
+The final paper is the primary experimental specification. Its canonical
+SHA-256 is available from the catalog's single source of truth:
+
+```bash
+uv run --project projects/typo-cot typo-cot experiments source
+```
+
+See
 [`docs/paper-experiments.md`](docs/paper-experiments.md) for the transcribed
 operation matrix, denominators, target directory layout, and one-command-per-
 experiment interface.

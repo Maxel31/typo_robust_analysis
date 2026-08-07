@@ -12,10 +12,9 @@ import re
 from dataclasses import asdict, dataclass
 from typing import Literal, get_args
 
-# Contract fingerprint of the user-supplied final PDF. Change it only when the
-# canonical paper artifact is intentionally replaced and the catalog is re-audited.
-# Use ``rg '<old digest>' README.md projects/typo-cot`` to find every public copy;
-# the contract tests require all documentation copies to stay synchronized.
+# Contract fingerprint of the user-supplied final PDF. Public documentation
+# reads it through ``typo-cot experiments source`` so this is its sole runtime
+# source. Change it only when the artifact is replaced and the catalog re-audited.
 PAPER_SHA256 = "2cfb736e4636ee8db8dc6a92a6004c6e36914538a9acadcd66073289580a39d0"
 
 ComputeClass = Literal["cpu", "gpu"]

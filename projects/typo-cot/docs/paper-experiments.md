@@ -6,7 +6,12 @@ This document is transcribed from the final 19-page PDF:
 
 - Title: *Edited-Word Activation Patching Reverses Selected Typo-Induced Answer Changes after Tokenization*
 - Filename: `Edited-Word Activation Patching Reverses Selected Typo-Induced Answer Changes after Tokenization.pdf`
-- SHA-256: `2cfb736e4636ee8db8dc6a92a6004c6e36914538a9acadcd66073289580a39d0`
+
+Read the canonical SHA-256 from the catalog's single source of truth:
+
+```bash
+uv run --project projects/typo-cot typo-cot experiments source
+```
 
 The PDF is authoritative. Old experiment numbers, worktree READMEs, analysis
 notes, archived outputs, and implementation comments are secondary evidence.
