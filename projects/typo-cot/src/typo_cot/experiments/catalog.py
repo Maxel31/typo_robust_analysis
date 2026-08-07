@@ -285,18 +285,33 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
     ExperimentSpec(
         slug="patch-text-combination",
         title="Cross fixed-window patching with complete clean text",
-        paper_question="RQ1/RQ3 control",
+        paper_question="RQ1/RQ3 descriptive comparison",
         paper_sections=("§3.5", "§4.1", "Table 2", "Appendix D"),
         summary=(
             "Run the descriptive two-by-two crossing of the fixed [0,6) patch with zero or "
             "complete clean pre-answer text."
         ),
-        cohort="The same 172 Gemma-3-4B/GSM8K primary flip pairs.",
+        cohort=(
+            "One hash-verified Gemma-3-4B/GSM8K fixed-window denominator in all four cells; "
+            "the published historical cohort had 172 pairs."
+        ),
         intervention="Patch absent/present crossed with no clean text/full clean text.",
         readout="Four free-answer correctness cells; no mediation or interaction estimate.",
-        required_arguments=("--model", "--benchmark", "--pairs", "--layers", "--output-dir"),
-        outputs=("patch_text_records.jsonl", "patch_text_summary.json"),
+        required_arguments=(
+            "--model",
+            "--benchmark",
+            "--fixed-window-run",
+            "--layers",
+            "--output-dir",
+        ),
+        outputs=(
+            "patch_text_records.jsonl",
+            "pair_status_records.jsonl",
+            "patch_text_summary.json",
+            "run.json",
+        ),
         compute="gpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="cot-swap",

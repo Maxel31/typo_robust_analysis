@@ -10,7 +10,6 @@ from pathlib import Path
 
 import typo_cot.cli as cli_module
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = PROJECT_ROOT.parents[1]
 PROJECT_PREFIX = "projects/typo-cot/"
@@ -109,6 +108,10 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/experiments/patch_position_controls/planning.py"),
     Path("src/typo_cot/experiments/patch_position_controls/runner.py"),
     Path("src/typo_cot/experiments/patch_position_controls/runtime.py"),
+    Path("src/typo_cot/experiments/patch_text_combination/__init__.py"),
+    Path("src/typo_cot/experiments/patch_text_combination/planning.py"),
+    Path("src/typo_cot/experiments/patch_text_combination/runner.py"),
+    Path("src/typo_cot/experiments/patch_text_combination/runtime.py"),
     Path("src/typo_cot/experiments/prepare_edited_pairs/__init__.py"),
     Path("src/typo_cot/experiments/prepare_edited_pairs/protocol.py"),
     Path("src/typo_cot/experiments/prepare_edited_pairs/runner.py"),
@@ -218,6 +221,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         "layerwise-kl-patching",
         "patch-coordinate-controls",
         "patch-position-controls",
+        "patch-text-combination",
         "prepare-edited-pairs",
         "targeting-fidelity-audit",
     }

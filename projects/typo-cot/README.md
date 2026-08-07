@@ -457,6 +457,61 @@ output hashes before reuse. See
 published acceptance values, schemas, last-layer behavior, and restart
 contract.
 
+## Cross the fixed patch with complete clean text
+
+`patch-text-combination` reproduces Table 2's descriptive two-by-two on one
+paired denominator. It consumes the completed Gemma-3-4B/GSM8K
+`fixed-window-answer-patching` run that already fixes the clean-correct,
+edited-wrong cohort, its untreated generations, and the clean-to-edited
+`[0,6)` patched generations. One invocation always emits all four conditions;
+there is no option to run cells on different pair sets.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+  typo-cot patch-text-combination \
+  --model google/gemma-3-4b-it \
+  --benchmark gsm8k \
+  --fixed-window-run \
+    results/fixed-window-answer-patching/gemma-3-4b-it/gsm8k \
+  --layers 0:6 \
+  --gpu-id 0 \
+  --output-dir results/patch-text-combination/gemma-3-4b-it/gsm8k
+```
+
+The no-text cells are carried forward from the hash-verified reference:
+untreated edited generation for patch-absent and its `[0,6)` clean-to-edited
+generation for patch-present. The command then supplies the complete clean
+pre-answer text under the edited question and generates the two complete-text
+cells without and with the same patch. Before those cells are generated, every
+selected clean and edited baseline is replayed and must match the reference
+token-for-token; complete-text generation starts only after the whole replay
+gate passes. Correctness is always against the GSM8K gold answer; an
+unextractable answer is incorrect and remains in the shared denominator.
+
+The final PDF specifies complete pre-answer text but not its exact character
+locator. To reproduce the submitted implementation, this command takes the
+prepared clean continuation and cuts immediately before the first literal
+`The answer is` or `the answer is`; if neither occurs, it supplies the entire
+continuation. It records the boundary diagnostics and requires tokenizing the
+edited prompt plus supplied text to preserve the exact edited prompt-token
+prefix. These are labelled legacy-backed implementation details, not additional
+claims from the paper.
+
+The historical Table 2 values—0/172, 129/172, 168/172, and 171/172—are stored
+only as published reference metadata. A fresh run reports its actual source
+denominator and does not claim the unpublished historical IDs; a denominator
+other than 172 is explicitly labelled as only a partial protocol run. The
+summary is descriptive: it reports four gold-correct counts and rates, without an
+interaction, mediation, necessity, sufficiency, or ranking estimate. Complete
+text includes near-answer content.
+
+The command writes `patch_text_records.jsonl`, `pair_status_records.jsonl`,
+`patch_text_summary.json`, and `run.json`. `--limit 1` produces a labelled GPU
+smoke run. `--resume` verifies the source, deterministic plan, runtime,
+checkpoints, and completed output hashes before reuse. See
+[`docs/patch-text-combination.md`](docs/patch-text-combination.md) for the full
+cell, boundary, provenance, and restart contracts.
+
 ## Tests
 
 ```bash
@@ -467,6 +522,7 @@ uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/te
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_fixed_window_answer_patching.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_patch_coordinate_controls.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_patch_position_controls.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_patch_text_combination.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 

@@ -55,6 +55,11 @@ from typo_cot.experiments.patch_position_controls import (
     PositionControlRunError,
     run_patch_position_controls,
 )
+from typo_cot.experiments.patch_text_combination import (
+    PatchTextCombinationConfig,
+    PatchTextCombinationRunError,
+    run_patch_text_combination,
+)
 from typo_cot.experiments.prepare_edited_pairs.runner import (
     PUBLIC_BENCHMARKS,
     TARGETING_CONDITIONS,
@@ -253,6 +258,25 @@ def _parser() -> argparse.ArgumentParser:
     position_controls.add_argument("--limit", type=_positive_int)
     position_controls.add_argument("--output-dir", required=True, type=Path)
     position_controls.add_argument("--resume", action="store_true")
+
+    patch_text = commands.add_parser(
+        "patch-text-combination",
+        help="Cross the fixed [0,6) patch with complete clean pre-answer text.",
+    )
+    patch_text.add_argument("--model", required=True, help="Hugging Face model identifier.")
+    patch_text.add_argument("--benchmark", required=True, choices=("gsm8k",))
+    patch_text.add_argument("--fixed-window-run", required=True, type=Path)
+    patch_text.add_argument(
+        "--layers",
+        required=True,
+        nargs="+",
+        type=parse_layer_window,
+        metavar="START:STOP",
+    )
+    patch_text.add_argument("--gpu-id", default="0")
+    patch_text.add_argument("--limit", type=_positive_int)
+    patch_text.add_argument("--output-dir", required=True, type=Path)
+    patch_text.add_argument("--resume", action="store_true")
     return parser
 
 
@@ -490,6 +514,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{result.pairs} pair(s): {result.records_path}"
         )
         print(f"position-control summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "patch-text-combination":
+        try:
+            result = run_patch_text_combination(
+                PatchTextCombinationConfig(
+                    model=args.model,
+                    benchmark=args.benchmark,
+                    fixed_window_run=args.fixed_window_run,
+                    layers=tuple(args.layers),
+                    output_dir=args.output_dir,
+                    gpu_id=args.gpu_id,
+                    limit=args.limit,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            PatchTextCombinationRunError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            print(f"patch-text-combination: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.records} patch/text cell record(s) for "
+            f"{result.pairs} pair(s): {result.records_path}"
+        )
+        print(f"patch/text summary: {result.summary_path}")
         print(f"run manifest: {result.run_path}")
         return 0
     raise AssertionError("argparse accepted an unhandled command")
