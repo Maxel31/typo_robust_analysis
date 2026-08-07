@@ -318,16 +318,22 @@ class HuggingFacePairPreparationRuntime:
             seed=config.seed,
             sample_id=sample.sample_id,
         )
-        if not application.attempts:
-            raise PairProtocolError("no eligible character edit could be applied")
 
         edited_prompt = (
             clean_prompt[:editable_start] + application.edited_text + clean_prompt[editable_end:]
         )
-        edited_prompt_ids, edited_generated_ids, edited_continuation = self._generate(edited_prompt)
-        aligned_ids, edited_offsets = _tokenize_with_offsets(self.tokenizer, edited_prompt)
-        if aligned_ids != edited_prompt_ids:
-            raise PairProtocolError("edited generation and alignment tokenization disagree")
+        if edited_prompt == clean_prompt:
+            edited_prompt_ids = clean_prompt_ids
+            edited_generated_ids = clean_generated_ids
+            edited_continuation = clean_continuation
+            edited_offsets = clean_offsets
+        else:
+            edited_prompt_ids, edited_generated_ids, edited_continuation = self._generate(
+                edited_prompt
+            )
+            aligned_ids, edited_offsets = _tokenize_with_offsets(self.tokenizer, edited_prompt)
+            if aligned_ids != edited_prompt_ids:
+                raise PairProtocolError("edited generation and alignment tokenization disagree")
         aligned_words = build_aligned_words(
             clean_editable=clean_editable,
             edited_editable=application.edited_text,
@@ -336,8 +342,6 @@ class HuggingFacePairPreparationRuntime:
             clean_token_offsets=clean_offsets,
             edited_token_offsets=edited_offsets,
         )
-        if not aligned_words:
-            raise PairProtocolError("edits produced no alignable changed word")
 
         clean_answer = self._answer(clean_continuation, sample.correct_answer)
         edited_answer = self._answer(edited_continuation, sample.correct_answer)
