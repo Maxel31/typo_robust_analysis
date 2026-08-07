@@ -3,26 +3,28 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
-
 import typo_cot.cli as cli_module
 from typo_cot.cli import main
 from typo_cot.experiments.catalog import get_experiment
 from typo_cot.experiments.prepare_edited_pairs.protocol import (
     CandidateToken,
     CharacterEdit,
+    PairProtocolError,
     apply_paper_edits,
     build_aligned_words,
     eligible_candidates,
     order_candidates,
 )
 from typo_cot.experiments.prepare_edited_pairs.runner import (
+    PairPreparationRunError,
     PrepareEditedPairsConfig,
     run_prepare_edited_pairs,
 )
+from typo_cot.experiments.prepare_edited_pairs.runtime import _tokenize_with_offsets
 
 
 def test_catalog_marks_pair_preparation_as_implemented() -> None:
@@ -97,6 +99,28 @@ def test_cli_rejects_non_paper_targeting_names(value: str) -> None:
     assert exc_info.value.code == 2
 
 
+@pytest.mark.parametrize("value", ("0", "5"))
+def test_cli_rejects_edit_counts_outside_the_paper_protocol(value: str) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            [
+                "prepare-edited-pairs",
+                "--model",
+                "google/gemma-3-4b-it",
+                "--benchmark",
+                "gsm8k",
+                "--targeting",
+                "attribution-4",
+                "--num-edits",
+                value,
+                "--output-dir",
+                "results/pairs",
+            ]
+        )
+
+    assert exc_info.value.code == 2
+
+
 def test_eligible_candidates_follow_the_paper_span_rules() -> None:
     candidates = eligible_candidates(
         token_texts=["<bos>", " Alpha", " 42", " (A)", " beta", "?"],
@@ -110,6 +134,32 @@ def test_eligible_candidates_follow_the_paper_span_rules() -> None:
         (1, " Alpha", -0.8),
         (4, " beta", 0.3),
     ]
+
+
+@pytest.mark.parametrize("relevance", (float("nan"), float("inf"), float("-inf")))
+def test_eligible_candidates_reject_nonfinite_relevance(relevance: float) -> None:
+    with pytest.raises(PairProtocolError, match="non-finite"):
+        eligible_candidates(
+            token_texts=[" word"],
+            relevances=[relevance],
+            offsets=[(0, 4)],
+            editable_prompt_start=0,
+            editable_prompt_end=4,
+        )
+
+
+def test_runtime_offsets_exclude_tokenizer_prefix_whitespace() -> None:
+    class PrefixWhitespaceTokenizer:
+        def __call__(self, text: str, **_kwargs: object) -> dict[str, object]:
+            assert text == " Alpha"
+            return {"input_ids": [1], "offset_mapping": [(0, 6)]}
+
+    _, offsets = _tokenize_with_offsets(PrefixWhitespaceTokenizer(), " Alpha")
+
+    # The archived AttnLRP pipeline lstripped decoded token text before locating
+    # it. Keeping that rule includes an item-initial token whose raw fast-tokenizer
+    # offset also covers the separator immediately before the editable span.
+    assert offsets == [(1, 6)]
 
 
 def test_attribution_order_uses_largest_absolute_relevance() -> None:
@@ -131,7 +181,7 @@ def test_attribution_order_uses_largest_absolute_relevance() -> None:
     assert [item.token_index for item in ordered.excluded_top] == []
 
 
-def test_random_control_excludes_attribution_top_k_and_is_deterministic() -> None:
+def test_random_control_always_excludes_attribution_top_four_and_is_deterministic() -> None:
     candidates = [
         CandidateToken(i, f" word{i}", float(10 - i), i * 6, (i + 1) * 6) for i in range(8)
     ]
@@ -146,7 +196,7 @@ def test_random_control_excludes_attribution_top_k_and_is_deterministic() -> Non
     second = order_candidates(
         list(reversed(candidates)),
         targeting="random-4",
-        num_edits=4,
+        num_edits=1,
         seed=42,
         sample_id="sample-1",
     )
@@ -161,8 +211,8 @@ def test_edit_attempts_preserve_the_reported_cumulative_shift_behavior() -> None
     # protocol applies its +1 cumulative shift to rank 2 even though rank 2 is
     # earlier in the text; rank 2 therefore lands outside its intended token.
     candidates = [
-        CandidateToken(9, " beta", 1.0, 16, 21, attribution_rank=1),
-        CandidateToken(3, "Alpha", 0.8, 10, 15, attribution_rank=2),
+        CandidateToken(9, " beta", 1.0, 17, 21, attribution_rank=1),
+        CandidateToken(3, "A", 0.8, 10, 11, attribution_rank=2),
     ]
 
     def controlled_edit(text: str, _: int) -> CharacterEdit | None:
@@ -187,7 +237,7 @@ def test_edit_attempts_preserve_the_reported_cumulative_shift_behavior() -> None
         return None
 
     result = apply_paper_edits(
-        editable_text="Alpha beta",
+        editable_text="Aalpha beta",
         editable_prompt_start=10,
         candidate_order=candidates,
         num_edits=2,
@@ -228,7 +278,7 @@ def test_alignment_records_actual_distinct_words_and_word_final_tokens() -> None
         sample_id="sample-1",
         edit_token=lambda text, _seed: CharacterEdit(
             original=text,
-            edited=" beeta",
+            edited="beeta",
             operation="duplication",
             character_index=2,
             original_character="e",
@@ -297,12 +347,109 @@ def test_runner_writes_versioned_pairs_and_completed_manifest(tmp_path: Path) ->
     assert result.pairs_path == output_dir / "pairs.jsonl"
 
 
+def test_completed_resume_returns_without_accessing_runtime(tmp_path: Path) -> None:
+    output_dir = tmp_path / "completed"
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=output_dir,
+    )
+    expected = run_prepare_edited_pairs(config, runtime=_FakeRuntime())
+
+    class RuntimeMustNotLoad(_FakeRuntime):
+        def load_samples(self, config: PrepareEditedPairsConfig) -> list[dict[str, str]]:
+            raise AssertionError("completed resume must not load a model or dataset")
+
+    resumed = run_prepare_edited_pairs(
+        replace(config, resume=True),
+        runtime=RuntimeMustNotLoad(),
+    )
+
+    assert resumed == expected
+
+
+def test_runner_rejects_an_empty_benchmark_selection(tmp_path: Path) -> None:
+    class EmptyRuntime(_FakeRuntime):
+        def load_samples(self, config: PrepareEditedPairsConfig) -> list[dict[str, str]]:
+            return []
+
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=tmp_path / "empty",
+    )
+
+    with pytest.raises(ValueError, match="no benchmark samples"):
+        run_prepare_edited_pairs(config, runtime=EmptyRuntime())
+
+
+def test_runner_rejects_resume_in_nonempty_directory_without_manifest(tmp_path: Path) -> None:
+    output_dir = tmp_path / "unrelated"
+    output_dir.mkdir()
+    (output_dir / "keep.txt").write_text("not an experiment\n", encoding="utf-8")
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=output_dir,
+        resume=True,
+    )
+
+    with pytest.raises(ValueError, match="run.json"):
+        run_prepare_edited_pairs(config, runtime=_FakeRuntime())
+
+    assert (output_dir / "keep.txt").read_text(encoding="utf-8") == "not an experiment\n"
+    assert not (output_dir / "pairs.jsonl").exists()
+
+
+def test_runner_resumes_only_missing_records_after_an_item_failure(tmp_path: Path) -> None:
+    class FailingRuntime(_FakeRuntime):
+        def prepare_pair(
+            self, sample: dict[str, str], config: PrepareEditedPairsConfig
+        ) -> dict[str, object]:
+            if sample["sample_id"] == "b":
+                raise RuntimeError("injected failure")
+            return super().prepare_pair(sample, config)
+
+    output_dir = tmp_path / "resume"
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=output_dir,
+    )
+
+    with pytest.raises(PairPreparationRunError, match="1 item"):
+        run_prepare_edited_pairs(config, runtime=FailingRuntime())
+
+    failed_manifest = json.loads((output_dir / "run.json").read_text())
+    assert failed_manifest["status"] == "failed"
+    assert failed_manifest["counts"] == {"discovered": 2, "written": 1, "failed": 1}
+    assert not (output_dir / "pairs.jsonl").exists()
+
+    resumed_runtime = _FakeRuntime()
+    result = run_prepare_edited_pairs(
+        replace(config, resume=True),
+        runtime=resumed_runtime,
+    )
+
+    rows = [json.loads(line) for line in result.pairs_path.read_text().splitlines()]
+    assert [row["sample_id"] for row in rows] == ["a", "b"]
+    assert json.loads((output_dir / "run.json").read_text())["status"] == "completed"
+
+
 def test_readme_starts_from_the_complete_public_command() -> None:
     project_root = Path(__file__).resolve().parents[1]
     readme = (project_root / "README.md").read_text(encoding="utf-8")
 
     for fragment in (
-        "typo-cot prepare-edited-pairs",
+        "uv run --project projects/typo-cot --extra lrp typo-cot prepare-edited-pairs",
         "--model google/gemma-3-4b-it",
         "--benchmark gsm8k",
         "--targeting attribution-4",

@@ -58,7 +58,7 @@ extraction, and edited-word-final token alignment. Run it separately for each
 model, benchmark, and targeting condition:
 
 ```bash
-uv run --project projects/typo-cot typo-cot prepare-edited-pairs \
+uv run --project projects/typo-cot --extra lrp typo-cot prepare-edited-pairs \
   --model google/gemma-3-4b-it \
   --benchmark gsm8k \
   --targeting attribution-4 \
@@ -66,9 +66,11 @@ uv run --project projects/typo-cot typo-cot prepare-edited-pairs \
   --output-dir results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/attribution-4
 ```
 
-Use `--targeting random-4` for the within-item non-top-relevance control. The
-paper defaults are `--seed 42` and `--max-new-tokens 512`; `--limit 1` is
-available for a GPU smoke run. A stopped run can be continued with `--resume`.
+Use `--targeting random-4` for the within-item control sampled after excluding
+the four Attribution-4 tokens. `--num-edits` selects how many of the sampled
+targets to edit (1–4). The paper defaults are `--seed 42` and
+`--max-new-tokens 512`; `--limit 1` is available for a GPU smoke run. A stopped
+run can be continued with `--resume`.
 The command writes:
 
 - `pairs.jsonl`: versioned per-item clean/edited generations, target-attempt
@@ -81,6 +83,8 @@ The target attempts and aligned words are deliberately separate. AttnLRP ranks
 tokens, and the final paper reports that some lower-ranked attempts land outside
 their intended token or share a word. The pair format preserves that behavior
 instead of silently converting targeting into a word-level selector.
+The complete field contract and coordinate conventions are documented in
+[`docs/prepare-edited-pairs.md`](docs/prepare-edited-pairs.md).
 
 ## Tests
 

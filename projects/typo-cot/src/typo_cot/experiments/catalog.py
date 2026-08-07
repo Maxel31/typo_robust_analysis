@@ -96,6 +96,7 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         ),
         outputs=("pairs.jsonl", "run.json"),
         compute="gpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="targeting-fidelity-audit",

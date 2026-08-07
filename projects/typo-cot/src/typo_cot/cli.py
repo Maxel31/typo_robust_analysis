@@ -5,12 +5,19 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Sequence
+from pathlib import Path
 
 from typo_cot.experiments import (
     PAPER_EXPERIMENTS,
     PAPER_SHA256,
     ExperimentSpec,
     get_experiment,
+)
+from typo_cot.experiments.prepare_edited_pairs.runner import (
+    PUBLIC_BENCHMARKS,
+    TARGETING_CONDITIONS,
+    PrepareEditedPairsConfig,
+    run_prepare_edited_pairs,
 )
 
 
@@ -24,6 +31,20 @@ def _experiment(value: str) -> ExperimentSpec:
 def _add_format_argument(parser: argparse.ArgumentParser) -> None:
     """Add the shared human/machine-readable output selector."""
     parser.add_argument("--format", choices=("text", "json"), default="text")
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def _edit_count(value: str) -> int:
+    parsed = _positive_int(value)
+    if parsed > 4:
+        raise argparse.ArgumentTypeError("must be between 1 and 4")
+    return parsed
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -49,6 +70,21 @@ def _parser() -> argparse.ArgumentParser:
     show_parser = actions.add_parser("show", help="Show one operation's public contract.")
     show_parser.add_argument("experiment", type=_experiment)
     _add_format_argument(show_parser)
+
+    pairs = commands.add_parser(
+        "prepare-edited-pairs",
+        help="Generate paper-aligned clean/edited pairs and word-final token alignment.",
+    )
+    pairs.add_argument("--model", required=True, help="Hugging Face model identifier.")
+    pairs.add_argument("--benchmark", required=True, choices=PUBLIC_BENCHMARKS)
+    pairs.add_argument("--targeting", required=True, choices=TARGETING_CONDITIONS)
+    pairs.add_argument("--num-edits", required=True, type=_edit_count)
+    pairs.add_argument("--output-dir", required=True, type=Path)
+    pairs.add_argument("--seed", type=int, default=42)
+    pairs.add_argument("--max-new-tokens", type=_positive_int, default=512)
+    pairs.add_argument("--gpu-id", default="0")
+    pairs.add_argument("--limit", type=_positive_int)
+    pairs.add_argument("--resume", action="store_true")
     return parser
 
 
@@ -102,6 +138,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command == "experiments" and args.catalog_action == "show":
         _print_spec(args.experiment, args.format)
+        return 0
+    if args.command == "prepare-edited-pairs":
+        result = run_prepare_edited_pairs(
+            PrepareEditedPairsConfig(
+                model=args.model,
+                benchmark=args.benchmark,
+                targeting=args.targeting,
+                num_edits=args.num_edits,
+                output_dir=args.output_dir,
+                seed=args.seed,
+                max_new_tokens=args.max_new_tokens,
+                gpu_id=args.gpu_id,
+                limit=args.limit,
+                resume=args.resume,
+            )
+        )
+        if result is not None:
+            print(f"wrote {result.written} pair(s): {result.pairs_path}")
+            print(f"run manifest: {result.run_path}")
         return 0
     raise AssertionError("argparse accepted an unhandled command")
 
