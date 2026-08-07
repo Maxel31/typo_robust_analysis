@@ -10,12 +10,11 @@ def test_package_import() -> None:
 
 def test_subpackages_import() -> None:
     """サブパッケージが正常にインポートできることを確認."""
-    from typo_cot import data, evaluation, lrp, models, perturbation, visualization
+    from typo_cot import data, evaluation, experiments, lrp, models
 
     # サブパッケージが存在することを確認
     assert data is not None
     assert models is not None
     assert lrp is not None
-    assert perturbation is not None
     assert evaluation is not None
-    assert visualization is not None
+    assert experiments is not None
