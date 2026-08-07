@@ -29,14 +29,31 @@ _BENCHMARK_NAMES = {
     "arc": "arc",
     "csqa": "commonsense_qa",
 }
-_SAMPLES_PER_SUBSET = {"mmlu": 50, "mmlu_pro": 100}
+_DEFAULT_SAMPLES_PER_SUBSET = {"mmlu": 50, "mmlu_pro": 100}
+_FULL_MMLU_PAPER_MODELS = frozenset(
+    {
+        "qwen2.5-7b-instruct",
+        "gemma-3-12b-it",
+        "gemma-3-27b-it",
+    }
+)
+_DATASET_COHORT_RULE = "paper-model-benchmark-cohort/v1"
 _HISTORICAL_COMPATIBILITY_NOTES = [
     "stable-sha256-seeds-replace-process-random-python-hash",
     "mistral-attnlrp-rules-target-mistral-classes",
     "actual-word-final-alignment-replaces-token-substring-coordinates",
     "parenthesized-choice-markers-use-recorded-choice-boundary",
     "arc-numeric-answer-keys-normalized-to-prompt-letters",
+    "model-specific-mmlu-cohort-matches-final-paper-denominators",
 ]
+
+
+def _paper_samples_per_subset(config: PrepareEditedPairsConfig) -> int:
+    """Return the final paper's model/benchmark-specific subset cap."""
+    model_basename = config.model.rsplit("/", 1)[-1].lower()
+    if config.benchmark == "mmlu" and model_basename in _FULL_MMLU_PAPER_MODELS:
+        return 100
+    return _DEFAULT_SAMPLES_PER_SUBSET.get(_BENCHMARK_NAMES[config.benchmark], 50)
 
 
 def _package_version(name: str) -> str:
@@ -74,6 +91,8 @@ def preload_provenance(
         "gpu_names": gpu_names,
         "model": config.model,
         "benchmark_dataset_loader": _BENCHMARK_NAMES[config.benchmark],
+        "dataset_cohort_rule": _DATASET_COHORT_RULE,
+        "dataset_samples_per_subset": _paper_samples_per_subset(config),
         "random_seed_algorithm": "sha256-first-64-bits/v1",
         "target_position": "maximum-logit-after-first-cot-token",
         "alignment": "actual-edited-word-final-token",
@@ -158,7 +177,7 @@ class HuggingFacePairPreparationRuntime:
 
         loader = create_loader(
             benchmark=self.internal_benchmark,
-            samples_per_subset=_SAMPLES_PER_SUBSET.get(self.internal_benchmark, 50),
+            samples_per_subset=_paper_samples_per_subset(config),
             seed=config.seed,
             num_samples=None,
         )

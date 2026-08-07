@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 import typo_cot.cli as cli_module
+import typo_cot.data.loader as loader_module
 import typo_cot.experiments.prepare_edited_pairs.runtime as runtime_module
 from typo_cot.cli import main
 from typo_cot.experiments.catalog import get_experiment
@@ -43,6 +44,91 @@ def test_catalog_marks_pair_preparation_as_implemented() -> None:
 
 def test_pair_preparation_allows_the_documented_qwen_72b_scale_model() -> None:
     assert "Qwen/Qwen2.5-72B-Instruct" in ModelWrapper.get_allowed_models()
+
+
+@pytest.mark.parametrize(
+    ("model", "benchmark", "expected"),
+    (
+        ("Qwen/Qwen2.5-7B-Instruct", "mmlu", 100),
+        ("qwen2.5-7b-instruct", "mmlu", 100),
+        ("google/gemma-3-12b-it", "mmlu", 100),
+        ("google/GEMMA-3-27B-IT", "mmlu", 100),
+        ("google/gemma-3-4b-it", "mmlu", 50),
+        ("meta-llama/Llama-3.2-3B-Instruct", "mmlu", 50),
+        ("Qwen/Qwen2.5-72B-Instruct", "mmlu", 50),
+        ("google/gemma-3-4b-it", "mmlu-pro", 100),
+        ("Qwen/Qwen2.5-7B-Instruct", "gsm8k", 50),
+    ),
+)
+def test_paper_cohort_size_depends_on_model_and_benchmark(
+    model: str,
+    benchmark: str,
+    expected: int,
+) -> None:
+    config = PrepareEditedPairsConfig(
+        model=model,
+        benchmark=benchmark,
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=Path("unused"),
+    )
+
+    assert runtime_module._paper_samples_per_subset(config) == expected
+
+
+def test_preload_provenance_freezes_the_paper_cohort_rule() -> None:
+    fake_torch = SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: False, device_count=lambda: 0),
+        version=SimpleNamespace(cuda=None),
+    )
+    config = PrepareEditedPairsConfig(
+        model="Qwen/Qwen2.5-7B-Instruct",
+        benchmark="mmlu",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=Path("unused"),
+    )
+
+    provenance = runtime_module.preload_provenance(config, torch_module=fake_torch)
+
+    assert provenance["dataset_cohort_rule"] == "paper-model-benchmark-cohort/v1"
+    assert provenance["dataset_samples_per_subset"] == 100
+
+
+def test_runtime_passes_the_frozen_cohort_size_to_the_dataset_loader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    sample = SimpleNamespace(
+        sample_id="sample",
+        question="question",
+        choices=["a", "b"],
+        correct_answer="A",
+        subset="subject",
+    )
+
+    class FakeLoader:
+        def load(self) -> list[SimpleNamespace]:
+            return [sample]
+
+    def fake_create_loader(**kwargs: object) -> FakeLoader:
+        captured.update(kwargs)
+        return FakeLoader()
+
+    monkeypatch.setattr(loader_module, "create_loader", fake_create_loader)
+    runtime = object.__new__(HuggingFacePairPreparationRuntime)
+    runtime.internal_benchmark = "mmlu"
+    runtime._dataset_provenance = {}
+    config = PrepareEditedPairsConfig(
+        model="google/gemma-3-12b-it",
+        benchmark="mmlu",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=Path("unused"),
+    )
+
+    assert runtime.load_samples(config) == [sample]
+    assert captured["samples_per_subset"] == 100
 
 
 def test_cli_dispatches_experiment_specific_pair_arguments(
