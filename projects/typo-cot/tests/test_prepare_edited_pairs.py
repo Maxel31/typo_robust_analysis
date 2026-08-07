@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 import typo_cot.cli as cli_module
+import typo_cot.data.loader as loader_module
 import typo_cot.experiments.prepare_edited_pairs.runtime as runtime_module
 from typo_cot.cli import main
 from typo_cot.experiments.catalog import get_experiment
@@ -28,6 +29,7 @@ from typo_cot.experiments.prepare_edited_pairs.runner import (
     PairPreparationRunError,
     PrepareEditedPairsConfig,
     PrepareEditedPairsResult,
+    _validate_preload_resume_provenance,
     run_prepare_edited_pairs,
 )
 from typo_cot.experiments.prepare_edited_pairs.runtime import (
@@ -43,6 +45,126 @@ def test_catalog_marks_pair_preparation_as_implemented() -> None:
 
 def test_pair_preparation_allows_the_documented_qwen_72b_scale_model() -> None:
     assert "Qwen/Qwen2.5-72B-Instruct" in ModelWrapper.get_allowed_models()
+
+
+@pytest.mark.parametrize(
+    ("model", "benchmark", "expected"),
+    (
+        ("Qwen/Qwen2.5-7B-Instruct", "mmlu", 100),
+        ("qwen2.5-7b-instruct", "mmlu", 100),
+        ("google/gemma-3-12b-it", "mmlu", 100),
+        ("google/GEMMA-3-27B-IT", "mmlu", 100),
+        ("google/gemma-3-4b-it", "mmlu", 50),
+        ("meta-llama/Llama-3.2-3B-Instruct", "mmlu", 50),
+        ("Qwen/Qwen2.5-72B-Instruct", "mmlu", 50),
+        ("google/gemma-3-4b-it", "mmlu-pro", 100),
+        ("Qwen/Qwen2.5-7B-Instruct", "gsm8k", 50),
+    ),
+)
+def test_paper_cohort_size_depends_on_model_and_benchmark(
+    model: str,
+    benchmark: str,
+    expected: int,
+) -> None:
+    config = PrepareEditedPairsConfig(
+        model=model,
+        benchmark=benchmark,
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=Path("unused"),
+    )
+
+    assert runtime_module._paper_samples_per_subset(config) == expected
+
+
+def test_full_mmlu_paper_cohort_models_are_supported_model_basenames() -> None:
+    allowed_basenames = {
+        model.rsplit("/", 1)[-1].lower() for model in ModelWrapper.get_allowed_models()
+    }
+
+    assert runtime_module._MMLU_100_PER_SUBJECT_PAPER_MODELS <= allowed_basenames
+
+
+def test_preload_provenance_freezes_the_paper_cohort_rule() -> None:
+    fake_torch = SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: False, device_count=lambda: 0),
+        version=SimpleNamespace(cuda=None),
+    )
+    config = PrepareEditedPairsConfig(
+        model="Qwen/Qwen2.5-7B-Instruct",
+        benchmark="mmlu",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=Path("unused"),
+    )
+
+    provenance = runtime_module.preload_provenance(config, torch_module=fake_torch)
+
+    assert provenance["dataset_cohort_rule"] == "paper-model-benchmark-cohort/v1"
+    assert provenance["dataset_samples_per_subset"] == 100
+
+
+def test_preload_provenance_uses_null_when_subset_cap_is_not_applied() -> None:
+    fake_torch = SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: False, device_count=lambda: 0),
+        version=SimpleNamespace(cuda=None),
+    )
+    config = PrepareEditedPairsConfig(
+        model="google/gemma-3-4b-it",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=Path("unused"),
+    )
+
+    provenance = runtime_module.preload_provenance(config, torch_module=fake_torch)
+
+    assert provenance["dataset_samples_per_subset"] is None
+
+
+def test_protocol_only_resume_rejects_incomplete_current_provenance() -> None:
+    with pytest.raises(ValueError, match="missing required protocol provenance"):
+        _validate_preload_resume_provenance(
+            {"provenance": {"runtime": "fake"}},
+            {"runtime": "fake"},
+            protocol_only=True,
+        )
+
+
+def test_runtime_passes_the_frozen_cohort_size_to_the_dataset_loader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    sample = SimpleNamespace(
+        sample_id="sample",
+        question="question",
+        choices=["a", "b"],
+        correct_answer="A",
+        subset="subject",
+    )
+
+    class FakeLoader:
+        def load(self) -> list[SimpleNamespace]:
+            return [sample]
+
+    def fake_create_loader(**kwargs: object) -> FakeLoader:
+        captured.update(kwargs)
+        return FakeLoader()
+
+    monkeypatch.setattr(loader_module, "create_loader", fake_create_loader)
+    runtime = object.__new__(HuggingFacePairPreparationRuntime)
+    runtime.internal_benchmark = "mmlu"
+    runtime._dataset_provenance = {}
+    config = PrepareEditedPairsConfig(
+        model="google/gemma-3-12b-it",
+        benchmark="mmlu",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=Path("unused"),
+    )
+
+    assert runtime.load_samples(config) == [sample]
+    assert captured["samples_per_subset"] == 100
 
 
 def test_cli_dispatches_experiment_specific_pair_arguments(
@@ -515,7 +637,7 @@ def test_runner_writes_versioned_pairs_and_completed_manifest(tmp_path: Path) ->
     assert result.pairs_path == output_dir / "pairs.jsonl"
 
 
-def test_completed_resume_returns_without_accessing_runtime(tmp_path: Path) -> None:
+def test_completed_resume_returns_without_loading_samples(tmp_path: Path) -> None:
     output_dir = tmp_path / "completed"
     config = PrepareEditedPairsConfig(
         model="test/model",
@@ -534,6 +656,100 @@ def test_completed_resume_returns_without_accessing_runtime(tmp_path: Path) -> N
         replace(config, resume=True),
         runtime=RuntimeMustNotLoad(),
     )
+
+    assert resumed == expected
+
+
+def test_completed_resume_rejects_a_legacy_cohort_before_model_loading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_dir = tmp_path / "legacy-cohort"
+    config = PrepareEditedPairsConfig(
+        model="google/gemma-3-12b-it",
+        benchmark="mmlu",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=output_dir,
+    )
+    run_prepare_edited_pairs(config, runtime=_FakeRuntime())
+    manifest_path = output_dir / "run.json"
+    manifest = json.loads(manifest_path.read_text())
+    assert "dataset_cohort_rule" not in manifest["provenance"]
+
+    monkeypatch.setattr(
+        runtime_module,
+        "preload_provenance",
+        lambda config: {
+            "model": config.model,
+            "benchmark_dataset_loader": "mmlu",
+            "dataset_cohort_rule": "paper-model-benchmark-cohort/v1",
+            "dataset_samples_per_subset": 100,
+            "random_seed_algorithm": "sha256-first-64-bits/v1",
+            "target_position": "maximum-logit-after-first-cot-token",
+            "alignment": "actual-edited-word-final-token",
+            "historical_compatibility_notes": [],
+        },
+    )
+
+    def model_must_not_load(config: PrepareEditedPairsConfig) -> None:
+        raise AssertionError("legacy cohort mismatch must fail before model loading")
+
+    monkeypatch.setattr(
+        runtime_module,
+        "HuggingFacePairPreparationRuntime",
+        model_must_not_load,
+    )
+
+    with pytest.raises(ValueError, match="resume provenance.*before model loading"):
+        run_prepare_edited_pairs(replace(config, resume=True))
+
+
+def test_completed_resume_ignores_environment_only_provenance_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_dir = tmp_path / "different-environment"
+    config = PrepareEditedPairsConfig(
+        model="google/gemma-3-12b-it",
+        benchmark="mmlu",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=output_dir,
+    )
+
+    protocol = {
+        "model": config.model,
+        "benchmark_dataset_loader": "mmlu",
+        "dataset_cohort_rule": "paper-model-benchmark-cohort/v1",
+        "dataset_samples_per_subset": 100,
+        "random_seed_algorithm": "sha256-first-64-bits/v1",
+        "target_position": "maximum-logit-after-first-cot-token",
+        "alignment": "actual-edited-word-final-token",
+        "historical_compatibility_notes": [],
+    }
+
+    class InitialRuntime(_FakeRuntime):
+        def provenance(self) -> dict[str, object]:
+            return {**protocol, "gpu_names": ["old-gpu"]}
+
+    expected = run_prepare_edited_pairs(config, runtime=InitialRuntime())
+    monkeypatch.setattr(
+        runtime_module,
+        "preload_provenance",
+        lambda config: {**protocol, "gpu_names": ["new-gpu"]},
+    )
+
+    def model_must_not_load(config: PrepareEditedPairsConfig) -> None:
+        raise AssertionError("completed resume must not load the model")
+
+    monkeypatch.setattr(
+        runtime_module,
+        "HuggingFacePairPreparationRuntime",
+        model_must_not_load,
+    )
+
+    resumed = run_prepare_edited_pairs(replace(config, resume=True))
 
     assert resumed == expected
 

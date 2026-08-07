@@ -83,6 +83,13 @@ instead of silently converting targeting into a word-level selector.
 The complete field contract and coordinate conventions are documented in
 [`docs/prepare-edited-pairs.md`](docs/prepare-edited-pairs.md).
 
+Dataset cohort size follows the final paper setting rather than one global
+MMLU cap. MMLU uses 100 examples per subject (5,700 items) for
+Qwen2.5-7B-Instruct, Gemma-3-12B-IT, and Gemma-3-27B-IT, and 50 per subject
+(2,850 items) for the other paper models. MMLU-Pro uses 100 per subject for
+every model. The selected cohort size and versioned selection rule are recorded
+in `run.json` provenance.
+
 ## Tests
 
 ```bash

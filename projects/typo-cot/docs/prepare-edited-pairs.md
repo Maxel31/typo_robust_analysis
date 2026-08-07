@@ -48,6 +48,25 @@ Multiple target ranks may map to the same row. `target_ranks` preserves those
 links, while `clean_token_indices`, `edited_token_indices`, and their final
 indices provide the coordinates later patching commands must use.
 
+## Paper cohort sizing
+
+The dataset loader derives its per-subset cap from both benchmark and model so
+the completed 42-setting grid has the final paper's denominators:
+
+| Benchmark/model setting | Per-subset cap | Completed items |
+|---|---:|---:|
+| MMLU with Qwen2.5-7B-Instruct or Gemma-3-12B/27B-IT | 100 | 5,700 |
+| MMLU with every other paper model | 50 | 2,850 |
+| MMLU-Pro with every paper model | 100 | 1,400 |
+
+Other benchmark loaders retain their complete paper cohorts. Model matching is
+case-insensitive and uses the final component of a Hugging Face model ID, so
+`Qwen/Qwen2.5-7B-Instruct` and `Qwen2.5-7B-Instruct` select the same rule. The
+manifest records the rule version and chosen per-subset cap; resume validation
+therefore rejects a checkpoint created under a different cohort rule. For
+benchmarks whose loaders do not apply a per-subset cap, the provenance value is
+`null` rather than a misleading default of 50.
+
 ## Run manifest and recovery
 
 `run.json` uses schema `prepare-edited-pairs-run/v1`. It records the canonical
@@ -59,9 +78,11 @@ Records are checkpointed individually in a hidden work directory. A failed run
 does not publish a partial `pairs.jsonl`; after the cause is fixed, rerun the
 identical command with `--resume`. The writer validates all frozen arguments,
 model/dataset/environment provenance, and protocol identifiers before it skips
-completed records. Environment and protocol mismatches fail before model
-weights are loaded; model revision and dataset fingerprints are checked after
-discovery but before any checkpoint is reused. The manifest remains `running`
+completed records. An incomplete resume checks the current environment and
+protocol before model loading, then model revision and dataset fingerprints
+after discovery but before any checkpoint is reused. A completed run performs
+no new computation, so its fast resume checks only static protocol/cohort
+identity and permits a different GPU or package environment. The manifest remains `running`
 while pending items are processed and becomes `failed` only after the run ends.
 It atomically publishes `pairs.jsonl` only when every selected item succeeds.
 If that published file is later removed, resuming a completed run reports an
