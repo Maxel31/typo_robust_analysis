@@ -19,6 +19,9 @@ dependencies = [
     "wordfreq>=3.1",
 ]
 
+[project.scripts]
+typo-cot = "typo_cot.cli:main"
+
 [project.optional-dependencies]
 # 生成・AttnLRP 帰属（Phase 1/3）。lxt は transformers を monkey-patch する
 lrp = [
