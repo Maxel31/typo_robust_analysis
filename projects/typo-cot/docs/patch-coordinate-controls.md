@@ -76,6 +76,12 @@ are ignored. Thus the referenced `correct` arm cannot be paired with controls
 from a materially different execution environment merely because their
 untreated answer tokens happen to match.
 
+Each runtime control scan also reports the exact source and destination token
+coordinates it actually used. The runner requires those coordinates to equal
+the preflight donor/offset plan before accepting or checkpointing a generation;
+therefore the public `coordinates` fields cannot silently diverge from the GPU
+patch locations after retokenization.
+
 `--limit N` is a smoke-only option. It limits recipients after the full
 reference denominator has fixed the donor map, so the donor for a retained
 recipient does not change when `N` changes.

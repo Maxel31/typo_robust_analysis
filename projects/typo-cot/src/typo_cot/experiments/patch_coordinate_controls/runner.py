@@ -166,11 +166,35 @@ class CoordinateControlConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ControlCoordinateUse:
+    """Exact token coordinates actually used by one runtime control arm."""
+
+    source_positions: tuple[int, ...]
+    destination_positions: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        for field, positions in (
+            ("source_positions", self.source_positions),
+            ("destination_positions", self.destination_positions),
+        ):
+            if not isinstance(positions, tuple) or not positions:
+                raise ValueError(f"{field} must be a non-empty tuple")
+            if any(
+                isinstance(position, bool) or not isinstance(position, int) or position < 0
+                for position in positions
+            ):
+                raise ValueError(f"{field} must contain non-negative integers")
+        if len(self.source_positions) != len(self.destination_positions):
+            raise ValueError("source and destination coordinate cardinalities differ")
+
+
+@dataclass(frozen=True, slots=True)
 class ControlScan:
     """Diagnostic generations returned for one recipient."""
 
     sample_id: str
     generations: Mapping[str, fixed_runner.AnswerGeneration]
+    coordinates: Mapping[str, ControlCoordinateUse]
 
 
 class CoordinateControlRuntime(Protocol):
@@ -954,6 +978,28 @@ def _matching_registry_entry(
     return entry if metadata.get("sha256") == entry["sha256"] else None
 
 
+def _coordinate_use_record(coordinates: ControlCoordinateUse) -> dict[str, list[int]]:
+    return {
+        "source_positions": list(coordinates.source_positions),
+        "destination_positions": list(coordinates.destination_positions),
+    }
+
+
+def _coordinate_use_from_record(value: object, *, field: str) -> ControlCoordinateUse:
+    row = _mapping(value, field=field)
+
+    def positions(name: str) -> tuple[int, ...]:
+        raw = row.get(name)
+        if not isinstance(raw, list):
+            raise TypeError(f"{field}.{name} must be a list")
+        return tuple(raw)  # type: ignore[arg-type]
+
+    return ControlCoordinateUse(
+        source_positions=positions("source_positions"),
+        destination_positions=positions("destination_positions"),
+    )
+
+
 def _baseline_checkpoint_payload(
     plan: _PairPlan,
     baseline: fixed_runner.BaselineScan,
@@ -1035,7 +1081,36 @@ def _control_checkpoint_payload(
             control: fixed_runner._generation_record(scan.generations[control])
             for control in diagnostics
         },
+        "coordinates": {
+            control: _coordinate_use_record(scan.coordinates[control]) for control in diagnostics
+        },
     }
+
+
+def _control_coordinate_use(
+    control: str,
+    plan: _PairPlan,
+    by_key: Mapping[tuple[str, str], _PairPlan],
+) -> ControlCoordinateUse:
+    if control == "correct":
+        return ControlCoordinateUse(plan.clean_positions, plan.edited_positions)
+    if control == "offset-2":
+        if plan.offset is None:
+            raise ValueError("offset-2 plan is missing")
+        return ControlCoordinateUse(
+            plan.offset.source_positions,
+            plan.offset.destination_positions,
+        )
+    if control == "cross-item":
+        if plan.donor_key is None or plan.donor_key not in by_key:
+            raise ValueError("cross-item donor plan is missing")
+        return ControlCoordinateUse(
+            by_key[plan.donor_key].clean_positions,
+            plan.edited_positions,
+        )
+    if control == "self-copy":
+        return ControlCoordinateUse(plan.edited_positions, plan.edited_positions)
+    raise ValueError(f"unsupported control: {control!r}")
 
 
 def _validate_control_scan(
@@ -1044,16 +1119,27 @@ def _validate_control_scan(
     *,
     baseline: fixed_runner.BaselineScan,
     config: CoordinateControlConfig,
+    plans: _Plans,
 ) -> None:
     diagnostics = tuple(control for control in config.controls if control != "correct")
     if not isinstance(scan, ControlScan) or scan.sample_id != plan.key[1]:
         raise ValueError("runtime ControlScan identity does not match its recipient")
     if set(scan.generations) != set(diagnostics) or len(scan.generations) != len(diagnostics):
         raise ValueError("runtime did not return exactly the requested diagnostic controls")
+    if set(scan.coordinates) != set(diagnostics) or len(scan.coordinates) != len(diagnostics):
+        raise ValueError("runtime did not report coordinates for every diagnostic control")
+    by_key = {candidate.key: candidate for candidate in plans.all_pairs}
     gold = _nonempty_string(
         plan.reference.source.record.get("gold_answer"), field="source gold_answer"
     )
     for control in diagnostics:
+        coordinate_use = scan.coordinates[control]
+        if not isinstance(coordinate_use, ControlCoordinateUse):
+            raise TypeError(f"runtime {control} coordinates must be ControlCoordinateUse")
+        if coordinate_use != _control_coordinate_use(control, plan, by_key):
+            raise ValueError(
+                f"runtime {control} coordinates do not match the preflight/output plan"
+            )
         fixed_runner._validate_generation(
             scan.generations[control],
             field=f"runtime {control}",
@@ -1093,6 +1179,9 @@ def _load_control_checkpoint(
     generations = _mapping(checkpoint.get("generations"), field="checkpoint generations")
     if set(generations) != set(diagnostics):
         raise ValueError("control checkpoint generation grid is incomplete")
+    coordinates = _mapping(checkpoint.get("coordinates"), field="checkpoint coordinates")
+    if set(coordinates) != set(diagnostics):
+        raise ValueError("control checkpoint coordinate grid is incomplete")
     gold = _nonempty_string(
         plan.reference.source.record.get("gold_answer"), field="source gold_answer"
     )
@@ -1107,8 +1196,15 @@ def _load_control_checkpoint(
             )
             for control in diagnostics
         },
+        coordinates={
+            control: _coordinate_use_from_record(
+                coordinates.get(control),
+                field=f"checkpoint {control} coordinates",
+            )
+            for control in diagnostics
+        },
     )
-    _validate_control_scan(scan, plan, baseline=baseline, config=config)
+    _validate_control_scan(scan, plan, baseline=baseline, config=config, plans=plans)
     return scan
 
 
@@ -1255,13 +1351,14 @@ def _coordinates_for_control(
     plan: _PairPlan,
     by_key: Mapping[tuple[str, str], _PairPlan],
 ) -> dict[str, object]:
+    coordinate_use = _control_coordinate_use(control, plan, by_key)
     if control == "correct":
         return {
             "source": "same-item-clean-edited-word",
             "donor_targeting": plan.key[0],
             "donor_sample_id": plan.key[1],
-            "source_positions": list(plan.clean_positions),
-            "destination_positions": list(plan.edited_positions),
+            "source_positions": list(coordinate_use.source_positions),
+            "destination_positions": list(coordinate_use.destination_positions),
             "input_pairs": len(plan.clean_positions),
             "dropped_pairs": 0,
             "offset_tokens": 0,
@@ -1273,8 +1370,8 @@ def _coordinates_for_control(
             "source": "same-item-clean-offset",
             "donor_targeting": plan.key[0],
             "donor_sample_id": plan.key[1],
-            "source_positions": list(plan.offset.source_positions),
-            "destination_positions": list(plan.offset.destination_positions),
+            "source_positions": list(coordinate_use.source_positions),
+            "destination_positions": list(coordinate_use.destination_positions),
             "input_pairs": plan.offset.input_pairs,
             "dropped_pairs": plan.offset.dropped_pairs,
             "offset_tokens": 2,
@@ -1287,8 +1384,8 @@ def _coordinates_for_control(
             "source": "different-item-clean-edited-word",
             "donor_targeting": donor.key[0],
             "donor_sample_id": donor.key[1],
-            "source_positions": list(donor.clean_positions),
-            "destination_positions": list(plan.edited_positions),
+            "source_positions": list(coordinate_use.source_positions),
+            "destination_positions": list(coordinate_use.destination_positions),
             "input_pairs": len(plan.edited_positions),
             "dropped_pairs": 0,
             "offset_tokens": 0,
@@ -1298,8 +1395,8 @@ def _coordinates_for_control(
             "source": "same-item-edited-identity",
             "donor_targeting": plan.key[0],
             "donor_sample_id": plan.key[1],
-            "source_positions": list(plan.edited_positions),
-            "destination_positions": list(plan.edited_positions),
+            "source_positions": list(coordinate_use.source_positions),
+            "destination_positions": list(coordinate_use.destination_positions),
             "input_pairs": len(plan.edited_positions),
             "dropped_pairs": 0,
             "offset_tokens": 0,
@@ -1815,6 +1912,7 @@ def run_patch_coordinate_controls(
                 plan,
                 baseline=baselines[plan.key],
                 config=config,
+                plans=plans,
             )
             fixed_runner._write_json_atomic(
                 path,

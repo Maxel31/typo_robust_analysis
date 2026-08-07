@@ -32,6 +32,7 @@ from typo_cot.experiments.patch_coordinate_controls.planning import (
 )
 from typo_cot.experiments.patch_coordinate_controls.runner import (
     CONTROL_NAMES,
+    ControlCoordinateUse,
     ControlScan,
     CoordinateControlConfig,
     CoordinateControlResult,
@@ -273,12 +274,14 @@ class _ControlRuntime:
         failure_for: str | None = None,
         num_layers: int = 12,
         provenance_changes: Mapping[str, object] | None = None,
+        coordinate_mismatch_for: str | None = None,
     ) -> None:
         self.answers = {sample_id: dict(values) for sample_id, values in (answers or {}).items()}
         self.baseline_mismatch_for = baseline_mismatch_for
         self.failure_for = failure_for
         self.num_layers = num_layers
         self.provenance_changes = dict(provenance_changes or {})
+        self.coordinate_mismatch_for = coordinate_mismatch_for
         self.baseline_calls: list[str] = []
         self.control_calls: list[tuple[str, str | None, tuple[str, ...]]] = []
 
@@ -334,7 +337,44 @@ class _ControlRuntime:
             else _answer(defaults[control], token=40 + CONTROL_NAMES.index(control))
             for control in controls
         }
-        return ControlScan(sample_id=sample_id, generations=generations)
+        clean_positions = tuple(int(word["clean_final_token"]) for word in pair["aligned_words"])
+        edited_positions = tuple(int(word["edited_final_token"]) for word in pair["aligned_words"])
+        coordinate_uses: dict[str, ControlCoordinateUse] = {}
+        if "offset-2" in controls:
+            offset = plan_offset_positions(
+                clean_positions,
+                edited_positions,
+                int(pair["clean"]["prompt_token_count"]),
+                int(pair["edited"]["prompt_token_count"]),
+                offset=2,
+            )
+            coordinate_uses["offset-2"] = ControlCoordinateUse(
+                source_positions=offset.source_positions,
+                destination_positions=offset.destination_positions,
+            )
+        if "cross-item" in controls:
+            assert donor_pair is not None
+            coordinate_uses["cross-item"] = ControlCoordinateUse(
+                source_positions=tuple(
+                    int(word["clean_final_token"]) for word in donor_pair["aligned_words"]
+                ),
+                destination_positions=edited_positions,
+            )
+        if "self-copy" in controls:
+            coordinate_uses["self-copy"] = ControlCoordinateUse(
+                source_positions=edited_positions,
+                destination_positions=edited_positions,
+            )
+        if sample_id == self.coordinate_mismatch_for and "offset-2" in coordinate_uses:
+            coordinate_uses["offset-2"] = ControlCoordinateUse(
+                source_positions=(999,),
+                destination_positions=(999,),
+            )
+        return ControlScan(
+            sample_id=sample_id,
+            generations=generations,
+            coordinates=coordinate_uses,
+        )
 
 
 def _config(reference: Path, output: Path, **changes: object) -> CoordinateControlConfig:
@@ -732,6 +772,11 @@ def test_production_runtime_routes_each_control_to_the_paper_coordinates() -> No
     )
 
     assert tuple(scan.generations) == ("offset-2", "cross-item", "self-copy")
+    assert scan.coordinates == {
+        "offset-2": ControlCoordinateUse((4,), (5,)),
+        "cross-item": ControlCoordinateUse((1,), (3,)),
+        "self-copy": ControlCoordinateUse((3,), (3,)),
+    }
     assert captures == [
         ("recipient", (4,)),
         ("donor", (1,)),
@@ -742,6 +787,22 @@ def test_production_runtime_routes_each_control_to_the_paper_coordinates() -> No
         ((3,), (0, 1, 2, 3, 4, 5)),
         ((3,), (0, 1, 2, 3, 4, 5)),
     ]
+
+
+def test_runtime_coordinate_use_must_match_the_preflight_and_output_plan(
+    tmp_path: Path,
+) -> None:
+    reference = _fixed_reference(tmp_path)
+    runtime = _ControlRuntime(coordinate_mismatch_for="a")
+
+    with pytest.raises(CoordinateControlRunError, match="coordinates do not match"):
+        run_patch_coordinate_controls(
+            _config(reference, tmp_path / "controls"),
+            runtime=runtime,
+        )
+
+    assert [call[0] for call in runtime.control_calls] == ["a"]
+    assert not (tmp_path / "controls" / "coordinate_control_records.jsonl").exists()
 
 
 @pytest.mark.parametrize("target", ("fixed-output", "prepared-source"))

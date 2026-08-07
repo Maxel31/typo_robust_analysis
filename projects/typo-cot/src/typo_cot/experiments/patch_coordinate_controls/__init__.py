@@ -2,6 +2,7 @@
 
 from typo_cot.experiments.patch_coordinate_controls.runner import (
     CONTROL_NAMES,
+    ControlCoordinateUse,
     ControlScan,
     CoordinateControlConfig,
     CoordinateControlResult,
@@ -11,6 +12,7 @@ from typo_cot.experiments.patch_coordinate_controls.runner import (
 
 __all__ = [
     "CONTROL_NAMES",
+    "ControlCoordinateUse",
     "ControlScan",
     "CoordinateControlConfig",
     "CoordinateControlResult",

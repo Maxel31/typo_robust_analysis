@@ -93,7 +93,10 @@ class HuggingFaceCoordinateControlRuntime(HuggingFaceFixedWindowAnswerPatchingRu
     ) -> ControlScan:
         """Generate each requested diagnostic arm for one edited recipient."""
 
-        from typo_cot.experiments.patch_coordinate_controls.runner import ControlScan
+        from typo_cot.experiments.patch_coordinate_controls.runner import (
+            ControlCoordinateUse,
+            ControlScan,
+        )
 
         self._validate_controls(controls)
         sample_id = self._sample_id(pair)
@@ -164,6 +167,7 @@ class HuggingFaceCoordinateControlRuntime(HuggingFaceFixedWindowAnswerPatchingRu
                 )
 
         generations: dict[str, Any] = {}
+        coordinate_uses: dict[str, ControlCoordinateUse] = {}
         with self._torch.inference_mode():
             for control in controls:
                 if control == "offset-2":
@@ -173,6 +177,7 @@ class HuggingFaceCoordinateControlRuntime(HuggingFaceFixedWindowAnswerPatchingRu
                         attention_mask=clean_mask,
                         positions=offset_plan.source_positions,
                     )
+                    source_positions = offset_plan.source_positions
                     destination_positions = offset_plan.destination_positions
                 elif control == "cross-item":
                     assert donor_ids is not None
@@ -183,6 +188,7 @@ class HuggingFaceCoordinateControlRuntime(HuggingFaceFixedWindowAnswerPatchingRu
                         attention_mask=donor_mask,
                         positions=donor_positions,
                     )
+                    source_positions = donor_positions
                     destination_positions = edited_positions
                 else:
                     donor_cache = self._capture(
@@ -190,7 +196,13 @@ class HuggingFaceCoordinateControlRuntime(HuggingFaceFixedWindowAnswerPatchingRu
                         attention_mask=edited_mask,
                         positions=edited_positions,
                     )
+                    source_positions = edited_positions
                     destination_positions = edited_positions
+
+                coordinate_uses[control] = ControlCoordinateUse(
+                    source_positions=source_positions,
+                    destination_positions=destination_positions,
+                )
 
                 generations[control] = self._generate(
                     input_ids=edited_ids,
@@ -203,7 +215,11 @@ class HuggingFaceCoordinateControlRuntime(HuggingFaceFixedWindowAnswerPatchingRu
                     ),
                 )
 
-        return ControlScan(sample_id=sample_id, generations=generations)
+        return ControlScan(
+            sample_id=sample_id,
+            generations=generations,
+            coordinates=coordinate_uses,
+        )
 
     def provenance(self) -> dict[str, object]:
         """Return the shared runtime provenance with control-specific semantics."""
