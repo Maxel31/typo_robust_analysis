@@ -726,9 +726,7 @@ def test_empty_regenerated_fixed_cohort_is_recorded_as_a_failed_run(
 def test_balanced_seed42_anchor_selection_is_per_arm_and_input_order_independent(
     tmp_path: Path,
 ) -> None:
-    attribution_records = [
-        _pair(f"a-{index}", targeting="attribution-4") for index in range(6)
-    ]
+    attribution_records = [_pair(f"a-{index}", targeting="attribution-4") for index in range(6)]
     random_records = [_pair(f"r-{index}", targeting="random-4") for index in range(6)]
     attribution, random_pairs = _sources(
         tmp_path,
@@ -746,8 +744,8 @@ def test_balanced_seed42_anchor_selection_is_per_arm_and_input_order_independent
     random.Random(42).shuffle(expected_a)
     random.Random(42).shuffle(expected_r)
     assert set(runtime.baseline_calls) == {
-        *(('attribution-4', str(sample_id)) for sample_id in expected_a[:2]),
-        *(('random-4', str(sample_id)) for sample_id in expected_r[:2]),
+        *(("attribution-4", str(sample_id)) for sample_id in expected_a[:2]),
+        *(("random-4", str(sample_id)) for sample_id in expected_r[:2]),
     }
 
 
@@ -777,9 +775,7 @@ def test_balanced_seed42_anchor_selection_is_per_arm_and_input_order_independent
             "model revisions differ",
         ),
         (
-            lambda a, r, ap, rp: r["provenance"].update(
-                dataset_records_sha256="other"
-            ),
+            lambda a, r, ap, rp: r["provenance"].update(dataset_records_sha256="other"),
             "dataset fingerprints differ",
         ),
         (
