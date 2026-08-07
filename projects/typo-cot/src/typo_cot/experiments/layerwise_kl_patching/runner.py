@@ -160,6 +160,7 @@ class _Source:
     pairs_sha256: str
     run_sha256: str
     manifest: dict[str, object]
+    model_revision: str
 
 
 def _now() -> str:
@@ -377,6 +378,15 @@ def _load_source(config: LayerwiseKLPatchingConfig) -> _Source:
         raise ValueError("source run must use paper seed 42")
     if arguments.get("num_edits") != 4:
         raise ValueError("source run must request four edits")
+    if "limit" not in arguments or arguments.get("limit") is not None:
+        raise ValueError("source pair preparation must not be limited")
+    if arguments.get("max_new_tokens") != 512:
+        raise ValueError("source run must use the paper generation cap 512")
+    provenance = _mapping(manifest.get("provenance"), field="source run provenance")
+    model_revision = _nonempty_string(
+        provenance.get("model_revision"),
+        field="source run provenance.model_revision",
+    )
     counts = _mapping(manifest.get("counts"), field="source run counts")
     if counts.get("failed") != 0 or manifest.get("failures") not in ([], None):
         raise ValueError("source run contains failures")
@@ -418,6 +428,7 @@ def _load_source(config: LayerwiseKLPatchingConfig) -> _Source:
         pairs_sha256=_sha256(pairs_path),
         run_sha256=_sha256(run_path),
         manifest=manifest,
+        model_revision=model_revision,
     )
 
 
@@ -564,6 +575,7 @@ def _base_manifest(
             "source_run_sha256": source.run_sha256,
             "source_record_count": len(source.pairs),
             "source_schema": "prepare-edited-pairs/v1",
+            "source_model_revision": source.model_revision,
         },
         "runtime": dict(runtime_provenance) if runtime_provenance is not None else None,
         "counts": dict(counts),
@@ -846,12 +858,19 @@ def run_layerwise_kl_patching(
             HuggingFaceLayerwiseKLPatchingRuntime,
         )
 
-        runtime = HuggingFaceLayerwiseKLPatchingRuntime(config)
+        runtime = HuggingFaceLayerwiseKLPatchingRuntime(
+            config,
+            revision=source.model_revision,
+        )
     if not isinstance(runtime.num_layers, int) or runtime.num_layers <= 0:
         raise ValueError("runtime num_layers must be a positive integer")
     runtime_provenance = dict(runtime.provenance())
     if runtime_provenance.get("num_decoder_layers") != runtime.num_layers:
         raise ValueError("runtime provenance num_decoder_layers does not match runtime")
+    if runtime_provenance.get("model_revision") != source.model_revision:
+        raise ValueError("runtime model revision does not match pair preparation")
+    if runtime_provenance.get("tokenizer_revision") != source.model_revision:
+        raise ValueError("runtime tokenizer revision does not match pair preparation")
     runtime_fp = _runtime_fingerprint(runtime_provenance)
     if previous is not None and previous.get("runtime") != runtime_provenance:
         raise ValueError("resume runtime provenance does not match the original run")

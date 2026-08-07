@@ -35,6 +35,12 @@ four-edit condition, source record count, sorted unique sample IDs, and strict
 JSON syntax. Duplicate keys and non-standard `NaN`/`Infinity` constants are
 errors rather than values.
 
+The source must be a full preparation run (`limit: null`) using the paper's
+512-token generation cap. Its recorded Hugging Face model commit is used to
+load both the model and tokenizer, and both resolved revisions are checked
+before any pair is scanned. A moving repository default therefore cannot
+silently change the failure cohort or patched activations.
+
 The RQ1 failure cohort first requires the freely generated clean answer to be
 correct and the freely generated edited answer to be wrong. Each runnable pair
 also needs at least one aligned changed word. At runtime the tokenizer must

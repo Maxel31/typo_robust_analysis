@@ -24,7 +24,9 @@ def _package_version(name: str) -> str:
 class HuggingFaceLayerwiseKLPatchingRuntime:
     """Load one causal LM and scan prompt-only edited-word block patches."""
 
-    def __init__(self, config: LayerwiseKLPatchingConfig) -> None:
+    def __init__(self, config: LayerwiseKLPatchingConfig, *, revision: str) -> None:
+        if not revision:
+            raise ValueError("layerwise-kl-patching requires a pinned source revision")
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None and visible != config.gpu_id:
             raise ValueError(
@@ -56,6 +58,7 @@ class HuggingFaceLayerwiseKLPatchingRuntime:
             gpu_id=config.gpu_id,
             dtype=torch.bfloat16,
             wrap_for_lxt=False,
+            revision=revision,
         )
         self.model = self.wrapper.model
         self.model.eval()

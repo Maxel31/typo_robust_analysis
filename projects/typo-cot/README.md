@@ -189,7 +189,9 @@ Use `--limit 1` only for a labelled GPU smoke run. It is always marked partial
 and is not comparable with the paper. An interrupted identical run can continue
 with `--resume`; public outputs are finalized only after all selected pairs have
 complete checkpoints. The command validates a completed four-edit, seed-42
-`prepare-edited-pairs/v1` input before loading model weights.
+`prepare-edited-pairs/v1` input before loading model weights. The source must
+be an unlimited run with the paper's 512-token generation cap; its recorded
+Hugging Face commit pins both the model and tokenizer used for patching.
 
 This command produces one setting summary. The paper's `.639/.410/.111`
 headline additionally macro-averages 30 setting summaries with equal setting
