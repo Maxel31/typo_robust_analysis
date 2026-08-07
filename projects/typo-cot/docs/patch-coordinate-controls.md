@@ -149,9 +149,14 @@ The command writes:
 
 Baseline replay and control generation use separate pair-atomic checkpoint
 directories. Every selected baseline must match the reference exactly before
-any control is generated. A failed run publishes no partial result tables;
-rerun the identical command with `--resume`. A completed resume validates the
-three public output hashes and returns before loading model weights.
+any control is generated, so baseline replay audits all selected pairs and
+reports every mismatch together. Once control generation begins, the first
+failure stops later GPU work; preceding pair checkpoints remain verified and
+`--resume` retries that first outstanding pair before continuing. A failed run
+publishes no partial result tables. A completed resume validates the three
+public output hashes and returns before loading model weights. Unregistered
+checkpoint files left by an interrupted or manual copy are removed against the
+deterministically reconstructed plan before reuse.
 
 SHA-256 values are content fingerprints, not random seeds. They make a changed
 paper, source, donor map, checkpoint, or output detectable; they do not choose

@@ -936,14 +936,22 @@ def _checkpoint_registry_entry(path: Path, plan: _PairPlan) -> dict[str, str]:
     }
 
 
-def _registry_matches(path: Path, metadata: object, plan: _PairPlan) -> bool:
-    return bool(
-        path.is_file()
-        and isinstance(metadata, Mapping)
-        and metadata.get("targeting") == plan.key[0]
-        and metadata.get("sample_id") == plan.key[1]
-        and metadata.get("sha256") == _sha256(path)
-    )
+def _matching_registry_entry(
+    path: Path,
+    metadata: object,
+    plan: _PairPlan,
+) -> dict[str, str] | None:
+    """Return current verified metadata without hashing a reusable file twice."""
+
+    if (
+        not path.is_file()
+        or not isinstance(metadata, Mapping)
+        or metadata.get("targeting") != plan.key[0]
+        or metadata.get("sample_id") != plan.key[1]
+    ):
+        return None
+    entry = _checkpoint_registry_entry(path, plan)
+    return entry if metadata.get("sha256") == entry["sha256"] else None
 
 
 def _baseline_checkpoint_payload(
@@ -1594,6 +1602,8 @@ def run_patch_coordinate_controls(
     selected_names = {_checkpoint_name(plan) for plan in plans.selected}
     for directory in (baseline_dir, control_dir):
         for orphan in directory.glob("*.json"):
+            # A valid manifest fixes the plan, but an interrupted/manual copy can
+            # still leave an unregistered file beside its checkpoints.
             if orphan.name not in selected_names:
                 orphan.unlink()
 
@@ -1602,7 +1612,8 @@ def run_patch_coordinate_controls(
     for plan in plans.selected:
         name = _checkpoint_name(plan)
         path = baseline_dir / name
-        reusable = _registry_matches(path, previous_baselines.get(name), plan)
+        registry_entry = _matching_registry_entry(path, previous_baselines.get(name), plan)
+        reusable = registry_entry is not None
         if reusable:
             try:
                 baselines[plan.key] = _load_baseline_checkpoint(
@@ -1615,7 +1626,8 @@ def run_patch_coordinate_controls(
             except (KeyError, OSError, TypeError, ValueError):
                 reusable = False
         if reusable:
-            baseline_registry[name] = _checkpoint_registry_entry(path, plan)
+            assert registry_entry is not None
+            baseline_registry[name] = registry_entry
         else:
             path.unlink(missing_ok=True)
 
@@ -1625,7 +1637,8 @@ def run_patch_coordinate_controls(
             continue
         name = _checkpoint_name(plan)
         path = control_dir / name
-        reusable = _registry_matches(path, previous_controls.get(name), plan)
+        registry_entry = _matching_registry_entry(path, previous_controls.get(name), plan)
+        reusable = registry_entry is not None
         if reusable:
             try:
                 _load_control_checkpoint(
@@ -1640,7 +1653,8 @@ def run_patch_coordinate_controls(
             except (KeyError, OSError, TypeError, ValueError):
                 reusable = False
         if reusable:
-            control_registry[name] = _checkpoint_registry_entry(path, plan)
+            assert registry_entry is not None
+            control_registry[name] = registry_entry
         else:
             path.unlink(missing_ok=True)
 
@@ -1850,6 +1864,9 @@ def run_patch_coordinate_controls(
             counts=counts,
             failures=control_failures,
         )
+        # Stop at the first control-generation failure: later pairs require
+        # expensive GPU work, no partial table may be published, and resume
+        # retries this first outstanding pair while preserving prior checkpoints.
         if control_failures:
             break
 

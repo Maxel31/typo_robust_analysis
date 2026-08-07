@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Mapping
 from contextlib import nullcontext
 from dataclasses import replace
@@ -807,6 +808,10 @@ def test_failed_run_keeps_checkpoints_and_resume_reuses_verified_baselines(tmp_p
     assert (output / "run.json").is_file()
     assert (output / "checkpoints" / "baselines").is_dir()
     assert not (output / "coordinate_control_records.jsonl").exists()
+    assert [call[0] for call in first.control_calls] == ["a", "b", "c"]
+
+    orphan = output / "checkpoints" / "baselines" / "not-in-the-plan.json"
+    _write_json(orphan, {"orphan": True})
 
     resumed_runtime = _ControlRuntime()
     result = run_patch_coordinate_controls(
@@ -814,8 +819,43 @@ def test_failed_run_keeps_checkpoints_and_resume_reuses_verified_baselines(tmp_p
         runtime=resumed_runtime,
     )
     assert result.records == 16
+    assert not orphan.exists()
     assert resumed_runtime.baseline_calls == []
     assert [call[0] for call in resumed_runtime.control_calls] == ["c", "d"]
+
+
+def test_resume_hashes_each_reusable_checkpoint_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reference = _fixed_reference(tmp_path)
+    output = tmp_path / "controls"
+    config = _config(reference, output)
+    with pytest.raises(CoordinateControlRunError, match="synthetic coordinate GPU failure"):
+        run_patch_coordinate_controls(config, runtime=_ControlRuntime(failure_for="c"))
+
+    reusable = {
+        path.resolve()
+        for checkpoint_type in ("baselines", "controls")
+        for path in (output / "checkpoints" / checkpoint_type).glob("*.json")
+    }
+    assert len(reusable) == 6
+    calls: Counter[Path] = Counter()
+    original_sha256 = coordinate_runner._sha256
+
+    def counting_sha256(path: Path) -> str:
+        resolved = path.resolve()
+        if resolved in reusable:
+            calls[resolved] += 1
+        return original_sha256(path)
+
+    monkeypatch.setattr(coordinate_runner, "_sha256", counting_sha256)
+    run_patch_coordinate_controls(
+        replace(config, resume=True),
+        runtime=_ControlRuntime(),
+    )
+
+    assert calls == Counter({path: 1 for path in reusable})
 
 
 def test_completed_resume_validates_hashes_without_loading_model(
