@@ -582,6 +582,34 @@ def test_continuation_slicing_rejects_empty_or_malformed_generation() -> None:
         continuation_token_ids(torch.tensor([[1], [2]]), prompt_length=0)
 
 
+def test_runtime_generation_freezes_greedy_tensor_output_and_extraction() -> None:
+    runtime = object.__new__(HuggingFaceLayerwiseAnswerPatchingRuntime)
+    calls: list[dict[str, object]] = []
+    runtime.config = SimpleNamespace(benchmark="gsm8k")
+    runtime.model = SimpleNamespace(
+        generate=lambda **kwargs: calls.append(kwargs) or torch.tensor([[10, 11, 20]])
+    )
+    runtime.tokenizer = SimpleNamespace(
+        pad_token_id=0,
+        decode=lambda token_ids, **kwargs: "The answer is 2.",
+    )
+
+    generation = runtime._generate(
+        input_ids=torch.tensor([[10, 11]]),
+        attention_mask=torch.ones(1, 2, dtype=torch.long),
+        correct_answer="2",
+    )
+
+    assert generation.token_ids == (20,)
+    assert generation.value == "2"
+    assert generation.is_correct is True
+    assert calls[0]["max_new_tokens"] == 512
+    assert calls[0]["do_sample"] is False
+    assert calls[0]["use_cache"] is True
+    assert calls[0]["return_dict_in_generate"] is False
+    assert calls[0]["output_scores"] is False
+
+
 def test_runner_rechecks_baselines_and_uses_one_fixed_denominator_for_both_directions(
     tmp_path: Path,
 ) -> None:
