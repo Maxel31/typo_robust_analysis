@@ -58,7 +58,7 @@ selected item succeeds. Reusing a non-empty output directory without
 
 ## Historical implementation differences
 
-The final paper is the protocol authority. Three behaviors in the exploratory
+The final paper is the protocol authority. Four behaviors in the exploratory
 code were not portable or did not implement that protocol exactly, so fresh
 outputs intentionally differ from some archived machine-local artifacts:
 
@@ -71,6 +71,10 @@ outputs intentionally differ from some archived machine-local artifacts:
 - Historical patching scripts sometimes found a ranked token substring. The
   final paper specifies the last token of the complete word that actually
   changed; `aligned_words` stores those exact clean and edited coordinates.
+- The exploratory option-label filter discarded every bare one-letter token
+  from A through J, including ordinary words such as `a` and variables such as
+  `i`. The public implementation excludes only contextual markers such as
+  `(A)`, `A.`, `A)`, or `A:`, even when the tokenizer splits the marker.
 
 These differences are also listed under `historical_compatibility_notes` in
 the run provenance. Do not combine newly generated pairs with archived pairs

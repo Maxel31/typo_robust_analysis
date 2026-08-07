@@ -123,9 +123,10 @@ def test_cli_rejects_edit_counts_outside_the_paper_protocol(value: str) -> None:
 
 def test_eligible_candidates_follow_the_paper_span_rules() -> None:
     candidates = eligible_candidates(
+        prompt_text="0123456789Alpha 42 (A) beta ?",
         token_texts=["<bos>", " Alpha", " 42", " (A)", " beta", "?"],
         relevances=[0.0, -0.8, 9.0, 5.0, 0.3, 2.0],
-        offsets=[(0, 0), (10, 16), (16, 19), (19, 23), (23, 28), (28, 29)],
+        offsets=[(0, 0), (10, 15), (16, 18), (19, 22), (23, 27), (28, 29)],
         editable_prompt_start=10,
         editable_prompt_end=29,
     )
@@ -136,10 +137,24 @@ def test_eligible_candidates_follow_the_paper_span_rules() -> None:
     ]
 
 
+def test_bare_single_letter_words_are_not_treated_as_option_markers() -> None:
+    candidates = eligible_candidates(
+        prompt_text="a i (A) option",
+        token_texts=[" a", " i", " (", "A", ")", " option"],
+        relevances=[1.0] * 6,
+        offsets=[(0, 1), (2, 3), (4, 5), (5, 6), (6, 7), (8, 14)],
+        editable_prompt_start=0,
+        editable_prompt_end=14,
+    )
+
+    assert [item.token_index for item in candidates] == [0, 1, 5]
+
+
 @pytest.mark.parametrize("relevance", (float("nan"), float("inf"), float("-inf")))
 def test_eligible_candidates_reject_nonfinite_relevance(relevance: float) -> None:
     with pytest.raises(PairProtocolError, match="non-finite"):
         eligible_candidates(
+            prompt_text="word",
             token_texts=[" word"],
             relevances=[relevance],
             offsets=[(0, 4)],

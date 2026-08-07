@@ -25,7 +25,7 @@ Operation = Literal["substitution", "duplication", "deletion"]
 _TARGETING_VALUES = frozenset(("attribution-4", "random-4"))
 _ATTRIBUTION_TARGET_COUNT = 4
 _NUMERIC_TOKEN = re.compile(r"[\d,.]+")
-_OPTION_MARKER = re.compile(r"(?:\([A-Ja-j]\)|[A-Ja-j][.):]?|[()]+)")
+_OPTION_MARKER = re.compile(r"(?:\([A-Ja-j]\)|[A-Ja-j][.):])")
 _WORD = re.compile(r"\S+")
 
 _QWERTY_NEIGHBORS: dict[str, tuple[str, ...]] = {
@@ -171,13 +171,23 @@ def _is_eligible_token(text: str) -> bool:
     stripped = text.strip()
     if not stripped or _NUMERIC_TOKEN.fullmatch(stripped):
         return False
-    if _OPTION_MARKER.fullmatch(stripped):
-        return False
     return any(_is_ascii_letter(character) for character in text)
+
+
+def _is_option_marker_span(prompt_text: str, start: int, end: int) -> bool:
+    """Recognize the complete whitespace word around a possibly split marker token."""
+    word_start = start
+    while word_start > 0 and not prompt_text[word_start - 1].isspace():
+        word_start -= 1
+    word_end = end
+    while word_end < len(prompt_text) and not prompt_text[word_end].isspace():
+        word_end += 1
+    return _OPTION_MARKER.fullmatch(prompt_text[word_start:word_end]) is not None
 
 
 def eligible_candidates(
     *,
+    prompt_text: str,
     token_texts: Sequence[str],
     relevances: Sequence[float],
     offsets: Sequence[tuple[int, int]],
@@ -195,12 +205,18 @@ def eligible_candidates(
         zip(token_texts, relevances, offsets, strict=True)
     ):
         start, end = offset
+        if start < 0 or end < start or end > len(prompt_text):
+            raise PairProtocolError(f"token {token_index} has an invalid prompt offset: {offset}")
         score = float(relevance)
         if not math.isfinite(score):
             raise PairProtocolError(f"token {token_index} has non-finite relevance: {score}")
         if start < editable_prompt_start or end > editable_prompt_end or end <= start:
             continue
-        if abs(score) <= 1e-9 or not _is_eligible_token(text):
+        if (
+            abs(score) <= 1e-9
+            or not _is_eligible_token(text)
+            or _is_option_marker_span(prompt_text, start, end)
+        ):
             continue
         candidates.append(CandidateToken(token_index, text, score, start, end))
     return candidates

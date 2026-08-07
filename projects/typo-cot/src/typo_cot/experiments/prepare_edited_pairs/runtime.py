@@ -225,6 +225,7 @@ class HuggingFacePairPreparationRuntime:
         editable_start = int(prompt_result.question_start_in_full)
         editable_end = int(prompt_result.question_with_choices_end)
         candidates = eligible_candidates(
+            prompt_text=clean_prompt,
             token_texts=token_texts,
             relevances=relevances,
             offsets=clean_offsets,
@@ -349,6 +350,7 @@ class HuggingFacePairPreparationRuntime:
                 "stable-sha256-seeds-replace-process-random-python-hash",
                 "mistral-attnlrp-rules-target-mistral-classes",
                 "actual-word-final-alignment-replaces-token-substring-coordinates",
+                "contextual-option-markers-retain-bare-single-letter-words",
             ],
         }
         provenance.update(self._dataset_provenance)
