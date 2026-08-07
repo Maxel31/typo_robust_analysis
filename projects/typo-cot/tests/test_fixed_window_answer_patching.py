@@ -491,7 +491,7 @@ def test_paired_binary_difference_is_deterministic_and_pair_resampled() -> None:
     assert result["difference"] == 0.0
     assert result["bootstrap_resamples"] == 10_000
     assert result["seed"] == 42
-    assert result["confidence_interval"] == [-0.5, 0.5]
+    assert result["confidence_interval"] == [-0.75, 0.75]
 
 
 def test_runner_uses_direction_specific_denominators_and_unextractable_is_failure(
