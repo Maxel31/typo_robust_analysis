@@ -47,6 +47,14 @@ from typo_cot.experiments.patch_coordinate_controls import (
     CoordinateControlRunError,
     run_patch_coordinate_controls,
 )
+from typo_cot.experiments.patch_position_controls import (
+    POSITION_NAMES as PATCH_POSITION_NAMES,
+)
+from typo_cot.experiments.patch_position_controls import (
+    PositionControlConfig,
+    PositionControlRunError,
+    run_patch_position_controls,
+)
 from typo_cot.experiments.prepare_edited_pairs.runner import (
     PUBLIC_BENCHMARKS,
     TARGETING_CONDITIONS,
@@ -227,6 +235,24 @@ def _parser() -> argparse.ArgumentParser:
     coordinate_controls.add_argument("--gpu-id", default="0")
     coordinate_controls.add_argument("--limit", type=_positive_int)
     coordinate_controls.add_argument("--resume", action="store_true")
+
+    position_controls = commands.add_parser(
+        "patch-position-controls",
+        help="Compare layerwise clean-state patches at three prompt positions.",
+    )
+    position_controls.add_argument("--model", required=True, help="Hugging Face model identifier.")
+    position_controls.add_argument("--benchmark", required=True, choices=("gsm8k",))
+    position_controls.add_argument("--layerwise-kl-run", required=True, type=Path)
+    position_controls.add_argument(
+        "--positions",
+        required=True,
+        nargs="+",
+        choices=PATCH_POSITION_NAMES,
+    )
+    position_controls.add_argument("--gpu-id", default="0")
+    position_controls.add_argument("--limit", type=_positive_int)
+    position_controls.add_argument("--output-dir", required=True, type=Path)
+    position_controls.add_argument("--resume", action="store_true")
     return parser
 
 
@@ -435,6 +461,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{result.pairs} pair(s): {result.records_path}"
         )
         print(f"coordinate-control summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "patch-position-controls":
+        try:
+            result = run_patch_position_controls(
+                PositionControlConfig(
+                    model=args.model,
+                    benchmark=args.benchmark,
+                    layerwise_kl_run=args.layerwise_kl_run,
+                    positions=tuple(args.positions),
+                    output_dir=args.output_dir,
+                    gpu_id=args.gpu_id,
+                    limit=args.limit,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            PositionControlRunError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            print(f"patch-position-controls: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.records} position-control record(s) for "
+            f"{result.pairs} pair(s): {result.records_path}"
+        )
+        print(f"position-control summary: {result.summary_path}")
         print(f"run manifest: {result.run_path}")
         return 0
     raise AssertionError("argparse accepted an unhandled command")

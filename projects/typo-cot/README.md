@@ -406,6 +406,57 @@ reference cohort has fixed the donor map. See
 [`docs/patch-coordinate-controls.md`](docs/patch-coordinate-controls.md) for
 the complete reference, schema, statistic, and restart contract.
 
+## Compare patch write positions
+
+`patch-position-controls` reproduces the Appendix B reachability scan for the
+Gemma-3-4B/GSM8K Attribution-4 layerwise-KL cohort. It consumes a completed
+`layerwise-kl-patching` run rather than a separately sampled pair file: the
+referenced run fixes the exact clean-to-edited included IDs, untreated KL
+denominators, and edited-word layer profile before either alternative position
+is evaluated.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+  typo-cot patch-position-controls \
+  --model google/gemma-3-4b-it \
+  --benchmark gsm8k \
+  --layerwise-kl-run \
+    results/layerwise-kl-patching/gemma-3-4b-it/gsm8k/attribution-4 \
+  --positions edited-word prompt-final question-final \
+  --gpu-id 0 \
+  --output-dir results/patch-position-controls/gemma-3-4b-it/gsm8k
+```
+
+The canonical direction is clean-to-edited only. For `edited-word`, the
+command carries forward the referenced run's clean edited-word-final states,
+aligned edited destinations, and complete layer profile without silently
+forming a new denominator. `prompt-final` copies the clean prompt's last token
+state to the edited prompt's last token. `question-final` copies between the
+last tokens overlapping each run's recorded editable GSM8K question span. The
+latter locator is an implementation detail recovered from the legacy runner;
+the final PDF names the position but does not specify its token locator.
+
+Every requested alternative arm must finish every decoder layer for every
+referenced included ID. Scores use the same source denominator:
+`1 - KL(clean || patched-edited) / KL(clean || edited)`. The summary reports
+the common cohort fingerprint, layerwise across-pair medians, and every layer
+tied at the maximum. It does not invent a three-arm difference test, CI, or
+alternative-position MCB result absent from the final paper; Table 5's
+edited-word MCB remains source-profile metadata. The analysis is
+recorded as `post_hoc_exploratory_descriptive` and maps intervention
+reachability, not information movement or an encoding mechanism.
+
+The command writes `position_control_records.jsonl`,
+`pair_status_records.jsonl`, `position_control_summary.json`, and `run.json`.
+A fresh public upstream run is labelled as a fresh protocol reproduction; it
+does not claim the undocumented historical IDs merely because the paper's
+legacy row had 109 pairs. `--limit 1` produces a labelled smoke run, and
+`--resume` validates the original input, plan, runtime, checkpoints, and final
+output hashes before reuse. See
+[`docs/patch-position-controls.md`](docs/patch-position-controls.md) for the
+published acceptance values, schemas, last-layer behavior, and restart
+contract.
+
 ## Tests
 
 ```bash
@@ -415,6 +466,7 @@ uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/te
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_layerwise_answer_patching.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_fixed_window_answer_patching.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_patch_coordinate_controls.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_patch_position_controls.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 

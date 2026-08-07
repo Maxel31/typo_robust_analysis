@@ -74,7 +74,7 @@ refactor, a direct command is executable only when its catalog status is
 | `layerwise-answer-patching` | §3.2–3.3, §4.1 | Separate eight-setting free-generation scans; at most 300 pooled anchors are rechecked into one fixed n=94–226 denominator per setting |
 | `fixed-window-answer-patching` | §3.3, §4.1, Appendix B | Frozen [0,6) answer patch; [6,12) prespecified MMLU-Pro comparison |
 | `patch-coordinate-controls` | §3.3, §4.1, Appendix B | Primary 172 pairs; correct, +2 offset, cross-item, and identity controls |
-| `patch-position-controls` | §4.1, Appendix B | Same 109 pairs at edited-word, prompt-final, and question-final positions |
+| `patch-position-controls` | §3.3, §4.1, Table 5, Appendix B | Gemma-3-4B/GSM8K Attribution-4 layerwise-KL cohort (published n=109), held common across edited-word, prompt-final, and question-final positions |
 | `patch-text-combination` | §3.5, §4.1, Table 2 | Descriptive patch absent/present × zero/full clean text on 172 pairs |
 | `cot-swap` | §3.4, §4.2, Appendix C | Clean-correct A denominator; restoration conditions on B≠A |
 | `answer-line-deletion` | §3.4, §4.2, Table 1 | Same eligible CoT-swap cases after final answer-line deletion |
@@ -190,11 +190,14 @@ uv run --project projects/typo-cot --extra lrp typo-cot patch-coordinate-control
   --gpu-id 0 \
   --output-dir results/patch-coordinate-controls/gemma-3-4b-it/gsm8k
 
-uv run typo-cot patch-position-controls \
+CUDA_VISIBLE_DEVICES=0 \
+uv run --project projects/typo-cot --extra lrp typo-cot patch-position-controls \
   --model google/gemma-3-4b-it --benchmark gsm8k \
-  --pairs data/cohorts/patch-position/common-109.jsonl \
+  --layerwise-kl-run \
+    results/layerwise-kl-patching/gemma-3-4b-it/gsm8k/attribution-4 \
   --positions edited-word prompt-final question-final \
-  --output-dir results/patch-position-controls
+  --gpu-id 0 \
+  --output-dir results/patch-position-controls/gemma-3-4b-it/gsm8k
 
 uv run typo-cot patch-text-combination \
   --model google/gemma-3-4b-it --benchmark gsm8k \
