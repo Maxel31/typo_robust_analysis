@@ -486,13 +486,15 @@ def test_wilson_interval_and_binary_layer_summary_use_fixed_pair_denominator() -
         (True, True, False),
         (True, False, False),
         (False, True, False),
+        (True, True, False),
+        (False, False, False),
         (False, False, False),
     )
     summary = summarize_binary_layers(events, bootstrap_resamples=200, seed=42)
     assert [(row["successes"], row["total"], row["rate"]) for row in summary["layer_profile"]] == [
-        (2, 4, 0.5),
-        (2, 4, 0.5),
-        (0, 4, 0.0),
+        (3, 6, 0.5),
+        (3, 6, 0.5),
+        (0, 6, 0.0),
     ]
     assert summary["peak"] == {
         "layer_index": 0,
@@ -643,6 +645,41 @@ def test_runner_rechecks_baselines_and_uses_one_fixed_denominator_for_both_direc
         "pair_status_records.jsonl",
         "setting_summary.json",
     }
+
+
+def test_empty_regenerated_fixed_cohort_is_recorded_as_a_failed_run(
+    tmp_path: Path,
+) -> None:
+    attribution, random_pairs = _sources(tmp_path)
+    excluded = {
+        key: BaselineScan(
+            sample_id=key[1],
+            clean=_answer("9", correct=False, token=90),
+            edited=_answer("3", correct=False, token=30),
+        )
+        for key in (("attribution-4", "a"), ("random-4", "b"))
+    }
+    output = tmp_path / "out"
+
+    with pytest.raises(LayerwiseAnswerPatchingRunError, match="no selected anchor"):
+        run_layerwise_answer_patching(
+            _config(attribution, random_pairs, output),
+            runtime=FakeRuntime(baselines=excluded),
+        )
+
+    run = json.loads((output / "run.json").read_text(encoding="utf-8"))
+    assert run["status"] == "failed"
+    assert run["counts"]["fixed_current_flips"] == 0
+    assert run["failures"] == [
+        {
+            "error_type": "EmptyFixedCohort",
+            "message": "no selected anchor remained a regenerated clean-correct, edited-wrong pair",
+            "sample_id": "*",
+            "targeting": "all",
+        }
+    ]
+    assert not (output / "answer_layer_records.jsonl").exists()
+    assert len(list((output / ".layerwise-answer-patching-work/checkpoints").glob("*.json"))) == 2
 
 
 def test_balanced_seed42_anchor_selection_is_per_arm_and_input_order_independent(
