@@ -683,7 +683,8 @@ def test_runner_rechecks_baselines_and_uses_one_fixed_denominator_for_both_direc
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["status"] == "completed"
     assert run["paper_sha256"] == PAPER_SHA256
-    assert run["comparability"]["status"] == "fresh-paper-protocol-reproduction"
+    assert run["comparability"]["status"] == "non-paper-setting"
+    assert run["comparability"]["limitations"] == ["model-not-in-paper-eight-settings"]
     assert run["comparability"]["exact_historical_figure2_ids"] is False
     assert run["comparability"]["historical_qwen_targeting_discrepancy"] is True
     assert run["comparability"]["historical_unextractable_induction_discrepancy"] is True
@@ -692,6 +693,75 @@ def test_runner_rechecks_baselines_and_uses_one_fixed_denominator_for_both_direc
         "pair_status_records.jsonl",
         "setting_summary.json",
     }
+
+
+def test_paper_comparability_requires_both_directions_and_both_targeting_arms(
+    tmp_path: Path,
+) -> None:
+    paper_model = "Qwen/Qwen2.5-3B-Instruct"
+
+    def paper_pair(
+        sample_id: str,
+        *,
+        targeting: str,
+        edited_correct: bool = False,
+    ) -> dict[str, object]:
+        record = _pair(sample_id, targeting=targeting, edited_correct=edited_correct)
+        record["model"] = paper_model
+        return record
+
+    full_attribution = _write_pair_source(
+        tmp_path / "full" / "attribution",
+        [paper_pair("a", targeting="attribution-4")],
+        targeting="attribution-4",
+        model=paper_model,
+    )
+    full_random = _write_pair_source(
+        tmp_path / "full" / "random",
+        [paper_pair("r", targeting="random-4")],
+        targeting="random-4",
+        model=paper_model,
+    )
+    full_config = _config(
+        full_attribution,
+        full_random,
+        tmp_path / "full" / "out",
+        model=paper_model,
+    )
+    full_result = run_layerwise_answer_patching(full_config, runtime=FakeRuntime())
+    full_run = json.loads(full_result.run_path.read_text(encoding="utf-8"))
+    assert full_run["comparability"]["status"] == "fresh-paper-protocol-reproduction"
+    assert full_run["comparability"]["limitations"] == []
+
+    partial_result = run_layerwise_answer_patching(
+        replace(
+            full_config,
+            directions=("clean-to-edited",),
+            output_dir=tmp_path / "partial-directions",
+        ),
+        runtime=FakeRuntime(),
+    )
+    partial_run = json.loads(partial_result.run_path.read_text(encoding="utf-8"))
+    assert partial_run["comparability"]["status"] == "partial-paper-protocol"
+    assert "directions-not-both" in partial_run["comparability"]["limitations"]
+
+    missing_random = _write_pair_source(
+        tmp_path / "missing-arm" / "random",
+        [paper_pair("r", targeting="random-4", edited_correct=True)],
+        targeting="random-4",
+        model=paper_model,
+    )
+    missing_result = run_layerwise_answer_patching(
+        replace(
+            full_config,
+            random_pairs=missing_random,
+            output_dir=tmp_path / "missing-arm" / "out",
+        ),
+        runtime=FakeRuntime(),
+    )
+    missing_run = json.loads(missing_result.run_path.read_text(encoding="utf-8"))
+    assert missing_run["comparability"]["status"] == "partial-paper-protocol"
+    assert "no-selected-random-4-anchors" in missing_run["comparability"]["limitations"]
 
 
 def test_empty_regenerated_fixed_cohort_is_recorded_as_a_failed_run(
