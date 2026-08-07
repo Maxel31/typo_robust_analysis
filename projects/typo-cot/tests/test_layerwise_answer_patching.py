@@ -684,7 +684,10 @@ def test_runner_rechecks_baselines_and_uses_one_fixed_denominator_for_both_direc
     assert run["status"] == "completed"
     assert run["paper_sha256"] == PAPER_SHA256
     assert run["comparability"]["status"] == "non-paper-setting"
-    assert run["comparability"]["limitations"] == ["model-not-in-paper-eight-settings"]
+    assert run["comparability"]["limitations"] == [
+        "model-not-in-paper-eight-settings",
+        "no-fixed-random-4-anchors",
+    ]
     assert run["comparability"]["exact_historical_figure2_ids"] is False
     assert run["comparability"]["historical_qwen_targeting_discrepancy"] is True
     assert run["comparability"]["historical_unextractable_induction_discrepancy"] is True
