@@ -71,7 +71,7 @@ refactor, a direct command is executable only when its catalog status is
 | `prepare-edited-pairs` | §3.1, Appendix A, Table 4 | Versioned clean/edited pair and alignment records |
 | `targeting-fidelity-audit` | §3.1, Appendix A | Edit landing, gold-option, and operation counts |
 | `layerwise-kl-patching` | §3.3, §4.1, Appendix B | Selected clean-correct/edited-wrong pairs; complete finite grids with untreated KL > 1e-9; normalized first-CoT-token KL |
-| `layerwise-answer-patching` | §3.2–3.3, §4.1 | Separate eight-setting free-generation scans, at most 300 pairs per curve |
+| `layerwise-answer-patching` | §3.2–3.3, §4.1 | Separate eight-setting free-generation scans; at most 300 pooled anchors are rechecked into one fixed n=94–226 denominator per setting |
 | `fixed-window-answer-patching` | §3.3, §4.1, Appendix B | Frozen [0,6) answer patch; [6,12) prespecified MMLU-Pro comparison |
 | `patch-coordinate-controls` | §3.3, §4.1, Appendix B | Primary 172 pairs; correct, +2 offset, cross-item, and identity controls |
 | `patch-position-controls` | §4.1, Appendix B | Same 109 pairs at edited-word, prompt-final, and question-final positions |
@@ -155,10 +155,12 @@ uv run --extra lrp typo-cot layerwise-kl-patching \
   --gpu-id 0 \
   --output-dir results/layerwise-kl-patching/gemma-3-4b-it/gsm8k
 
-uv run typo-cot layerwise-answer-patching \
+CUDA_VISIBLE_DEVICES=0 uv run --extra lrp typo-cot layerwise-answer-patching \
   --model google/gemma-3-4b-it --benchmark gsm8k \
-  --pairs data/cohorts/layerwise-answer/gemma-3-4b-it_gsm8k.jsonl \
+  --attribution-pairs results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/attribution-4/pairs.jsonl \
+  --random-pairs results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/random-4/pairs.jsonl \
   --directions clean-to-edited edited-to-clean --max-pairs 300 \
+  --gpu-id 0 \
   --output-dir results/layerwise-answer-patching/gemma-3-4b-it/gsm8k
 
 uv run typo-cot fixed-window-answer-patching \
