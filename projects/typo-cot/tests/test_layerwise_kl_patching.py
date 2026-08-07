@@ -164,17 +164,21 @@ class FakeRuntime:
         n_layers: int = 3,
         scans: dict[str, dict[str, DirectionScan]] | None = None,
         error_for: str | None = None,
+        model_revision: str = "source-revision",
+        tokenizer_revision: str = "source-revision",
     ) -> None:
         self.num_layers = n_layers
         self.scans = scans or {}
         self.error_for = error_for
+        self.model_revision = model_revision
+        self.tokenizer_revision = tokenizer_revision
         self.calls: list[tuple[str, tuple[str, ...]]] = []
 
     def provenance(self) -> dict[str, object]:
         return {
             "runtime": "fake",
-            "model_revision": "runtime-revision",
-            "tokenizer_revision": "runtime-revision",
+            "model_revision": self.model_revision,
+            "tokenizer_revision": self.tokenizer_revision,
             "decoder_adapter": "fake.layers",
             "num_decoder_layers": self.num_layers,
             "dtype": "bfloat16",
@@ -584,6 +588,18 @@ def test_direction_validity_is_independent_and_nonfinite_layer_excludes_complete
             lambda manifest, pair: manifest["arguments"].update(num_edits=2),
             "four edits",
         ),
+        (
+            lambda manifest, pair: manifest["arguments"].update(limit=1),
+            "must not be limited",
+        ),
+        (
+            lambda manifest, pair: manifest["arguments"].update(max_new_tokens=64),
+            "generation cap 512",
+        ),
+        (
+            lambda manifest, pair: manifest["provenance"].update(model_revision=None),
+            "model_revision",
+        ),
         (lambda manifest, pair: pair.update(model="other/model"), "record model"),
         (
             lambda manifest, pair: pair["aligned_words"][0].update(clean_final_token=2),
@@ -607,6 +623,51 @@ def test_source_contract_errors_fail_before_runtime_loading(
     with pytest.raises(ValueError, match=message):
         run_layerwise_kl_patching(_config(pairs_path, tmp_path / "out"), runtime=runtime)
     assert runtime.calls == []
+
+
+@pytest.mark.parametrize(
+    ("runtime", "message"),
+    (
+        (FakeRuntime(model_revision="different-revision"), "model revision"),
+        (FakeRuntime(tokenizer_revision="different-revision"), "tokenizer revision"),
+    ),
+)
+def test_runtime_revision_must_match_pair_preparation_before_scanning(
+    tmp_path: Path,
+    runtime: FakeRuntime,
+    message: str,
+) -> None:
+    pairs_path = _write_pair_source(tmp_path / "source", [_pair("sample")])
+
+    with pytest.raises(ValueError, match=message):
+        run_layerwise_kl_patching(_config(pairs_path, tmp_path / "out"), runtime=runtime)
+
+    assert runtime.calls == []
+
+
+def test_default_runtime_receives_pair_preparation_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from typo_cot.experiments.layerwise_kl_patching import runtime as runtime_module
+
+    pairs_path = _write_pair_source(tmp_path / "source", [_pair("sample")])
+    received: dict[str, object] = {}
+
+    class RecordingRuntime(FakeRuntime):
+        def __init__(self, config: object, *, revision: str) -> None:
+            super().__init__(model_revision=revision, tokenizer_revision=revision)
+            received.update(config=config, revision=revision)
+
+    monkeypatch.setattr(
+        runtime_module,
+        "HuggingFaceLayerwiseKLPatchingRuntime",
+        RecordingRuntime,
+    )
+
+    run_layerwise_kl_patching(_config(pairs_path, tmp_path / "out"))
+
+    assert received["revision"] == "source-revision"
 
 
 def test_strict_json_rejects_duplicate_keys_and_nonfinite_constants(tmp_path: Path) -> None:

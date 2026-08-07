@@ -158,6 +158,30 @@ class TestModelWrapper:
         _ = wrapper.tokenizer
         mock_tokenizer.assert_called_once()
 
+    @patch("typo_cot.models.wrapper.AutoModelForCausalLM.from_pretrained")
+    @patch("typo_cot.models.wrapper.AutoTokenizer.from_pretrained")
+    def test_model_and_tokenizer_are_loaded_at_the_requested_revision(
+        self,
+        mock_tokenizer: MagicMock,
+        mock_model: MagicMock,
+    ) -> None:
+        mock_model.return_value = MagicMock()
+        tokenizer = MagicMock()
+        tokenizer.pad_token = "<pad>"
+        mock_tokenizer.return_value = tokenizer
+
+        wrapper = ModelWrapper(
+            model_name="gpt2",
+            device=torch.device("cpu"),
+            revision="0123456789abcdef",
+        )
+
+        _ = wrapper.model
+        _ = wrapper.tokenizer
+
+        assert mock_model.call_args.kwargs["revision"] == "0123456789abcdef"
+        assert mock_tokenizer.call_args.kwargs["revision"] == "0123456789abcdef"
+
     @patch("typo_cot.models.wrapper.AutoTokenizer.from_pretrained")
     def test_tokenize(self, mock_tokenizer: MagicMock) -> None:
         """トークナイズが正しく動作することを確認."""
