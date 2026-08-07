@@ -233,12 +233,17 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         required_arguments=(
             "--model",
             "--benchmark",
-            "--pairs",
+            "--fixed-window-run",
             "--layers",
             "--controls",
             "--output-dir",
         ),
-        outputs=("coordinate_control_records.jsonl", "coordinate_control_summary.json"),
+        outputs=(
+            "coordinate_control_records.jsonl",
+            "pair_status_records.jsonl",
+            "coordinate_control_summary.json",
+            "run.json",
+        ),
         compute="gpu",
     ),
     ExperimentSpec(

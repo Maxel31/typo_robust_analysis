@@ -180,11 +180,15 @@ uv run --extra lrp typo-cot fixed-window-answer-patching \
   --gpu-id 0 \
   --output-dir results/fixed-window-answer-patching/gemma-3-4b-it/gsm8k
 
-uv run typo-cot patch-coordinate-controls \
+CUDA_VISIBLE_DEVICES=0 \
+uv run --project projects/typo-cot --extra lrp typo-cot patch-coordinate-controls \
   --model google/gemma-3-4b-it --benchmark gsm8k \
-  --pairs data/cohorts/fixed-window/primary-172.jsonl --layers 0:6 \
+  --fixed-window-run \
+    results/fixed-window-answer-patching/gemma-3-4b-it/gsm8k \
+  --layers 0:6 \
   --controls correct offset-2 cross-item self-copy \
-  --output-dir results/patch-coordinate-controls
+  --gpu-id 0 \
+  --output-dir results/patch-coordinate-controls/gemma-3-4b-it/gsm8k
 
 uv run typo-cot patch-position-controls \
   --model google/gemma-3-4b-it --benchmark gsm8k \
