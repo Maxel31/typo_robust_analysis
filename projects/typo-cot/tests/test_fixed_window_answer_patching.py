@@ -6,6 +6,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -31,6 +32,9 @@ from typo_cot.experiments.fixed_window_answer_patching.runner import (
     PairWindowScan,
     parse_layer_window,
     run_fixed_window_answer_patching,
+)
+from typo_cot.experiments.fixed_window_answer_patching.runtime import (
+    HuggingFaceFixedWindowAnswerPatchingRuntime,
 )
 
 
@@ -217,9 +221,7 @@ class FakeRuntime:
         self.scans = dict(scans or {})
         self.error_for = error_for
         self.baseline_calls: list[tuple[str, str]] = []
-        self.scan_calls: list[
-            tuple[str, str, tuple[LayerWindow, ...], tuple[str, ...]]
-        ] = []
+        self.scan_calls: list[tuple[str, str, tuple[LayerWindow, ...], tuple[str, ...]]] = []
 
     def provenance(self) -> dict[str, object]:
         return {
@@ -341,29 +343,32 @@ def test_cli_dispatches_paths_windows_and_runtime_controls(
         )
 
     monkeypatch.setattr(cli_module, "run_fixed_window_answer_patching", fake_run)
-    assert main(
-        [
-            "fixed-window-answer-patching",
-            "--model",
-            "test/model",
-            "--benchmark",
-            "mmlu-pro",
-            "--pairs",
-            "results/a/pairs.jsonl",
-            "--layers",
-            "0:6",
-            "6:12",
-            "--directions",
-            "clean-to-edited",
-            "--gpu-id",
-            "0",
-            "--limit",
-            "2",
-            "--output-dir",
-            "results/fixed",
-            "--resume",
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "fixed-window-answer-patching",
+                "--model",
+                "test/model",
+                "--benchmark",
+                "mmlu-pro",
+                "--pairs",
+                "results/a/pairs.jsonl",
+                "--layers",
+                "0:6",
+                "6:12",
+                "--directions",
+                "clean-to-edited",
+                "--gpu-id",
+                "0",
+                "--limit",
+                "2",
+                "--output-dir",
+                "results/fixed",
+                "--resume",
+            ]
+        )
+        == 0
+    )
     assert captured == [
         FixedWindowAnswerPatchingConfig(
             model="test/model",
@@ -492,6 +497,47 @@ def test_paired_binary_difference_is_deterministic_and_pair_resampled() -> None:
     assert result["bootstrap_resamples"] == 10_000
     assert result["seed"] == 42
     assert result["confidence_interval"] == [-0.75, 0.75]
+
+
+def test_runtime_generation_explicitly_freezes_greedy_decoding() -> None:
+    runtime = object.__new__(HuggingFaceFixedWindowAnswerPatchingRuntime)
+    calls: list[dict[str, object]] = []
+    runtime.config = SimpleNamespace(benchmark="gsm8k")
+    runtime.model = SimpleNamespace(
+        generate=lambda **kwargs: calls.append(kwargs) or torch.tensor([[10, 11, 20]])
+    )
+    runtime.tokenizer = SimpleNamespace(
+        pad_token_id=0,
+        decode=lambda token_ids, **kwargs: "The answer is 2.",
+    )
+
+    generation = runtime._generate(
+        input_ids=torch.tensor([[10, 11]]),
+        attention_mask=torch.ones(1, 2, dtype=torch.long),
+        correct_answer="2",
+    )
+
+    assert generation.value == "2"
+    assert generation.is_correct is True
+    assert len(calls) == 1
+    assert torch.equal(calls[0].pop("input_ids"), torch.tensor([[10, 11]]))
+    assert torch.equal(
+        calls[0].pop("attention_mask"),
+        torch.ones(1, 2, dtype=torch.long),
+    )
+    assert calls[0] == {
+        "max_new_tokens": 512,
+        "do_sample": False,
+        "num_beams": 1,
+        "num_return_sequences": 1,
+        "temperature": None,
+        "top_p": None,
+        "top_k": None,
+        "use_cache": True,
+        "return_dict_in_generate": False,
+        "output_scores": False,
+        "pad_token_id": 0,
+    }
 
 
 def test_runner_uses_direction_specific_denominators_and_unextractable_is_failure(
@@ -706,9 +752,7 @@ def test_source_contract_fails_before_runtime_creation(
         forbidden_factory,
     )
     with pytest.raises(ValueError, match="paper SHA-256"):
-        run_fixed_window_answer_patching(
-            _config((attribution, random_pairs), tmp_path / "out")
-        )
+        run_fixed_window_answer_patching(_config((attribution, random_pairs), tmp_path / "out"))
     assert created is False
 
 

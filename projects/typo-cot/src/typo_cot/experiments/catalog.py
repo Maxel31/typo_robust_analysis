@@ -209,8 +209,14 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
             "--directions",
             "--output-dir",
         ),
-        outputs=("fixed_window_records.jsonl", "setting_summary.json"),
+        outputs=(
+            "fixed_window_records.jsonl",
+            "pair_status_records.jsonl",
+            "setting_summary.json",
+            "run.json",
+        ),
         compute="gpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="patch-coordinate-controls",

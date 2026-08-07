@@ -335,7 +335,9 @@ counted some unextractable patched answers as changes. Fresh runs therefore
 report the paper-defined extracted-answer event and retain the published Table 6
 values only as historical reference metadata, not as forced acceptance targets.
 The offset and cross-item donor comparisons are a separate
-`patch-coordinate-controls` operation.
+`patch-coordinate-controls` operation. See
+[`docs/fixed-window-answer-patching.md`](docs/fixed-window-answer-patching.md)
+for the complete selection, schema, comparison, and resume contract.
 
 ## Tests
 
