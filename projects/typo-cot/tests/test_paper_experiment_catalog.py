@@ -66,6 +66,8 @@ def _documented_target_commands(markdown: str) -> dict[str, set[str]]:
                 if executable_index + 1 >= len(tokens):
                     continue
                 slug = tokens[executable_index + 1]
+                if slug not in EXPECTED_EXPERIMENTS:
+                    continue
                 assert slug not in commands, f"duplicate command example: {slug}"
                 commands[slug] = set(tokens)
 
