@@ -487,9 +487,7 @@ def test_runtime_retains_an_item_with_no_eligible_edit() -> None:
     assert record["answer_changed"] is False
 
 
-def test_runtime_retains_attempts_when_edits_have_no_final_text_difference(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_runtime_retains_attempts_when_edits_have_no_final_text_difference() -> None:
     runtime, generated_prompts = _pair_runtime_for_prompt("alpha")
     config = PrepareEditedPairsConfig(
         model="test/model",
@@ -499,32 +497,12 @@ def test_runtime_retains_attempts_when_edits_have_no_final_text_difference(
         output_dir=Path("unused"),
     )
     sample = SimpleNamespace(
-        sample_id="unaligned",
+        sample_id="net-zero-109",
         question="alpha",
         choices=None,
         correct_answer="A",
         subset=None,
     )
-    edits = iter(
-        (
-            CharacterEdit("alpha", "blpha", "substitution", 0, "a", "b"),
-            CharacterEdit("blpha", "alpha", "substitution", 0, "b", "a"),
-        )
-    )
-    application = apply_paper_edits(
-        editable_text="alpha",
-        editable_prompt_start=0,
-        candidate_order=(
-            CandidateToken(3, " alpha", 1.0, 0, 5, attribution_rank=1),
-            CandidateToken(4, " alpha", 0.5, 0, 5, attribution_rank=2),
-        ),
-        num_edits=2,
-        seed=42,
-        sample_id="unaligned",
-        edit_token=lambda _text, _seed: next(edits),
-    )
-    assert application.edited_text == "alpha"
-    monkeypatch.setattr(runtime_module, "apply_paper_edits", lambda **_kwargs: application)
 
     record = runtime.prepare_pair(sample, config)
 
@@ -532,7 +510,11 @@ def test_runtime_retains_attempts_when_edits_have_no_final_text_difference(
     assert record["num_candidates"] == 2
     assert record["num_target_attempts"] == 2
     assert len(record["target_attempts"]) == 2
-    assert len({attempt["target_token_index"] for attempt in record["target_attempts"]}) == 2
+    assert {attempt["target_token_index"] for attempt in record["target_attempts"]} == {0, 1}
+    assert [attempt["edited_token_text"] for attempt in record["target_attempts"]] == [
+        "aopha",
+        "alpha",
+    ]
     assert record["num_aligned_words"] == 0
     assert record["aligned_words"] == []
     assert record["edited"]["prompt"] == record["clean"]["prompt"]
