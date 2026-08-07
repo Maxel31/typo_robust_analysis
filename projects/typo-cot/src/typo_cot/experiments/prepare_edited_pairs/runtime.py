@@ -30,7 +30,7 @@ _BENCHMARK_NAMES = {
     "csqa": "commonsense_qa",
 }
 _DEFAULT_SAMPLES_PER_SUBSET = {"mmlu": 50, "mmlu_pro": 100}
-_FULL_MMLU_PAPER_MODELS = frozenset(
+_MMLU_100_PER_SUBJECT_PAPER_MODELS = frozenset(
     {
         "qwen2.5-7b-instruct",
         "gemma-3-12b-it",
@@ -51,9 +51,16 @@ _HISTORICAL_COMPATIBILITY_NOTES = [
 def _paper_samples_per_subset(config: PrepareEditedPairsConfig) -> int:
     """Return the final paper's model/benchmark-specific subset cap."""
     model_basename = config.model.rsplit("/", 1)[-1].lower()
-    if config.benchmark == "mmlu" and model_basename in _FULL_MMLU_PAPER_MODELS:
+    if config.benchmark == "mmlu" and model_basename in _MMLU_100_PER_SUBJECT_PAPER_MODELS:
         return 100
     return _DEFAULT_SAMPLES_PER_SUBSET.get(_BENCHMARK_NAMES[config.benchmark], 50)
+
+
+def _recorded_samples_per_subset(config: PrepareEditedPairsConfig) -> int | None:
+    """Return the applied subset cap, or null when that loader ignores the cap."""
+    if config.benchmark not in {"mmlu", "mmlu-pro"}:
+        return None
+    return _paper_samples_per_subset(config)
 
 
 def _package_version(name: str) -> str:
@@ -92,7 +99,7 @@ def preload_provenance(
         "model": config.model,
         "benchmark_dataset_loader": _BENCHMARK_NAMES[config.benchmark],
         "dataset_cohort_rule": _DATASET_COHORT_RULE,
-        "dataset_samples_per_subset": _paper_samples_per_subset(config),
+        "dataset_samples_per_subset": _recorded_samples_per_subset(config),
         "random_seed_algorithm": "sha256-first-64-bits/v1",
         "target_position": "maximum-logit-after-first-cot-token",
         "alignment": "actual-edited-word-final-token",

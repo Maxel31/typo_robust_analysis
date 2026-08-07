@@ -76,6 +76,14 @@ def test_paper_cohort_size_depends_on_model_and_benchmark(
     assert runtime_module._paper_samples_per_subset(config) == expected
 
 
+def test_full_mmlu_paper_cohort_models_are_supported_model_basenames() -> None:
+    allowed_basenames = {
+        model.rsplit("/", 1)[-1].lower() for model in ModelWrapper.get_allowed_models()
+    }
+
+    assert runtime_module._MMLU_100_PER_SUBJECT_PAPER_MODELS <= allowed_basenames
+
+
 def test_preload_provenance_freezes_the_paper_cohort_rule() -> None:
     fake_torch = SimpleNamespace(
         cuda=SimpleNamespace(is_available=lambda: False, device_count=lambda: 0),
@@ -93,6 +101,24 @@ def test_preload_provenance_freezes_the_paper_cohort_rule() -> None:
 
     assert provenance["dataset_cohort_rule"] == "paper-model-benchmark-cohort/v1"
     assert provenance["dataset_samples_per_subset"] == 100
+
+
+def test_preload_provenance_uses_null_when_subset_cap_is_not_applied() -> None:
+    fake_torch = SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: False, device_count=lambda: 0),
+        version=SimpleNamespace(cuda=None),
+    )
+    config = PrepareEditedPairsConfig(
+        model="google/gemma-3-4b-it",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=Path("unused"),
+    )
+
+    provenance = runtime_module.preload_provenance(config, torch_module=fake_torch)
+
+    assert provenance["dataset_samples_per_subset"] is None
 
 
 def test_runtime_passes_the_frozen_cohort_size_to_the_dataset_loader(
@@ -662,6 +688,45 @@ def test_completed_resume_rejects_a_legacy_cohort_before_model_loading(
 
     with pytest.raises(ValueError, match="resume provenance.*before model loading"):
         run_prepare_edited_pairs(replace(config, resume=True))
+
+
+def test_completed_resume_ignores_environment_only_provenance_changes(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "different-environment"
+    config = PrepareEditedPairsConfig(
+        model="google/gemma-3-12b-it",
+        benchmark="mmlu",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=output_dir,
+    )
+
+    class InitialRuntime(_FakeRuntime):
+        def provenance(self) -> dict[str, object]:
+            return {
+                "model": config.model,
+                "dataset_cohort_rule": "paper-model-benchmark-cohort/v1",
+                "dataset_samples_per_subset": 100,
+                "gpu_names": ["old-gpu"],
+            }
+
+    class CurrentRuntime(_FakeRuntime):
+        def provenance(self) -> dict[str, object]:
+            return {
+                "model": config.model,
+                "dataset_cohort_rule": "paper-model-benchmark-cohort/v1",
+                "dataset_samples_per_subset": 100,
+                "gpu_names": ["new-gpu"],
+            }
+
+    expected = run_prepare_edited_pairs(config, runtime=InitialRuntime())
+    resumed = run_prepare_edited_pairs(
+        replace(config, resume=True),
+        runtime=CurrentRuntime(),
+    )
+
+    assert resumed == expected
 
 
 def test_completed_resume_accepts_equivalent_relative_and_absolute_output_paths(

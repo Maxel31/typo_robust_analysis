@@ -166,13 +166,37 @@ def _validate_resume(
     return (started_at if isinstance(started_at, str) else _now()), previous
 
 
+_COMPLETED_RESUME_PROTOCOL_FIELDS = (
+    "model",
+    "benchmark_dataset_loader",
+    "dataset_cohort_rule",
+    "dataset_samples_per_subset",
+    "random_seed_algorithm",
+    "target_position",
+    "alignment",
+    "historical_compatibility_notes",
+)
+
+
 def _validate_preload_resume_provenance(
     previous_manifest: Mapping[str, object],
     current_provenance: Mapping[str, object],
+    *,
+    protocol_only: bool = False,
 ) -> None:
     previous_provenance = previous_manifest.get("provenance")
+    fields = (
+        [key for key in _COMPLETED_RESUME_PROTOCOL_FIELDS if key in current_provenance]
+        if protocol_only
+        else list(current_provenance)
+    )
+    # Injected CPU test runtimes may expose only one synthetic provenance key.
+    # Preserve their completed-resume contract while production manifests use
+    # the explicit protocol field set above.
+    if not fields:
+        fields = list(current_provenance)
     if not isinstance(previous_provenance, Mapping) or any(
-        previous_provenance.get(key) != value for key, value in current_provenance.items()
+        previous_provenance.get(key) != current_provenance.get(key) for key in fields
     ):
         raise ValueError(
             "resume provenance does not match the current environment or protocol "
@@ -222,6 +246,7 @@ def run_prepare_edited_pairs(
             _validate_preload_resume_provenance(
                 previous,
                 current_preload_provenance,
+                protocol_only=True,
             )
             counts = previous.get("counts")
             written = int(counts.get("written", 0)) if isinstance(counts, Mapping) else 0
