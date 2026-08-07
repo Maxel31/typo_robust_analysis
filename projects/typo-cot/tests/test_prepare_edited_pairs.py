@@ -601,7 +601,7 @@ def test_runner_writes_versioned_pairs_and_completed_manifest(tmp_path: Path) ->
     assert result.pairs_path == output_dir / "pairs.jsonl"
 
 
-def test_completed_resume_returns_without_accessing_runtime(tmp_path: Path) -> None:
+def test_completed_resume_returns_without_loading_samples(tmp_path: Path) -> None:
     output_dir = tmp_path / "completed"
     config = PrepareEditedPairsConfig(
         model="test/model",
@@ -622,6 +622,46 @@ def test_completed_resume_returns_without_accessing_runtime(tmp_path: Path) -> N
     )
 
     assert resumed == expected
+
+
+def test_completed_resume_rejects_a_legacy_cohort_before_model_loading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_dir = tmp_path / "legacy-cohort"
+    config = PrepareEditedPairsConfig(
+        model="google/gemma-3-12b-it",
+        benchmark="mmlu",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=output_dir,
+    )
+    run_prepare_edited_pairs(config, runtime=_FakeRuntime())
+    manifest_path = output_dir / "run.json"
+    manifest = json.loads(manifest_path.read_text())
+    assert "dataset_cohort_rule" not in manifest["provenance"]
+
+    monkeypatch.setattr(
+        runtime_module,
+        "preload_provenance",
+        lambda config: {
+            "model": config.model,
+            "dataset_cohort_rule": "paper-model-benchmark-cohort/v1",
+            "dataset_samples_per_subset": 100,
+        },
+    )
+
+    def model_must_not_load(config: PrepareEditedPairsConfig) -> None:
+        raise AssertionError("legacy cohort mismatch must fail before model loading")
+
+    monkeypatch.setattr(
+        runtime_module,
+        "HuggingFacePairPreparationRuntime",
+        model_must_not_load,
+    )
+
+    with pytest.raises(ValueError, match="resume provenance.*before model loading"):
+        run_prepare_edited_pairs(replace(config, resume=True))
 
 
 def test_completed_resume_accepts_equivalent_relative_and_absolute_output_paths(

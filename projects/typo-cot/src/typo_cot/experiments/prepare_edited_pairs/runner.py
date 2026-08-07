@@ -166,6 +166,20 @@ def _validate_resume(
     return (started_at if isinstance(started_at, str) else _now()), previous
 
 
+def _validate_preload_resume_provenance(
+    previous_manifest: Mapping[str, object],
+    current_provenance: Mapping[str, object],
+) -> None:
+    previous_provenance = previous_manifest.get("provenance")
+    if not isinstance(previous_provenance, Mapping) or any(
+        previous_provenance.get(key) != value for key, value in current_provenance.items()
+    ):
+        raise ValueError(
+            "resume provenance does not match the current environment or protocol "
+            "before model loading"
+        )
+
+
 def run_prepare_edited_pairs(
     config: PrepareEditedPairsConfig,
     *,
@@ -197,6 +211,18 @@ def run_prepare_edited_pairs(
                     "completed run is missing pairs.jsonl; restore the published file or use "
                     "a new output directory"
                 )
+            if runtime is None:
+                from typo_cot.experiments.prepare_edited_pairs.runtime import (
+                    preload_provenance,
+                )
+
+                current_preload_provenance = preload_provenance(config)
+            else:
+                current_preload_provenance = runtime.provenance()
+            _validate_preload_resume_provenance(
+                previous,
+                current_preload_provenance,
+            )
             counts = previous.get("counts")
             written = int(counts.get("written", 0)) if isinstance(counts, Mapping) else 0
             return PrepareEditedPairsResult(pairs_path, run_path, written)
@@ -212,16 +238,11 @@ def run_prepare_edited_pairs(
         )
 
         if previous_manifest is not None:
-            previous_provenance = previous_manifest.get("provenance")
             current_preload_provenance = preload_provenance(config)
-            if not isinstance(previous_provenance, Mapping) or any(
-                previous_provenance.get(key) != value
-                for key, value in current_preload_provenance.items()
-            ):
-                raise ValueError(
-                    "resume provenance does not match the current environment or protocol "
-                    "before model loading"
-                )
+            _validate_preload_resume_provenance(
+                previous_manifest,
+                current_preload_provenance,
+            )
         runtime = HuggingFacePairPreparationRuntime(config)
 
     samples = sorted(runtime.load_samples(config), key=_sample_id)
