@@ -46,9 +46,8 @@ paper contract and future command are fixed but the public runner is not yet
 available; `implemented` means the command can run. The catalog reports this
 status explicitly, so the README does not imply that unfinished runners work.
 
-GPU experiments will require the locked `lrp` environment after its dedicated
-environment PR lands. CPU-only catalog inspection and contract tests require no
-model download.
+GPU experiments use the paper-locked `lrp` environment. CPU-only catalog
+inspection and contract tests require no model download.
 
 ## Repository map
 

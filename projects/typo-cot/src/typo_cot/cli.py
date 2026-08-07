@@ -14,6 +14,12 @@ from typo_cot.experiments import (
     ExperimentSpec,
     get_experiment,
 )
+from typo_cot.experiments.layerwise_kl_patching import (
+    DIRECTION_NAMES,
+    LayerwiseKLPatchingConfig,
+    LayerwiseKLPatchingRunError,
+    run_layerwise_kl_patching,
+)
 from typo_cot.experiments.prepare_edited_pairs.runner import (
     PUBLIC_BENCHMARKS,
     TARGETING_CONDITIONS,
@@ -100,6 +106,25 @@ def _parser() -> argparse.ArgumentParser:
     targeting_audit.add_argument("--pairs-root", required=True, type=Path)
     targeting_audit.add_argument("--output-dir", required=True, type=Path)
     targeting_audit.add_argument("--expected-seed", type=int, default=42)
+
+    layerwise_kl = commands.add_parser(
+        "layerwise-kl-patching",
+        help="Patch aligned edited-word block outputs and scan first-CoT-token KL.",
+    )
+    layerwise_kl.add_argument("--model", required=True, help="Hugging Face model identifier.")
+    layerwise_kl.add_argument("--benchmark", required=True, choices=PUBLIC_BENCHMARKS)
+    layerwise_kl.add_argument("--pairs", required=True, type=Path)
+    layerwise_kl.add_argument("--targeting", required=True, choices=TARGETING_CONDITIONS)
+    layerwise_kl.add_argument(
+        "--directions",
+        required=True,
+        nargs="+",
+        choices=DIRECTION_NAMES,
+    )
+    layerwise_kl.add_argument("--output-dir", required=True, type=Path)
+    layerwise_kl.add_argument("--gpu-id", default="0")
+    layerwise_kl.add_argument("--limit", type=_positive_int)
+    layerwise_kl.add_argument("--resume", action="store_true")
     return parser
 
 
@@ -192,6 +217,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"audited {result.items} pair(s) across {result.settings} setting(s): "
             f"{result.summary_path}"
         )
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "layerwise-kl-patching":
+        try:
+            result = run_layerwise_kl_patching(
+                LayerwiseKLPatchingConfig(
+                    model=args.model,
+                    benchmark=args.benchmark,
+                    pairs=args.pairs,
+                    targeting=args.targeting,
+                    directions=tuple(args.directions),
+                    output_dir=args.output_dir,
+                    gpu_id=args.gpu_id,
+                    limit=args.limit,
+                    resume=args.resume,
+                )
+            )
+        except (FileExistsError, LayerwiseKLPatchingRunError, RuntimeError, ValueError) as exc:
+            print(f"layerwise-kl-patching: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.layer_records} layer record(s) from "
+            f"{result.included_grids} complete grid(s): {result.layer_records_path}"
+        )
+        print(f"setting summary: {result.summary_path}")
         print(f"run manifest: {result.run_path}")
         return 0
     raise AssertionError("argparse accepted an unhandled command")

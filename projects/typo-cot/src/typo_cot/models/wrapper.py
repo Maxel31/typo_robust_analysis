@@ -129,6 +129,7 @@ class ModelWrapper:
         dtype: torch.dtype = torch.bfloat16,
         trust_remote_code: bool = False,
         use_multi_gpu: bool = False,
+        revision: str | None = None,
     ) -> None:
         """初期化.
 
@@ -138,12 +139,14 @@ class ModelWrapper:
             dtype: モデルのデータ型（lxtでは勾配オーバーフロー防止のためbfloat16推奨）
             trust_remote_code: リモートコードを信頼するか
             use_multi_gpu: 複数GPUを使用するか（device_map="auto"）
+            revision: モデルとトークナイザーを固定するHugging Face revision
         """
         self.model_name = model_name
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = dtype
         self.trust_remote_code = trust_remote_code
         self.use_multi_gpu = use_multi_gpu
+        self.revision = revision
 
         self._model: PreTrainedModel | None = None
         self._tokenizer: PreTrainedTokenizer | None = None
@@ -166,6 +169,7 @@ class ModelWrapper:
     def _load_model(self) -> None:
         """モデルをロード."""
         logger.info(f"モデルをロード中: {self.model_name}")
+        revision_kwargs = {"revision": self.revision} if self.revision is not None else {}
 
         # 複数GPUの場合はdevice_map="auto"を使用
         if self.use_multi_gpu:
@@ -175,6 +179,7 @@ class ModelWrapper:
                 torch_dtype=self.dtype,
                 device_map="auto",
                 trust_remote_code=self.trust_remote_code,
+                **revision_kwargs,
             )
         else:
             self._model = AutoModelForCausalLM.from_pretrained(
@@ -182,6 +187,7 @@ class ModelWrapper:
                 torch_dtype=self.dtype,
                 device_map=self.device,
                 trust_remote_code=self.trust_remote_code,
+                **revision_kwargs,
             )
         self._model.eval()
 
@@ -190,10 +196,12 @@ class ModelWrapper:
     def _load_tokenizer(self) -> None:
         """トークナイザーをロード."""
         logger.info(f"トークナイザーをロード中: {self.model_name}")
+        revision_kwargs = {"revision": self.revision} if self.revision is not None else {}
 
         self._tokenizer = AutoTokenizer.from_pretrained(
             self.model_name,
             trust_remote_code=self.trust_remote_code,
+            **revision_kwargs,
         )
 
         # パディングトークンの設定
@@ -528,6 +536,7 @@ def create_model_wrapper(
     gpu_id: str = "0",
     dtype: torch.dtype = torch.bfloat16,
     wrap_for_lxt: bool = True,
+    revision: str | None = None,
 ) -> ModelWrapper:
     """モデルラッパーを作成するファクトリ関数.
 
@@ -536,6 +545,7 @@ def create_model_wrapper(
         gpu_id: 使用するGPU ID（複数の場合はカンマ区切り: "0,1,2"）
         dtype: モデルのデータ型（lxtでは勾配オーバーフロー防止のためbfloat16推奨）
         wrap_for_lxt: lxtでラップするか
+        revision: モデルとトークナイザーを固定するHugging Face revision
 
     Returns:
         ModelWrapperインスタンス
@@ -547,6 +557,7 @@ def create_model_wrapper(
         device=device,
         dtype=dtype,
         use_multi_gpu=use_multi_gpu,
+        revision=revision,
     )
 
     if wrap_for_lxt:

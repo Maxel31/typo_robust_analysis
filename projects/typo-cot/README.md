@@ -24,7 +24,8 @@ From the repository root:
 uv sync --project projects/typo-cot
 ```
 
-Pair preparation additionally needs the GPU/LRP dependencies:
+Pair preparation and activation-patching commands additionally need the
+paper-locked GPU/LRP dependencies:
 
 ```bash
 uv sync --project projects/typo-cot --extra lrp
@@ -144,11 +145,70 @@ See
 [`docs/targeting-fidelity-audit.md`](docs/targeting-fidelity-audit.md) for the
 schemas and paper comparison rules.
 
+## Scan layerwise first-CoT-token KL patches
+
+`layerwise-kl-patching` implements the paper's distributional RQ1 scan for one
+model, benchmark, and targeting condition. It selects the stored freely
+generated cases whose clean answer is correct and edited answer is wrong, then
+copies one complete decoder block's residual output at every aligned edited-word
+final token. Run every layer in both directions with physical GPU 0 as follows:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+  typo-cot layerwise-kl-patching \
+  --model google/gemma-3-4b-it \
+  --benchmark gsm8k \
+  --pairs results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/attribution-4/pairs.jsonl \
+  --targeting attribution-4 \
+  --directions clean-to-edited edited-to-clean \
+  --gpu-id 0 \
+  --output-dir results/layerwise-kl-patching/gemma-3-4b-it/gsm8k/attribution-4
+```
+
+The readout is the prompt-final next-token distribution that predicts the first
+CoT token. It is not pair preparation's adjacent AttnLRP target after observing
+that token. For `clean-to-edited`, the normalized score is
+`1 - KL(clean || patched-edited) / KL(clean || edited)`; the reciprocal
+direction swaps clean and edited everywhere. Untreated denominators must be
+finite and greater than `1e-9`. A pair and direction enter a summary only when
+all decoder layers have finite patched KL values; negative normalized values
+remain negative.
+
+The command writes:
+
+- `layer_records.jsonl`: included long-form records ordered by sample,
+  direction, and layer;
+- `pair_status_records.jsonl`: every selected pair/direction and its inclusion
+  or explicit exclusion reason;
+- `setting_summary.json`: across-pair layer medians, peak and Hsu MCB layer set,
+  plus paper-defined early/middle/late summaries;
+- `run.json`: arguments, paper/input/output fingerprints, protocol and runtime
+  provenance, progress, failures, and comparability status.
+
+Use `--limit 1` only for a labelled GPU smoke run. It is always marked partial
+and is not comparable with the paper. An interrupted identical run can continue
+with `--resume`; public outputs are finalized only after all selected pairs have
+complete checkpoints. The command validates a completed four-edit, seed-42
+`prepare-edited-pairs/v1` input before loading model weights. The source must
+be an unlimited run with the paper's 512-token generation cap; its recorded
+Hugging Face commit pins both the model and tokenizer used for patching.
+
+This command produces one setting summary. The paper's `.639/.410/.111`
+headline additionally macro-averages 30 setting summaries with equal setting
+weight after excluding the two flagged small MATH cells; that cross-setting
+artifact step is intentionally separate. Fresh public pair generation follows
+the final PDF but fixes documented historical alignment and extraction defects,
+so exact Table 5 row counts require the corresponding frozen source IDs rather
+than an undocumented recreation of old teacher-forcing gates. See
+[`docs/layerwise-kl-patching.md`](docs/layerwise-kl-patching.md) for the complete
+contract.
+
 ## Tests
 
 ```bash
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_paper_experiment_catalog.py
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_targeting_fidelity_audit.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_layerwise_kl_patching.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 

@@ -133,8 +133,9 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
             "and scan every layer in both patch directions."
         ),
         cohort=(
-            "Pairs with a complete finite layer grid and an untreated KL denominator above "
-            "1e-9; the headline macro summary retains 30 of 32 settings."
+            "Selected clean-correct, edited-wrong pairs with a complete finite layer grid "
+            "and untreated KL denominator above 1e-9; the headline macro retains 30 of 32 "
+            "settings."
         ),
         intervention="Clean-to-edited restoration and reciprocal edited-to-clean induction.",
         readout="Normalized first-CoT-token KL restoration or induction.",
@@ -146,8 +147,14 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
             "--directions",
             "--output-dir",
         ),
-        outputs=("layer_records.jsonl", "setting_summary.json"),
+        outputs=(
+            "layer_records.jsonl",
+            "pair_status_records.jsonl",
+            "setting_summary.json",
+            "run.json",
+        ),
         compute="gpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="layerwise-answer-patching",

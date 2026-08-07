@@ -70,7 +70,7 @@ refactor, a direct command is executable only when its catalog status is
 |---|---|---|
 | `prepare-edited-pairs` | §3.1, Appendix A, Table 4 | Versioned clean/edited pair and alignment records |
 | `targeting-fidelity-audit` | §3.1, Appendix A | Edit landing, gold-option, and operation counts |
-| `layerwise-kl-patching` | §3.3, §4.1, Appendix B | Complete finite grids with untreated KL > 1e-9; normalized first-CoT-token KL |
+| `layerwise-kl-patching` | §3.3, §4.1, Appendix B | Selected clean-correct/edited-wrong pairs; complete finite grids with untreated KL > 1e-9; normalized first-CoT-token KL |
 | `layerwise-answer-patching` | §3.2–3.3, §4.1 | Separate eight-setting free-generation scans, at most 300 pairs per curve |
 | `fixed-window-answer-patching` | §3.3, §4.1, Appendix B | Frozen [0,6) answer patch; [6,12) prespecified MMLU-Pro comparison |
 | `patch-coordinate-controls` | §3.3, §4.1, Appendix B | Primary 172 pairs; correct, +2 offset, cross-item, and identity controls |
@@ -147,11 +147,12 @@ uv run typo-cot targeting-fidelity-audit \
 ### Edited-word activation patching
 
 ```bash
-uv run typo-cot layerwise-kl-patching \
+uv run --extra lrp typo-cot layerwise-kl-patching \
   --model google/gemma-3-4b-it --benchmark gsm8k \
   --pairs results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/attribution-4/pairs.jsonl \
   --targeting attribution-4 \
   --directions clean-to-edited edited-to-clean \
+  --gpu-id 0 \
   --output-dir results/layerwise-kl-patching/gemma-3-4b-it/gsm8k
 
 uv run typo-cot layerwise-answer-patching \
