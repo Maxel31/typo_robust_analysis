@@ -10,6 +10,7 @@ import random
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
+from typo_cot.evaluation.fallback import answers_equal, fallback_answer
 from typo_cot.experiments.prepare_edited_pairs.protocol import (
     PairProtocolError,
     apply_paper_edits,
@@ -38,6 +39,8 @@ _MMLU_100_PER_SUBJECT_PAPER_MODELS = frozenset(
     }
 )
 _DATASET_COHORT_RULE = "paper-model-benchmark-cohort/v1"
+_GENERATION_PROTOCOL = "explicit-greedy-generation/v1"
+_FINAL_PAPER_FALLBACK_BENCHMARKS = frozenset({"gsm8k", "mmlu", "mmlu_pro", "arc", "commonsense_qa"})
 _HISTORICAL_COMPATIBILITY_NOTES = [
     "stable-sha256-seeds-replace-process-random-python-hash",
     "mistral-attnlrp-rules-target-mistral-classes",
@@ -45,6 +48,9 @@ _HISTORICAL_COMPATIBILITY_NOTES = [
     "parenthesized-choice-markers-use-recorded-choice-boundary",
     "arc-numeric-answer-keys-normalized-to-prompt-letters",
     "model-specific-mmlu-cohort-matches-final-paper-denominators",
+    "explicit-greedy-parameters-replace-model-generation-defaults",
+    "empty-primary-answer-fallback-matches-final-paper",
+    "exact-canonical-answer-comparison-replaces-float-tolerance",
 ]
 
 
@@ -101,6 +107,7 @@ def preload_provenance(
         "dataset_cohort_rule": _DATASET_COHORT_RULE,
         "dataset_samples_per_subset": _recorded_samples_per_subset(config),
         "random_seed_algorithm": "sha256-first-64-bits/v1",
+        "generation_protocol": _GENERATION_PROTOCOL,
         "target_position": "maximum-logit-after-first-cot-token",
         "alignment": "actual-edited-word-final-token",
         "historical_compatibility_notes": list(_HISTORICAL_COMPATIBILITY_NOTES),
@@ -234,6 +241,14 @@ class HuggingFacePairPreparationRuntime:
                 attention_mask=attention_mask,
                 max_new_tokens=self.config.max_new_tokens,
                 do_sample=False,
+                num_beams=1,
+                num_return_sequences=1,
+                temperature=None,
+                top_p=None,
+                top_k=None,
+                use_cache=True,
+                return_dict_in_generate=False,
+                output_scores=False,
                 pad_token_id=self.tokenizer.pad_token_id,
             )
         prompt_length = input_ids.shape[1]
@@ -264,14 +279,36 @@ class HuggingFacePairPreparationRuntime:
         return [float(value) for value in relevance[: len(prompt_ids)].detach().cpu().tolist()]
 
     def _answer(self, continuation: str, correct_answer: str) -> dict[str, object]:
-        extraction = self.extractor.extract(continuation)
-        answer = extraction.extracted_answer
+        primary = self.extractor.extract(continuation)
+        answer = primary.extracted_answer
+        if answer:
+            method = f"primary:{primary.extraction_method}"
+            confidence = primary.confidence
+        elif self.internal_benchmark in _FINAL_PAPER_FALLBACK_BENCHMARKS:
+            answer, fallback_method = fallback_answer(
+                continuation,
+                benchmark=self.internal_benchmark,
+            )
+            method = f"fallback:{fallback_method}" if answer else "unextractable"
+            confidence = 1.0 if answer else 0.0
+        else:
+            method = "unextractable"
+            confidence = 0.0
+        if self.internal_benchmark in _FINAL_PAPER_FALLBACK_BENCHMARKS:
+            is_correct = answers_equal(
+                answer,
+                correct_answer,
+                benchmark=self.internal_benchmark,
+            )
+        else:
+            is_correct = self.extractor.is_correct(answer, correct_answer)
         return {
             "value": answer,
             "is_extracted": bool(answer),
-            "is_correct": self.extractor.is_correct(answer, correct_answer),
-            "method": extraction.extraction_method,
-            "confidence": extraction.confidence,
+            "is_correct": is_correct,
+            "method": method,
+            "primary_method": primary.extraction_method,
+            "confidence": confidence,
         }
 
     def prepare_pair(self, sample: Any, config: PrepareEditedPairsConfig) -> dict[str, object]:

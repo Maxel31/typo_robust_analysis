@@ -14,6 +14,13 @@ from typo_cot.experiments import (
     ExperimentSpec,
     get_experiment,
 )
+from typo_cot.experiments.fixed_window_answer_patching import (
+    DIRECTION_NAMES as FIXED_WINDOW_DIRECTION_NAMES,
+    FixedWindowAnswerPatchingConfig,
+    FixedWindowAnswerPatchingRunError,
+    parse_layer_window,
+    run_fixed_window_answer_patching,
+)
 from typo_cot.experiments.layerwise_answer_patching import (
     DIRECTION_NAMES as ANSWER_DIRECTION_NAMES,
     LayerwiseAnswerPatchingConfig,
@@ -150,6 +157,35 @@ def _parser() -> argparse.ArgumentParser:
     layerwise_answer.add_argument("--output-dir", required=True, type=Path)
     layerwise_answer.add_argument("--gpu-id", default="0")
     layerwise_answer.add_argument("--resume", action="store_true")
+
+    fixed_window = commands.add_parser(
+        "fixed-window-answer-patching",
+        help="Patch fixed decoder-block windows and freely regenerate answers.",
+    )
+    fixed_window.add_argument("--model", required=True, help="Hugging Face model identifier.")
+    fixed_window.add_argument(
+        "--benchmark",
+        required=True,
+        choices=("gsm8k", "mmlu", "mmlu-pro"),
+    )
+    fixed_window.add_argument("--pairs", required=True, nargs="+", type=Path)
+    fixed_window.add_argument(
+        "--layers",
+        required=True,
+        nargs="+",
+        type=parse_layer_window,
+        metavar="START:STOP",
+    )
+    fixed_window.add_argument(
+        "--directions",
+        required=True,
+        nargs="+",
+        choices=FIXED_WINDOW_DIRECTION_NAMES,
+    )
+    fixed_window.add_argument("--output-dir", required=True, type=Path)
+    fixed_window.add_argument("--gpu-id", default="0")
+    fixed_window.add_argument("--limit", type=_positive_int)
+    fixed_window.add_argument("--resume", action="store_true")
     return parser
 
 
@@ -295,6 +331,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"wrote {result.layer_records} layer record(s) for "
             f"{result.fixed_pairs} fixed pair(s): {result.answer_layer_records_path}"
+        )
+        print(f"setting summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "fixed-window-answer-patching":
+        try:
+            result = run_fixed_window_answer_patching(
+                FixedWindowAnswerPatchingConfig(
+                    model=args.model,
+                    benchmark=args.benchmark,
+                    pairs=tuple(args.pairs),
+                    layers=tuple(args.layers),
+                    directions=tuple(args.directions),
+                    output_dir=args.output_dir,
+                    gpu_id=args.gpu_id,
+                    limit=args.limit,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            FixedWindowAnswerPatchingRunError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            print(f"fixed-window-answer-patching: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.window_records} fixed-window record(s) from "
+            f"{result.included_direction_pairs} included pair-direction(s): "
+            f"{result.fixed_window_records_path}"
         )
         print(f"setting summary: {result.summary_path}")
         print(f"run manifest: {result.run_path}")

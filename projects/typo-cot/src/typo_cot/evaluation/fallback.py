@@ -158,7 +158,7 @@ def extract_with_fallback(
     return AnswerExtraction(
         value=value,
         is_extracted=bool(value),
-        is_correct=bool(value and extractor.is_correct(value, correct_answer)),
+        is_correct=answers_equal(value, correct_answer, benchmark=benchmark),
         method=method,
         primary_method=primary.extraction_method,
     )

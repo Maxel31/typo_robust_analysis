@@ -103,7 +103,7 @@ the transcription; the PDF fingerprint above identifies that exact artifact.
 |---|---|---|
 | Layerwise KL patching | 32 completed settings; 30 headline settings after excluding MATH cells with n=13 and n=27; 7,919 retained pairs | p. 12, Table 3; p. 13, Appendix B |
 | Layerwise answer patching | Eight settings (four base models × GSM8K/MMLU), with n=94–226 per curve | p. 6, Figure 2; p. 12, Table 3 |
-| Fixed-window answer patching | Six planned settings; restoration n=1,241 with 800 successes; reciprocal induction n=1,458 with 871 changes | p. 6, §4.1; p. 15, Table 6 |
+| Fixed-window answer patching | Six planned settings; published restoration n=1,241 with 800 successes; published reciprocal induction n=1,458 with 871 reported changes | p. 6, §4.1; p. 15, Table 6 |
 | Primary coordinate controls | The same 172 Gemma-3-4B/GSM8K pairs: correct coordinates 129, offset 44, cross-item donor 42 | p. 6, §4.1; p. 15, Table 7 |
 | Position reachability | The same 109 pairs for all three patch positions | p. 13, Appendix B |
 | Prespecified MMLU-Pro windows | Qwen2.5-3B n=97 and Mistral-7B n=120 | p. 6, §4.1; p. 15, Table 7 |
@@ -111,6 +111,14 @@ the transcription; the PDF fingerprint above identifies that exact artifact.
 | Answer-line deletion | GSM8K n=333 and MMLU n=450 in the three-model controls | p. 7, Table 1; p. 12, Table 3 |
 | Clean-prefix extensions | 2,100 deterministic targets from 5,918 capped candidates; 2,094 valid scans; 1,858 fresh k=0 errors | p. 12, Table 3 and Appendix A; p. 17, Table 10 |
 | One-token diagnostic | Primary n=153 and extensions n=1,629; distant common four-arm subset n=1,575; adjacent subset n=391 | p. 17, Table 10; p. 18, Table 11 |
+
+The fixed-window counts in this table are publication references, not an
+acceptance requirement for a fresh run. Preserved historical records show that
+the published induction aggregate treated some unextractable patched answers as
+incorrect changes, whereas the final PDF explicitly defines an unextractable
+answer as a failed intervention readout. The public runner follows the latter
+rule, records this historical discrepancy, and never counts an unextractable
+patched answer as restoration or induction.
 
 For layerwise KL patching, the normalized restoration readout is
 
@@ -163,10 +171,13 @@ uv run --extra lrp typo-cot layerwise-answer-patching \
   --gpu-id 0 \
   --output-dir results/layerwise-answer-patching/gemma-3-4b-it/gsm8k
 
-uv run typo-cot fixed-window-answer-patching \
+uv run --extra lrp typo-cot fixed-window-answer-patching \
   --model google/gemma-3-4b-it --benchmark gsm8k \
-  --pairs data/cohorts/fixed-window/gemma-3-4b-it_gsm8k.jsonl \
+  --pairs \
+    results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/attribution-4/pairs.jsonl \
+    results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/random-4/pairs.jsonl \
   --layers 0:6 --directions clean-to-edited edited-to-clean \
+  --gpu-id 0 \
   --output-dir results/fixed-window-answer-patching/gemma-3-4b-it/gsm8k
 
 uv run typo-cot patch-coordinate-controls \

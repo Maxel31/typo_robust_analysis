@@ -209,14 +209,20 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
             "--directions",
             "--output-dir",
         ),
-        outputs=("fixed_window_records.jsonl", "setting_summary.json"),
+        outputs=(
+            "fixed_window_records.jsonl",
+            "pair_status_records.jsonl",
+            "setting_summary.json",
+            "run.json",
+        ),
         compute="gpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="patch-coordinate-controls",
         title="Compare edited-word patches with coordinate and donor controls",
         paper_question="RQ1",
-        paper_sections=("§3.3", "§4.1", "Appendix B", "Table 6"),
+        paper_sections=("§3.3", "§4.1", "Appendix B", "Table 7"),
         summary=(
             "Run the correct-coordinate patch beside two-token offset, matched cross-item "
             "donor, and identity self-copy controls."
