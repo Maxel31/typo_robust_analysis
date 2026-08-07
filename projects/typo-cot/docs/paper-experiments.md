@@ -220,9 +220,11 @@ uv run --project projects/typo-cot --extra lrp typo-cot cot-swap \
   --targeting attribution-4 --gpu-id 0 \
   --output-dir results/cot-swap/gemma-3-4b-it/gsm8k/attribution-4
 
-uv run typo-cot answer-line-deletion \
+CUDA_VISIBLE_DEVICES=0 \
+uv run --project projects/typo-cot --extra lrp typo-cot answer-line-deletion \
   --model google/gemma-3-4b-it --benchmark gsm8k \
-  --pairs data/cohorts/cot-swap/gemma-3-4b-it_gsm8k.jsonl \
+  --cot-swap-run results/cot-swap/gemma-3-4b-it/gsm8k/random-4 \
+  --max-pairs 150 --gpu-id 0 \
   --output-dir results/answer-line-deletion/gemma-3-4b-it/gsm8k
 
 uv run typo-cot clean-prefix-scan \

@@ -84,8 +84,15 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/evaluation/fallback.py"),
     Path("src/typo_cot/experiments/__init__.py"),
     Path("src/typo_cot/experiments/catalog.py"),
+    Path("src/typo_cot/experiments/answer_line_deletion/__init__.py"),
+    Path("src/typo_cot/experiments/answer_line_deletion/planning.py"),
+    Path("src/typo_cot/experiments/answer_line_deletion/protocol.py"),
+    Path("src/typo_cot/experiments/answer_line_deletion/runner.py"),
+    Path("src/typo_cot/experiments/answer_line_deletion/runtime.py"),
+    Path("src/typo_cot/experiments/answer_line_deletion/source.py"),
     Path("src/typo_cot/experiments/cot_swap/__init__.py"),
     Path("src/typo_cot/experiments/cot_swap/planning.py"),
+    Path("src/typo_cot/experiments/cot_swap/protocol.py"),
     Path("src/typo_cot/experiments/cot_swap/runner.py"),
     Path("src/typo_cot/experiments/cot_swap/runtime.py"),
     Path("src/typo_cot/experiments/fixed_window_answer_patching/__init__.py"),
@@ -219,6 +226,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
     )
     assert set(subparsers.choices) == {
+        "answer-line-deletion",
         "experiments",
         "cot-swap",
         "fixed-window-answer-patching",

@@ -586,6 +586,57 @@ Appendix C/Table 9 12B--72B ladder remains the catalogued
 single-visible-GPU runner. The documented command and repository validation use
 physical GPU 0; `--gpu-id` can explicitly select another single visible device.
 
+## Delete the final non-empty line from clean pre-answer text
+
+`answer-line-deletion` implements the final paper's RQ2 content/format control
+for Gemma-3-4B, Llama-3.2-3B, and Mistral-7B on GSM8K and MMLU. It consumes one
+completed, unlimited Random-4 `cot-swap` run, selects its regenerated-A-correct
+`B != A` cases by sample ID, and applies the submitted control cap of 150 cases
+per model/task setting:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+  typo-cot answer-line-deletion \
+  --model google/gemma-3-4b-it \
+  --benchmark gsm8k \
+  --cot-swap-run results/cot-swap/gemma-3-4b-it/gsm8k/random-4 \
+  --max-pairs 150 \
+  --gpu-id 0 \
+  --output-dir results/answer-line-deletion/gemma-3-4b-it/gsm8k
+```
+
+For every selected pair, the command reruns two fixed-context conditions in one
+paired batch: the edited question with complete clean pre-answer text, and the
+same input after deleting the clean text's final non-empty line. The deletion
+leaves one newline when earlier text remains, so generation resumes at the
+truncation boundary. If there is only one non-empty line, the supplied prefix
+becomes empty; outputs report and stratify this diagnostic. The model generates
+at most 16 continuation tokens from each fixed boundary, and an answer is
+extracted from only those new token IDs using the final PDF's greedy bfloat16
+left-padded protocol. Restoration in each arm is
+equality with the source run's clean A answer; unextractable answers are retained
+as failures.
+
+`--limit 1` is a labelled smoke run and is applied only after validating and
+constructing the full deterministic capped cohort. `--resume` verifies the
+upstream run, prepared pairs, plan, runtime, pair-atomic checkpoints, and public
+output hashes before reuse. The command writes
+`answer_line_deletion_records.jsonl`, `pair_status_records.jsonl`,
+`answer_line_deletion_summary.json`, and `run.json`.
+
+Table 1 reports pooled baseline-to-deletion restoration of 95.2% to 48.9%
+(`n=333`) on GSM8K and 82.2% to 29.1% (`n=450`) on MMLU. The archived producer
+of those printed values generated up to 256 answer tokens, conflicting with the
+final PDF's global 16-token CoT-swap rule. The public command follows the final
+PDF and records this as a historical-comparability limitation; it does not tune
+fresh results to the printed percentages. Deleting the last line also truncates
+the text mid-flow, so the contrast combines near-answer content removal with
+format disruption; in the archived Table 1 cohort it removed the entire prefix
+for 179/333 GSM8K and 334/450 MMLU cases. It is therefore not a reasoning-only,
+local-line-only, or mediation effect. See
+[`docs/answer-line-deletion.md`](docs/answer-line-deletion.md) for the exact
+source, selection, deletion, schema, and restart contracts.
+
 ## Tests
 
 ```bash
@@ -598,6 +649,7 @@ uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/te
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_patch_position_controls.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_patch_text_combination.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_cot_swap.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_answer_line_deletion.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 

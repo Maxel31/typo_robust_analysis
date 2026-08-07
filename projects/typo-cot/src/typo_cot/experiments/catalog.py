@@ -346,19 +346,34 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
     ),
     ExperimentSpec(
         slug="answer-line-deletion",
-        title="Delete the final answer line from the supplied clean CoT",
+        title="Delete the final non-empty line from the supplied clean CoT",
         paper_question="RQ2 control",
         paper_sections=("§3.4", "§4.2", "Table 1"),
         summary=(
-            "Repeat the edited-question/clean-CoT cell after removing its final answer line "
-            "to audit dependence on near-answer content and format."
+            "Repeat the edited-question/clean-CoT cell after removing its final non-empty "
+            "pre-answer line to audit dependence on near-answer content and format."
         ),
-        cohort="Gemma-3-4B, Llama-3.2-3B, and Mistral-7B on GSM8K and MMLU.",
+        cohort=(
+            "Regenerated-A-correct, B-changed cases from completed unlimited Random-4 "
+            "CoT-swap runs for the three control models on GSM8K and MMLU."
+        ),
         intervention="Teacher-force the clean CoT with its final answer line deleted.",
-        readout="Answer restoration on the same eligible CoT-swap cases.",
-        required_arguments=("--model", "--benchmark", "--pairs", "--output-dir"),
-        outputs=("answer_line_deletion_records.jsonl", "answer_line_deletion_summary.json"),
+        readout="Paired complete/deleted restoration to the source clean A answer.",
+        required_arguments=(
+            "--model",
+            "--benchmark",
+            "--cot-swap-run",
+            "--max-pairs",
+            "--output-dir",
+        ),
+        outputs=(
+            "answer_line_deletion_records.jsonl",
+            "pair_status_records.jsonl",
+            "answer_line_deletion_summary.json",
+            "run.json",
+        ),
         compute="gpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="clean-prefix-scan",
