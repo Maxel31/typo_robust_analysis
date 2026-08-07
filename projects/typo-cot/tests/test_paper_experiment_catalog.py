@@ -243,6 +243,7 @@ def test_relocated_legacy_readme_relative_links_resolve() -> None:
 def test_root_readme_accounts_for_retained_workspace_support() -> None:
     readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
 
+    assert "sha256sum" in readme
     for retained_path in (
         "datasets/",
         "utils/",

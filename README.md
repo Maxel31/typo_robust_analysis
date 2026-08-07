@@ -18,6 +18,13 @@ from the experiment catalog's single source of truth:
 uv run --project projects/typo-cot typo-cot experiments source
 ```
 
+To verify a local copy of the paper, compare these two command outputs:
+
+```bash
+sha256sum "/path/to/Edited-Word Activation Patching Reverses Selected Typo-Induced Answer Changes after Tokenization.pdf"
+uv run --project projects/typo-cot typo-cot experiments source
+```
+
 If an old script, branch, result note, or README disagrees with that PDF, the
 PDF wins. The transcribed experiment contract is documented in
 [`paper-experiments.md`](projects/typo-cot/docs/paper-experiments.md).
