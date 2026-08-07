@@ -154,6 +154,7 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
             "run.json",
         ),
         compute="gpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="layerwise-answer-patching",

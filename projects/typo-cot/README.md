@@ -24,7 +24,8 @@ From the repository root:
 uv sync --project projects/typo-cot
 ```
 
-Pair preparation additionally needs the GPU/LRP dependencies:
+Pair preparation and activation-patching commands additionally need the
+paper-locked GPU/LRP dependencies:
 
 ```bash
 uv sync --project projects/typo-cot --extra lrp

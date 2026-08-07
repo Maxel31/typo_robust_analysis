@@ -188,6 +188,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
     )
     assert set(subparsers.choices) == {
         "experiments",
+        "layerwise-kl-patching",
         "prepare-edited-pairs",
         "targeting-fidelity-audit",
     }
