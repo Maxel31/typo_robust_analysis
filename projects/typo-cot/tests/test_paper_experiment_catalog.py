@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 import typo_cot.cli as cli_module
+import typo_cot.experiments as experiments_api
 from typo_cot.cli import main
 from typo_cot.experiments.catalog import (
     _PAPER_QUESTION_SLUG_PATTERN,
@@ -70,6 +71,10 @@ def _documented_target_commands(markdown: str) -> dict[str, set[str]]:
 
 def test_catalog_identifies_the_user_supplied_final_pdf() -> None:
     assert PAPER_SHA256 == "2cfb736e4636ee8db8dc6a92a6004c6e36914538a9acadcd66073289580a39d0"
+
+
+def test_experiments_package_exports_the_canonical_paper_fingerprint() -> None:
+    assert experiments_api.PAPER_SHA256 == PAPER_SHA256
 
 
 def test_catalog_covers_the_final_paper_experiments_in_reproduction_order() -> None:

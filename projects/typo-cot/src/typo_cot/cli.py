@@ -6,7 +6,7 @@ import argparse
 import json
 from collections.abc import Sequence
 
-from typo_cot.experiments.catalog import (
+from typo_cot.experiments import (
     PAPER_EXPERIMENTS,
     PAPER_SHA256,
     ExperimentSpec,
@@ -19,6 +19,11 @@ def _experiment(value: str) -> ExperimentSpec:
         return get_experiment(value)
     except KeyError as exc:
         raise argparse.ArgumentTypeError(str(exc.args[0])) from None
+
+
+def _add_format_argument(parser: argparse.ArgumentParser) -> None:
+    """Add the shared human/machine-readable output selector."""
+    parser.add_argument("--format", choices=("text", "json"), default="text")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -34,16 +39,16 @@ def _parser() -> argparse.ArgumentParser:
     actions = experiments.add_subparsers(dest="catalog_action", required=True)
 
     list_parser = actions.add_parser("list", help="List operations in reproduction order.")
-    list_parser.add_argument("--format", choices=("text", "json"), default="text")
+    _add_format_argument(list_parser)
 
     source_parser = actions.add_parser(
         "source", help="Show the canonical paper artifact fingerprint."
     )
-    source_parser.add_argument("--format", choices=("text", "json"), default="text")
+    _add_format_argument(source_parser)
 
     show_parser = actions.add_parser("show", help="Show one operation's public contract.")
     show_parser.add_argument("experiment", type=_experiment)
-    show_parser.add_argument("--format", choices=("text", "json"), default="text")
+    _add_format_argument(show_parser)
     return parser
 
 
@@ -62,7 +67,7 @@ def _print_list(output_format: str) -> None:
 
 def _print_source(output_format: str) -> None:
     if output_format == "json":
-        print(json.dumps({"sha256": PAPER_SHA256}, indent=2))
+        print(json.dumps({"sha256": PAPER_SHA256}, indent=2, ensure_ascii=False))
         return
     print(f"paper sha256: {PAPER_SHA256}")
 
