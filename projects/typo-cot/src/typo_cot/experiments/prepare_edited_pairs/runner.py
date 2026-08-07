@@ -185,15 +185,17 @@ def _validate_preload_resume_provenance(
     protocol_only: bool = False,
 ) -> None:
     previous_provenance = previous_manifest.get("provenance")
-    fields = (
-        [key for key in _COMPLETED_RESUME_PROTOCOL_FIELDS if key in current_provenance]
-        if protocol_only
-        else list(current_provenance)
-    )
-    # Injected CPU test runtimes may expose only one synthetic provenance key.
-    # Preserve their completed-resume contract while production manifests use
-    # the explicit protocol field set above.
-    if not fields:
+    if protocol_only:
+        missing = [
+            key for key in _COMPLETED_RESUME_PROTOCOL_FIELDS if key not in current_provenance
+        ]
+        if missing:
+            raise ValueError(
+                "resume is missing required protocol provenance before model loading: "
+                + ", ".join(missing)
+            )
+        fields = list(_COMPLETED_RESUME_PROTOCOL_FIELDS)
+    else:
         fields = list(current_provenance)
     if not isinstance(previous_provenance, Mapping) or any(
         previous_provenance.get(key) != current_provenance.get(key) for key in fields
@@ -246,7 +248,7 @@ def run_prepare_edited_pairs(
             _validate_preload_resume_provenance(
                 previous,
                 current_preload_provenance,
-                protocol_only=True,
+                protocol_only=runtime is None,
             )
             counts = previous.get("counts")
             written = int(counts.get("written", 0)) if isinstance(counts, Mapping) else 0

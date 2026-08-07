@@ -29,6 +29,7 @@ from typo_cot.experiments.prepare_edited_pairs.runner import (
     PairPreparationRunError,
     PrepareEditedPairsConfig,
     PrepareEditedPairsResult,
+    _validate_preload_resume_provenance,
     run_prepare_edited_pairs,
 )
 from typo_cot.experiments.prepare_edited_pairs.runtime import (
@@ -119,6 +120,15 @@ def test_preload_provenance_uses_null_when_subset_cap_is_not_applied() -> None:
     provenance = runtime_module.preload_provenance(config, torch_module=fake_torch)
 
     assert provenance["dataset_samples_per_subset"] is None
+
+
+def test_protocol_only_resume_rejects_incomplete_current_provenance() -> None:
+    with pytest.raises(ValueError, match="missing required protocol provenance"):
+        _validate_preload_resume_provenance(
+            {"provenance": {"runtime": "fake"}},
+            {"runtime": "fake"},
+            protocol_only=True,
+        )
 
 
 def test_runtime_passes_the_frozen_cohort_size_to_the_dataset_loader(
@@ -672,8 +682,13 @@ def test_completed_resume_rejects_a_legacy_cohort_before_model_loading(
         "preload_provenance",
         lambda config: {
             "model": config.model,
+            "benchmark_dataset_loader": "mmlu",
             "dataset_cohort_rule": "paper-model-benchmark-cohort/v1",
             "dataset_samples_per_subset": 100,
+            "random_seed_algorithm": "sha256-first-64-bits/v1",
+            "target_position": "maximum-logit-after-first-cot-token",
+            "alignment": "actual-edited-word-final-token",
+            "historical_compatibility_notes": [],
         },
     )
 
@@ -692,6 +707,7 @@ def test_completed_resume_rejects_a_legacy_cohort_before_model_loading(
 
 def test_completed_resume_ignores_environment_only_provenance_changes(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     output_dir = tmp_path / "different-environment"
     config = PrepareEditedPairsConfig(
@@ -702,29 +718,38 @@ def test_completed_resume_ignores_environment_only_provenance_changes(
         output_dir=output_dir,
     )
 
+    protocol = {
+        "model": config.model,
+        "benchmark_dataset_loader": "mmlu",
+        "dataset_cohort_rule": "paper-model-benchmark-cohort/v1",
+        "dataset_samples_per_subset": 100,
+        "random_seed_algorithm": "sha256-first-64-bits/v1",
+        "target_position": "maximum-logit-after-first-cot-token",
+        "alignment": "actual-edited-word-final-token",
+        "historical_compatibility_notes": [],
+    }
+
     class InitialRuntime(_FakeRuntime):
         def provenance(self) -> dict[str, object]:
-            return {
-                "model": config.model,
-                "dataset_cohort_rule": "paper-model-benchmark-cohort/v1",
-                "dataset_samples_per_subset": 100,
-                "gpu_names": ["old-gpu"],
-            }
-
-    class CurrentRuntime(_FakeRuntime):
-        def provenance(self) -> dict[str, object]:
-            return {
-                "model": config.model,
-                "dataset_cohort_rule": "paper-model-benchmark-cohort/v1",
-                "dataset_samples_per_subset": 100,
-                "gpu_names": ["new-gpu"],
-            }
+            return {**protocol, "gpu_names": ["old-gpu"]}
 
     expected = run_prepare_edited_pairs(config, runtime=InitialRuntime())
-    resumed = run_prepare_edited_pairs(
-        replace(config, resume=True),
-        runtime=CurrentRuntime(),
+    monkeypatch.setattr(
+        runtime_module,
+        "preload_provenance",
+        lambda config: {**protocol, "gpu_names": ["new-gpu"]},
     )
+
+    def model_must_not_load(config: PrepareEditedPairsConfig) -> None:
+        raise AssertionError("completed resume must not load the model")
+
+    monkeypatch.setattr(
+        runtime_module,
+        "HuggingFacePairPreparationRuntime",
+        model_must_not_load,
+    )
+
+    resumed = run_prepare_edited_pairs(replace(config, resume=True))
 
     assert resumed == expected
 
