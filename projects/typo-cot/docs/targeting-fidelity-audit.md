@@ -24,6 +24,12 @@ whereas the legacy 30.2% excluded undecidable edits. The 21.5% gold-option
 reference additionally requires a later CoT-swap inclusion condition and cannot
 be recomputed from prepared-pair inputs alone.
 
+The PDF is the source for the published rounded rates and the rank-1
+`0/68,650` result. Exact numerators, denominators, the rank 2--4 breakdown, and
+the 3,501/16,316 cohort count come from the frozen archival reanalysis. This
+distinction is recorded per metric in `run.json`; exact archival counts are not
+mislabelled as verbatim PDF values.
+
 ## Command
 
 Run from the repository root after all required four-edit cells have completed:
@@ -48,13 +54,17 @@ command rejects partial individual runs, but intentionally permits an
 explicitly partial grid; `run.json` reports observed setting coverage instead
 of falsely claiming that all 42 paper settings were supplied.
 
-The audit does not trust a pair's landing Boolean in isolation. It replays each
-substitution, duplication, or deletion from the clean editable text while
+The audit does not trust a pair's landing Boolean or operation label in
+isolation. Starting from the clean editable text, it independently derives the
+producer's cumulative-shift landing coordinates and the Table 4 edit selected
+by SHA-256 from `(seed, sample_id, target_token_index, target_token_text)` while
 tracking every character's clean-text origin. The replay must reproduce the
-recorded landing origin, landing Boolean, edited text, changed-word spans,
-selection ranks, and target-token indices. JSON duplicate keys, non-finite
-numbers, out-of-order sample IDs, and inconsistent producer protocol metadata
-are rejected before an output directory is published.
+prompt/editable coordinates, landing origin and Boolean, operation and edited
+text, changed-word spans, selection ranks, and target-token indices. Random-4
+must contain the recorded attribution ranks 1--4 exclusion set and may target
+only ranks above four. JSON duplicate keys, non-finite numbers, out-of-order
+sample IDs, and inconsistent producer protocol metadata are rejected before an
+output directory is published.
 
 ## Metrics
 
@@ -97,7 +107,11 @@ canonical paper SHA-256, resolved arguments, SHA-256 and record count for every
 input pair file and manifest, output SHA-256 values, discovered setting counts,
 and the Appendix A reference values above. Its `paper_comparison` block lists
 missing and unexpected cells against the exact 42-setting/two-condition paper
-grid. A partial grid is `not_comparable`; even a complete public-v1 grid is
-labelled `descriptive_only` for the legacy landing rate because the two
-decidability protocols differ. The public output directory is published only
-after all inputs validate and all four files are complete.
+grid and checks seed 42, the 512-token generation cap, archival per-cell item
+counts, and the 68,660-item total in each arm. Attribution-4 and Random-4 inputs
+for a setting must have identical ordered sample IDs, reconstructed dataset
+hashes, model revision, and generation metadata; normalized model aliases
+cannot hide duplicate cells. A partial or mixed grid is `not_comparable`; even
+a complete public-v1 grid is labelled `descriptive_only` for the legacy landing
+rate because the two decidability protocols differ. The public output directory
+is published only after all inputs validate and all four files are complete.

@@ -12,6 +12,7 @@ import pytest
 
 from typo_cot.cli import main
 from typo_cot.experiments.catalog import PAPER_SHA256, get_experiment
+from typo_cot.experiments.prepare_edited_pairs.protocol import seeded_character_edit
 from typo_cot.experiments.targeting_fidelity_audit import (
     TargetingFidelityAuditConfig,
     TargetingFidelityAuditError,
@@ -105,12 +106,27 @@ def _word_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
+def _stable_seed(*parts: object) -> int:
+    payload = "\x1f".join(str(part) for part in parts).encode()
+    return int.from_bytes(hashlib.sha256(payload).digest()[:8], "big")
+
+
+def _word_index_at(text: str, position: int) -> int:
+    return next(
+        index for index, (start, end) in enumerate(_word_spans(text)) if start <= position < end
+    )
+
+
 def _materialize_edits(
     editable: str,
     attempt_specs: list[dict[str, object]],
     word_specs: list[dict[str, object]],
+    *,
+    sample_id: str,
+    seed: int,
+    editable_prompt_start: int,
 ) -> tuple[str, list[dict[str, object]], list[dict[str, object]]]:
-    """Turn compact test plans into internally consistent public pair fields."""
+    """Search producer-valid candidates matching compact test expectations."""
     clean_spans = _word_spans(editable)
     rank_to_word: dict[int, int] = {}
     for word in word_specs:
@@ -127,71 +143,89 @@ def _materialize_edits(
 
     current = editable
     origins: list[int | None] = list(range(len(editable)))
+    cumulative_shift = 0
     attempts: list[dict[str, object]] = []
     for rank, spec in enumerate(attempt_specs, 1):
-        landed_word_index = rank_to_word[rank]
-        current_spans = _word_spans(current)
-        landed_start, landed_end = current_spans[landed_word_index]
-        landed_text = current[landed_start:landed_end]
-        letter_positions = [
-            index for index, character in enumerate(landed_text) if character.isalpha()
-        ]
-        assert letter_positions
-        operation = str(spec["operation"])
-        character_index = (
-            letter_positions[-1]
-            if operation == "deletion"
-            else letter_positions[(rank - 1) % len(letter_positions)]
-        )
-        original_character = landed_text[character_index]
-        if operation == "substitution":
-            new_character: str | None = "z" if original_character.lower() != "z" else "y"
-            if original_character.isupper():
-                new_character = new_character.upper()
-            edited_token_text = (
-                landed_text[:character_index] + new_character + landed_text[character_index + 1 :]
-            )
-            replacement_origins = origins[landed_start:landed_end]
-        elif operation == "duplication":
-            new_character = original_character
-            edited_token_text = (
-                landed_text[: character_index + 1]
-                + original_character
-                + landed_text[character_index + 1 :]
-            )
-            local_origins = origins[landed_start:landed_end]
-            replacement_origins = (
-                local_origins[: character_index + 1] + [None] + local_origins[character_index + 1 :]
-            )
-        elif operation == "deletion":
-            assert len(letter_positions) > 1
-            new_character = None
-            edited_token_text = landed_text[:character_index] + landed_text[character_index + 1 :]
-            local_origins = origins[landed_start:landed_end]
-            replacement_origins = (
-                local_origins[:character_index] + local_origins[character_index + 1 :]
-            )
-        else:
-            # Invalid-operation tests mutate a valid materialized record later.
-            raise AssertionError(operation)
+        desired_landed_word = rank_to_word[rank]
+        desired_operation = str(spec["operation"])
+        desired_faithful = bool(spec["landed_on_intended_token"])
+        candidate_spans: list[tuple[int, int, int]] = []
+        for intended_word_index, (word_start, word_end) in enumerate(clean_spans):
+            for intended_start in range(word_start, word_end):
+                for intended_end in range(word_end, intended_start, -1):
+                    if any(
+                        character.isascii() and character.isalpha()
+                        for character in editable[intended_start:intended_end]
+                    ):
+                        candidate_spans.append((intended_word_index, intended_start, intended_end))
+        candidate_spans.sort(key=lambda item: item[0] != desired_landed_word)
 
-        landed_origin = origins[landed_start + character_index]
+        selected: tuple[int, int, int, int, object, int | None, int] | None = None
+        for intended_word_index, intended_start, intended_end in candidate_spans:
+            landed_start = intended_start + cumulative_shift
+            landed_end = intended_end + cumulative_shift
+            if not 0 <= landed_start < landed_end <= len(current):
+                continue
+            landed_text = current[landed_start:landed_end]
+            target_text = editable[intended_start:intended_end]
+            for target_token_index in range(rank * 1000, rank * 1000 + 2000):
+                edit = seeded_character_edit(
+                    landed_text,
+                    _stable_seed(
+                        seed,
+                        sample_id,
+                        target_token_index,
+                        target_text,
+                    ),
+                )
+                if edit is None or edit.operation != desired_operation:
+                    continue
+                affected_position = landed_start + edit.character_index
+                landed_origin = origins[affected_position]
+                faithful = (
+                    landed_origin is not None and intended_start <= landed_origin < intended_end
+                )
+                landed_word_index = _word_index_at(current, affected_position)
+                if faithful == desired_faithful and landed_word_index == desired_landed_word:
+                    selected = (
+                        intended_word_index,
+                        intended_start,
+                        intended_end,
+                        target_token_index,
+                        edit,
+                        landed_origin,
+                        landed_word_index,
+                    )
+                    break
+            if selected is not None:
+                break
+        assert selected is not None, (rank, spec, cumulative_shift)
+        (
+            intended_word_index,
+            intended_start,
+            intended_end,
+            target_token_index,
+            raw_edit,
+            landed_origin,
+            landed_word_index,
+        ) = selected
+        edit = raw_edit
+        assert hasattr(edit, "operation")
+        landed_start = intended_start + cumulative_shift
+        landed_end = intended_end + cumulative_shift
+        landed_text = current[landed_start:landed_end]
         faithful = bool(spec["landed_on_intended_token"])
-        if faithful:
-            intended_word_index = landed_word_index
-        else:
-            intended_word_index = next(
-                index for index in range(len(clean_spans)) if index != landed_word_index
-            )
-        intended_start, intended_end = clean_spans[intended_word_index]
         attempts.append(
             {
                 "selection_rank": rank,
                 "attribution_rank": int(spec["attribution_rank"]),
-                "target_token_index": 100 + rank,
+                "target_token_index": target_token_index,
                 "target_token_text": editable[intended_start:intended_end],
                 "relevance": float(spec["relevance"]),
-                "intended_prompt_span": {"start": intended_start, "end": intended_end},
+                "intended_prompt_span": {
+                    "start": editable_prompt_start + intended_start,
+                    "end": editable_prompt_start + intended_end,
+                },
                 "intended_editable_span": {"start": intended_start, "end": intended_end},
                 "landed_editable_span_before": {
                     "start": landed_start,
@@ -202,15 +236,29 @@ def _materialize_edits(
                 "landed_on_intended_token": faithful,
                 "intended_word_index": intended_word_index,
                 "landed_word_index": landed_word_index,
-                "operation": operation,
-                "character_index": character_index,
-                "original_character": original_character,
-                "new_character": new_character,
-                "edited_token_text": edited_token_text,
+                "operation": edit.operation,
+                "character_index": edit.character_index,
+                "original_character": edit.original_character,
+                "new_character": edit.new_character,
+                "edited_token_text": edit.edited,
             }
         )
+        local_origins = origins[landed_start:landed_end]
+        if edit.operation == "substitution":
+            replacement_origins = local_origins
+        elif edit.operation == "duplication":
+            replacement_origins = (
+                local_origins[: edit.character_index + 1]
+                + [None]
+                + local_origins[edit.character_index + 1 :]
+            )
+        else:
+            replacement_origins = (
+                local_origins[: edit.character_index] + local_origins[edit.character_index + 1 :]
+            )
         origins = origins[:landed_start] + replacement_origins + origins[landed_end:]
-        current = current[:landed_start] + edited_token_text + current[landed_end:]
+        current = current[:landed_start] + edit.edited + current[landed_end:]
+        cumulative_shift += len(edit.edited) - len(landed_text)
 
     edited_spans = _word_spans(current)
     aligned: list[dict[str, object]] = []
@@ -229,8 +277,14 @@ def _materialize_edits(
                 "edited_text": edited_text,
                 "clean_editable_span": {"start": clean_start, "end": clean_end},
                 "edited_editable_span": {"start": edited_start, "end": edited_end},
-                "clean_prompt_span": {"start": clean_start, "end": clean_end},
-                "edited_prompt_span": {"start": edited_start, "end": edited_end},
+                "clean_prompt_span": {
+                    "start": editable_prompt_start + clean_start,
+                    "end": editable_prompt_start + clean_end,
+                },
+                "edited_prompt_span": {
+                    "start": editable_prompt_start + edited_start,
+                    "end": editable_prompt_start + edited_end,
+                },
                 "target_ranks": [int(attempt["selection_rank"]) for attempt in matching],
                 "target_token_indices": [
                     int(attempt["target_token_index"]) for attempt in matching
@@ -264,7 +318,31 @@ def _pair(
         editable = f"{question}\n{options}"
     else:
         editable = question
-    edited_editable, attempts, aligned_words = _materialize_edits(editable, attempts, aligned_words)
+    editable_prompt_start = len("PREFIX:")
+    clean_prompt = "PREFIX:" + editable
+    edited_editable, attempts, aligned_words = _materialize_edits(
+        editable,
+        attempts,
+        aligned_words,
+        sample_id=sample_id,
+        seed=seed,
+        editable_prompt_start=editable_prompt_start,
+    )
+    excluded_attribution_tokens = (
+        [
+            {
+                "token_index": 9000 + rank,
+                "text": f"excluded-{rank}",
+                "relevance": 10.0 - rank,
+                "prompt_start": editable_prompt_start,
+                "prompt_end": editable_prompt_start + 1,
+                "attribution_rank": rank,
+            }
+            for rank in range(1, 5)
+        ]
+        if targeting == "random-4"
+        else []
+    )
     return {
         "schema_version": "prepare-edited-pairs/v1",
         "sample_id": sample_id,
@@ -282,8 +360,21 @@ def _pair(
             "question": question,
             "choices": choices,
             "editable_text": editable,
+            "editable_prompt_span": {
+                "start": editable_prompt_start,
+                "end": editable_prompt_start + len(editable),
+            },
+            "prompt": clean_prompt,
         },
-        "edited": {"editable_text": edited_editable},
+        "edited": {
+            "editable_text": edited_editable,
+            "editable_prompt_span": {
+                "start": editable_prompt_start,
+                "end": editable_prompt_start + len(edited_editable),
+            },
+            "prompt": "PREFIX:" + edited_editable,
+        },
+        "excluded_attribution_tokens": excluded_attribution_tokens,
         "target_attempts": attempts,
         "aligned_words": aligned_words,
     }
@@ -308,6 +399,29 @@ def _write_source(
         encoding="utf-8",
     )
     failed = 0 if status == "completed" else 1
+    dataset_identity = json.dumps(
+        [
+            {
+                "sample_id": row["sample_id"],
+                "question": row["clean"]["question"],
+                "choices": row["clean"]["choices"],
+                "correct_answer": row["gold_answer"],
+                "subset": row["subset"],
+            }
+            for row in sorted(rows, key=lambda row: str(row["sample_id"]))
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    benchmark_loader = {
+        "gsm8k": "gsm8k",
+        "math-500": "math",
+        "mmlu": "mmlu",
+        "mmlu-pro": "mmlu_pro",
+        "arc": "arc",
+        "csqa": "commonsense_qa",
+    }[benchmark]
     _write_json(
         directory / "run.json",
         {
@@ -340,6 +454,11 @@ def _write_source(
             },
             "provenance": {
                 "fixture": True,
+                "model": model,
+                "model_revision": "fixture-model-revision",
+                "benchmark_dataset_loader": benchmark_loader,
+                "dataset_sample_count": len(rows),
+                "dataset_records_sha256": hashlib.sha256(dataset_identity).hexdigest(),
                 "random_seed_algorithm": "sha256-first-64-bits/v1",
                 "target_position": "maximum-logit-after-first-cot-token",
                 "alignment": "actual-edited-word-final-token",
@@ -363,15 +482,15 @@ def _fixture_inputs(root: Path) -> None:
             choices=choices,
             gold_answer="B",
             attempts=[
-                _attempt(1, operation="substitution"),
-                _attempt(2, faithful=False, operation="duplication"),
+                _attempt(1, operation="duplication"),
+                _attempt(2, faithful=False, operation="substitution"),
                 _attempt(3, operation="deletion"),
                 _attempt(4, operation="substitution"),
             ],
             aligned_words=[
-                _aligned_word(editable, "Which", word_index=0, target_ranks=(1,)),
                 _aligned_word(editable, "blue", word_index=3, target_ranks=(2, 3)),
-                _aligned_word(editable, "dog", word_index=5, target_ranks=(4,)),
+                _aligned_word(editable, "dog", word_index=5, target_ranks=(1,)),
+                _aligned_word(editable, "fox", word_index=6, target_ranks=(4,)),
             ],
         ),
         _pair(
@@ -412,8 +531,7 @@ def _fixture_inputs(root: Path) -> None:
     )
 
     random_attempts = [
-        _attempt(rank, faithful=rank != 4, operation="duplication", attribution_rank=rank + 4)
-        for rank in range(1, 5)
+        _attempt(rank, operation="duplication", attribution_rank=rank + 4) for rank in range(1, 5)
     ]
     random_editable = f"{question}\n(A) cat (B) blue whale (C) dog (D) fox"
     random_row = _pair(
@@ -439,6 +557,57 @@ def _fixture_inputs(root: Path) -> None:
         benchmark="mmlu",
         targeting="random-4",
     )
+
+
+def _break_cumulative_shift_invariant(manifest: dict[str, object], pair: dict[str, object]) -> None:
+    del manifest
+    attempt = pair["target_attempts"][0]
+    intended = attempt["intended_editable_span"]
+    intended_prompt = attempt["intended_prompt_span"]
+    assert isinstance(intended, dict) and isinstance(intended_prompt, dict)
+    intended["end"] = int(intended["end"]) + 1
+    intended_prompt["end"] = int(intended_prompt["end"]) + 1
+
+
+def _change_seed_input_but_preserve_declared_alignment(
+    manifest: dict[str, object], pair: dict[str, object]
+) -> None:
+    del manifest
+    attempt = pair["target_attempts"][0]
+    original_index = int(attempt["target_token_index"])
+    landed_text = str(attempt["landed_text_before"])
+    sample_id = str(pair["sample_id"])
+    seed = int(pair["seed"])
+    target_text = str(attempt["target_token_text"])
+    declared = (
+        attempt["operation"],
+        attempt["character_index"],
+        attempt["new_character"],
+        attempt["edited_token_text"],
+    )
+    replacement = original_index + 1
+    while True:
+        edit = seeded_character_edit(
+            landed_text,
+            _stable_seed(seed, sample_id, replacement, target_text),
+        )
+        assert edit is not None
+        replayed = (
+            edit.operation,
+            edit.character_index,
+            edit.new_character,
+            edit.edited,
+        )
+        if replayed != declared:
+            break
+        replacement += 1
+    attempt["target_token_index"] = replacement
+    for word in pair["aligned_words"]:
+        ranks = list(word["target_ranks"])
+        if 1 in ranks:
+            rank_position = ranks.index(1)
+            word["target_token_indices"][rank_position] = replacement
+            break
 
 
 def test_audit_keeps_paper_denominators_separate_and_writes_provenance(
@@ -544,11 +713,33 @@ def test_audit_keeps_paper_denominators_separate_and_writes_provenance(
         "cohort": "Attribution-4 CoT-swap included multiple-choice items",
         "computable_from_prepared_pairs_alone": False,
     }
+    assert run["paper_reference_values"]["sources"] == {
+        "final_pdf": "rounded published rates and 0/68,650 rank-1 result",
+        "archival_reanalysis": (
+            "exact numerators, denominators, rank 2-4 breakdowns, and cohort counts"
+        ),
+    }
+    assert run["paper_reference_values"]["source_by_metric"]["all_evaluable_target_miss_rate"] == {
+        "rounded_rate": "final_pdf",
+        "exact_counts": "archival_reanalysis",
+    }
     assert "gold_option_edit_rate" not in run["paper_reference_values"]
     assert len(run["inputs"]) == 3
     assert run["paper_comparison"]["status"] == "not_comparable"
     assert run["paper_comparison"]["expected_model_benchmark_settings"] == 42
     assert run["paper_comparison"]["observed_model_benchmark_settings"] == 2
+    assert run["paper_comparison"]["checks"] == {
+        "paper_seed_42": True,
+        "exact_42_setting_84_cell_grid": False,
+        "exact_per_cell_item_counts": False,
+        "paired_targeting_arms": False,
+        "paper_generation_cap_512": True,
+        "exact_arm_item_totals": False,
+    }
+    assert len(run["paper_comparison"]["cell_count_mismatches"]) == 3
+    assert run["paper_comparison"]["expected_cell_counts_source"] == (
+        "archival_reanalysis/source_provenance.csv"
+    )
     assert run["metric_protocol"]["rank_metric"] == (
         "successful Attribution-4 application selection_rank"
     )
@@ -655,6 +846,10 @@ def test_gold_option_uses_the_exact_formatted_choice_span_not_text_search(tmp_pa
             "random_seed_algorithm",
         ),
         (
+            lambda manifest, pair: manifest["provenance"].update(dataset_records_sha256="0" * 64),
+            "dataset records SHA-256",
+        ),
+        (
             lambda manifest, pair: manifest["decoding"].update(strategy="sampled"),
             "greedy",
         ),
@@ -676,6 +871,8 @@ def test_gold_option_uses_the_exact_formatted_choice_span_not_text_search(tmp_pa
             lambda manifest, pair: pair["target_attempts"][0].update(relevance="inf"),
             "finite relevance",
         ),
+        (_break_cumulative_shift_invariant, "cumulative-shift"),
+        (_change_seed_input_but_preserve_declared_alignment, "seeded Table 4"),
     ),
 )
 def test_invalid_or_partial_input_is_rejected_without_publishing_output(
@@ -746,6 +943,76 @@ def test_duplicate_setting_sources_are_rejected(tmp_path: Path) -> None:
         )
 
     with pytest.raises(TargetingFidelityAuditError, match="duplicate input cell"):
+        run_targeting_fidelity_audit(
+            TargetingFidelityAuditConfig(
+                pairs_root=pairs_root,
+                output_dir=tmp_path / "audit",
+            )
+        )
+
+
+def test_normalized_model_aliases_cannot_hide_a_duplicate_cell(tmp_path: Path) -> None:
+    pairs_root = tmp_path / "pairs"
+    question = "alpha"
+    for source_name, model in (("qualified", "org/model"), ("basename", "model")):
+        row = _pair(
+            source_name,
+            model=model,
+            benchmark="gsm8k",
+            targeting="attribution-4",
+            question=question,
+            choices=None,
+            gold_answer="1",
+            attempts=[_attempt(1)],
+            aligned_words=[_aligned_word(question, "alpha", word_index=0, target_ranks=(1,))],
+        )
+        _write_source(
+            pairs_root / source_name,
+            [row],
+            model=model,
+            benchmark="gsm8k",
+            targeting="attribution-4",
+        )
+
+    with pytest.raises(TargetingFidelityAuditError, match="normalized input cell"):
+        run_targeting_fidelity_audit(
+            TargetingFidelityAuditConfig(
+                pairs_root=pairs_root,
+                output_dir=tmp_path / "audit",
+            )
+        )
+
+
+def test_random_control_excludes_attribution_ranks_one_through_four(
+    tmp_path: Path,
+) -> None:
+    pairs_root = tmp_path / "pairs"
+    _fixture_inputs(pairs_root)
+    source = pairs_root / "m-random-mmlu" / "pairs.jsonl"
+    pair = json.loads(source.read_text())
+    pair["target_attempts"][0]["attribution_rank"] = 4
+    source.write_text(json.dumps(pair) + "\n", encoding="utf-8")
+
+    with pytest.raises(TargetingFidelityAuditError, match="Random-4.*top four"):
+        run_targeting_fidelity_audit(
+            TargetingFidelityAuditConfig(
+                pairs_root=pairs_root,
+                output_dir=tmp_path / "audit",
+            )
+        )
+
+
+def test_paired_targeting_arms_require_matching_dataset_and_model_provenance(
+    tmp_path: Path,
+) -> None:
+    pairs_root = tmp_path / "pairs"
+    _fixture_inputs(pairs_root)
+    manifest_path = pairs_root / "m-random-mmlu" / "run.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["provenance"]["model_revision"] = "other-model-revision"
+    _write_json(manifest_path, manifest)
+
+    with pytest.raises(TargetingFidelityAuditError, match="paired targeting provenance"):
         run_targeting_fidelity_audit(
             TargetingFidelityAuditConfig(
                 pairs_root=pairs_root,
@@ -867,6 +1134,18 @@ def test_expected_seed_is_enforced_and_an_existing_output_is_never_overwritten(
                 output_dir=tmp_path / "wrong-seed",
             )
         )
+
+    sensitivity_output = tmp_path / "sensitivity"
+    run_targeting_fidelity_audit(
+        TargetingFidelityAuditConfig(
+            pairs_root=pairs_root,
+            output_dir=sensitivity_output,
+            expected_seed=7,
+        )
+    )
+    sensitivity_manifest = json.loads((sensitivity_output / "run.json").read_text())
+    assert sensitivity_manifest["paper_comparison"]["status"] == "not_comparable"
+    assert sensitivity_manifest["paper_comparison"]["checks"]["paper_seed_42"] is False
 
     existing = tmp_path / "existing"
     existing.mkdir()

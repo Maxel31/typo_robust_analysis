@@ -112,6 +112,8 @@ their records and manifests rather than from machine-specific path names. It
 rejects partial, duplicate, mixed, or non-four-edit inputs instead of silently
 changing the Appendix A denominator. It expects the paper seed 42 by default;
 use `--expected-seed` only for a separately labelled sensitivity run. The
+audit independently replays cumulative landing offsets and every SHA-seeded
+character edit instead of trusting recorded landing/operation flags. The
 command writes:
 
 - `targeting_fidelity_records.jsonl`: one validation/audit row per prepared
@@ -130,6 +132,10 @@ attempt-level, and the prepared-pair gold-option rate is restricted to
 multiple-choice inputs. The paper's 21.5% gold-option value uses the later
 Attribution-4 CoT-swap included cohort, so this pair-only command records that
 reference as not directly computable rather than comparing unlike denominators.
+`run.json` permits a `descriptive_only` paper comparison only after checking
+the exact 42-setting grid, archival per-cell counts, paired-arm
+sample/provenance identity, seed 42, and the 512-token generation cap;
+otherwise its status is `not_comparable`.
 See
 [`docs/targeting-fidelity-audit.md`](docs/targeting-fidelity-audit.md) for the
 schemas and paper comparison rules.

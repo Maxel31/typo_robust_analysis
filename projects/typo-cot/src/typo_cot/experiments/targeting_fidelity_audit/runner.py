@@ -20,6 +20,7 @@ from typo_cot.experiments.prepare_edited_pairs.runner import (
     PUBLIC_BENCHMARKS,
     TARGETING_CONDITIONS,
 )
+from typo_cot.experiments.prepare_edited_pairs.protocol import seeded_character_edit
 
 _OPERATIONS = ("substitution", "duplication", "deletion")
 _WORD = re.compile(r"\S+")
@@ -37,6 +38,22 @@ _FULL_GRID_MODELS = frozenset(
 _SCALE_EXTENSION_MODELS = frozenset({"gemma-3-12b-it", "gemma-3-27b-it"})
 _FULL_GRID_BENCHMARKS = frozenset(PUBLIC_BENCHMARKS)
 _SCALE_EXTENSION_BENCHMARKS = frozenset({"gsm8k", "math-500", "mmlu"})
+_BENCHMARK_DATASET_LOADERS = {
+    "gsm8k": "gsm8k",
+    "math-500": "math",
+    "mmlu": "mmlu",
+    "mmlu-pro": "mmlu_pro",
+    "arc": "arc",
+    "csqa": "commonsense_qa",
+}
+_PAPER_BENCHMARK_ITEM_COUNTS = {
+    "arc": 1172,
+    "csqa": 1221,
+    "gsm8k": 1319,
+    "math-500": 500,
+    "mmlu": 2850,
+    "mmlu-pro": 1400,
+}
 _EXPECTED_PAPER_SETTINGS = frozenset(
     {(model, benchmark) for model in _FULL_GRID_MODELS for benchmark in _FULL_GRID_BENCHMARKS}
     | {
@@ -50,6 +67,15 @@ _EXPECTED_PAPER_CELLS = frozenset(
     for model, benchmark in _EXPECTED_PAPER_SETTINGS
     for targeting in TARGETING_CONDITIONS
 )
+_DOUBLE_MMLU_MODELS = frozenset({"qwen2.5-7b-instruct"}) | _SCALE_EXTENSION_MODELS
+_EXPECTED_PAPER_ITEM_COUNTS = {
+    (model, benchmark): (
+        5700
+        if benchmark == "mmlu" and model in _DOUBLE_MMLU_MODELS
+        else _PAPER_BENCHMARK_ITEM_COUNTS[benchmark]
+    )
+    for model, benchmark in _EXPECTED_PAPER_SETTINGS
+}
 _CSV_FIELDS = (
     "row_type",
     "model",
@@ -86,7 +112,32 @@ _CSV_FIELDS = (
 )
 
 PAPER_REFERENCE_VALUES: dict[str, object] = {
-    "source": "Final PDF Appendix A, Targeting fidelity and Perturbation strata",
+    "sources": {
+        "final_pdf": "rounded published rates and 0/68,650 rank-1 result",
+        "archival_reanalysis": (
+            "exact numerators, denominators, rank 2-4 breakdowns, and cohort counts"
+        ),
+    },
+    "source_by_metric": {
+        "four_distinct_words": {
+            "rounded_rates": "final_pdf",
+            "exact_counts": "archival_reanalysis",
+        },
+        "top_selected_attribution_attempt": {
+            "rank_1_result": "final_pdf",
+        },
+        "attribution_apply_rank_miss": {
+            "rank_2_to_4_exact_counts": "archival_reanalysis",
+        },
+        "all_evaluable_target_miss_rate": {
+            "rounded_rate": "final_pdf",
+            "exact_counts": "archival_reanalysis",
+        },
+        "conditional_gold_option_edit_rate": {
+            "rounded_rate": "final_pdf",
+            "exact_counts": "archival_reanalysis",
+        },
+    },
     "four_distinct_words": {
         "settings": 42,
         "attribution-4": {"items_with_four": 56141, "items": 68660, "rate": 0.818},
@@ -156,6 +207,23 @@ class _Cell:
     benchmark: str
     targeting: str
     seed: int
+
+
+@dataclass(frozen=True, slots=True)
+class _ManifestAudit:
+    cell: _Cell
+    record_count: int
+    max_new_tokens: int
+    dataset_sample_count: int
+    dataset_records_sha256: str
+    model_revision: str | None
+    dataset_loader: str
+
+
+@dataclass(frozen=True, slots=True)
+class _InputAudit:
+    manifest: _ManifestAudit
+    sample_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,6 +357,11 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _stable_seed(*parts: object) -> int:
+    payload = "\x1f".join(str(part) for part in parts).encode("utf-8")
+    return int.from_bytes(hashlib.sha256(payload).digest()[:8], "big")
+
+
 def _relative(path: Path, root: Path) -> str:
     try:
         return path.resolve().relative_to(root.resolve()).as_posix()
@@ -300,7 +373,7 @@ def _validate_manifest(
     path: Path,
     *,
     expected_seed: int,
-) -> tuple[_Cell, int]:
+) -> _ManifestAudit:
     manifest = _load_json(path)
     if manifest.get("schema_version") != "prepare-edited-pairs-run/v1":
         raise _error(path, "unknown prepare-edited-pairs run schema")
@@ -333,6 +406,8 @@ def _validate_manifest(
         path=path,
         field_name="arguments.max_new_tokens",
     )
+    if max_new_tokens <= 0:
+        raise _error(path, "arguments.max_new_tokens must be positive")
 
     decoding = _mapping(manifest.get("decoding"), path=path, field_name="decoding")
     if decoding.get("strategy") != "greedy":
@@ -356,6 +431,35 @@ def _validate_manifest(
                 path,
                 f"provenance.{field_name} must be {expected_value!r}",
             )
+    if provenance.get("model") != model:
+        raise _error(path, "provenance.model does not match arguments.model")
+    dataset_loader = _string(
+        provenance.get("benchmark_dataset_loader"),
+        path=path,
+        field_name="provenance.benchmark_dataset_loader",
+    )
+    if dataset_loader != _BENCHMARK_DATASET_LOADERS[benchmark]:
+        raise _error(path, "provenance benchmark dataset loader does not match benchmark")
+    dataset_sample_count = _integer(
+        provenance.get("dataset_sample_count"),
+        path=path,
+        field_name="provenance.dataset_sample_count",
+    )
+    dataset_records_sha256 = _string(
+        provenance.get("dataset_records_sha256"),
+        path=path,
+        field_name="provenance.dataset_records_sha256",
+    )
+    if re.fullmatch(r"[0-9a-f]{64}", dataset_records_sha256) is None:
+        raise _error(path, "provenance.dataset_records_sha256 must be lowercase SHA-256")
+    if "model_revision" not in provenance:
+        raise _error(path, "provenance.model_revision is required")
+    raw_model_revision = provenance.get("model_revision")
+    if raw_model_revision is not None and (
+        not isinstance(raw_model_revision, str) or not raw_model_revision
+    ):
+        raise _error(path, "provenance.model_revision must be null or a non-empty string")
+    model_revision = raw_model_revision if isinstance(raw_model_revision, str) else None
 
     counts = _mapping(manifest.get("counts"), path=path, field_name="counts")
     discovered = _integer(counts.get("discovered"), path=path, field_name="counts.discovered")
@@ -365,7 +469,17 @@ def _validate_manifest(
         raise _error(path, "completed input contains no pair records")
     if discovered != written or failed != 0:
         raise _error(path, "completed input has partial discovered/written/failed counts")
-    return _Cell(model, benchmark, targeting, seed), written
+    if dataset_sample_count != written:
+        raise _error(path, "dataset sample count does not match completed record count")
+    return _ManifestAudit(
+        cell=_Cell(model, benchmark, targeting, seed),
+        record_count=written,
+        max_new_tokens=max_new_tokens,
+        dataset_sample_count=dataset_sample_count,
+        dataset_records_sha256=dataset_records_sha256,
+        model_revision=model_revision,
+        dataset_loader=dataset_loader,
+    )
 
 
 def _load_jsonl(path: Path) -> list[dict[str, object]]:
@@ -390,6 +504,57 @@ def _load_jsonl(path: Path) -> list[dict[str, object]]:
     except OSError as exc:
         raise _error(path, f"cannot read JSONL: {exc}") from exc
     return rows
+
+
+def _dataset_records_sha256(rows: Sequence[Mapping[str, object]], *, path: Path) -> str:
+    fingerprint_rows: list[dict[str, object]] = []
+    for row in rows:
+        line = row.get("__source_line__")
+        prefix = f"line {line}"
+        clean = _mapping(row.get("clean"), path=path, field_name=f"{prefix}.clean")
+        raw_choices = clean.get("choices")
+        if raw_choices is None:
+            choices: list[str] | None = None
+        else:
+            choices = [
+                _string(
+                    choice,
+                    path=path,
+                    field_name=f"{prefix}.clean.choices[{index}]",
+                )
+                for index, choice in enumerate(
+                    _list(raw_choices, path=path, field_name=f"{prefix}.clean.choices")
+                )
+            ]
+        subset = row.get("subset")
+        if subset is not None and not isinstance(subset, str):
+            raise _error(path, f"{prefix}.subset must be null or a string")
+        fingerprint_rows.append(
+            {
+                "sample_id": _string(
+                    row.get("sample_id"), path=path, field_name=f"{prefix}.sample_id"
+                ),
+                "question": _string(
+                    clean.get("question"),
+                    path=path,
+                    field_name=f"{prefix}.clean.question",
+                ),
+                "choices": choices,
+                "correct_answer": _string(
+                    row.get("gold_answer"),
+                    path=path,
+                    field_name=f"{prefix}.gold_answer",
+                ),
+                "subset": subset,
+            }
+        )
+    serialized = json.dumps(
+        fingerprint_rows,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(serialized).hexdigest()
 
 
 def _span(
@@ -490,6 +655,56 @@ def _gold_option(
     return True, edited, {"start": gold_start, "end": gold_end}
 
 
+def _validate_excluded_tokens(
+    record: Mapping[str, object],
+    *,
+    path: Path,
+    cell: _Cell,
+    editable_prompt_span: tuple[int, int],
+) -> set[int]:
+    raw_excluded = _list(
+        record.get("excluded_attribution_tokens"),
+        path=path,
+        field_name="excluded_attribution_tokens",
+    )
+    if cell.targeting == "attribution-4":
+        if raw_excluded:
+            raise _error(path, "Attribution-4 must not declare excluded attribution tokens")
+        return set()
+    if len(raw_excluded) != 4:
+        raise _error(path, "Random-4 must exclude exactly the attribution top four")
+
+    editable_start, editable_end = editable_prompt_span
+    token_indices: set[int] = set()
+    for expected_rank, value in enumerate(raw_excluded, 1):
+        prefix = f"excluded_attribution_tokens[{expected_rank - 1}]"
+        token = _mapping(value, path=path, field_name=prefix)
+        rank = _integer(
+            token.get("attribution_rank"),
+            path=path,
+            field_name=f"{prefix}.attribution_rank",
+        )
+        if rank != expected_rank:
+            raise _error(path, "Random-4 excluded tokens must be attribution ranks 1-4")
+        token_index = _integer(
+            token.get("token_index"),
+            path=path,
+            field_name=f"{prefix}.token_index",
+        )
+        if token_index < 0 or token_index in token_indices:
+            raise _error(path, "Random-4 excluded token indices must be distinct and non-negative")
+        token_indices.add(token_index)
+        _string(token.get("text"), path=path, field_name=f"{prefix}.text")
+        _finite_number(token.get("relevance"), path=path, field_name=f"{prefix}.relevance")
+        prompt_start = _integer(
+            token.get("prompt_start"), path=path, field_name=f"{prefix}.prompt_start"
+        )
+        prompt_end = _integer(token.get("prompt_end"), path=path, field_name=f"{prefix}.prompt_end")
+        if not editable_start <= prompt_start < prompt_end <= editable_end:
+            raise _error(path, f"{prefix} lies outside the clean editable prompt span")
+    return token_indices
+
+
 def _validate_pair(
     record: dict[str, object],
     *,
@@ -527,6 +742,21 @@ def _validate_pair(
 
     clean = _mapping(record.get("clean"), path=item_path, field_name="clean")
     editable = _string(clean.get("editable_text"), path=item_path, field_name="clean.editable_text")
+    clean_prompt = _string(clean.get("prompt"), path=item_path, field_name="clean.prompt")
+    editable_prompt_start, editable_prompt_end = _span(
+        clean.get("editable_prompt_span"),
+        path=item_path,
+        field_name="clean.editable_prompt_span",
+        text_length=len(clean_prompt),
+    )
+    if clean_prompt[editable_prompt_start:editable_prompt_end] != editable:
+        raise _error(item_path, "clean editable prompt span does not match editable_text")
+    excluded_token_indices = _validate_excluded_tokens(
+        record,
+        path=item_path,
+        cell=cell,
+        editable_prompt_span=(editable_prompt_start, editable_prompt_end),
+    )
     raw_attempts = _list(
         record.get("target_attempts"), path=item_path, field_name="target_attempts"
     )
@@ -539,9 +769,17 @@ def _validate_pair(
         raise _error(item_path, "num_target_attempts does not match target_attempts")
     if not raw_attempts or len(raw_attempts) > 4:
         raise _error(item_path, "target_attempts must contain between one and four edits")
+    num_candidates = _integer(
+        record.get("num_candidates"), path=item_path, field_name="num_candidates"
+    )
+    if num_candidates < len(raw_attempts) + len(excluded_token_indices):
+        raise _error(item_path, "num_candidates is smaller than recorded target provenance")
 
     current_text = editable
     origins: list[int | None] = list(range(len(editable)))
+    cumulative_shift = 0
+    seen_target_token_indices: set[int] = set()
+    seen_attribution_ranks: set[int] = set()
     attempts: list[dict[str, object]] = []
     for index, value in enumerate(raw_attempts, 1):
         field_prefix = f"target_attempts[{index - 1}]"
@@ -560,14 +798,33 @@ def _validate_pair(
         )
         if attribution_rank <= 0:
             raise _error(item_path, "attribution ranks must be positive")
+        if attribution_rank in seen_attribution_ranks:
+            raise _error(item_path, "target attribution ranks must be distinct")
+        if cell.targeting == "random-4" and attribution_rank <= 4:
+            raise _error(item_path, "Random-4 targets must exclude the attribution top four")
+        if (
+            cell.targeting == "attribution-4"
+            and seen_attribution_ranks
+            and attribution_rank <= max(seen_attribution_ranks)
+        ):
+            raise _error(item_path, "Attribution-4 target ranks must remain increasing")
+        seen_attribution_ranks.add(attribution_rank)
         target_token_index = _integer(
             attempt.get("target_token_index"),
             path=item_path,
             field_name=f"{field_prefix}.target_token_index",
         )
-        if target_token_index < 0:
-            raise _error(item_path, "target token indices must be non-negative")
-        _string(
+        if (
+            target_token_index < 0
+            or target_token_index in seen_target_token_indices
+            or target_token_index in excluded_token_indices
+        ):
+            raise _error(
+                item_path,
+                "target token indices must be distinct, non-negative, and not excluded",
+            )
+        seen_target_token_indices.add(target_token_index)
+        target_token_text = _string(
             attempt.get("target_token_text"),
             path=item_path,
             field_name=f"{field_prefix}.target_token_text",
@@ -584,12 +841,34 @@ def _validate_pair(
             field_name=f"{field_prefix}.intended_editable_span",
             text_length=len(editable),
         )
+        intended_prompt_start, intended_prompt_end = _span(
+            attempt.get("intended_prompt_span"),
+            path=item_path,
+            field_name=f"{field_prefix}.intended_prompt_span",
+            text_length=len(clean_prompt),
+        )
+        if (intended_prompt_start, intended_prompt_end) != (
+            editable_prompt_start + intended_start,
+            editable_prompt_start + intended_end,
+        ):
+            raise _error(
+                item_path,
+                f"{field_prefix}.intended_prompt_span does not match clean editable coordinates",
+            )
         landed_start, landed_end = _span(
             attempt.get("landed_editable_span_before"),
             path=item_path,
             field_name=f"{field_prefix}.landed_editable_span_before",
             text_length=len(current_text),
         )
+        if (landed_start, landed_end) != (
+            intended_start + cumulative_shift,
+            intended_end + cumulative_shift,
+        ):
+            raise _error(
+                item_path,
+                f"{field_prefix} violates the producer cumulative-shift landing invariant",
+            )
         landed_text = _string(
             attempt.get("landed_text_before"),
             path=item_path,
@@ -669,6 +948,32 @@ def _validate_pair(
             path=item_path,
             field_name=f"{field_prefix}.edited_token_text",
         )
+        seeded_edit = seeded_character_edit(
+            landed_text,
+            _stable_seed(
+                cell.seed,
+                sample_id,
+                target_token_index,
+                target_token_text,
+            ),
+        )
+        if seeded_edit is None or (
+            seeded_edit.operation,
+            seeded_edit.character_index,
+            seeded_edit.original_character,
+            seeded_edit.new_character,
+            seeded_edit.edited,
+        ) != (
+            operation,
+            character_index,
+            original_character,
+            new_character,
+            edited_token_text,
+        ):
+            raise _error(
+                item_path,
+                f"{field_prefix} does not match the SHA-seeded Table 4 edit",
+            )
         if edited_token_text != expected_edited:
             raise _error(item_path, f"{field_prefix}.edited_token_text does not match replay")
 
@@ -734,6 +1039,7 @@ def _validate_pair(
         )
         origins = origins[:landed_start] + replacement_origins + origins[landed_end:]
         current_text = current_text[:landed_start] + edited_token_text + current_text[landed_end:]
+        cumulative_shift += len(edited_token_text) - len(landed_text)
 
     edited = _mapping(record.get("edited"), path=item_path, field_name="edited")
     recorded_edited = _string(
@@ -741,6 +1047,18 @@ def _validate_pair(
     )
     if recorded_edited != current_text:
         raise _error(item_path, "replayed edited text does not match edited.editable_text")
+    edited_prompt = _string(edited.get("prompt"), path=item_path, field_name="edited.prompt")
+    edited_prompt_start, edited_prompt_end = _span(
+        edited.get("editable_prompt_span"),
+        path=item_path,
+        field_name="edited.editable_prompt_span",
+        text_length=len(edited_prompt),
+    )
+    if (
+        edited_prompt_start != editable_prompt_start
+        or edited_prompt[edited_prompt_start:edited_prompt_end] != recorded_edited
+    ):
+        raise _error(item_path, "edited prompt coordinates do not match replayed editable text")
 
     clean_word_spans = _word_spans(editable)
     edited_word_spans = _word_spans(recorded_edited)
@@ -789,6 +1107,26 @@ def _validate_pair(
             edited_end,
         ) != replayed_edited_span:
             raise _error(item_path, "aligned editable spans do not match replayed words")
+        clean_prompt_word_start, clean_prompt_word_end = _span(
+            word.get("clean_prompt_span"),
+            path=item_path,
+            field_name=f"aligned_words[{index}].clean_prompt_span",
+            text_length=len(clean_prompt),
+        )
+        edited_prompt_word_start, edited_prompt_word_end = _span(
+            word.get("edited_prompt_span"),
+            path=item_path,
+            field_name=f"aligned_words[{index}].edited_prompt_span",
+            text_length=len(edited_prompt),
+        )
+        if (clean_prompt_word_start, clean_prompt_word_end) != (
+            editable_prompt_start + start,
+            editable_prompt_start + end,
+        ) or (edited_prompt_word_start, edited_prompt_word_end) != (
+            edited_prompt_start + edited_start,
+            edited_prompt_start + edited_end,
+        ):
+            raise _error(item_path, "aligned prompt spans do not match editable word spans")
         clean_text = _string(
             word.get("clean_text"), path=item_path, field_name=f"aligned_words[{index}].clean_text"
         )
@@ -1017,32 +1355,90 @@ def _normalized_setting(cell: _Cell) -> tuple[str, str]:
     return cell.model.rsplit("/", 1)[-1].lower(), cell.benchmark
 
 
+def _validate_paired_sources(inputs: Sequence[_InputAudit]) -> None:
+    by_setting: dict[tuple[str, str], dict[str, _InputAudit]] = {}
+    for source in inputs:
+        cell = source.manifest.cell
+        by_setting.setdefault(_normalized_setting(cell), {})[cell.targeting] = source
+    for (model, benchmark), arms in by_setting.items():
+        if set(arms) != set(TARGETING_CONDITIONS):
+            continue
+        attribution = arms["attribution-4"]
+        random_control = arms["random-4"]
+        left = attribution.manifest
+        right = random_control.manifest
+        if (
+            left.cell.model != right.cell.model
+            or attribution.sample_ids != random_control.sample_ids
+            or left.record_count != right.record_count
+            or left.dataset_sample_count != right.dataset_sample_count
+            or left.dataset_records_sha256 != right.dataset_records_sha256
+            or left.model_revision != right.model_revision
+            or left.dataset_loader != right.dataset_loader
+            or left.max_new_tokens != right.max_new_tokens
+        ):
+            raise TargetingFidelityAuditError(
+                "paired targeting provenance or cohort mismatch for "
+                f"model={model!r}, benchmark={benchmark!r}"
+            )
+
+
 def _paper_comparison(
-    input_cells: set[_Cell],
-    audited_items: Sequence[_AuditedItem],
+    inputs: Sequence[_InputAudit],
+    *,
+    expected_seed: int,
 ) -> dict[str, object]:
+    input_cells = {source.manifest.cell for source in inputs}
     observed_settings = {_normalized_setting(cell) for cell in input_cells}
     observed_cells = {(*_normalized_setting(cell), cell.targeting) for cell in input_cells}
     missing_settings = sorted(_EXPECTED_PAPER_SETTINGS - observed_settings)
     unexpected_settings = sorted(observed_settings - _EXPECTED_PAPER_SETTINGS)
     missing_cells = sorted(_EXPECTED_PAPER_CELLS - observed_cells)
     unexpected_cells = sorted(observed_cells - _EXPECTED_PAPER_CELLS)
-    item_counts = Counter(item.cell.targeting for item in audited_items)
-    full_coverage = (
-        not missing_cells
-        and not unexpected_cells
-        and item_counts["attribution-4"] == 68660
-        and item_counts["random-4"] == 68660
-    )
+    item_counts: Counter[str] = Counter()
+    cell_count_mismatches: list[dict[str, object]] = []
+    for source in inputs:
+        manifest = source.manifest
+        cell = manifest.cell
+        item_counts[cell.targeting] += manifest.record_count
+        normalized = _normalized_setting(cell)
+        expected_count = _EXPECTED_PAPER_ITEM_COUNTS.get(normalized)
+        if expected_count != manifest.record_count:
+            cell_count_mismatches.append(
+                {
+                    "model": normalized[0],
+                    "benchmark": normalized[1],
+                    "targeting": cell.targeting,
+                    "expected_items": expected_count,
+                    "observed_items": manifest.record_count,
+                }
+            )
+    targeting_by_setting: dict[tuple[str, str], set[str]] = {}
+    for cell in input_cells:
+        targeting_by_setting.setdefault(_normalized_setting(cell), set()).add(cell.targeting)
+    checks = {
+        "paper_seed_42": expected_seed == 42,
+        "exact_42_setting_84_cell_grid": not missing_cells and not unexpected_cells,
+        "exact_per_cell_item_counts": not cell_count_mismatches,
+        "paired_targeting_arms": all(
+            arms == set(TARGETING_CONDITIONS) for arms in targeting_by_setting.values()
+        ),
+        "paper_generation_cap_512": all(source.manifest.max_new_tokens == 512 for source in inputs),
+        "exact_arm_item_totals": item_counts["attribution-4"] == 68660
+        and item_counts["random-4"] == 68660,
+    }
+    full_coverage = all(checks.values())
+    failed_checks = [name for name, passed in checks.items() if not passed]
     return {
         "status": "descriptive_only" if full_coverage else "not_comparable",
         "reason": (
             "The complete paper grid and item denominators are present, but the public-v1 "
             "origin replay is a descriptive successor to the legacy decidability metric."
             if full_coverage
-            else "Paper values require the complete 42-setting, two-condition grid and exact "
-            "68,660-item denominator in each condition."
+            else "Failed paper-comparison preconditions: " + ", ".join(failed_checks)
         ),
+        "checks": checks,
+        "expected_cell_counts_source": "archival_reanalysis/source_provenance.csv",
         "expected_model_benchmark_settings": len(_EXPECTED_PAPER_SETTINGS),
         "observed_model_benchmark_settings": len(observed_settings),
         "expected_input_cells": len(_EXPECTED_PAPER_CELLS),
@@ -1068,6 +1464,14 @@ def _paper_comparison(
             {"model": model, "benchmark": benchmark, "targeting": targeting}
             for model, benchmark, targeting in unexpected_cells
         ],
+        "cell_count_mismatches": sorted(
+            cell_count_mismatches,
+            key=lambda row: (
+                str(row["model"]),
+                str(row["benchmark"]),
+                str(row["targeting"]),
+            ),
+        ),
         "metric_compatibility": {
             "four_distinct_words": "same definition after exact-grid validation",
             "selection_rank": (
@@ -1146,6 +1550,8 @@ def run_targeting_fidelity_audit(
         raise TargetingFidelityAuditError("the same pairs.jsonl was discovered more than once")
 
     input_cells: set[_Cell] = set()
+    normalized_input_cells: set[tuple[str, str, str]] = set()
+    input_audits: list[_InputAudit] = []
     pair_identities: set[tuple[_Cell, str]] = set()
     audited_items: list[_AuditedItem] = []
     input_provenance: list[dict[str, object]] = []
@@ -1153,14 +1559,24 @@ def run_targeting_fidelity_audit(
         manifest_path = pairs_path.with_name("run.json")
         if not manifest_path.is_file():
             raise TargetingFidelityAuditError(f"{pairs_path}: missing sibling completed run.json")
-        cell, expected_rows = _validate_manifest(manifest_path, expected_seed=config.expected_seed)
+        manifest_audit = _validate_manifest(manifest_path, expected_seed=config.expected_seed)
+        cell = manifest_audit.cell
+        expected_rows = manifest_audit.record_count
         if cell in input_cells:
             raise TargetingFidelityAuditError(
                 "duplicate input cell for "
                 f"model={cell.model!r}, benchmark={cell.benchmark!r}, "
                 f"targeting={cell.targeting!r}, seed={cell.seed}"
             )
+        normalized_cell = (*_normalized_setting(cell), cell.targeting)
+        if normalized_cell in normalized_input_cells:
+            raise TargetingFidelityAuditError(
+                "duplicate normalized input cell for "
+                f"model={normalized_cell[0]!r}, benchmark={cell.benchmark!r}, "
+                f"targeting={cell.targeting!r}"
+            )
         input_cells.add(cell)
+        normalized_input_cells.add(normalized_cell)
         relative_pairs = _relative(pairs_path, pairs_root)
         raw_rows = _load_jsonl(pairs_path)
         if len(raw_rows) != expected_rows:
@@ -1187,6 +1603,13 @@ def run_targeting_fidelity_audit(
             raise TargetingFidelityAuditError(
                 f"{pairs_path}: sample_id rows must remain strictly sorted"
             )
+        if (
+            _dataset_records_sha256(raw_rows, path=pairs_path)
+            != manifest_audit.dataset_records_sha256
+        ):
+            raise TargetingFidelityAuditError(
+                f"{pairs_path}: dataset records SHA-256 does not match reconstructed pairs"
+            )
         for raw_row in raw_rows:
             item = _validate_pair(
                 raw_row,
@@ -1201,6 +1624,12 @@ def run_targeting_fidelity_audit(
                 )
             pair_identities.add(identity)
             audited_items.append(item)
+        input_audits.append(
+            _InputAudit(
+                manifest=manifest_audit,
+                sample_ids=tuple(source_sample_ids),
+            )
+        )
         input_provenance.append(
             {
                 "model": cell.model,
@@ -1208,6 +1637,9 @@ def run_targeting_fidelity_audit(
                 "targeting": cell.targeting,
                 "seed": cell.seed,
                 "record_count": expected_rows,
+                "dataset_records_sha256": manifest_audit.dataset_records_sha256,
+                "model_revision": manifest_audit.model_revision,
+                "max_new_tokens": manifest_audit.max_new_tokens,
                 "pairs_path": relative_pairs,
                 "pairs_sha256": _sha256(pairs_path),
                 "manifest_path": _relative(manifest_path, pairs_root),
@@ -1215,6 +1647,7 @@ def run_targeting_fidelity_audit(
             }
         )
 
+    _validate_paired_sources(input_audits)
     audited_items.sort(
         key=lambda item: (
             item.cell.model,
@@ -1226,7 +1659,10 @@ def run_targeting_fidelity_audit(
     )
     summary_rows, operation_counts = _group(audited_items)
     settings = len({(item.cell.model, item.cell.benchmark) for item in audited_items})
-    paper_comparison = _paper_comparison(input_cells, audited_items)
+    paper_comparison = _paper_comparison(
+        input_audits,
+        expected_seed=config.expected_seed,
+    )
 
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     temporary_dir = Path(tempfile.mkdtemp(prefix=f".{output_dir.name}.tmp-", dir=output_dir.parent))
