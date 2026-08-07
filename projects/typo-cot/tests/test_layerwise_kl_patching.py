@@ -26,6 +26,9 @@ from typo_cot.experiments.layerwise_kl_patching.patching import (
     capture_block_outputs,
     find_decoder_layers,
 )
+from typo_cot.experiments.layerwise_kl_patching.runtime import (
+    HuggingFaceLayerwiseKLPatchingRuntime,
+)
 from typo_cot.experiments.layerwise_kl_patching.runner import (
     DirectionScan,
     LayerwiseKLPatchingConfig,
@@ -164,12 +167,14 @@ class FakeRuntime:
         n_layers: int = 3,
         scans: dict[str, dict[str, DirectionScan]] | None = None,
         error_for: str | None = None,
+        requested_revision: str = "source-revision",
         model_revision: str = "source-revision",
         tokenizer_revision: str = "source-revision",
     ) -> None:
         self.num_layers = n_layers
         self.scans = scans or {}
         self.error_for = error_for
+        self.requested_revision = requested_revision
         self.model_revision = model_revision
         self.tokenizer_revision = tokenizer_revision
         self.calls: list[tuple[str, tuple[str, ...]]] = []
@@ -177,6 +182,7 @@ class FakeRuntime:
     def provenance(self) -> dict[str, object]:
         return {
             "runtime": "fake",
+            "requested_revision": self.requested_revision,
             "model_revision": self.model_revision,
             "tokenizer_revision": self.tokenizer_revision,
             "decoder_adapter": "fake.layers",
@@ -630,6 +636,7 @@ def test_source_contract_errors_fail_before_runtime_loading(
     (
         (FakeRuntime(model_revision="different-revision"), "model revision"),
         (FakeRuntime(tokenizer_revision="different-revision"), "tokenizer revision"),
+        (FakeRuntime(requested_revision="different-revision"), "requested revision"),
     ),
 )
 def test_runtime_revision_must_match_pair_preparation_before_scanning(
@@ -668,6 +675,34 @@ def test_default_runtime_receives_pair_preparation_revision(
     run_layerwise_kl_patching(_config(pairs_path, tmp_path / "out"))
 
     assert received["revision"] == "source-revision"
+
+
+def test_runtime_provenance_records_explicit_revision_when_tokenizer_omits_metadata() -> None:
+    revision = "7ae557604adf67be50417f59c2c2f167def9a775"
+    runtime = object.__new__(HuggingFaceLayerwiseKLPatchingRuntime)
+    runtime.config = SimpleNamespace(model="test/model")
+    runtime.revision = revision
+    runtime.model = SimpleNamespace(
+        config=SimpleNamespace(_commit_hash=revision),
+        get_decoder=lambda: SimpleNamespace(layers=[]),
+    )
+    runtime.tokenizer = SimpleNamespace(init_kwargs={})
+    runtime.num_layers = 3
+    runtime.device = "cuda:0"
+    runtime._torch = SimpleNamespace(
+        version=SimpleNamespace(cuda="test-cuda"),
+        cuda=SimpleNamespace(
+            get_device_name=lambda index: "test-gpu",
+            get_device_properties=lambda index: SimpleNamespace(total_memory=1024),
+        ),
+    )
+
+    provenance = runtime.provenance()
+
+    assert provenance["requested_revision"] == revision
+    assert provenance["model_revision"] == revision
+    assert provenance["tokenizer_revision"] == revision
+    assert provenance["tokenizer_revision_source"] == "explicit-load-revision"
 
 
 def test_strict_json_rejects_duplicate_keys_and_nonfinite_constants(tmp_path: Path) -> None:
