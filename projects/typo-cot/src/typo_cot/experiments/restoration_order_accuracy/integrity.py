@@ -24,6 +24,7 @@ _PRODUCER_FILES = frozenset(
 _EXTERNAL_FILES = (
     Path("evaluation/extractor.py"),
     Path("evaluation/fallback.py"),
+    Path("evaluation/generation.py"),
     Path("experiments/input_corrector_audit/protocol.py"),
     Path("experiments/input_corrector_audit/restoration.py"),
     Path("experiments/input_corrector_audit/source.py"),

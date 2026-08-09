@@ -76,6 +76,11 @@ uv run --project projects/typo-cot --extra lrp typo-cot prepare-edited-pairs \
 `--max-new-tokens 512` です。GPU smoke testには `--limit 1`、中断再開には
 `--resume` を使えます。clean/editedの両生成でsamplingを無効化し、answer extractorは
 primary、空の場合だけ決定的fallbackの順で適用します。
+各armには、effective EOSで終了したか、EOSなしでlength capへ達したかを記録します。
+512番目の生成tokenがEOSなら完了扱いなのでpositional fallbackを許可し、EOSなしで
+512 tokenへ達した場合だけ `length-cap` として禁止します。
+`generation_termination_protocol` 導入前のrunはresumeや下流での再利用をせず、
+`prepare-edited-pairs` から再生成してください。
 
 出力は次の2ファイルです。
 
@@ -949,8 +954,9 @@ source selectionの前に、保存された両endpointのcontinuationをfinal PD
 primary-then-empty-only-fallback ruleで再採点します。古いmetadataやprimary-onlyの
 stored answerはcohortの分母を黙って変えず、入力エラーとして拒否します。
 完了したproducer manifestは、`pairs.jsonl` の正確なbyte列とrecord数も固定します。
-この固定情報が導入される前に作成したsourceは `prepare-edited-pairs` で再生成する必要が
-あります。完了後にrelevanceやtoken位置metadataを変更したsourceはmodel load前に拒否します。
+この固定情報または明示的なEOS/length-cap停止理由が導入される前に作成したsourceは
+`prepare-edited-pairs` で再生成する必要があります。完了後にrelevanceやtoken位置metadataを
+変更したsourceはmodel load前に拒否します。
 
 runnerは保持する各itemについて、question、choices、subjectから完全なclean promptを再構築
 します。まず現在のGSM8K 8-shotまたはMMLU 5-shot templateを、保存済みの

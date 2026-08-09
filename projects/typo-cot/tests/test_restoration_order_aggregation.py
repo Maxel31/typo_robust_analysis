@@ -125,7 +125,8 @@ def _install_validated_source_fixture(monkeypatch: pytest.MonkeyPatch) -> None:
             json.loads(line)
             for line in (setting / "restoration_order_records.jsonl")
             .read_text(encoding="utf-8")
-            .splitlines()
+            .split("\n")
+            if line
             if json.loads(line).get("schema_version")
             == "restoration-order-record/v1"
         ]
@@ -481,6 +482,66 @@ def test_builder_micro_pools_six_settings_and_uses_exact_paired_binomial(
     assert result.markdown_path.is_file()
     assert result.latex_path.is_file()
     assert _read_json(result.run_path)["status"] == "completed"
+
+
+@pytest.mark.parametrize("separator", ("\u0085", "\u2028", "\u2029"))
+def test_builder_preserves_unicode_line_separators_inside_json_strings(
+    tmp_path: Path,
+    separator: str,
+) -> None:
+    runs_root = tmp_path / "runs"
+    setting = _complete_grid(runs_root)[0]
+    records_path = setting / "restoration_order_records.jsonl"
+    rows = [
+        json.loads(line)
+        for line in records_path.read_text(encoding="utf-8").split("\n")
+        if line
+    ]
+    rows[0]["arms"]["edited:k0"]["text"] += f"{separator}diagnostic"
+    records_path.write_text(
+        "".join(
+            json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows
+        ),
+        encoding="utf-8",
+    )
+    run_path = setting / "run.json"
+    run = _read_json(run_path)
+    run["outputs"]["records"]["sha256"] = _sha256(records_path)
+    _write_json(run_path, run)
+
+    result = build_restoration_order_table(
+        BuildRestorationOrderTableConfig(
+            runs_root=runs_root,
+            output_dir=tmp_path / "table",
+        )
+    )
+
+    assert result.settings == 6
+    assert _read_json(result.table_path)["cohort"]["items"] == 12
+
+
+def test_builder_rejects_records_without_the_producer_final_newline(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "runs"
+    setting = _complete_grid(runs_root)[0]
+    records_path = setting / "restoration_order_records.jsonl"
+    records_path.write_text(
+        records_path.read_text(encoding="utf-8").removesuffix("\n"),
+        encoding="utf-8",
+    )
+    run_path = setting / "run.json"
+    run = _read_json(run_path)
+    run["outputs"]["records"]["sha256"] = _sha256(records_path)
+    _write_json(run_path, run)
+
+    with pytest.raises(RestorationOrderTableInputError, match="final newline"):
+        build_restoration_order_table(
+            BuildRestorationOrderTableConfig(
+                runs_root=runs_root,
+                output_dir=tmp_path / "table",
+            )
+        )
 
 
 def test_builder_rejects_model_revision_drift_between_benchmarks(

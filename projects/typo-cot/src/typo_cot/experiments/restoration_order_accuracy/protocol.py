@@ -93,6 +93,7 @@ PROTOCOL = {
         "source_outcome_revalidation": (
             "stored-continuation-final-pdf-extraction-match/v1"
         ),
+        "source_generation_termination": "effective-eos-vs-length-cap/v1",
         "cross_setting_source_identity": (
             "model-revision-per-model-and-dataset-plus-ordered-samples-per-task/v1"
         ),

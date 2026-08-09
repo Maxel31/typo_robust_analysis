@@ -76,13 +76,16 @@ A completed producer manifest has exactly one declared output,
 atomic rename. Completed resume and every downstream load hash the actual file
 again. Consequently, changing an edit event's relevance or token index changes
 the artifact identity and is rejected before a model or dataset is loaded.
-Legacy completed manifests without this output binding are intentionally not
-accepted; rerun `prepare-edited-pairs` to regenerate them.
+Legacy completed manifests without this output binding or the explicit
+`effective-eos-vs-length-cap/v1` generation-termination protocol are
+intentionally not accepted; rerun `prepare-edited-pairs` to regenerate them.
 
 The loader does not trust the stored endpoint `answer.is_correct` flag by
 itself. It reruns the task extractor and empty-primary-only fallback on each
-stored clean and edited continuation, using the recorded token count to disable
-positional fallback at the 512-token cap, and requires the stored value,
+stored clean and edited continuation. It validates each recorded stopping
+reason and allows positional fallback for `eos`, including an EOS in generated
+position 512; it disables positional fallback only for `length-cap`, which must
+contain exactly 512 tokens. It then requires the stored value,
 extraction flag, correctness, method, and primary method to match. Thus an
 older primary-only result or self-consistent metadata edit cannot silently
 change source selection.
@@ -215,7 +218,8 @@ Generation uses the paper protocol:
 - temperature, top-p, and top-k are unset rather than assigned sampling
   values;
 - at most 512 new tokens are generated, and only new token IDs are decoded;
-- EOS and length-cap termination are recorded; and
+- EOS and length-cap termination use the same shared classifier as source
+  preparation (EOS takes precedence even at position 512); and
 - GSM8K uses its frozen 8-shot prompt and MMLU its frozen 5-shot prompt.
 
 Every condition uses the same task-specific primary extractor and the same

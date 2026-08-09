@@ -520,9 +520,14 @@ def _load_records(
     effective_eos_token_ids: frozenset[int],
 ) -> tuple[dict[str, object], ...]:
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        records_text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise RestorationOrderTableInputError(f"cannot read records: {path}") from exc
+    if not records_text.endswith("\n"):
+        raise RestorationOrderTableInputError(
+            f"records JSONL lacks its final newline: {path}"
+        )
+    lines = records_text[:-1].split("\n")
     if not lines or any(not line for line in lines):
         raise RestorationOrderTableInputError(f"records JSONL is empty or sparse: {path}")
     rows: list[dict[str, object]] = []

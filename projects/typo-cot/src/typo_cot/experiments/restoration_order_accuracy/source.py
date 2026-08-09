@@ -121,6 +121,7 @@ def _source_outcome(
     payload = _object(record.get(arm), field=f"{arm} source arm")
     continuation = payload.get("continuation")
     token_count = payload.get("continuation_token_count")
+    termination = payload.get("termination")
     gold_answer = record.get("gold_answer")
     if not isinstance(continuation, str):
         raise ValueError(f"{sample_id} {arm}.continuation must be a string")
@@ -132,12 +133,19 @@ def _source_outcome(
         raise ValueError(f"{sample_id} {arm}.continuation_token_count is invalid")
     if not isinstance(gold_answer, str) or not gold_answer:
         raise ValueError(f"{sample_id} gold_answer must be a non-empty string")
+    if termination not in {"eos", "length-cap"}:
+        raise ValueError(f"{sample_id} {arm}.termination is invalid")
+    if termination == "length-cap" and token_count != int(GENERATION["max_new_tokens"]):
+        raise ValueError(
+            f"{sample_id} {arm}.length-cap termination requires exactly "
+            f"{GENERATION['max_new_tokens']} continuation tokens"
+        )
     answer = _object(payload.get("answer"), field=f"{arm}.answer")
     recomputed = extract_with_fallback(
         continuation,
         benchmark=benchmark,
         correct_answer=gold_answer,
-        allow_positional=token_count < int(GENERATION["max_new_tokens"]),
+        allow_positional=termination == "eos",
     )
     expected = {
         "value": recomputed.value,
@@ -185,11 +193,9 @@ def load_restoration_order_source(
     source_selected: list[dict[str, object]] = []
     for raw_record in getattr(prepared, "records"):
         record = dict(_object(raw_record, field="prepared pair record"))
-        if _source_outcome(record, "clean", benchmark=benchmark) and not _source_outcome(
-            record,
-            "edited",
-            benchmark=benchmark,
-        ):
+        clean_correct = _source_outcome(record, "clean", benchmark=benchmark)
+        edited_correct = _source_outcome(record, "edited", benchmark=benchmark)
+        if clean_correct and not edited_correct:
             source_selected.append(record)
 
     separable_records: list[dict[str, object]] = []

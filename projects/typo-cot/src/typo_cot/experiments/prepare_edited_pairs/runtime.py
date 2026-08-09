@@ -13,6 +13,10 @@ from typing import TYPE_CHECKING, Any
 
 from typo_cot.data.cohorts import load_sample_id_cohort
 from typo_cot.evaluation.fallback import answers_equal, fallback_answer
+from typo_cot.evaluation.generation import (
+    classify_generated_token_ids,
+    resolve_effective_eos_token_ids,
+)
 from typo_cot.experiments.prepare_edited_pairs.protocol import (
     PairProtocolError,
     apply_paper_edits,
@@ -45,6 +49,7 @@ _MMLU_100_PER_SUBJECT_PAPER_MODELS = frozenset(
 )
 _DATASET_COHORT_RULE = "paper-model-benchmark-cohort/v1"
 _GENERATION_PROTOCOL = "explicit-greedy-generation/v1"
+_GENERATION_TERMINATION_PROTOCOL = "effective-eos-vs-length-cap/v1"
 _FINAL_PAPER_FALLBACK_BENCHMARKS = frozenset({"gsm8k", "mmlu", "mmlu_pro", "arc", "commonsense_qa"})
 _HISTORICAL_COMPATIBILITY_NOTES = [
     "stable-sha256-seeds-replace-process-random-python-hash",
@@ -56,6 +61,7 @@ _HISTORICAL_COMPATIBILITY_NOTES = [
     "explicit-greedy-parameters-replace-model-generation-defaults",
     "empty-primary-answer-fallback-matches-final-paper",
     "exact-canonical-answer-comparison-replaces-float-tolerance",
+    "effective-eos-termination-replaces-token-count-heuristic",
 ]
 
 
@@ -135,6 +141,7 @@ def preload_provenance(
         "dataset_samples_per_subset": _recorded_samples_per_subset(config),
         "random_seed_algorithm": "sha256-first-64-bits/v1",
         "generation_protocol": _GENERATION_PROTOCOL,
+        "generation_termination_protocol": _GENERATION_TERMINATION_PROTOCOL,
         "target_position": "maximum-logit-after-first-cot-token",
         "alignment": "actual-edited-word-final-token",
         "historical_compatibility_notes": list(_HISTORICAL_COMPATIBILITY_NOTES),
@@ -212,6 +219,13 @@ class HuggingFacePairPreparationRuntime:
         )
         self.tokenizer = self.wrapper.tokenizer
         self.tokenizer.padding_side = "left"
+        self.effective_eos_token_ids, self.eos_source = (
+            resolve_effective_eos_token_ids(
+                generation_config=self.wrapper.model.generation_config,
+                tokenizer=self.tokenizer,
+                operation="pair preparation generation",
+            )
+        )
         self.analyzer = create_analyzer(
             model=self.wrapper.model,
             tokenizer=self.tokenizer,
@@ -268,7 +282,7 @@ class HuggingFacePairPreparationRuntime:
             result = self.template.generate(question=sample.question, subject=sample.subset)
         return result, result.get_full_prompt()
 
-    def _generate(self, prompt: str) -> tuple[list[int], list[int], str]:
+    def _generate(self, prompt: str) -> tuple[list[int], list[int], str, str]:
         encoded = self.tokenizer(prompt, return_tensors="pt", add_special_tokens=True)
         input_ids = encoded["input_ids"].to(self.wrapper.device)
         attention_mask = encoded.get("attention_mask")
@@ -289,17 +303,21 @@ class HuggingFacePairPreparationRuntime:
                 return_dict_in_generate=False,
                 output_scores=False,
                 pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=list(self.effective_eos_token_ids),
             )
         prompt_length = input_ids.shape[1]
-        generated_ids = output_ids[0, prompt_length:].tolist()
-        if not generated_ids:
-            raise PairProtocolError("model generated no continuation token")
+        generated_ids, termination = classify_generated_token_ids(
+            output_ids[0, prompt_length:].tolist(),
+            effective_eos_token_ids=self.effective_eos_token_ids,
+            max_new_tokens=self.config.max_new_tokens,
+            field="pair preparation",
+        )
         continuation = self.tokenizer.decode(
-            generated_ids,
+            list(generated_ids),
             skip_special_tokens=True,
             clean_up_tokenization_spaces=False,
         )
-        return input_ids[0].tolist(), generated_ids, continuation
+        return input_ids[0].tolist(), list(generated_ids), continuation, termination
 
     def _relevance_after_first_cot(
         self, prompt_ids: list[int], generated_ids: list[int]
@@ -359,7 +377,12 @@ class HuggingFacePairPreparationRuntime:
 
     def prepare_pair(self, sample: Any, config: PrepareEditedPairsConfig) -> dict[str, object]:
         prompt_result, clean_prompt = self._prompt(sample)
-        clean_prompt_ids, clean_generated_ids, clean_continuation = self._generate(clean_prompt)
+        (
+            clean_prompt_ids,
+            clean_generated_ids,
+            clean_continuation,
+            clean_termination,
+        ) = self._generate(clean_prompt)
         token_ids, clean_offsets = _tokenize_with_offsets(self.tokenizer, clean_prompt)
         if token_ids != clean_prompt_ids:
             raise PairProtocolError("generation and alignment tokenization disagree")
@@ -409,11 +432,15 @@ class HuggingFacePairPreparationRuntime:
             edited_prompt_ids = clean_prompt_ids
             edited_generated_ids = clean_generated_ids
             edited_continuation = clean_continuation
+            edited_termination = clean_termination
             edited_offsets = clean_offsets
         else:
-            edited_prompt_ids, edited_generated_ids, edited_continuation = self._generate(
-                edited_prompt
-            )
+            (
+                edited_prompt_ids,
+                edited_generated_ids,
+                edited_continuation,
+                edited_termination,
+            ) = self._generate(edited_prompt)
             aligned_ids, edited_offsets = _tokenize_with_offsets(self.tokenizer, edited_prompt)
             if aligned_ids != edited_prompt_ids:
                 raise PairProtocolError("edited generation and alignment tokenization disagree")
@@ -431,12 +458,12 @@ class HuggingFacePairPreparationRuntime:
         clean_answer = self._answer(
             clean_continuation,
             sample.correct_answer,
-            allow_positional=len(clean_generated_ids) < config.max_new_tokens,
+            allow_positional=clean_termination == "eos",
         )
         edited_answer = self._answer(
             edited_continuation,
             sample.correct_answer,
-            allow_positional=len(edited_generated_ids) < config.max_new_tokens,
+            allow_positional=edited_termination == "eos",
         )
         return {
             "schema_version": "prepare-edited-pairs/v1",
@@ -471,6 +498,7 @@ class HuggingFacePairPreparationRuntime:
                 "prompt_token_count": len(clean_prompt_ids),
                 "continuation": clean_continuation,
                 "continuation_token_count": len(clean_generated_ids),
+                "termination": clean_termination,
                 "answer": clean_answer,
             },
             "edited": {
@@ -483,6 +511,7 @@ class HuggingFacePairPreparationRuntime:
                 "prompt_token_count": len(edited_prompt_ids),
                 "continuation": edited_continuation,
                 "continuation_token_count": len(edited_generated_ids),
+                "termination": edited_termination,
                 "answer": edited_answer,
             },
             "answer_changed": clean_answer["value"] != edited_answer["value"],
@@ -496,6 +525,8 @@ class HuggingFacePairPreparationRuntime:
         provenance.update(
             {
                 "model_revision": getattr(self.wrapper.model.config, "_commit_hash", None),
+                "effective_eos_token_ids": list(self.effective_eos_token_ids),
+                "effective_eos_token_ids_source": self.eos_source,
             }
         )
         provenance.update(self._dataset_provenance)

@@ -132,6 +132,9 @@ def test_dataset_cohort_sizes_are_public_implementation_evidence_not_pdf_facts()
     assert PROTOCOL["public_reproduction"]["source_outcome_revalidation"] == (
         "stored-continuation-final-pdf-extraction-match/v1"
     )
+    assert PROTOCOL["public_reproduction"]["source_generation_termination"] == (
+        "effective-eos-vs-length-cap/v1"
+    )
 
 
 def test_archived_table13_prompt_template_identities_are_frozen() -> None:

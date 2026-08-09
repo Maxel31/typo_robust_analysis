@@ -11,6 +11,10 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 
 from typo_cot.evaluation.fallback import extract_with_fallback
+from typo_cot.evaluation.generation import (
+    classify_generated_token_ids,
+    resolve_effective_eos_token_ids,
+)
 from typo_cot.experiments.restoration_order_accuracy.integrity import (
     implementation_code_identity,
     validate_paper_runtime_environment,
@@ -151,32 +155,12 @@ class HuggingFaceRestorationRuntime:
         self.internal_benchmark = _BENCHMARK_ALIASES[benchmark]
         self._closed = False
 
-    @staticmethod
-    def _normalized_eos(value: object) -> tuple[int, ...]:
-        values = value if isinstance(value, (list, tuple, set)) else (value,)
-        return tuple(
-            sorted(
-                {
-                    token
-                    for token in values
-                    if isinstance(token, int) and not isinstance(token, bool) and token >= 0
-                }
-            )
-        )
-
     def _resolve_eos(self) -> tuple[tuple[int, ...], str]:
-        generation_config = self.model.generation_config
-        if getattr(generation_config, "stop_strings", None):
-            raise ValueError("restoration-order generation does not support stop_strings")
-        if getattr(generation_config, "forced_eos_token_id", None) is not None:
-            raise ValueError("restoration-order generation does not support forced_eos_token_id")
-        values = self._normalized_eos(getattr(generation_config, "eos_token_id", None))
-        if values:
-            return values, "model-generation-config"
-        values = self._normalized_eos(getattr(self.tokenizer, "eos_token_id", None))
-        if values:
-            return values, "tokenizer-fallback"
-        raise ValueError("evaluator exposes no EOS token ID")
+        return resolve_effective_eos_token_ids(
+            generation_config=self.model.generation_config,
+            tokenizer=self.tokenizer,
+            operation="restoration-order generation",
+        )
 
     def _encode_unpadded(self, prompt: str, *, field: str) -> tuple[int, ...]:
         encoded = self.tokenizer(
@@ -283,26 +267,12 @@ class HuggingFaceRestorationRuntime:
             raw = tuple(
                 int(token) for token in output_ids[index, prompt_width:].detach().cpu().tolist()
             )
-            eos_index = next(
-                (
-                    position
-                    for position, token in enumerate(raw)
-                    if token in self.effective_eos_token_ids
-                ),
-                None,
+            continuation, termination = classify_generated_token_ids(
+                raw,
+                effective_eos_token_ids=self.effective_eos_token_ids,
+                max_new_tokens=max_new_tokens,
+                field=sample_id,
             )
-            if eos_index is None:
-                if len(raw) != max_new_tokens:
-                    raise ValueError(f"{sample_id} stopped without EOS before the token cap")
-                continuation = raw
-                termination = "length-cap"
-                allow_positional = False
-            else:
-                continuation = raw[: eos_index + 1]
-                termination = "eos"
-                allow_positional = True
-            if not continuation:
-                raise ValueError(f"{sample_id} generated no continuation token")
             text = self.tokenizer.decode(
                 list(continuation),
                 skip_special_tokens=True,
@@ -312,7 +282,7 @@ class HuggingFaceRestorationRuntime:
                 text,
                 benchmark=self.internal_benchmark,
                 correct_answer=gold_answer,
-                allow_positional=allow_positional,
+                allow_positional=termination == "eos",
             )
             generations.append(
                 RestorationGeneration(

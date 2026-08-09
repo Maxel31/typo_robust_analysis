@@ -89,6 +89,12 @@ token cap; model defaults cannot silently change the cohort. The primary answer
 extractor runs first, the deterministic fallback runs only for an empty result,
 and GSM8K correctness uses exact canonical strings rather than floating-point
 tolerance. MATH-500 retains its task-native symbolic comparator.
+Each clean and edited arm records whether generation ended at an effective EOS
+or only at the length cap. An EOS in the 512th generated position is still an
+EOS completion, so positional fallback remains available; only 512 generated
+tokens with no effective EOS are `length-cap` and disable that fallback. Runs
+created before `generation_termination_protocol` was recorded must be regenerated
+instead of resumed or reused downstream.
 The command writes:
 
 - `pairs.jsonl`: versioned per-item clean/edited generations, target-attempt
@@ -1364,9 +1370,10 @@ Before source selection, both stored endpoint continuations are rescored with
 the final-PDF primary-then-empty-only-fallback rule. A stale or primary-only
 stored answer is rejected instead of silently changing the cohort denominator.
 The completed producer manifest also binds the exact `pairs.jsonl` bytes and
-record count. Sources made before that binding was introduced must be
-regenerated with `prepare-edited-pairs`; editing relevance or token-position
-metadata after completion is rejected before model loading.
+record count. Sources made before that binding or explicit EOS-versus-length-cap
+termination was introduced must be regenerated with `prepare-edited-pairs`;
+editing relevance or token-position metadata after completion is rejected
+before model loading.
 
 For every retained item, the runner rebuilds the full clean prompt from its
 question, choices, and subject. It first checks the current GSM8K 8-shot or

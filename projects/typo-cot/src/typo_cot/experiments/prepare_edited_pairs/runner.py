@@ -246,6 +246,7 @@ _COMPLETED_RESUME_PROTOCOL_FIELDS = (
     "dataset_samples_per_subset",
     "random_seed_algorithm",
     "generation_protocol",
+    "generation_termination_protocol",
     "target_position",
     "alignment",
     "historical_compatibility_notes",

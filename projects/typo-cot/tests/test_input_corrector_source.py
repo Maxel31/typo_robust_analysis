@@ -111,6 +111,7 @@ def _pair_record(
             "prompt_token_count": 12,
             "continuation": "Clean reasoning. The answer is 2.",
             "continuation_token_count": 8,
+            "termination": "eos",
             "answer": _answer("2", correct=True),
         },
         "edited": {
@@ -123,6 +124,7 @@ def _pair_record(
             "prompt_token_count": 12,
             "continuation": "Edited reasoning. The answer is 3.",
             "continuation_token_count": 8,
+            "termination": "eos",
             "answer": _answer("3", correct=False),
         },
         "answer_changed": True,
@@ -272,6 +274,7 @@ def _manifest(
             "dataset_records_sha256": dataset_sha256,
             "random_seed_algorithm": "sha256-first-64-bits/v1",
             "generation_protocol": "explicit-greedy-generation/v1",
+            "generation_termination_protocol": "effective-eos-vs-length-cap/v1",
             "target_position": "maximum-logit-after-first-cot-token",
             "alignment": "actual-edited-word-final-token",
             "historical_compatibility_notes": [],
@@ -430,6 +433,11 @@ def test_rejects_nonpublic_benchmark_aliases(tmp_path: Path, benchmark: str) -> 
         ("provenance.dataset_samples_per_subset", 99, "samples_per_subset|subset"),
         ("provenance.random_seed_algorithm", "python-hash/v0", "random_seed_algorithm"),
         ("provenance.generation_protocol", "model-defaults/v0", "generation_protocol"),
+        (
+            "provenance.generation_termination_protocol",
+            "token-count-heuristic/v0",
+            "generation_termination_protocol",
+        ),
         ("provenance.target_position", "last-token", "target_position"),
         ("provenance.alignment", "token-substring", "alignment"),
         ("provenance.dataset_records_sha256", "not-a-sha", "dataset_records_sha256|SHA"),
@@ -540,6 +548,27 @@ def test_rejects_pair_record_schema_or_identity_drift(
     pairs_path, _run_path = _write_source(tmp_path / "source", [row])
 
     with pytest.raises(InputCorrectorSourceError, match=message):
+        _load(pairs_path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("clean.termination", _DELETE),
+        ("edited.termination", "unknown"),
+        ("clean.termination", "length-cap"),
+    ],
+)
+def test_rejects_missing_or_inconsistent_generation_termination(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    row = _pair_record("sample-000")
+    _set_path(row, field, value)
+    pairs_path, _run_path = _write_source(tmp_path / "source", [row])
+
+    with pytest.raises(InputCorrectorSourceError, match="termination|length-cap"):
         _load(pairs_path)
 
 

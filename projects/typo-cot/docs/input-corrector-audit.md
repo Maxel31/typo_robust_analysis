@@ -59,6 +59,8 @@ the sibling producer `run.json`. A paper-grid run must reject a source unless
 all of the following hold:
 
 - every record has `schema_version: prepare-edited-pairs/v1`;
+- both clean and edited arms record a valid `eos` or `length-cap` termination,
+  and `length-cap` has exactly 512 continuation tokens;
 - the sibling manifest has `schema_version: prepare-edited-pairs-run/v1` and a
   completed status with no failures;
 - the source is an unlimited run, not a `--limit` smoke test;
@@ -81,8 +83,9 @@ all of the following hold:
 The completed output inventory must contain only `pairs.jsonl`. This makes
 changes to relevance, token positions, edit events, or any other pair bytes
 detectable before a corrector or evaluator model is loaded. A legacy completed
-source without the output binding must be regenerated with
-`prepare-edited-pairs`.
+source without the output binding or
+`generation_termination_protocol: effective-eos-vs-length-cap/v1` must be
+regenerated with `prepare-edited-pairs`.
 
 Every source record remains in the setting run, including a record for which no
 character change could be applied. `aligned_words` remains part of source

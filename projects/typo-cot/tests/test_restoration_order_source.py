@@ -55,6 +55,7 @@ def _record(
             "editable_text": editable_text,
             "continuation": f"Reasoning. The answer is {value}.",
             "continuation_token_count": 8,
+            "termination": "eos",
             "answer": {
                 "value": value,
                 "is_extracted": True,
@@ -238,6 +239,32 @@ def test_selection_uses_only_source_clean_correct_and_four_edit_wrong_outcomes(
     }
 
 
+@pytest.mark.parametrize(
+    ("termination", "token_count"),
+    (("unknown", 8), ("length-cap", 8)),
+)
+def test_loader_rejects_invalid_source_termination_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    termination: str,
+    token_count: int,
+) -> None:
+    record = _record("invalid-termination")
+    clean = record["clean"]
+    assert isinstance(clean, dict)
+    clean["termination"] = termination
+    clean["continuation_token_count"] = token_count
+    strict = _StrictPreparedSource(records=(record,))
+    _install_strict_loader(monkeypatch, strict)
+
+    with pytest.raises(ValueError, match="termination|length-cap"):
+        load_restoration_order_source(
+            tmp_path / "pairs.jsonl",
+            model=MODEL,
+            benchmark=BENCHMARK,
+        )
+
+
 def test_loader_recomputes_final_pdf_source_outcomes_before_selection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -263,6 +290,56 @@ def test_loader_recomputes_final_pdf_source_outcomes_before_selection(
             model=MODEL,
             benchmark=BENCHMARK,
         )
+
+
+def test_loader_revalidates_edited_outcome_when_clean_is_wrong(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = _record("clean-wrong-stale-edited", clean_correct=False)
+    edited = record["edited"]
+    assert isinstance(edited, dict)
+    edited["continuation"] = "Reasoning. The answer is 2."
+    strict = _StrictPreparedSource(records=(record,))
+    _install_strict_loader(monkeypatch, strict)
+
+    with pytest.raises(ValueError, match="edited.*final-PDF|edited.*source answer"):
+        load_restoration_order_source(
+            tmp_path / "pairs.jsonl",
+            model=MODEL,
+            benchmark=BENCHMARK,
+        )
+
+
+def test_loader_allows_positional_fallback_when_eos_is_the_512th_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = _record("eos-exactly-at-cap")
+    clean = record["clean"]
+    assert isinstance(clean, dict)
+    clean["continuation"] = (
+        "The computation is complete and the final total is 2 dollars."
+    )
+    clean["continuation_token_count"] = 512
+    clean["termination"] = "eos"
+    clean["answer"] = {
+        "value": "2",
+        "is_extracted": True,
+        "is_correct": True,
+        "method": "fallback:N5_tail_number",
+        "primary_method": "no_match",
+    }
+    strict = _StrictPreparedSource(records=(record,))
+    _install_strict_loader(monkeypatch, strict)
+
+    source = load_restoration_order_source(
+        tmp_path / "pairs.jsonl",
+        model=MODEL,
+        benchmark=BENCHMARK,
+    )
+
+    assert source.source_selected_count == 1
 
 
 def test_source_plan_uses_the_protocol_seed_constant(

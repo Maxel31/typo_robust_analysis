@@ -55,6 +55,9 @@ _PREPARATION_PROVENANCE = {
     "dataset_cohort_rule": "paper-model-benchmark-cohort/v1",
     "random_seed_algorithm": "sha256-first-64-bits/v1",
     "generation_protocol": "explicit-greedy-generation/v1",
+    "generation_termination_protocol": SOURCE_PROTOCOL[
+        "generation_termination_protocol"
+    ],
     "target_position": "maximum-logit-after-first-cot-token",
     "alignment": "actual-edited-word-final-token",
 }
@@ -139,6 +142,33 @@ def _validate_answer(value: object, *, field: str) -> None:
     for name in ("is_extracted", "is_correct"):
         if not isinstance(payload.get(name), bool):
             raise InputCorrectorSourceError(f"{field}.{name} must be boolean")
+
+
+def _validate_generation_arm(value: Mapping[str, object], *, field: str) -> None:
+    continuation = value.get("continuation")
+    if not isinstance(continuation, str):
+        raise InputCorrectorSourceError(f"{field}.continuation must be a string")
+    token_count = value.get("continuation_token_count")
+    if (
+        not isinstance(token_count, int)
+        or isinstance(token_count, bool)
+        or not 1 <= token_count <= int(_PREPARATION_DECODING["max_new_tokens"])
+    ):
+        raise InputCorrectorSourceError(
+            f"{field}.continuation_token_count must be between 1 and 512"
+        )
+    termination = value.get("termination")
+    if termination not in {"eos", "length-cap"}:
+        raise InputCorrectorSourceError(
+            f"{field}.termination must be 'eos' or 'length-cap'"
+        )
+    if (
+        termination == "length-cap"
+        and token_count != _PREPARATION_DECODING["max_new_tokens"]
+    ):
+        raise InputCorrectorSourceError(
+            f"{field}.length-cap termination requires exactly 512 tokens"
+        )
 
 
 def _validate_aligned_word(
@@ -289,6 +319,8 @@ def _validate_record(
         )
     _validate_answer(clean.get("answer"), field=f"pair record {sample_id}.clean.answer")
     _validate_answer(edited.get("answer"), field=f"pair record {sample_id}.edited.answer")
+    _validate_generation_arm(clean, field=f"pair record {sample_id}.clean")
+    _validate_generation_arm(edited, field=f"pair record {sample_id}.edited")
 
     aligned_words = _list(
         record.get("aligned_words"), field=f"pair record {sample_id}.aligned_words"
