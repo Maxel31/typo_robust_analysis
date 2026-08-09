@@ -15,7 +15,7 @@ REPOSITORY_ROOT = PROJECT_ROOT.parents[1]
 PROJECT_PREFIX = "projects/typo-cot/"
 
 OBSOLETE_REPOSITORY_ROOTS = {"_sample_project", "datasets", "scripts", "utils"}
-OBSOLETE_REPOSITORY_PATHS = {Path(".env.example")}
+OBSOLETE_REPOSITORY_PATHS = {Path(".env.example"), Path("projects/.gitkeep")}
 
 LEGACY_PROJECT_DIRECTORIES = {"analysis", "configs", "scripts"}
 LEGACY_PACKAGE_DIRECTORIES = {
@@ -344,6 +344,19 @@ def test_local_legacy_output_locations_remain_ignored() -> None:
     )
     ignored = set(completed.stdout.splitlines())
     assert ignored == local_artifacts
+
+
+def test_existing_top_level_dataset_cache_remains_ignored() -> None:
+    local_cache_path = "datasets/local-cache.bin"
+    completed = subprocess.run(
+        ["git", "check-ignore", "--no-index", local_cache_path],
+        cwd=REPOSITORY_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0
+    assert completed.stdout.splitlines() == [local_cache_path]
 
 
 def test_cli_only_exposes_reviewed_public_commands() -> None:
