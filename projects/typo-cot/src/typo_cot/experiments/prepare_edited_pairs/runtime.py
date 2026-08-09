@@ -1,0 +1,533 @@
+"""GPU/AttnLRP runtime for the paper's pair-preparation operation."""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.metadata
+import json
+import platform
+import random
+from collections.abc import Sequence
+from dataclasses import asdict
+from typing import TYPE_CHECKING, Any
+
+from typo_cot.data.cohorts import load_sample_id_cohort
+from typo_cot.evaluation.fallback import answers_equal, fallback_answer
+from typo_cot.evaluation.generation import (
+    classify_generated_token_ids,
+    resolve_effective_eos_token_ids,
+)
+from typo_cot.experiments.prepare_edited_pairs.protocol import (
+    PairProtocolError,
+    apply_paper_edits,
+    build_aligned_words,
+    eligible_candidates,
+    order_candidates,
+)
+
+if TYPE_CHECKING:
+    from typo_cot.experiments.prepare_edited_pairs.runner import PrepareEditedPairsConfig
+
+_BENCHMARK_NAMES = {
+    "gsm8k": "gsm8k",
+    "math-500": "math",
+    "mmlu": "mmlu",
+    "mmlu-pro": "mmlu_pro",
+    "arc": "arc",
+    "csqa": "commonsense_qa",
+}
+_DEFAULT_SAMPLES_PER_SUBSET = {"mmlu": 50, "mmlu_pro": 100}
+_SUBSET_CAP_BENCHMARKS = frozenset({"mmlu", "mmlu-pro"})
+_MMLU_100_PER_SUBJECT_PAPER_MODELS = frozenset(
+    {
+        "qwen2.5-7b-instruct",
+        "gemma-3-12b-it",
+        "gemma-3-27b-it",
+        "llama-3.1-70b-instruct",
+        "qwen2.5-72b-instruct",
+    }
+)
+_DATASET_COHORT_RULE = "paper-model-benchmark-cohort/v1"
+_GENERATION_PROTOCOL = "explicit-greedy-generation/v1"
+_GENERATION_TERMINATION_PROTOCOL = "effective-eos-vs-length-cap/v1"
+_FINAL_PAPER_FALLBACK_BENCHMARKS = frozenset({"gsm8k", "mmlu", "mmlu_pro", "arc", "commonsense_qa"})
+_HISTORICAL_COMPATIBILITY_NOTES = [
+    "stable-sha256-seeds-replace-process-random-python-hash",
+    "mistral-attnlrp-rules-target-mistral-classes",
+    "actual-word-final-alignment-replaces-token-substring-coordinates",
+    "parenthesized-choice-markers-use-recorded-choice-boundary",
+    "arc-numeric-answer-keys-normalized-to-prompt-letters",
+    "model-specific-mmlu-cohort-matches-final-paper-denominators",
+    "explicit-greedy-parameters-replace-model-generation-defaults",
+    "empty-primary-answer-fallback-matches-final-paper",
+    "exact-canonical-answer-comparison-replaces-float-tolerance",
+    "effective-eos-termination-replaces-token-count-heuristic",
+]
+
+
+def _paper_samples_per_subset(config: PrepareEditedPairsConfig) -> int:
+    """Return the final paper's model/benchmark-specific subset cap."""
+    return (
+        paper_dataset_samples_per_subset(
+            model=config.model,
+            benchmark=config.benchmark,
+        )
+        or 50
+    )
+
+
+def paper_dataset_samples_per_subset(*, model: str, benchmark: str) -> int | None:
+    """Return the subset cap recorded for a final-paper pair-preparation setting."""
+
+    if benchmark not in _BENCHMARK_NAMES:
+        raise ValueError(f"unsupported benchmark: {benchmark!r}")
+    if benchmark not in _SUBSET_CAP_BENCHMARKS:
+        return None
+    internal_benchmark = _BENCHMARK_NAMES[benchmark]
+    if internal_benchmark not in _DEFAULT_SAMPLES_PER_SUBSET:
+        return None
+    model_basename = model.rsplit("/", 1)[-1].lower()
+    if benchmark == "mmlu" and model_basename in _MMLU_100_PER_SUBJECT_PAPER_MODELS:
+        return 100
+    return _DEFAULT_SAMPLES_PER_SUBSET[internal_benchmark]
+
+
+def _recorded_samples_per_subset(config: PrepareEditedPairsConfig) -> int | None:
+    """Return the applied subset cap, or null when that loader ignores the cap."""
+    if config.benchmark not in _SUBSET_CAP_BENCHMARKS:
+        return None
+    return paper_dataset_samples_per_subset(
+        model=config.model,
+        benchmark=config.benchmark,
+    )
+
+
+def _package_version(name: str) -> str:
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return "not-installed"
+
+
+def preload_provenance(
+    config: PrepareEditedPairsConfig,
+    *,
+    torch_module: Any | None = None,
+) -> dict[str, object]:
+    """Collect environment and protocol identity without loading model weights."""
+    if torch_module is None:
+        import torch as torch_module
+
+    gpu_names = (
+        [
+            torch_module.cuda.get_device_name(index)
+            for index in range(torch_module.cuda.device_count())
+        ]
+        if torch_module.cuda.is_available()
+        else []
+    )
+    provenance: dict[str, object] = {
+        "python": platform.python_version(),
+        "torch": _package_version("torch"),
+        "transformers": _package_version("transformers"),
+        "accelerate": _package_version("accelerate"),
+        "lxt": _package_version("lxt"),
+        "datasets": _package_version("datasets"),
+        "cuda": torch_module.version.cuda,
+        "gpu_names": gpu_names,
+        "model": config.model,
+        "benchmark_dataset_loader": _BENCHMARK_NAMES[config.benchmark],
+        "dataset_cohort_rule": _DATASET_COHORT_RULE,
+        "dataset_samples_per_subset": _recorded_samples_per_subset(config),
+        "random_seed_algorithm": "sha256-first-64-bits/v1",
+        "generation_protocol": _GENERATION_PROTOCOL,
+        "generation_termination_protocol": _GENERATION_TERMINATION_PROTOCOL,
+        "target_position": "maximum-logit-after-first-cot-token",
+        "alignment": "actual-edited-word-final-token",
+        "historical_compatibility_notes": list(_HISTORICAL_COMPATIBILITY_NOTES),
+    }
+    if config.sample_ids is not None:
+        cohort = load_sample_id_cohort(config.sample_ids)
+        if cohort.benchmark != config.benchmark:
+            raise ValueError(
+                "sample-ID cohort benchmark does not match pair preparation: "
+                f"cohort={cohort.benchmark!r}, argument={config.benchmark!r}"
+            )
+        provenance["dataset_cohort_rule"] = "explicit-sample-id-cohort/v1"
+        provenance["sample_id_cohort"] = cohort.provenance_for(config.model)
+    return provenance
+
+
+def _tokenize_with_offsets(tokenizer: Any, text: str) -> tuple[list[int], list[tuple[int, int]]]:
+    try:
+        encoded = tokenizer(
+            text,
+            add_special_tokens=True,
+            return_attention_mask=False,
+            return_offsets_mapping=True,
+        )
+    except (NotImplementedError, TypeError) as exc:
+        raise PairProtocolError(
+            "the selected tokenizer must provide exact offset_mapping for word-final alignment"
+        ) from exc
+
+    input_ids = encoded["input_ids"]
+    raw_offsets = encoded.get("offset_mapping")
+    if raw_offsets is None or len(input_ids) != len(raw_offsets):
+        raise PairProtocolError("tokenizer returned incomplete offset_mapping")
+
+    offsets: list[tuple[int, int]] = []
+    for raw_start, raw_end in raw_offsets:
+        start, end = int(raw_start), int(raw_end)
+        # The paper run used AttnLRPAnalyzer's fallback locator, which lstrips
+        # decoded token text before locating it. Fast tokenizers commonly attach
+        # the preceding separator to a word token; trimming it here preserves the
+        # reported item-initial target and edit spans while retaining exact ends.
+        while start < end and text[start].isspace():
+            start += 1
+        while start < end and text[end - 1].isspace():
+            end -= 1
+        offsets.append((start, end))
+    return list(input_ids), offsets
+
+
+class HuggingFacePairPreparationRuntime:
+    """Load one paper setting and produce schema-v1 pair records."""
+
+    def __init__(self, config: PrepareEditedPairsConfig) -> None:
+        import numpy as np
+        import torch
+
+        from typo_cot.evaluation.extractor import create_extractor
+        from typo_cot.lrp.analyzer import create_analyzer
+        from typo_cot.models.prompts import create_prompt_template
+        from typo_cot.models.wrapper import create_model_wrapper
+
+        random.seed(config.seed)
+        np.random.seed(config.seed)
+        torch.manual_seed(config.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(config.seed)
+
+        self.config = config
+        self.internal_benchmark = _BENCHMARK_NAMES[config.benchmark]
+        self.wrapper = create_model_wrapper(
+            model_name=config.model,
+            gpu_id=config.gpu_id,
+            dtype=torch.bfloat16,
+            wrap_for_lxt=True,
+        )
+        self.tokenizer = self.wrapper.tokenizer
+        self.tokenizer.padding_side = "left"
+        self.effective_eos_token_ids, self.eos_source = (
+            resolve_effective_eos_token_ids(
+                generation_config=self.wrapper.model.generation_config,
+                tokenizer=self.tokenizer,
+                operation="pair preparation generation",
+            )
+        )
+        self.analyzer = create_analyzer(
+            model=self.wrapper.model,
+            tokenizer=self.tokenizer,
+            top_k=None,
+            device=self.wrapper.device,
+        )
+        self.template = create_prompt_template(self.internal_benchmark)
+        self.extractor = create_extractor(self.internal_benchmark)
+        self._torch = torch
+        self._dataset_provenance: dict[str, object] = {}
+
+    def load_samples(self, config: PrepareEditedPairsConfig) -> list[Any]:
+        from typo_cot.data.loader import create_loader
+
+        loader = create_loader(
+            benchmark=self.internal_benchmark,
+            samples_per_subset=_paper_samples_per_subset(config),
+            seed=config.seed,
+            num_samples=None,
+        )
+        return loader.load()
+
+    def record_selected_samples(self, samples: Sequence[Any]) -> None:
+        """Fingerprint the exact runner-selected records for run provenance."""
+        fingerprint_rows = [
+            {
+                "sample_id": sample.sample_id,
+                "question": sample.question,
+                "choices": sample.choices,
+                "correct_answer": sample.correct_answer,
+                "subset": sample.subset,
+            }
+            for sample in sorted(samples, key=lambda item: item.sample_id)
+        ]
+        serialized = json.dumps(
+            fingerprint_rows,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        self._dataset_provenance = {
+            "dataset_sample_count": len(samples),
+            "dataset_records_sha256": hashlib.sha256(serialized).hexdigest(),
+        }
+
+    def _prompt(self, sample: Any) -> tuple[Any, str]:
+        if self.internal_benchmark in {"mmlu", "mmlu_pro", "arc", "commonsense_qa"}:
+            result = self.template.generate(
+                question=sample.question,
+                choices=sample.choices,
+                subject=sample.subset,
+            )
+        else:
+            result = self.template.generate(question=sample.question, subject=sample.subset)
+        return result, result.get_full_prompt()
+
+    def _generate(self, prompt: str) -> tuple[list[int], list[int], str, str]:
+        encoded = self.tokenizer(prompt, return_tensors="pt", add_special_tokens=True)
+        input_ids = encoded["input_ids"].to(self.wrapper.device)
+        attention_mask = encoded.get("attention_mask")
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(self.wrapper.device)
+        with self._torch.no_grad():
+            output_ids = self.wrapper.model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                max_new_tokens=self.config.max_new_tokens,
+                do_sample=False,
+                num_beams=1,
+                num_return_sequences=1,
+                temperature=None,
+                top_p=None,
+                top_k=None,
+                use_cache=True,
+                return_dict_in_generate=False,
+                output_scores=False,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=list(self.effective_eos_token_ids),
+            )
+        prompt_length = input_ids.shape[1]
+        generated_ids, termination = classify_generated_token_ids(
+            output_ids[0, prompt_length:].tolist(),
+            effective_eos_token_ids=self.effective_eos_token_ids,
+            max_new_tokens=self.config.max_new_tokens,
+            field="pair preparation",
+        )
+        continuation = self.tokenizer.decode(
+            list(generated_ids),
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )
+        return input_ids[0].tolist(), list(generated_ids), continuation, termination
+
+    def _relevance_after_first_cot(
+        self, prompt_ids: list[int], generated_ids: list[int]
+    ) -> list[float]:
+        if not generated_ids:
+            raise PairProtocolError("cannot attribute an empty clean continuation")
+        input_ids = self._torch.tensor(
+            [prompt_ids + generated_ids],
+            dtype=self._torch.long,
+            device=self.wrapper.device,
+        )
+        # The target position contains the first generated CoT token; its logits
+        # are therefore the distribution immediately after that token. Keeping
+        # the complete clean generation matches the reported AttnLRP pipeline.
+        relevance = self.analyzer.compute_relevance(input_ids, target_position=len(prompt_ids))
+        return [float(value) for value in relevance[: len(prompt_ids)].detach().cpu().tolist()]
+
+    def _answer(
+        self,
+        continuation: str,
+        correct_answer: str,
+        *,
+        allow_positional: bool = True,
+    ) -> dict[str, object]:
+        primary = self.extractor.extract(continuation)
+        answer = primary.extracted_answer
+        if answer:
+            method = f"primary:{primary.extraction_method}"
+            confidence = primary.confidence
+        elif self.internal_benchmark in _FINAL_PAPER_FALLBACK_BENCHMARKS:
+            answer, fallback_method = fallback_answer(
+                continuation,
+                benchmark=self.internal_benchmark,
+                allow_positional=allow_positional,
+            )
+            method = f"fallback:{fallback_method}" if answer else "unextractable"
+            confidence = 1.0 if answer else 0.0
+        else:
+            method = "unextractable"
+            confidence = 0.0
+        if self.internal_benchmark in _FINAL_PAPER_FALLBACK_BENCHMARKS:
+            is_correct = answers_equal(
+                answer,
+                correct_answer,
+                benchmark=self.internal_benchmark,
+            )
+        else:
+            is_correct = self.extractor.is_correct(answer, correct_answer)
+        return {
+            "value": answer,
+            "is_extracted": bool(answer),
+            "is_correct": is_correct,
+            "method": method,
+            "primary_method": primary.extraction_method,
+            "confidence": confidence,
+        }
+
+    def prepare_pair(self, sample: Any, config: PrepareEditedPairsConfig) -> dict[str, object]:
+        prompt_result, clean_prompt = self._prompt(sample)
+        (
+            clean_prompt_ids,
+            clean_generated_ids,
+            clean_continuation,
+            clean_termination,
+        ) = self._generate(clean_prompt)
+        token_ids, clean_offsets = _tokenize_with_offsets(self.tokenizer, clean_prompt)
+        if token_ids != clean_prompt_ids:
+            raise PairProtocolError("generation and alignment tokenization disagree")
+
+        relevances = self._relevance_after_first_cot(clean_prompt_ids, clean_generated_ids)
+        token_texts = [
+            self.tokenizer.decode(
+                [token_id],
+                skip_special_tokens=False,
+                clean_up_tokenization_spaces=False,
+            )
+            for token_id in token_ids
+        ]
+        editable_start = int(prompt_result.question_start_in_full)
+        choice_list_start = int(prompt_result.question_end_in_full)
+        editable_end = int(prompt_result.question_with_choices_end)
+        candidates = eligible_candidates(
+            prompt_text=clean_prompt,
+            token_texts=token_texts,
+            relevances=relevances,
+            offsets=clean_offsets,
+            editable_prompt_start=editable_start,
+            editable_prompt_end=editable_end,
+            choice_list_start=choice_list_start,
+        )
+        ordering = order_candidates(
+            candidates,
+            targeting=config.targeting,
+            num_edits=config.num_edits,
+            seed=config.seed,
+            sample_id=sample.sample_id,
+        )
+        clean_editable = clean_prompt[editable_start:editable_end]
+        application = apply_paper_edits(
+            editable_text=clean_editable,
+            editable_prompt_start=editable_start,
+            candidate_order=ordering.candidates,
+            num_edits=config.num_edits,
+            seed=config.seed,
+            sample_id=sample.sample_id,
+        )
+
+        edited_prompt = (
+            clean_prompt[:editable_start] + application.edited_text + clean_prompt[editable_end:]
+        )
+        if edited_prompt == clean_prompt:
+            edited_prompt_ids = clean_prompt_ids
+            edited_generated_ids = clean_generated_ids
+            edited_continuation = clean_continuation
+            edited_termination = clean_termination
+            edited_offsets = clean_offsets
+        else:
+            (
+                edited_prompt_ids,
+                edited_generated_ids,
+                edited_continuation,
+                edited_termination,
+            ) = self._generate(edited_prompt)
+            aligned_ids, edited_offsets = _tokenize_with_offsets(self.tokenizer, edited_prompt)
+            if aligned_ids != edited_prompt_ids:
+                raise PairProtocolError("edited generation and alignment tokenization disagree")
+        aligned_words = build_aligned_words(
+            clean_editable=clean_editable,
+            edited_editable=application.edited_text,
+            editable_prompt_start=editable_start,
+            attempts=application.attempts,
+            clean_token_offsets=clean_offsets,
+            edited_token_offsets=edited_offsets,
+        )
+        if edited_prompt != clean_prompt and not aligned_words:
+            raise PairProtocolError("edited prompt changed but produced no alignable changed word")
+
+        clean_answer = self._answer(
+            clean_continuation,
+            sample.correct_answer,
+            allow_positional=clean_termination == "eos",
+        )
+        edited_answer = self._answer(
+            edited_continuation,
+            sample.correct_answer,
+            allow_positional=edited_termination == "eos",
+        )
+        return {
+            "schema_version": "prepare-edited-pairs/v1",
+            "sample_id": sample.sample_id,
+            "model": config.model,
+            "benchmark": config.benchmark,
+            "targeting": config.targeting,
+            "seed": config.seed,
+            "num_edits_requested": config.num_edits,
+            "num_candidates": len(candidates),
+            "num_target_attempts": len(application.attempts),
+            "num_aligned_words": len(aligned_words),
+            "gold_answer": sample.correct_answer,
+            "subset": sample.subset,
+            "attribution_target": {
+                "definition": "maximum-logit-after-first-cot-token",
+                "position": len(clean_prompt_ids),
+                "first_cot_token_id": clean_generated_ids[0],
+                "first_cot_token_text": self.tokenizer.decode(
+                    [clean_generated_ids[0]],
+                    skip_special_tokens=False,
+                    clean_up_tokenization_spaces=False,
+                ),
+                "context": "complete-clean-generation",
+            },
+            "clean": {
+                "question": sample.question,
+                "choices": sample.choices,
+                "editable_text": clean_editable,
+                "editable_prompt_span": {"start": editable_start, "end": editable_end},
+                "prompt": clean_prompt,
+                "prompt_token_count": len(clean_prompt_ids),
+                "continuation": clean_continuation,
+                "continuation_token_count": len(clean_generated_ids),
+                "termination": clean_termination,
+                "answer": clean_answer,
+            },
+            "edited": {
+                "editable_text": application.edited_text,
+                "editable_prompt_span": {
+                    "start": editable_start,
+                    "end": editable_start + len(application.edited_text),
+                },
+                "prompt": edited_prompt,
+                "prompt_token_count": len(edited_prompt_ids),
+                "continuation": edited_continuation,
+                "continuation_token_count": len(edited_generated_ids),
+                "termination": edited_termination,
+                "answer": edited_answer,
+            },
+            "answer_changed": clean_answer["value"] != edited_answer["value"],
+            "excluded_attribution_tokens": [asdict(item) for item in ordering.excluded_top],
+            "target_attempts": [asdict(item) for item in application.attempts],
+            "aligned_words": [asdict(item) for item in aligned_words],
+        }
+
+    def provenance(self) -> dict[str, object]:
+        provenance = preload_provenance(self.config, torch_module=self._torch)
+        provenance.update(
+            {
+                "model_revision": getattr(self.wrapper.model.config, "_commit_hash", None),
+                "effective_eos_token_ids": list(self.effective_eos_token_ids),
+                "effective_eos_token_ids_source": self.eos_source,
+            }
+        )
+        provenance.update(self._dataset_provenance)
+        return provenance
