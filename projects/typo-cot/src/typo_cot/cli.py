@@ -31,6 +31,11 @@ from typo_cot.experiments.cot_swap import (
     CotSwapRunError,
     run_cot_swap,
 )
+from typo_cot.experiments.edit_count_sensitivity import (
+    EditCountSensitivityConfig,
+    EditCountSensitivityInputError,
+    run_edit_count_sensitivity,
+)
 from typo_cot.experiments.fixed_window_answer_patching import (
     DIRECTION_NAMES as FIXED_WINDOW_DIRECTION_NAMES,
 )
@@ -172,6 +177,7 @@ def _parser() -> argparse.ArgumentParser:
     cot_swap.add_argument("--benchmark", required=True, choices=COT_SWAP_BENCHMARKS)
     cot_swap.add_argument("--pairs", required=True, type=Path)
     cot_swap.add_argument("--targeting", required=True, choices=TARGETING_CONDITIONS)
+    cot_swap.add_argument("--source-num-edits", type=_positive_int, choices=(1, 2, 4), default=4)
     cot_swap.add_argument("--gpu-id", default="0")
     cot_swap.add_argument("--limit", type=_positive_int)
     cot_swap.add_argument("--output-dir", required=True, type=Path)
@@ -256,6 +262,21 @@ def _parser() -> argparse.ArgumentParser:
     )
     one_token_tables.add_argument("--runs-root", required=True, type=Path)
     one_token_tables.add_argument("--output-dir", required=True, type=Path)
+
+    edit_count = commands.add_parser(
+        "edit-count-sensitivity",
+        help="Build Appendix C/Table 8 from verified edit-count producer runs.",
+    )
+    edit_count.add_argument("--pairs-root", required=True, type=Path)
+    edit_count.add_argument("--cot-swap-runs-root", required=True, type=Path)
+    edit_count.add_argument(
+        "--edit-counts",
+        required=True,
+        nargs="+",
+        type=_positive_int,
+        choices=(1, 2, 4),
+    )
+    edit_count.add_argument("--output-dir", required=True, type=Path)
 
     targeting_audit = commands.add_parser(
         "targeting-fidelity-audit",
@@ -480,6 +501,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     pairs=args.pairs,
                     targeting=args.targeting,
                     output_dir=args.output_dir,
+                    source_num_edits=args.source_num_edits,
                     gpu_id=args.gpu_id,
                     limit=args.limit,
                     resume=args.resume,
@@ -618,6 +640,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         print(f"built one-token tables from {result.settings} setting(s): {result.tables_path}")
         print(f"Figure 5 validation: {result.figure5_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "edit-count-sensitivity":
+        try:
+            result = run_edit_count_sensitivity(
+                EditCountSensitivityConfig(
+                    pairs_root=args.pairs_root,
+                    cot_swap_runs_root=args.cot_swap_runs_root,
+                    edit_counts=tuple(args.edit_counts),
+                    output_dir=args.output_dir,
+                )
+            )
+        except (
+            FileExistsError,
+            OSError,
+            EditCountSensitivityInputError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            print(f"edit-count-sensitivity: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"built Table 8 from {result.accuracy_settings} accuracy setting(s) and "
+            f"{result.restoration_settings} restoration setting(s): {result.summary_path}"
+        )
         print(f"run manifest: {result.run_path}")
         return 0
     if args.command == "targeting-fidelity-audit":

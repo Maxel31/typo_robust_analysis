@@ -180,6 +180,15 @@ GPUs. The documented reproduction and smoke validation use physical GPU 0,
 while the public argument accepts another explicitly selected single visible
 GPU.
 
+The main command defaults to `--source-num-edits 4`. Appendix C/Table 8 reuses
+the identical four-cell operation with completed one- and two-edit pair
+preparations by passing `--source-num-edits 1` or `2`. The selected value is
+bound into the protocol hash, checkpoints, records, summary, and run manifest;
+it does not alter the A/B/C/D definitions or intersect their edit-count-specific
+restoration denominators. See
+[`edit-count-sensitivity.md`](edit-count-sensitivity.md) for that separate CPU
+aggregation contract.
+
 ## Published references and a final-PDF conflict
 
 The final PDF reports the task-pooled Attribution-4 values:

@@ -299,10 +299,11 @@ not this setting runner, performs Figure 3's 14-setting clustered bootstrap.
 ### Sensitivity, scale, and input correction
 
 ```bash
-uv run typo-cot edit-count-sensitivity \
-  --model google/gemma-3-4b-it --benchmark gsm8k \
-  --edit-counts 1 2 4 --pairs-root data/cohorts/edit-count \
-  --output-dir results/edit-count-sensitivity/gemma-3-4b-it/gsm8k
+uv run --project projects/typo-cot typo-cot edit-count-sensitivity \
+  --pairs-root results/edit-count-pairs \
+  --cot-swap-runs-root results/edit-count-cot-swap \
+  --edit-counts 1 2 4 \
+  --output-dir results/edit-count-sensitivity
 
 uv run typo-cot model-scale-cot-swap \
   --models google/gemma-3-1b-it google/gemma-3-4b-it \
