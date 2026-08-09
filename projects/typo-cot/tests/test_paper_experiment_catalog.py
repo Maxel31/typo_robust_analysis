@@ -185,6 +185,24 @@ def test_cli_shows_experiment_specific_arguments(capsys: pytest.CaptureFixture[s
     ]
 
 
+def test_catalog_exposes_the_input_corrector_setting_contract() -> None:
+    spec = get_experiment("input-corrector-audit")
+
+    assert spec.status == "implemented"
+    assert spec.required_arguments == (
+        "--corrector",
+        "--model",
+        "--benchmark",
+        "--pairs",
+        "--output-dir",
+    )
+    assert spec.outputs == (
+        "corrector_records.jsonl",
+        "corrector_audit_summary.json",
+        "run.json",
+    )
+
+
 def test_cli_text_show_includes_the_operation_summary(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

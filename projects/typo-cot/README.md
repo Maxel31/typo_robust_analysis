@@ -1158,6 +1158,126 @@ patching. See
 [`docs/typo-warning-prompt.md`](docs/typo-warning-prompt.md) for the complete
 prompt, selection, validation, schema, and restart contracts.
 
+## Audit input correctors and build Table 12
+
+`input-corrector-audit` applies one explicitly selected corrector to one
+model-task Attribution-4 input set. The core experiment is the complete grid
+of five evaluation models, five tasks, and three correctors. Each source must
+be a completed, unlimited `prepare-edited-pairs` run with seed 42, four edits,
+and `attribution-4` targeting; the runner validates the sibling `run.json`
+before loading a corrector.
+
+The first loop below prepares all 30 Attribution-4 model-task sources with the
+paper counts (1,319/2,850/1,400/1,172/1,221 core items and 500 MATH-500 items
+per model). The next loop runs the 75 core corrector settings and builds the
+table. The optional MATH-500 loop reproduces the Appendix E collateral-change
+diagnostic for the T5 and Qwen correctors; those ten runs never enter the
+25-setting Table 12 mean.
+
+```bash
+GPU_ID="${GPU_ID:-0}"
+INPUT_CORRECTOR_MODELS=(
+  google/gemma-3-1b-it
+  google/gemma-3-4b-it
+  meta-llama/Llama-3.2-1B-Instruct
+  meta-llama/Llama-3.2-3B-Instruct
+  mistralai/Mistral-7B-Instruct-v0.3
+)
+INPUT_CORRECTOR_BENCHMARKS=(gsm8k mmlu mmlu-pro arc csqa)
+INPUT_CORRECTORS=(pyspellchecker t5-large-spell qwen2.5-7b-instruct)
+INPUT_CORRECTOR_SOURCE_BENCHMARKS=(gsm8k mmlu mmlu-pro arc csqa math-500)
+
+# Prepare the complete Attribution-4 source matrix consumed below.
+for MODEL in "${INPUT_CORRECTOR_MODELS[@]}"; do
+  MODEL_SLUG="${MODEL##*/}"
+  MODEL_SLUG="${MODEL_SLUG,,}"
+  for BENCHMARK in "${INPUT_CORRECTOR_SOURCE_BENCHMARKS[@]}"; do
+    CUDA_VISIBLE_DEVICES="${GPU_ID}" \
+      uv run --project projects/typo-cot --extra lrp \
+      typo-cot prepare-edited-pairs \
+      --model "${MODEL}" \
+      --benchmark "${BENCHMARK}" \
+      --targeting attribution-4 \
+      --num-edits 4 \
+      --seed 42 \
+      --max-new-tokens 512 \
+      --gpu-id "${GPU_ID}" \
+      --output-dir \
+        "results/prepare-edited-pairs/${MODEL_SLUG}/${BENCHMARK}/attribution-4"
+  done
+done
+
+# Run the 75 core corrector settings.
+for MODEL in "${INPUT_CORRECTOR_MODELS[@]}"; do
+  MODEL_SLUG="${MODEL##*/}"
+  MODEL_SLUG="${MODEL_SLUG,,}"
+  for BENCHMARK in "${INPUT_CORRECTOR_BENCHMARKS[@]}"; do
+    for CORRECTOR in "${INPUT_CORRECTORS[@]}"; do
+      CUDA_VISIBLE_DEVICES="${GPU_ID}" \
+        uv run --project projects/typo-cot --extra lrp \
+        typo-cot input-corrector-audit \
+        --corrector "${CORRECTOR}" \
+        --model "${MODEL}" \
+        --benchmark "${BENCHMARK}" \
+        --pairs \
+          "results/prepare-edited-pairs/${MODEL_SLUG}/${BENCHMARK}/attribution-4/pairs.jsonl" \
+        --gpu-id "${GPU_ID}" \
+        --output-dir \
+          "results/input-corrector-audit/core/${CORRECTOR}/${MODEL_SLUG}/${BENCHMARK}"
+    done
+  done
+done
+
+INPUT_CORRECTOR_MATH_CORRECTORS=(t5-large-spell qwen2.5-7b-instruct)
+# Run the optional ten-setting MATH-500 diagnostic.
+for MODEL in "${INPUT_CORRECTOR_MODELS[@]}"; do
+  MODEL_SLUG="${MODEL##*/}"
+  MODEL_SLUG="${MODEL_SLUG,,}"
+  for CORRECTOR in "${INPUT_CORRECTOR_MATH_CORRECTORS[@]}"; do
+    CUDA_VISIBLE_DEVICES="${GPU_ID}" \
+      uv run --project projects/typo-cot --extra lrp \
+      typo-cot input-corrector-audit \
+      --corrector "${CORRECTOR}" \
+      --model "${MODEL}" \
+      --benchmark math-500 \
+      --pairs \
+        "results/prepare-edited-pairs/${MODEL_SLUG}/math-500/attribution-4/pairs.jsonl" \
+      --gpu-id "${GPU_ID}" \
+      --output-dir \
+        "results/input-corrector-audit/math-500/${CORRECTOR}/${MODEL_SLUG}"
+  done
+done
+
+# Build Table 12 and the optional diagnostic summary on CPU.
+uv run --project projects/typo-cot \
+  typo-cot build-input-corrector-summary \
+  --runs-root results/input-corrector-audit/core \
+  --math-runs-root results/input-corrector-audit/math-500 \
+  --output-dir results/input-corrector-summary
+```
+
+The `Word` value is the equally weighted mean of 25 within-setting exact
+restoration rates, not a pooled word ratio. `Exact clean` compares the final
+clean and corrected prompts byte for byte, including few-shot text and
+whitespace. For those exact prompts, `Same` generates adjacent duplicate rows
+in one call, using `[p, p, q, q]` batches. A whitespace-normalized restoration
+flag is retained only as a diagnostic and cannot define `Exact clean`.
+
+Each setting writes `corrector_records.jsonl`,
+`corrector_audit_summary.json`, and `run.json`. The builder writes
+`input_corrector_summary.json`, `table12_input_correctors.csv`,
+`table12_input_correctors.md`, `table12_input_correctors.tex`, and `run.json`.
+The paper's `archive` column compared a corrected-generation run with a
+separately archived clean run. The fresh source-pair comparison is reported
+separately, but it is not substituted for the published archive count and is
+not interpreted as a corrector effect or subtractable noise. Add `--resume`
+only to continue an interrupted setting; `--limit 1` is a labelled smoke run
+and the complete-grid builder rejects it. See
+[`docs/input-corrector-audit.md`](docs/input-corrector-audit.md) for the exact
+corrector prompts, alignment metric, provenance, validation, and restart
+contracts. If the optional MATH-500 loop is skipped, omit
+`--math-runs-root` from the builder command as well.
+
 ## Tests
 
 ```bash
@@ -1176,6 +1296,7 @@ uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/te
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_build_one_token_tables_*.py
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_edit_count_sensitivity.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_typo_warning_prompt.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_input_corrector_*.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 

@@ -578,8 +578,9 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
             "--pairs",
             "--output-dir",
         ),
-        outputs=("corrector_records.jsonl", "corrector_audit_summary.json"),
+        outputs=("corrector_records.jsonl", "corrector_audit_summary.json", "run.json"),
         compute="gpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="restoration-order-accuracy",
