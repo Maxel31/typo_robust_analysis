@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Reproduction code for edited-word activation patching experiments"
 requires-python = ">=3.12"
 dependencies = [
+    "numpy>=2",
     "tqdm>=4.65",
 ]
 

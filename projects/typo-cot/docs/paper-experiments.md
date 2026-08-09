@@ -80,6 +80,7 @@ refactor, a direct command is executable only when its catalog status is
 | `answer-line-deletion` | §3.4, §4.2, Table 1 | Same eligible CoT-swap cases after final answer-line deletion |
 | `clean-prefix-scan` | §3.5, §4.3, Appendix D | Valid scans whose fresh k=0 rerun is wrong; point/stable correctness |
 | `one-token-prefix-replacement` | §3.5, §4.3, Appendix D | Eligible selected/control replacements; correct-to-wrong rate |
+| `build-one-token-tables` | §4.3, Figure 5, Appendix D | Verified integer events; separate Table 10/11 denominators and clustered inference |
 | `edit-count-sensitivity` | Appendix C, Table 8 | Accuracy and conditional CoT-swap restoration at 1/2/4 edits |
 | `model-scale-cot-swap` | Appendix C, Table 9 | Same first 500 MMLU IDs across the model scale ladder |
 | `typo-warning-prompt` | §4.3, Appendix E | Paired edited-input accuracy with/without the warning |
@@ -269,6 +270,10 @@ uv run --project projects/typo-cot --extra lrp typo-cot one-token-prefix-replace
     results/prepare-edited-pairs/gemma-3-1b-it/gsm8k/random-4/pairs.jsonl \
   --max-pairs 150 --position-controls distant adjacent --gpu-id 0 \
   --output-dir results/one-token-prefix-replacement/gemma-3-1b-it/gsm8k
+
+uv run --project projects/typo-cot typo-cot build-one-token-tables \
+  --runs-root results/one-token-prefix-replacement \
+  --output-dir results/one-token-tables
 ```
 
 The prefix grid is the union of the shown absolute values and
@@ -354,6 +359,7 @@ projects/typo-cot/
 │       ├── cot_swap/
 │       ├── clean_prefix_scan/
 │       ├── one_token_prefix_replacement/
+│       ├── build_one_token_tables/
 │       └── ...                   # remaining operation-named modules
 ├── tests/
 │   ├── unit/

@@ -250,6 +250,13 @@ def _parser() -> argparse.ArgumentParser:
     one_token.add_argument("--output-dir", required=True, type=Path)
     one_token.add_argument("--resume", action="store_true")
 
+    one_token_tables = commands.add_parser(
+        "build-one-token-tables",
+        help="Build Appendix D one-token tables from verified completed producer runs.",
+    )
+    one_token_tables.add_argument("--runs-root", required=True, type=Path)
+    one_token_tables.add_argument("--output-dir", required=True, type=Path)
+
     targeting_audit = commands.add_parser(
         "targeting-fidelity-audit",
         help="Validate prepared pairs and aggregate Appendix A input-quality checks.",
@@ -582,6 +589,35 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(f"pair statuses: {result.pair_status_records_path}")
         print(f"one-token summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "build-one-token-tables":
+        # Keep NumPy and the analysis implementation out of the base CLI import
+        # path. They are needed only when this CPU artifact builder is invoked.
+        from typo_cot.experiments.build_one_token_tables import (
+            BuildOneTokenTablesConfig,
+            OneTokenTablesInputError,
+            run_build_one_token_tables,
+        )
+
+        try:
+            result = run_build_one_token_tables(
+                BuildOneTokenTablesConfig(
+                    runs_root=args.runs_root,
+                    output_dir=args.output_dir,
+                )
+            )
+        except (
+            FileExistsError,
+            OSError,
+            OneTokenTablesInputError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            print(f"build-one-token-tables: error: {exc}", file=sys.stderr)
+            return 1
+        print(f"built one-token tables from {result.settings} setting(s): {result.tables_path}")
+        print(f"Figure 5 validation: {result.figure5_path}")
         print(f"run manifest: {result.run_path}")
         return 0
     if args.command == "targeting-fidelity-audit":

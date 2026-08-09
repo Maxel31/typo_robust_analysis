@@ -441,6 +441,37 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         status="implemented",
     ),
     ExperimentSpec(
+        slug="build-one-token-tables",
+        title="Build the one-token paper tables",
+        paper_question="Supplementary diagnostic",
+        paper_sections=("§4.3", "Figure 5", "Appendix D", "Tables 10 and 11"),
+        summary=(
+            "Validate completed one-token producer runs, assemble the distinct paper "
+            "denominators, and compute clustered Table 11 inference."
+        ),
+        cohort=(
+            "The separate Gemma-3-4B/GSM8K primary cell and the fourteen extension "
+            "model-task cells; adjacent pooling uses exactly three prespecified cells."
+        ),
+        intervention="No model intervention; consume verified integer producer events.",
+        readout=(
+            "Table 10 token columns, Table 11 position controls, and stored-field "
+            "validation for the Figure 5 one-token case."
+        ),
+        required_arguments=("--runs-root", "--output-dir"),
+        outputs=(
+            "one_token_tables.json",
+            "table10_one_token.csv",
+            "table11_position_controls.csv",
+            "one_token_tables.md",
+            "one_token_tables.tex",
+            "figure5_validation.json",
+            "run.json",
+        ),
+        compute="cpu",
+        status="implemented",
+    ),
+    ExperimentSpec(
         slug="edit-count-sensitivity",
         title="Measure accuracy and CoT-swap restoration by edit count",
         paper_question="RQ2 sensitivity",

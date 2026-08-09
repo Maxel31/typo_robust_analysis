@@ -242,6 +242,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
     )
     assert set(subparsers.choices) == {
         "answer-line-deletion",
+        "build-one-token-tables",
         "clean-prefix-scan",
         "one-token-prefix-replacement",
         "experiments",
