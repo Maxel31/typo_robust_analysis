@@ -13,7 +13,7 @@ import pytest
 import typo_cot.cli as cli_module
 import typo_cot.experiments.model_scale_cot_swap.runner as runner_module
 from typo_cot.cli import main
-from typo_cot.data.cohorts import load_sample_id_cohort
+from typo_cot.data.cohorts import load_sample_id_cohort, select_cohort_samples
 from typo_cot.experiments.catalog import PAPER_SHA256, get_experiment
 from typo_cot.experiments.cot_swap import (
     CELL_ORDER,
@@ -36,6 +36,10 @@ from typo_cot.experiments.model_scale_cot_swap.protocol import (
     MODEL_LABELS,
 )
 from typo_cot.experiments.model_scale_cot_swap.source import ModelScaleInputs
+from typo_cot.experiments.edit_count_sensitivity.source import (
+    EditCountSensitivityInputError,
+    discover_prepared_runs,
+)
 from typo_cot.experiments.prepare_edited_pairs.runner import (
     PrepareEditedPairsConfig,
     run_prepare_edited_pairs,
@@ -234,6 +238,22 @@ def test_public_cohort_freezes_the_recovered_first500_selector() -> None:
         )
         for model in EXPECTED_MODELS
     }
+    assert cohort.model_selected_sample_ids_sha256 == {
+        model: (
+            "68aa9f5af41582b8e13f0fe672c694e1a4b194f1d3315a0e9e08b07e4ed678de"
+            if model in EXPECTED_MODELS[2:4] + EXPECTED_MODELS[6:7] + EXPECTED_MODELS[8:9]
+            else "36f979645502a57429b5e1507d79b03054423ae13271c02a770bba23eb7fe56e"
+        )
+        for model in EXPECTED_MODELS
+    }
+
+
+def test_public_cohort_rejects_the_wrong_250_id_intersection() -> None:
+    cohort = load_sample_id_cohort(COHORT_PATH)
+    wrong_samples = [{"sample_id": sample_id} for sample_id in cohort.sample_ids[:250]]
+
+    with pytest.raises(ValueError, match="exact model-specific sample-ID set"):
+        select_cohort_samples(wrong_samples, cohort, model=EXPECTED_MODELS[0])
 
 
 def test_known_table9_cohort_rejects_a_self_consistent_reordered_selector(
@@ -434,8 +454,16 @@ def test_existing_output_directory_is_never_overwritten(
 
 
 class _PairRuntime:
-    def __init__(self, sample_ids: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        sample_ids: tuple[str, ...],
+        *,
+        model: str = EXPECTED_MODELS[0],
+        samples_per_subset: int = 50,
+    ) -> None:
         self.sample_ids = sample_ids
+        self.model = model
+        self.samples_per_subset = samples_per_subset
 
     def load_samples(self, config: PrepareEditedPairsConfig) -> list[dict[str, str]]:
         return [{"sample_id": sample_id} for sample_id in self.sample_ids]
@@ -496,13 +524,13 @@ class _PairRuntime:
 
     def provenance(self) -> dict[str, object]:
         return {
-            "model": EXPECTED_MODELS[0],
+            "model": self.model,
             "model_revision": "fixture-revision",
             "benchmark_dataset_loader": "mmlu",
             "dataset_cohort_rule": "paper-model-benchmark-cohort/v1",
             "dataset_sample_count": len(self.sample_ids),
             "dataset_records_sha256": "d" * 64,
-            "dataset_samples_per_subset": 50,
+            "dataset_samples_per_subset": self.samples_per_subset,
             "random_seed_algorithm": "sha256-first-64-bits/v1",
             "generation_protocol": "explicit-greedy-generation/v1",
             "target_position": "maximum-logit-after-first-cot-token",
@@ -512,15 +540,21 @@ class _PairRuntime:
 
 
 class _CotRuntime:
-    def __init__(self, sample_ids: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        sample_ids: tuple[str, ...],
+        *,
+        model: str = EXPECTED_MODELS[0],
+    ) -> None:
         self.sample_ids = sample_ids
+        self.model = model
 
     def provenance(self) -> dict[str, object]:
         eos = [1, *[ord(cell) for cell in CELL_ORDER]]
         return {
             "operation": "cot-swap",
             "runtime": "fixture-runtime",
-            "model": EXPECTED_MODELS[0],
+            "model": self.model,
             "requested_revision": "fixture-revision",
             "model_revision": "fixture-revision",
             "tokenizer_revision": "fixture-revision",
@@ -607,39 +641,65 @@ class _CotRuntime:
         )
 
 
+def test_source_reader_rejects_a_self_consistent_wrong_250_id_set(tmp_path: Path) -> None:
+    cohort = load_sample_id_cohort(COHORT_PATH)
+    model = EXPECTED_MODELS[0]
+    wrong_ids = tuple(cohort.sample_ids[:250])
+    pairs_dir = tmp_path / "pairs" / "wrong-250"
+    result = run_prepare_edited_pairs(
+        PrepareEditedPairsConfig(
+            model=model,
+            benchmark="mmlu",
+            targeting="attribution-4",
+            num_edits=4,
+            output_dir=pairs_dir,
+        ),
+        runtime=_PairRuntime(wrong_ids),
+    )
+    manifest = json.loads(result.run_path.read_text(encoding="utf-8"))
+    manifest["arguments"]["sample_ids"] = str(COHORT_PATH.resolve())
+    manifest["provenance"]["dataset_cohort_rule"] = "explicit-sample-id-cohort/v1"
+    manifest["provenance"]["sample_id_cohort"] = cohort.provenance_for(model)
+    result.run_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(EditCountSensitivityInputError, match="exact model-specific sample-ID set"):
+        discover_prepared_runs(
+            tmp_path / "pairs",
+            edit_counts=(4,),
+            expected_settings=((model, "mmlu"),),
+            sample_id_cohort=cohort,
+        )
+
+
 def test_documented_cpu_command_accepts_a_real_verified_partial_producer_grid(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     cohort = load_sample_id_cohort(COHORT_PATH)
-    # The submitted 50-per-subject source intersects the five 100-ID blocks this way.
-    sample_ids = tuple(
-        sample_id
-        for block_start in range(0, 500, 100)
-        for sample_id in cohort.sample_ids[block_start : block_start + 50]
-    )
-    pairs_dir = tmp_path / "pairs" / "gemma-1b"
+    model = EXPECTED_MODELS[2]
+    sample_ids = tuple(cohort.sample_ids)
+    pairs_dir = tmp_path / "pairs" / "gemma-12b"
     pair_result = run_prepare_edited_pairs(
         PrepareEditedPairsConfig(
-            model=EXPECTED_MODELS[0],
+            model=model,
             benchmark="mmlu",
             targeting="attribution-4",
             num_edits=4,
             sample_ids=COHORT_PATH,
             output_dir=pairs_dir,
         ),
-        runtime=_PairRuntime(sample_ids),
+        runtime=_PairRuntime(sample_ids, model=model, samples_per_subset=100),
     )
-    cot_dir = tmp_path / "cot" / "gemma-1b"
+    cot_dir = tmp_path / "cot" / "gemma-12b"
     run_cot_swap(
         CotSwapConfig(
-            model=EXPECTED_MODELS[0],
+            model=model,
             benchmark="mmlu",
             pairs=pair_result.pairs_path,
             targeting="attribution-4",
             output_dir=cot_dir,
         ),
-        runtime=_CotRuntime(tuple(sorted(sample_ids))),
+        runtime=_CotRuntime(tuple(sorted(sample_ids)), model=model),
     )
     output = tmp_path / "table9"
 
@@ -661,8 +721,8 @@ def test_documented_cpu_command_accepts_a_real_verified_partial_producer_grid(
     )
     assert "built Table 9 from 1 model setting(s)" in capsys.readouterr().out
     summary = json.loads((output / "model_scale_summary.json").read_text(encoding="utf-8"))
-    row = summary["models"][EXPECTED_MODELS[0]]
-    assert row["source_records"] == 250
+    row = summary["models"][model]
+    assert row["source_records"] == 500
     assert row["n_s"] == 2
     assert row["both"] == {"numerator": 2, "denominator": 2, "rate": 1.0}
     assert row["restoration"] == {"numerator": 1, "denominator": 2, "rate": 0.5}

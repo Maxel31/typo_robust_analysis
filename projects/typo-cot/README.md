@@ -981,7 +981,8 @@ MMLU Attribution-4 producer runs. The paper fixes nine models and applies one
 shared selector containing the first 500 seed-42 MMLU loader IDs. The selector
 is versioned at
 `projects/typo-cot/data/cohorts/model_scale_mmlu_first500.json`; it contains
-dataset IDs and protocol metadata, not historical model outputs.
+dataset IDs, the exact model-specific selected-ID set hashes, and protocol
+metadata, not historical model outputs.
 
 Run pair preparation and CoT swap separately for each model. The commands
 below default to physical GPU 0. Set `MODEL_SCALE_GPU_IDS` to a comma-separated
@@ -1046,9 +1047,11 @@ The shared selector is intersected with each model's final-paper MMLU source
 cohort before inference. The submitted setup used 50 examples per subject for
 five smaller-model settings and 100 for Gemma-12B/27B and the 70B/72B scale
 checks; consequently the selector retains 250 or 500 source IDs respectively.
-This model-specific cap and the exact ID list are recovered producer details,
-not claims added to the PDF. The CPU builder verifies those details, all source
-and output hashes, the exact nine-setting grid, and A/B/C/D event semantics.
+This model-specific cap and exact ID-set identity are recovered producer
+details, not claims added to the PDF. Pair preparation, CoT swap, and the CPU
+builder each verify those details. The builder also verifies all source and
+output hashes, the exact nine-setting grid, binds every gold answer to its
+prepared pair, and recomputes A/B/C/D correctness and event semantics.
 
 `n_s` is the number of executed, regenerated-A-correct pairs and is the common
 denominator for Both, Question only, and CoT only. Restoration uses only the

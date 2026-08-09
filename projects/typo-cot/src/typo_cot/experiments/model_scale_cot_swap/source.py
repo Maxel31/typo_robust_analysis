@@ -22,6 +22,7 @@ from typo_cot.experiments.model_scale_cot_swap.protocol import (
     EXPECTED_SETTINGS,
     MODEL_SAMPLES_PER_SUBSET,
     MODEL_SELECTED_SAMPLE_COUNTS,
+    MODEL_SELECTED_SAMPLE_IDS_SHA256,
 )
 
 
@@ -60,6 +61,10 @@ def _validate_table9_cohort(cohort: SampleIdCohort) -> None:
     if dict(cohort.model_selected_sample_counts) != MODEL_SELECTED_SAMPLE_COUNTS:
         raise ModelScaleCotSwapInputError(
             "Table 9 cohort model selected-count map does not match the submitted protocol"
+        )
+    if dict(cohort.model_selected_sample_ids_sha256) != MODEL_SELECTED_SAMPLE_IDS_SHA256:
+        raise ModelScaleCotSwapInputError(
+            "Table 9 cohort model selected sample-ID map does not match the submitted protocol"
         )
 
 

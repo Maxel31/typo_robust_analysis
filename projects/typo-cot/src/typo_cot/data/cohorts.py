@@ -34,6 +34,18 @@ MODEL_SCALE_COHORT_SELECTED_SAMPLE_COUNTS = {
     model: 500 if count == 100 else 250
     for model, count in MODEL_SCALE_COHORT_SAMPLES_PER_SUBSET.items()
 }
+_MODEL_SCALE_250_SAMPLE_IDS_SHA256 = (
+    "36f979645502a57429b5e1507d79b03054423ae13271c02a770bba23eb7fe56e"
+)
+_MODEL_SCALE_500_SAMPLE_IDS_SHA256 = (
+    "68aa9f5af41582b8e13f0fe672c694e1a4b194f1d3315a0e9e08b07e4ed678de"
+)
+MODEL_SCALE_COHORT_SELECTED_SAMPLE_IDS_SHA256 = {
+    model: (
+        _MODEL_SCALE_500_SAMPLE_IDS_SHA256 if count == 500 else _MODEL_SCALE_250_SAMPLE_IDS_SHA256
+    )
+    for model, count in MODEL_SCALE_COHORT_SELECTED_SAMPLE_COUNTS.items()
+}
 _COHORT_KEYS = {
     "schema_version",
     "paper_sha256",
@@ -46,6 +58,7 @@ _COHORT_KEYS = {
     "sample_ids",
     "model_samples_per_subset",
     "model_selected_sample_counts",
+    "model_selected_sample_ids_sha256",
 }
 
 
@@ -70,6 +83,17 @@ def _canonical_ids_sha256(sample_ids: Sequence[str]) -> str:
         allow_nan=False,
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def canonical_sample_id_set_sha256(sample_ids: Sequence[str]) -> str:
+    """Hash a sample-ID set deterministically, independent of producer order."""
+    normalized = [
+        _nonempty_string(sample_id, field=f"selected sample_ids[{index}]")
+        for index, sample_id in enumerate(sample_ids)
+    ]
+    if len(normalized) != len(set(normalized)):
+        raise ValueError("selected sample IDs must be unique")
+    return _canonical_ids_sha256(sorted(normalized))
 
 
 def _nonempty_string(value: object, *, field: str) -> str:
@@ -99,6 +123,18 @@ def _model_mapping(
     return MappingProxyType(result)
 
 
+def _model_hash_mapping(value: object, *, field: str) -> Mapping[str, str]:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"sample-ID cohort {field} must be a JSON object")
+    result: dict[str, str] = {}
+    for raw_model, raw_digest in value.items():
+        model = _nonempty_string(raw_model, field=f"{field} model")
+        if not isinstance(raw_digest, str) or _SHA256.fullmatch(raw_digest) is None:
+            raise ValueError(f"sample-ID cohort {field}.{model} must be a SHA-256 digest")
+        result[model] = raw_digest
+    return MappingProxyType(result)
+
+
 @dataclass(frozen=True, slots=True)
 class SampleIdCohort:
     """Validated identity and model-specific coverage of one cohort artifact."""
@@ -115,10 +151,15 @@ class SampleIdCohort:
     artifact_sha256: str
     model_samples_per_subset: Mapping[str, int | None]
     model_selected_sample_counts: Mapping[str, int | None]
+    model_selected_sample_ids_sha256: Mapping[str, str]
 
     def expected_count_for(self, model: str) -> int | None:
         """Return a frozen selected-count expectation when the artifact defines one."""
         return self.model_selected_sample_counts.get(model)
+
+    def expected_sample_ids_sha256_for(self, model: str) -> str | None:
+        """Return the frozen exact selected-ID set digest for one model."""
+        return self.model_selected_sample_ids_sha256.get(model)
 
     def provenance_for(self, model: str) -> dict[str, object]:
         """Return the compact identity embedded in producer manifests."""
@@ -133,6 +174,7 @@ class SampleIdCohort:
             "artifact_sha256": self.artifact_sha256,
             "model_samples_per_subset": self.model_samples_per_subset.get(model),
             "selected_sample_count": self.expected_count_for(model),
+            "selected_sample_ids_sha256": self.expected_sample_ids_sha256_for(model),
         }
 
     def to_dict(self) -> dict[str, object]:
@@ -149,6 +191,7 @@ class SampleIdCohort:
             "sample_ids": list(self.sample_ids),
             "model_samples_per_subset": dict(self.model_samples_per_subset),
             "model_selected_sample_counts": dict(self.model_selected_sample_counts),
+            "model_selected_sample_ids_sha256": dict(self.model_selected_sample_ids_sha256),
         }
 
 
@@ -215,9 +258,13 @@ def load_sample_id_cohort(path: Path) -> SampleIdCohort:
         field="model_selected_sample_counts",
         allow_null=False,
     )
-    if set(samples_per_subset) != set(selected_counts):
+    selected_sample_ids_sha256 = _model_hash_mapping(
+        payload.get("model_selected_sample_ids_sha256"),
+        field="model_selected_sample_ids_sha256",
+    )
+    if not (set(samples_per_subset) == set(selected_counts) == set(selected_sample_ids_sha256)):
         raise ValueError(
-            "sample-ID cohort model coverage keys must match between cap and count maps"
+            "sample-ID cohort model coverage keys must match between cap, count, and ID maps"
         )
     if any(count is not None and count > len(sample_ids) for count in selected_counts.values()):
         raise ValueError("sample-ID cohort selected counts cannot exceed sample_count")
@@ -240,6 +287,8 @@ def load_sample_id_cohort(path: Path) -> SampleIdCohort:
             raise ValueError("frozen cohort model samples-per-subset map does not match")
         if dict(selected_counts) != MODEL_SCALE_COHORT_SELECTED_SAMPLE_COUNTS:
             raise ValueError("frozen cohort model selected-count map does not match")
+        if dict(selected_sample_ids_sha256) != MODEL_SCALE_COHORT_SELECTED_SAMPLE_IDS_SHA256:
+            raise ValueError("frozen cohort model selected sample-ID map does not match")
     return SampleIdCohort(
         path=resolved,
         schema_version="sample-id-cohort/v1",
@@ -253,6 +302,7 @@ def load_sample_id_cohort(path: Path) -> SampleIdCohort:
         artifact_sha256=hashlib.sha256(raw).hexdigest(),
         model_samples_per_subset=samples_per_subset,
         model_selected_sample_counts=selected_counts,
+        model_selected_sample_ids_sha256=selected_sample_ids_sha256,
     )
 
 
@@ -286,6 +336,14 @@ def select_cohort_samples(
             f"sample-ID cohort expected {expected} selected sample(s) for {model}, "
             f"found {len(selected)}"
         )
+    expected_ids_sha256 = cohort.expected_sample_ids_sha256_for(model)
+    if expected_ids_sha256 is not None:
+        observed_ids_sha256 = canonical_sample_id_set_sha256(observed)
+        if observed_ids_sha256 != expected_ids_sha256:
+            raise ValueError(
+                "sample-ID cohort does not match the exact model-specific sample-ID set "
+                f"for {model}"
+            )
     return selected
 
 
@@ -293,9 +351,11 @@ __all__ = [
     "MODEL_SCALE_COHORT_ID",
     "MODEL_SCALE_COHORT_SAMPLES_PER_SUBSET",
     "MODEL_SCALE_COHORT_SELECTED_SAMPLE_COUNTS",
+    "MODEL_SCALE_COHORT_SELECTED_SAMPLE_IDS_SHA256",
     "MODEL_SCALE_COHORT_SELECTION",
     "MODEL_SCALE_COHORT_SAMPLE_IDS_SHA256",
     "SampleIdCohort",
+    "canonical_sample_id_set_sha256",
     "load_sample_id_cohort",
     "sample_id_of",
     "select_cohort_samples",

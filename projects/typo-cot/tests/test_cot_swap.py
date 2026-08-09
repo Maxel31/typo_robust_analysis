@@ -479,6 +479,9 @@ def test_explicit_sample_id_cohort_is_preserved_in_cot_swap_sources(
         "artifact_sha256": "b" * 64,
         "model_samples_per_subset": None,
         "selected_sample_count": 1,
+        "selected_sample_ids_sha256": hashlib.sha256(
+            json.dumps(["sample"], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
     }
     source = _write_pair_source(
         tmp_path / "prepared",

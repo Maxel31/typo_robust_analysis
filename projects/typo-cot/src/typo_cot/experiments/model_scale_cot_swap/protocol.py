@@ -9,6 +9,7 @@ from typo_cot.data.cohorts import (
     MODEL_SCALE_COHORT_ID,
     MODEL_SCALE_COHORT_SAMPLES_PER_SUBSET,
     MODEL_SCALE_COHORT_SELECTED_SAMPLE_COUNTS,
+    MODEL_SCALE_COHORT_SELECTED_SAMPLE_IDS_SHA256,
     MODEL_SCALE_COHORT_SELECTION,
     MODEL_SCALE_COHORT_SAMPLE_IDS_SHA256,
 )
@@ -38,6 +39,7 @@ MODEL_LABELS = {
 }
 MODEL_SAMPLES_PER_SUBSET = dict(MODEL_SCALE_COHORT_SAMPLES_PER_SUBSET)
 MODEL_SELECTED_SAMPLE_COUNTS = dict(MODEL_SCALE_COHORT_SELECTED_SAMPLE_COUNTS)
+MODEL_SELECTED_SAMPLE_IDS_SHA256 = dict(MODEL_SCALE_COHORT_SELECTED_SAMPLE_IDS_SHA256)
 if set(MODEL_SAMPLES_PER_SUBSET) != set(EXPECTED_MODELS):
     raise AssertionError("the Table 9 model grid and cohort coverage must match")
 
@@ -73,6 +75,7 @@ ANALYSIS_PROTOCOL: dict[str, object] = {
         "selection": COHORT_SELECTION,
         "intersection": "model-specific-final-paper-mmlu-source-cohort/v1",
         "model_selected_sample_counts": dict(MODEL_SELECTED_SAMPLE_COUNTS),
+        "model_selected_sample_ids_sha256": dict(MODEL_SELECTED_SAMPLE_IDS_SHA256),
     },
     "change_denominator": "executed-regenerated-a-correct-per-model",
     "both_event": "b-not-equal-a",

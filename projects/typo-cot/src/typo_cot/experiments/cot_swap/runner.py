@@ -18,6 +18,7 @@ from typing import Literal, Protocol
 from tqdm.auto import tqdm
 
 import typo_cot.experiments.cot_swap.protocol as cot_swap_protocol
+from typo_cot.data.cohorts import canonical_sample_id_set_sha256
 from typo_cot.evaluation.fallback import answers_equal, extract_with_fallback
 from typo_cot.experiments.catalog import PAPER_SHA256
 from typo_cot.experiments.cot_swap.planning import (
@@ -612,7 +613,11 @@ def _load_source(config: CotSwapConfig) -> _Source:
                 sample_id_cohort.get(field),
                 field=f"source run provenance.sample_id_cohort.{field}",
             )
-        for field in ("sample_ids_sha256", "artifact_sha256"):
+        for field in (
+            "sample_ids_sha256",
+            "artifact_sha256",
+            "selected_sample_ids_sha256",
+        ):
             digest = _nonempty_string(
                 sample_id_cohort.get(field),
                 field=f"source run provenance.sample_id_cohort.{field}",
@@ -685,6 +690,12 @@ def _load_source(config: CotSwapConfig) -> _Source:
         raise ValueError("pairs input contains no records")
     if len(source_pairs) != written:
         raise ValueError("source run written count does not match pairs.jsonl")
+    if sample_id_cohort is not None:
+        selected_ids_sha256 = canonical_sample_id_set_sha256(
+            [pair.sample_id for pair in source_pairs]
+        )
+        if sample_id_cohort["selected_sample_ids_sha256"] != selected_ids_sha256:
+            raise ValueError("source run pairs do not match the exact model-specific sample-ID set")
     return _Source(
         path=path,
         run_path=run_path,

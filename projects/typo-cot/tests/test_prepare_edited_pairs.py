@@ -412,6 +412,15 @@ def _write_sample_id_cohort(
         "sample_ids": sample_ids,
         "model_samples_per_subset": {model: None},
         "model_selected_sample_counts": {model: len(sample_ids)},
+        "model_selected_sample_ids_sha256": {
+            model: hashlib.sha256(
+                json.dumps(
+                    sorted(sample_ids),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+        },
     }
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return path

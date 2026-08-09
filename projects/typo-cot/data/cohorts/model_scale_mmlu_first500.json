@@ -23,6 +23,17 @@
     "meta-llama/Llama-3.2-3B-Instruct": 250,
     "mistralai/Mistral-7B-Instruct-v0.3": 250
   },
+  "model_selected_sample_ids_sha256": {
+    "Qwen/Qwen2.5-72B-Instruct": "68aa9f5af41582b8e13f0fe672c694e1a4b194f1d3315a0e9e08b07e4ed678de",
+    "google/gemma-3-12b-it": "68aa9f5af41582b8e13f0fe672c694e1a4b194f1d3315a0e9e08b07e4ed678de",
+    "google/gemma-3-1b-it": "36f979645502a57429b5e1507d79b03054423ae13271c02a770bba23eb7fe56e",
+    "google/gemma-3-27b-it": "68aa9f5af41582b8e13f0fe672c694e1a4b194f1d3315a0e9e08b07e4ed678de",
+    "google/gemma-3-4b-it": "36f979645502a57429b5e1507d79b03054423ae13271c02a770bba23eb7fe56e",
+    "meta-llama/Llama-3.1-70B-Instruct": "68aa9f5af41582b8e13f0fe672c694e1a4b194f1d3315a0e9e08b07e4ed678de",
+    "meta-llama/Llama-3.2-1B-Instruct": "36f979645502a57429b5e1507d79b03054423ae13271c02a770bba23eb7fe56e",
+    "meta-llama/Llama-3.2-3B-Instruct": "36f979645502a57429b5e1507d79b03054423ae13271c02a770bba23eb7fe56e",
+    "mistralai/Mistral-7B-Instruct-v0.3": "36f979645502a57429b5e1507d79b03054423ae13271c02a770bba23eb7fe56e"
+  },
   "paper_sha256": "2cfb736e4636ee8db8dc6a92a6004c6e36914538a9acadcd66073289580a39d0",
   "provenance": "submitted-source-recovered",
   "sample_count": 500,

@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from typo_cot.data.cohorts import SampleIdCohort
+from typo_cot.data.cohorts import SampleIdCohort, canonical_sample_id_set_sha256
 from typo_cot.evaluation.fallback import answers_equal
 from typo_cot.experiments.catalog import PAPER_SHA256
 from typo_cot.experiments.cot_swap.protocol import protocol_for as cot_swap_protocol_for
@@ -425,12 +425,20 @@ def _validate_prepare_manifest(
         record_sha256_by_id[sample_id] = hashlib.sha256(
             raw_lines[line_number - 1].encode("utf-8")
         ).hexdigest()
-    if sample_id_cohort is not None and not set(records_by_id).issubset(
-        sample_id_cohort.sample_ids
-    ):
-        raise EditCountSensitivityInputError(
-            f"{pairs_path}: pair sample IDs fall outside the requested cohort"
-        )
+    if sample_id_cohort is not None:
+        if not set(records_by_id).issubset(sample_id_cohort.sample_ids):
+            raise EditCountSensitivityInputError(
+                f"{pairs_path}: pair sample IDs fall outside the requested cohort"
+            )
+        expected_ids_sha256 = sample_id_cohort.expected_sample_ids_sha256_for(model)
+        if expected_ids_sha256 is None:
+            raise EditCountSensitivityInputError(
+                f"{pairs_path}: sample-ID cohort has no exact-ID contract for {model}"
+            )
+        if canonical_sample_id_set_sha256(tuple(records_by_id)) != expected_ids_sha256:
+            raise EditCountSensitivityInputError(
+                f"{pairs_path}: pair IDs do not match the exact model-specific sample-ID set"
+            )
     return PreparedEditCountRun(
         model=model,
         benchmark=benchmark,
@@ -628,7 +636,15 @@ def _validate_event_record(
     ):
         if not isinstance(events.get(field), bool):
             raise EditCountSensitivityInputError(f"{context}.events.{field} must be boolean")
-    _string(row.get("gold_answer"), context=f"{context}.gold_answer")
+    gold_answer = _string(row.get("gold_answer"), context=f"{context}.gold_answer")
+    prepared_gold_answer = _string(
+        prepared.records_by_id[sample_id].get("gold_answer"),
+        context=f"{context}.prepared_pair.gold_answer",
+    )
+    if gold_answer != prepared_gold_answer:
+        raise EditCountSensitivityInputError(
+            f"{context}: gold answer does not match the prepared pair"
+        )
     cells = _mapping(row.get("cells"), context=f"{context}.cells")
     if set(cells) != {"A", "B", "C", "D"}:
         raise EditCountSensitivityInputError(f"{context}.cells must contain exactly A, B, C, and D")
@@ -643,6 +659,18 @@ def _validate_event_record(
                 f"{context}.cells.{cell}.equal_to_a must be boolean"
             )
         answers[cell] = answer
+    answer_benchmark = _DATASET_LOADERS[benchmark]
+    for cell, answer in answers.items():
+        expected_correct = answers_equal(
+            str(answer["value"]),
+            prepared_gold_answer,
+            benchmark=answer_benchmark,
+        )
+        if answer["is_correct"] is not expected_correct:
+            raise EditCountSensitivityInputError(
+                f"{context}.cells.{cell}.answer.is_correct contradicts the extracted "
+                "answer and gold answer"
+            )
     answer_a = str(answers["A"]["value"])
     same_as_a = {
         "A": True,
@@ -650,7 +678,7 @@ def _validate_event_record(
             cell: answers_equal(
                 str(answers[cell]["value"]),
                 answer_a,
-                benchmark=_DATASET_LOADERS[benchmark],
+                benchmark=answer_benchmark,
             )
             for cell in ("B", "C", "D")
         },
@@ -662,7 +690,11 @@ def _validate_event_record(
                 f"{context}.cells.{cell}.equal_to_a contradicts extracted answers"
             )
     expected_events = {
-        "clean_correct": answers["A"]["is_correct"],
+        "clean_correct": answers_equal(
+            answer_a,
+            prepared_gold_answer,
+            benchmark=answer_benchmark,
+        ),
         "both_changed": not same_as_a["B"],
         "question_only_changed": not same_as_a["C"],
         "cot_only_changed": not same_as_a["D"],

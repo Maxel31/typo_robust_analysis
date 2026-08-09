@@ -32,7 +32,9 @@ The final PDF says that all rows use the same first 500 MMLU sample IDs. The
 submitted selector was the first 500 IDs in the seed-42 loader order with 100
 examples per subject. Its public protocol artifact is
 `data/cohorts/model_scale_mmlu_first500.json` and includes exactly 500 unique
-IDs plus a canonical list hash.
+IDs plus a canonical list hash and a canonical selected-ID set hash for every
+model. Thus a different 250-ID subset cannot pass merely by having the expected
+count and remaining inside the shared 500-ID selector.
 
 Pair preparation intersects that selector with the model's submitted MMLU
 source cohort before any model call. The submitted cohort cap was 50 examples
@@ -59,10 +61,11 @@ and template gates. Among successfully executed records:
   over `n_B`.
 
 All comparisons use the task's canonical extracted-answer equality. The
-builder recomputes events from the stored A/B/C/D answers, then checks the
-producer event flags, status denominator flags, per-setting summary, and
-integer counts. It does not compare raw answer strings or reuse rounded
-percentages as computational input.
+builder first binds each record's gold answer to its cryptographically linked
+prepared pair. It recomputes every cell's correctness and all events from that
+gold answer and the stored A/B/C/D extracted values, then checks the producer
+event flags, status denominator flags, per-setting summary, and integer counts.
+It does not reuse rounded percentages as computational input.
 
 ## Final-PDF reference
 
@@ -94,7 +97,8 @@ Before publication, the builder requires:
 - the canonical final-paper SHA-256 and exact cohort artifact;
 - completed, unlimited, four-edit Attribution-4 pair preparations selected by
   that cohort, with seed 42, frozen greedy decoding, model revision, dataset
-  fingerprint, source-cap provenance, sorted unique IDs, and zero failures;
+  fingerprint, source-cap provenance, the exact model-specific ID-set hash,
+  sorted unique IDs, and zero failures;
 - completed, unlimited CoT-swap runs with the exact public protocol and output
   registry, each cryptographically linked to its prepared source;
 - status coverage matching every selected pair and executed records matching
