@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import difflib
+import hashlib
 import json
 import math
 from collections.abc import Mapping, Sequence
@@ -25,6 +25,20 @@ INTERMEDIATE_BUDGETS = (1, 2, 3)
 PAPER_SEED = 42
 PAPER_BATCH_SIZE = 8
 PAPER_SOURCE_RECORD_COUNTS = {"gsm8k": 1319, "mmlu": 2850}
+PAPER_PROMPT_TEMPLATES = {
+    "gsm8k": {
+        "prompt_id": "gsm8k_cot_v1",
+        "probe_sha256": (
+            "b4e6d6087551c55558c1afe236c68bbcc83a00f69864d41641fa1a45d77ca22f"
+        ),
+    },
+    "mmlu": {
+        "prompt_id": "mmlu_cot_v1",
+        "probe_sha256": (
+            "eb9d417152748c6eebef118a8e5717919c8f10fac601e12a0376a10022538606"
+        ),
+    },
+}
 
 ALL_CONDITION_IDS = (
     "edited:k0",
@@ -61,6 +75,7 @@ PROTOCOL = {
         "paired_test": "two-sided-exact-mcnemar-binomial-unadjusted",
     },
     "legacy_backed": {
+        "prompt_templates": PAPER_PROMPT_TEMPLATES,
         "restoration_unit": "contiguous-difflib-non-equal-edit-group/v1",
         "alignment": "left-to-right-groups-to-target-attempts-sorted-by-token-index/v1",
         "relevance": "absolute-attnlrp-relevance-with-left-to-right-ties/v1",
@@ -72,9 +87,14 @@ PROTOCOL = {
             "task-primary-then-empty-only-fallback-symmetric-cap-aware/v1"
         ),
         "source": "completed-prepare-edited-pairs-attribution-4/v1",
+        "source_artifact_binding": "completed-manifest-pairs-sha256/v1",
         "source_records": PAPER_SOURCE_RECORD_COUNTS,
+        "source_prompt_revalidation": "archived-probe-plus-record-byte-match/v1",
         "source_outcome_revalidation": (
             "stored-continuation-final-pdf-extraction-match/v1"
+        ),
+        "cross_setting_source_identity": (
+            "model-revision-per-model-and-dataset-plus-ordered-samples-per-task/v1"
         ),
         "fresh_endpoint_refilter": False,
     },
@@ -274,6 +294,7 @@ __all__ = [
     "PAPER_BUDGETS",
     "PAPER_MODELS",
     "PAPER_ORDERS",
+    "PAPER_PROMPT_TEMPLATES",
     "PAPER_SEED",
     "PAPER_SOURCE_RECORD_COUNTS",
     "PROTOCOL",

@@ -1363,6 +1363,18 @@ unadjusted, as in the paper.
 Before source selection, both stored endpoint continuations are rescored with
 the final-PDF primary-then-empty-only-fallback rule. A stale or primary-only
 stored answer is rejected instead of silently changing the cohort denominator.
+The completed producer manifest also binds the exact `pairs.jsonl` bytes and
+record count. Sources made before that binding was introduced must be
+regenerated with `prepare-edited-pairs`; editing relevance or token-position
+metadata after completion is rejected before model loading.
+
+For every retained item, the runner rebuilds the full clean prompt from its
+question, choices, and subject. It first checks the current GSM8K 8-shot or
+MMLU 5-shot template against the archived `*_cot_v1` probe SHA-256, then
+requires the rebuilt UTF-8 bytes and editable span to match the source. The
+six-setting builder additionally requires one model revision across both tasks
+for each model, and one dataset plus ordered-sample identity across all three
+models for each task.
 
 The PDF reports 1,582 archived-selected items, endpoint accuracies 12.0% and
 88.9%, and the three intermediate rows. Fresh public preparation follows the

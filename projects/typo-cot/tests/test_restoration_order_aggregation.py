@@ -483,6 +483,110 @@ def test_builder_micro_pools_six_settings_and_uses_exact_paired_binomial(
     assert _read_json(result.run_path)["status"] == "completed"
 
 
+def test_builder_rejects_model_revision_drift_between_benchmarks(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "runs"
+    setting = _complete_grid(runs_root)[0]
+    run_path = setting / "run.json"
+    run = _read_json(run_path)
+    replacement = "2" * 40
+    run["source"]["model_revision"] = replacement
+    run["runtime"]["requested_revision"] = replacement
+    run["runtime"]["model_revision"] = replacement
+    run["runtime"]["tokenizer_revision"] = replacement
+    _write_json(run_path, run)
+
+    with pytest.raises(
+        RestorationOrderTableInputError,
+        match="model revision|revision.*benchmark|cross-setting",
+    ):
+        build_restoration_order_table(
+            BuildRestorationOrderTableConfig(
+                runs_root=runs_root,
+                output_dir=tmp_path / "table",
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "identity_field",
+    ("dataset_records_sha256", "ordered_sample_ids_sha256"),
+)
+def test_builder_rejects_dataset_identity_drift_between_models(
+    tmp_path: Path,
+    identity_field: str,
+) -> None:
+    runs_root = tmp_path / "runs"
+    setting = _complete_grid(runs_root)[0]
+    run_path = setting / "run.json"
+    run = _read_json(run_path)
+    run["source"][identity_field] = "6" * 64
+    _write_json(run_path, run)
+
+    with pytest.raises(
+        RestorationOrderTableInputError,
+        match="dataset|sample identity|identity.*benchmark|cross-setting",
+    ):
+        build_restoration_order_table(
+            BuildRestorationOrderTableConfig(
+                runs_root=runs_root,
+                output_dir=tmp_path / "table",
+            )
+        )
+
+
+def test_builder_allows_distinct_model_and_benchmark_specific_identities(
+    tmp_path: Path,
+) -> None:
+    runs_root = tmp_path / "runs"
+    settings = _complete_grid(runs_root)
+    revisions = {
+        model: format(index + 1, "x") * 40 for index, model in enumerate(PAPER_MODELS)
+    }
+    datasets = {
+        benchmark: format(index + 4, "x") * 64
+        for index, benchmark in enumerate(PAPER_BENCHMARKS)
+    }
+    ordered_ids = {
+        benchmark: format(index + 6, "x") * 64
+        for index, benchmark in enumerate(PAPER_BENCHMARKS)
+    }
+    for setting in settings:
+        run_path = setting / "run.json"
+        run = _read_json(run_path)
+        model = str(run["arguments"]["model"])
+        benchmark = str(run["arguments"]["benchmark"])
+        revision = revisions[model]
+        run["source"]["model_revision"] = revision
+        run["source"]["dataset_records_sha256"] = datasets[benchmark]
+        run["source"]["ordered_sample_ids_sha256"] = ordered_ids[benchmark]
+        run["runtime"]["requested_revision"] = revision
+        run["runtime"]["model_revision"] = revision
+        run["runtime"]["tokenizer_revision"] = revision
+        _write_json(run_path, run)
+
+    result = build_restoration_order_table(
+        BuildRestorationOrderTableConfig(
+            runs_root=runs_root,
+            output_dir=tmp_path / "table",
+        )
+    )
+
+    inputs = _read_json(result.run_path)["inputs"]
+    assert {
+        (item["model"], item["source_model_revision"]) for item in inputs
+    } == set(revisions.items())
+    assert {
+        (item["benchmark"], item["source_dataset_records_sha256"])
+        for item in inputs
+    } == set(datasets.items())
+    assert {
+        (item["benchmark"], item["source_ordered_sample_ids_sha256"])
+        for item in inputs
+    } == set(ordered_ids.items())
+
+
 def test_builder_rejects_missing_setting_and_never_publishes_partial_tables(
     tmp_path: Path,
 ) -> None:

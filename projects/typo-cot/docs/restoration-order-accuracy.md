@@ -71,6 +71,14 @@ source unless all of the following are true:
   per-record prompt spans, edit events, and source outcomes pass integrity
   validation.
 
+A completed producer manifest has exactly one declared output,
+`pairs.jsonl`, and binds its path, record count, and SHA-256 after the final
+atomic rename. Completed resume and every downstream load hash the actual file
+again. Consequently, changing an edit event's relevance or token index changes
+the artifact identity and is rejected before a model or dataset is loaded.
+Legacy completed manifests without this output binding are intentionally not
+accepted; rerun `prepare-edited-pairs` to regenerate them.
+
 The loader does not trust the stored endpoint `answer.is_correct` flag by
 itself. It reruns the task extractor and empty-primary-only fallback on each
 stored clean and edited continuation, using the recorded token count to disable
@@ -82,6 +90,16 @@ change source selection.
 The 1,319 and 2,850 source-record counts above identify the pinned public
 GSM8K and MMLU dataset cohorts used by this reproduction. They are public
 input-contract checks, not Table 13 result counts printed in the paper.
+
+The paper specifies GSM8K 8-shot and MMLU 5-shot prompting. The submitted
+experiment archive additionally froze the two templates as `gsm8k_cot_v1`
+(`b4e6d6...ca22f`) and `mmlu_cot_v1` (`eb9d41...38606`) probe hashes. Before
+processing a record, the runner verifies the full current template against the
+corresponding archived SHA-256. It then regenerates the clean prompt from the
+recorded question, ordered choices, and MMLU subject, requiring both the full
+UTF-8 bytes and the canonical editable span to equal the source. This focused
+check preserves the two templates used by this experiment without restoring a
+repository-wide legacy registry.
 
 The setting cohort is chosen once from those source outcomes. A record is a
 candidate exactly when its source clean outcome is correct and its source
@@ -285,6 +303,12 @@ prompt context, recomputes correctness and extraction counts from records, and
 requires the same eleven conditions for every selected model/task/sample
 identity. Stored percentages and stored p values are never trusted as
 aggregation inputs.
+
+Across that exact grid, the two task settings for a model must report the same
+resolved model revision. For a benchmark, all three model settings must report
+the same dataset-record SHA-256 and the same ordered sample-ID SHA-256. Model
+revisions may differ between models, and dataset identities may differ between
+benchmarks; no unrelated source hashes are forced to match.
 
 Every rendered fresh result states its pooled `n` and labels itself as a
 final-PDF protocol replication. The JSON also carries only the rounded cohort,

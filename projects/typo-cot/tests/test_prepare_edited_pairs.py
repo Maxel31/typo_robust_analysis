@@ -1112,6 +1112,13 @@ def test_runner_writes_versioned_pairs_and_completed_manifest(tmp_path: Path) ->
     assert manifest["schema_version"] == "prepare-edited-pairs-run/v1"
     assert manifest["status"] == "completed"
     assert manifest["counts"] == {"discovered": 2, "written": 2, "failed": 0}
+    assert manifest["outputs"] == {
+        "pairs": {
+            "path": "pairs.jsonl",
+            "sha256": hashlib.sha256(result.pairs_path.read_bytes()).hexdigest(),
+            "records": 2,
+        }
+    }
     assert result.pairs_path == output_dir / "pairs.jsonl"
 
 
@@ -1279,6 +1286,32 @@ def test_completed_resume_rejects_a_missing_published_pairs_file(tmp_path: Path)
             raise AssertionError("a completed run without pairs must fail before runtime access")
 
     with pytest.raises(ValueError, match="completed.*pairs.jsonl"):
+        run_prepare_edited_pairs(
+            replace(config, resume=True),
+            runtime=RuntimeMustNotLoad(),
+        )
+
+
+def test_completed_resume_rejects_a_changed_published_pairs_file(tmp_path: Path) -> None:
+    output_dir = tmp_path / "changed-pairs"
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=output_dir,
+    )
+    result = run_prepare_edited_pairs(config, runtime=_FakeRuntime())
+    result.pairs_path.write_text(
+        result.pairs_path.read_text(encoding="utf-8") + "\n",
+        encoding="utf-8",
+    )
+
+    class RuntimeMustNotLoad(_FakeRuntime):
+        def load_samples(self, config: PrepareEditedPairsConfig) -> list[dict[str, str]]:
+            raise AssertionError("changed completed output must fail before runtime access")
+
+    with pytest.raises(ValueError, match="pairs.*SHA|hash|changed"):
         run_prepare_edited_pairs(
             replace(config, resume=True),
             runtime=RuntimeMustNotLoad(),

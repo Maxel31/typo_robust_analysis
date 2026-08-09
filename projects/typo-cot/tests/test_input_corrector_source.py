@@ -215,6 +215,7 @@ def _manifest(
             allow_nan=False,
         ).encode("utf-8")
     ).hexdigest()
+    pairs_path = directory / "pairs.jsonl"
     return {
         "schema_version": "prepare-edited-pairs-run/v1",
         "paper_sha256": PAPER_SHA256,
@@ -237,6 +238,13 @@ def _manifest(
             "failed": 0,
         },
         "failures": [],
+        "outputs": {
+            "pairs": {
+                "path": "pairs.jsonl",
+                "sha256": sha256_file(pairs_path),
+                "records": len(rows),
+            }
+        },
         "decoding": {
             "strategy": "greedy",
             "dtype": "bfloat16",
@@ -322,6 +330,8 @@ def test_loads_completed_unlimited_prepare_source_and_exposes_stable_hashes(
     assert source is not None
     assert sha256_file(pairs_path) == hashlib.sha256(pairs_path.read_bytes()).hexdigest()
     assert sha256_file(run_path) == hashlib.sha256(run_path.read_bytes()).hexdigest()
+    manifest = json.loads(run_path.read_text(encoding="utf-8"))
+    assert source.pairs_sha256 == manifest["outputs"]["pairs"]["sha256"]
 
 
 def test_jsonl_loader_keeps_unicode_line_separators_inside_a_record(
@@ -429,6 +439,10 @@ def test_rejects_nonpublic_benchmark_aliases(tmp_path: Path, benchmark: str) -> 
         ("counts.written", 2, "count|written"),
         ("counts.failed", 1, "failure|failed"),
         ("failures", [{"sample_id": "failed"}], "failure"),
+        ("outputs", _DELETE, "output|pairs|SHA"),
+        ("outputs.pairs.path", "other.jsonl", "output|path|pairs"),
+        ("outputs.pairs.sha256", "0" * 64, "output|pairs|SHA|hash"),
+        ("outputs.pairs.records", 2, "output|record|count"),
     ],
 )
 def test_rejects_manifest_contract_drift(
@@ -464,6 +478,39 @@ def test_rejects_an_unlimited_explicit_sample_id_cohort(tmp_path: Path) -> None:
     _write_json(run_path, manifest)
 
     with pytest.raises(InputCorrectorSourceError, match="sample_ids|explicit|paper.*cohort"):
+        _load(pairs_path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("relevance", 99.0), ("target_token_index", 9)),
+)
+def test_rejects_pairs_changed_after_the_completed_manifest_bound_them(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    row = _pair_record("sample-000")
+    pairs_path, _run_path = _write_source(tmp_path / "source", [row])
+    attempts = row["target_attempts"]
+    assert isinstance(attempts, list) and isinstance(attempts[0], dict)
+    attempts[0][field] = value
+    _write_jsonl(pairs_path, [row])
+
+    with pytest.raises(InputCorrectorSourceError, match="output|pairs|SHA|hash"):
+        _load(pairs_path)
+
+
+def test_rejects_an_unexpected_completed_output_inventory(tmp_path: Path) -> None:
+    pairs_path, run_path = _write_source(
+        tmp_path / "source",
+        [_pair_record("sample-000")],
+    )
+    manifest = json.loads(run_path.read_text(encoding="utf-8"))
+    manifest["outputs"]["unexpected"] = {"path": "unexpected.txt"}
+    _write_json(run_path, manifest)
+
+    with pytest.raises(InputCorrectorSourceError, match="output|inventory|pairs"):
         _load(pairs_path)
 
 

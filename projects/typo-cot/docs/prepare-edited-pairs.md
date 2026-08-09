@@ -87,7 +87,9 @@ benchmarks whose loaders do not apply a per-subset cap, the provenance value is
 `run.json` uses schema `prepare-edited-pairs-run/v1`. It records the canonical
 paper fingerprint, full arguments, greedy/bfloat16/left-padding settings,
 package and hardware provenance, model revision, a SHA-256 fingerprint of the
-loaded benchmark records, progress counts, and per-item failures.
+loaded benchmark records, progress counts, and per-item failures. A completed
+manifest also declares exactly one output, binding `pairs.jsonl` by path,
+record count, and SHA-256 computed after its final atomic publication.
 
 Greedy generation is fully explicit: `do_sample=false`, `num_beams=1`,
 `num_return_sequences=1`, `temperature/top_p/top_k=null`, `use_cache=true`, and
@@ -110,11 +112,13 @@ no new computation, so its fast resume checks only static protocol/cohort
 identity and permits a different GPU or package environment. The manifest remains `running`
 while pending items are processed and becomes `failed` only after the run ends.
 It atomically publishes `pairs.jsonl` only when every selected item succeeds.
-If that published file is later removed, resuming a completed run reports an
-error instead of silently regenerating every item. Reusing a non-empty output
-directory without `--resume` is rejected. Conversely, `--resume` always
-requires an existing `run.json`; a missing or empty output directory is not
-silently treated as a new run.
+If that published file is later removed or its bytes differ from the completed
+manifest, resuming reports an error instead of silently accepting or
+regenerating it. Completed manifests created before this output identity was
+introduced must be regenerated. Reusing a non-empty output directory without
+`--resume` is rejected. Conversely, `--resume` always requires an existing
+`run.json`; a missing or empty output directory is not silently treated as a
+new run.
 
 ## Historical implementation differences
 

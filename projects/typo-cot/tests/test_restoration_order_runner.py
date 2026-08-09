@@ -11,18 +11,23 @@ from pathlib import Path
 
 import pytest
 
+from typo_cot.experiments.restoration_order_accuracy.integrity import (
+    implementation_code_identity,
+)
+from typo_cot.experiments.restoration_order_accuracy.planning import (
+    build_restoration_plan,
+)
 from typo_cot.experiments.restoration_order_accuracy.protocol import (
     PAPER_BUDGETS,
     PAPER_ORDERS,
-)
-from typo_cot.experiments.restoration_order_accuracy.integrity import (
-    implementation_code_identity,
+    build_edit_groups,
 )
 from typo_cot.experiments.restoration_order_accuracy.runner import (
     RestorationGeneration,
     RestorationOrderConfig,
     run_restoration_order_accuracy,
 )
+from typo_cot.models.prompts import create_prompt_template
 
 
 MODEL = "google/gemma-3-4b-it"
@@ -31,8 +36,13 @@ MODEL = "google/gemma-3-4b-it"
 def _pair_record(sample_id: str = "sample-a") -> dict[str, object]:
     clean_text = "alpha beta gamma delta"
     edited_text = "alpga beeta gamna delxa"
-    prefix = f"few-shot::{sample_id}\nQuestion: "
-    suffix = "\nAnswer:"
+    prompt_result = create_prompt_template("gsm8k").generate(question=clean_text)
+    clean_prompt = prompt_result.get_full_prompt()
+    editable_start = prompt_result.question_start_in_full
+    editable_end = prompt_result.question_with_choices_end
+    assert clean_prompt[editable_start:editable_end] == clean_text
+    prefix = clean_prompt[:editable_start]
+    suffix = clean_prompt[editable_end:]
     attempts = []
     cursor = 0
     for rank, (clean_word, relevance) in enumerate(
@@ -53,9 +63,12 @@ def _pair_record(sample_id: str = "sample-a") -> dict[str, object]:
         "model": MODEL,
         "benchmark": "gsm8k",
         "gold_answer": "4",
+        "subset": None,
         "num_target_attempts": 4,
         "target_attempts": attempts,
         "clean": {
+            "question": clean_text,
+            "choices": None,
             "editable_text": clean_text,
             "editable_prompt_span": {
                 "start": len(prefix),
@@ -322,8 +335,13 @@ def test_runner_generates_shared_endpoints_and_nine_order_budget_arms(
     assert arms["edited:k0"]["is_correct"] is False
     assert arms["clean:k4"]["is_correct"] is True
     assert rows[0]["realized_edit_groups"] == 4
-    prefix = "few-shot::sample-a\nQuestion: "
-    suffix = "\nAnswer:"
+    source_clean = source.records[0]["clean"]
+    assert isinstance(source_clean, dict)
+    source_prompt = source_clean["prompt"]
+    source_span = source_clean["editable_prompt_span"]
+    assert isinstance(source_prompt, str) and isinstance(source_span, dict)
+    prefix = source_prompt[: int(source_span["start"])]
+    suffix = source_prompt[int(source_span["end"]) :]
     assert rows[0]["prompt_context"] == {
         "prefix_length": len(prefix),
         "prefix_sha256": hashlib.sha256(prefix.encode()).hexdigest(),
@@ -340,6 +358,136 @@ def test_runner_generates_shared_endpoints_and_nine_order_budget_arms(
     assert manifest["status"] == "completed"
     assert manifest["arguments"]["gpu_id"] == "1"
     assert manifest["outputs"]["records"]["sha256"]
+
+
+def test_runner_rejects_a_noncanonical_source_prompt_before_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import typo_cot.experiments.restoration_order_accuracy.runner as runner_module
+
+    record = _pair_record()
+    stale_prefix = "legacy prompt template\n"
+    for arm_name in ("clean", "edited"):
+        arm = record[arm_name]
+        assert isinstance(arm, dict)
+        arm["prompt"] = stale_prefix + str(arm["prompt"])
+        span = arm["editable_prompt_span"]
+        assert isinstance(span, dict)
+        span["start"] = int(span["start"]) + len(stale_prefix)
+        span["end"] = int(span["end"]) + len(stale_prefix)
+    source = _Source((record,))
+    runtime = _Runtime()
+    monkeypatch.setattr(
+        runner_module,
+        "load_restoration_order_source",
+        lambda *args, **kwargs: source,
+    )
+
+    with pytest.raises(ValueError, match="canonical|frozen|prompt template"):
+        run_restoration_order_accuracy(
+            _config(tmp_path),
+            runtime_factory=lambda *args, **kwargs: runtime,
+        )
+
+    assert runtime.calls == []
+
+
+def test_condition_prompts_accept_the_frozen_mmlu_five_shot_template() -> None:
+    import typo_cot.experiments.restoration_order_accuracy.runner as runner_module
+
+    question = "alpha beta gamma delta"
+    edited_question = "alpga beeta gamna delxa"
+    choices = ["one", "two", "three", "four"]
+    subset = "abstract_algebra"
+    prompt_result = create_prompt_template("mmlu").generate(
+        question=question,
+        choices=choices,
+        subject=subset,
+    )
+    clean_prompt = prompt_result.get_full_prompt()
+    start = prompt_result.question_start_in_full
+    end = prompt_result.question_with_choices_end
+    clean_text = clean_prompt[start:end]
+    edited_text = edited_question + clean_text[len(question) :]
+    prefix = clean_prompt[:start]
+    suffix = clean_prompt[end:]
+    edited_prompt = prefix + edited_text + suffix
+    attempts = [
+        {
+            "selection_rank": rank,
+            "target_token_index": rank * 10,
+            "relevance": float(5 - rank),
+        }
+        for rank in range(1, 5)
+    ]
+    plan = build_restoration_plan(
+        sample_id="mmlu-sample",
+        clean_text=clean_text,
+        edited_text=edited_text,
+        groups=build_edit_groups(clean_text, edited_text, attempts),
+        seed=42,
+    )
+    record = {
+        "sample_id": "mmlu-sample",
+        "subset": subset,
+        "clean": {
+            "question": question,
+            "choices": choices,
+            "editable_text": clean_text,
+            "editable_prompt_span": {"start": start, "end": end},
+            "prompt": clean_prompt,
+        },
+        "edited": {
+            "editable_text": edited_text,
+            "editable_prompt_span": {
+                "start": start,
+                "end": start + len(edited_text),
+            },
+            "prompt": edited_prompt,
+        },
+    }
+
+    prompts = runner_module._condition_prompts(record, plan, benchmark="mmlu")
+
+    assert prompts["clean:k4"].encode("utf-8") == clean_prompt.encode("utf-8")
+    assert prompts["edited:k0"].encode("utf-8") == edited_prompt.encode("utf-8")
+    assert len(prompts) == 11
+
+
+def test_condition_prompts_reject_prompt_template_probe_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import typo_cot.experiments.restoration_order_accuracy.runner as runner_module
+
+    record = _pair_record()
+    plan = build_restoration_plan(
+        sample_id=str(record["sample_id"]),
+        clean_text=str(record["clean"]["editable_text"]),
+        edited_text=str(record["edited"]["editable_text"]),
+        groups=build_edit_groups(
+            str(record["clean"]["editable_text"]),
+            str(record["edited"]["editable_text"]),
+            record["target_attempts"],
+        ),
+        seed=42,
+    )
+    original_factory = create_prompt_template
+
+    class DriftedTemplate:
+        def generate(self, *args: object, **kwargs: object) -> object:
+            result = original_factory("gsm8k").generate(*args, **kwargs)
+            result.system_prompt += " drift"
+            return result
+
+    monkeypatch.setattr(
+        runner_module,
+        "_create_prompt_template",
+        lambda benchmark: DriftedTemplate(),
+    )
+
+    with pytest.raises(ValueError, match="frozen.*prompt.*template|prompt.*SHA"):
+        runner_module._condition_prompts(record, plan, benchmark="gsm8k")
 
 
 def test_completed_resume_validates_outputs_without_loading_the_model(

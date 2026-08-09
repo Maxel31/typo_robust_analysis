@@ -8,6 +8,7 @@ import pytest
 
 import typo_cot.experiments.restoration_order_accuracy.protocol as protocol_module
 from typo_cot.experiments.restoration_order_accuracy.protocol import (
+    PAPER_PROMPT_TEMPLATES,
     PAPER_SOURCE_RECORD_COUNTS,
     PROTOCOL,
     EditGroupingError,
@@ -130,4 +131,31 @@ def test_dataset_cohort_sizes_are_public_implementation_evidence_not_pdf_facts()
     assert PROTOCOL["public_reproduction"]["source_records"] == PAPER_SOURCE_RECORD_COUNTS
     assert PROTOCOL["public_reproduction"]["source_outcome_revalidation"] == (
         "stored-continuation-final-pdf-extraction-match/v1"
+    )
+
+
+def test_archived_table13_prompt_template_identities_are_frozen() -> None:
+    assert PAPER_PROMPT_TEMPLATES == {
+        "gsm8k": {
+            "prompt_id": "gsm8k_cot_v1",
+            "probe_sha256": (
+                "b4e6d6087551c55558c1afe236c68bbcc83a00f69864d41641fa1a45d77ca22f"
+            ),
+        },
+        "mmlu": {
+            "prompt_id": "mmlu_cot_v1",
+            "probe_sha256": (
+                "eb9d417152748c6eebef118a8e5717919c8f10fac601e12a0376a10022538606"
+            ),
+        },
+    }
+    assert PROTOCOL["legacy_backed"]["prompt_templates"] == PAPER_PROMPT_TEMPLATES
+    assert PROTOCOL["public_reproduction"]["source_artifact_binding"] == (
+        "completed-manifest-pairs-sha256/v1"
+    )
+    assert PROTOCOL["public_reproduction"]["source_prompt_revalidation"] == (
+        "archived-probe-plus-record-byte-match/v1"
+    )
+    assert PROTOCOL["public_reproduction"]["cross_setting_source_identity"] == (
+        "model-revision-per-model-and-dataset-plus-ordered-samples-per-task/v1"
     )

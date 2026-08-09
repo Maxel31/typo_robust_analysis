@@ -355,6 +355,13 @@ def _source_manifest(
             "failed": 0,
         },
         "failures": [],
+        "outputs": {
+            "pairs": {
+                "path": "pairs.jsonl",
+                "sha256": _sha256_file(directory / "pairs.jsonl"),
+                "records": len(rows),
+            }
+        },
         "decoding": {
             "strategy": "greedy",
             "dtype": "bfloat16",

@@ -35,6 +35,7 @@ from typo_cot.experiments.restoration_order_accuracy.protocol import (
     PAPER_BUDGETS,
     PAPER_MODELS,
     PAPER_ORDERS,
+    PAPER_PROMPT_TEMPLATES,
     PAPER_SEED,
     PROTOCOL_SHA256,
     build_edit_groups,
@@ -433,8 +434,41 @@ def _span(value: object, *, field: str, text: str) -> tuple[int, int]:
     return start, end
 
 
+def _create_prompt_template(benchmark: str) -> object:
+    """Import model-adjacent prompt code only for the GPU producer path."""
+    from typo_cot.models.prompts import create_prompt_template
+
+    return create_prompt_template(benchmark)
+
+
+def _frozen_prompt_template(benchmark: str) -> object:
+    """Load one Table 13 template only if its archived probe still matches."""
+    template = _create_prompt_template(benchmark)
+    if benchmark == "gsm8k":
+        probe = template.generate(question="PROBE QUESTION?")
+    elif benchmark == "mmlu":
+        probe = template.generate(
+            question="PROBE QUESTION?",
+            choices=["PROBE_A", "PROBE_B", "PROBE_C", "PROBE_D"],
+            subject="probe subject",
+        )
+    else:  # Configuration validation normally makes this unreachable.
+        raise ValueError(f"unsupported frozen prompt benchmark: {benchmark!r}")
+    expected = PAPER_PROMPT_TEMPLATES[benchmark]["probe_sha256"]
+    actual = _sha256_text(probe.get_full_prompt())
+    if actual != expected:
+        raise ValueError(
+            f"{benchmark} frozen prompt template SHA-256 differs: "
+            f"expected={expected}, actual={actual}"
+        )
+    return template
+
+
 def _condition_prompts(
-    record: Mapping[str, object], plan: RestorationPlan
+    record: Mapping[str, object],
+    plan: RestorationPlan,
+    *,
+    benchmark: str,
 ) -> dict[str, str]:
     sample_id = plan.sample_id
     clean = _mapping(record.get("clean"), field=f"{sample_id}.clean")
@@ -453,6 +487,39 @@ def _condition_prompts(
         field=f"{sample_id}.edited.editable_prompt_span",
         text=edited_prompt,
     )
+    question = clean.get("question")
+    choices = clean.get("choices")
+    subset = record.get("subset")
+    if not isinstance(question, str) or not question:
+        raise ValueError(f"{sample_id} source question must be a non-empty string")
+    template = _frozen_prompt_template(benchmark)
+    if benchmark == "gsm8k":
+        if choices is not None or subset is not None:
+            raise ValueError(f"{sample_id} GSM8K source identity is not canonical")
+        expected_prompt = template.generate(question=question)
+    elif benchmark == "mmlu":
+        if (
+            not isinstance(choices, list)
+            or not choices
+            or any(not isinstance(choice, str) or not choice for choice in choices)
+            or not isinstance(subset, str)
+            or not subset
+        ):
+            raise ValueError(f"{sample_id} MMLU source identity is not canonical")
+        expected_prompt = template.generate(
+            question=question,
+            choices=choices,
+            subject=subset,
+        )
+    else:  # Configuration validation normally makes this unreachable.
+        raise ValueError(f"unsupported frozen prompt benchmark: {benchmark!r}")
+    if clean_prompt.encode("utf-8") != expected_prompt.get_full_prompt().encode("utf-8"):
+        raise ValueError(f"{sample_id} source prompt differs from the frozen prompt template")
+    if (clean_start, clean_end) != (
+        expected_prompt.question_start_in_full,
+        expected_prompt.question_with_choices_end,
+    ):
+        raise ValueError(f"{sample_id} source prompt span differs from the frozen template")
     if clean_prompt[clean_start:clean_end] != plan.clean_text:
         raise ValueError(f"{sample_id} clean prompt span differs from the restoration plan")
     if edited_prompt[edited_start:edited_end] != plan.edited_text:
@@ -1037,7 +1104,11 @@ def _run_restoration_order_accuracy_locked(
     if tuple(plan.sample_id for plan in plans) != sample_ids:
         raise ValueError("source plans differ from selected sample order")
     prompts_by_sample = {
-        plan.sample_id: _condition_prompts(record, plan)
+        plan.sample_id: _condition_prompts(
+            record,
+            plan,
+            benchmark=config.benchmark,
+        )
         for record, plan in zip(records, plans, strict=True)
     }
 

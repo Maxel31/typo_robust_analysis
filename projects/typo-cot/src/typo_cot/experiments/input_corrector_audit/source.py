@@ -320,6 +320,7 @@ def _validate_manifest(
     benchmark: str,
     record_count: int,
     records: list[dict[str, object]],
+    pairs_sha256: str,
 ) -> dict[str, object]:
     manifest = dict(_object(value, field="source run manifest"))
     if manifest.get("schema_version") != SOURCE_PROTOCOL["run_schema"]:
@@ -368,6 +369,25 @@ def _validate_manifest(
     failures = _list(manifest.get("failures"), field="source run failures")
     if failures:
         raise InputCorrectorSourceError("source run contains failures")
+
+    outputs = _object(manifest.get("outputs"), field="source run outputs")
+    if set(outputs) != {"pairs"}:
+        raise InputCorrectorSourceError(
+            "source run output inventory must contain only pairs; "
+            "rerun prepare-edited-pairs"
+        )
+    pairs_output = _object(outputs.get("pairs"), field="source run outputs.pairs")
+    if pairs_output.get("path") != "pairs.jsonl":
+        raise InputCorrectorSourceError("source pairs output path must be pairs.jsonl")
+    if (
+        type(pairs_output.get("records")) is not int
+        or pairs_output.get("records") != record_count
+    ):
+        raise InputCorrectorSourceError("source pairs output record count does not match")
+    if pairs_output.get("sha256") != pairs_sha256:
+        raise InputCorrectorSourceError(
+            "source pairs output SHA-256 does not match pairs.jsonl"
+        )
 
     provenance = _object(manifest.get("provenance"), field="source run provenance")
     if provenance.get("model") != model:
@@ -495,6 +515,7 @@ def load_input_corrector_source(
         benchmark=benchmark,
         record_count=len(records),
         records=records,
+        pairs_sha256=initial_pairs_sha256,
     )
     if sha256_file(path) != initial_pairs_sha256:
         raise InputCorrectorSourceError("pairs source changed during hash validation")

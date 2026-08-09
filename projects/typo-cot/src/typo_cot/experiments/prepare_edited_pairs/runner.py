@@ -126,6 +126,14 @@ def _write_json_atomic(path: Path, payload: Mapping[str, object]) -> None:
     os.replace(temporary, path)
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _load_json(path: Path) -> dict[str, object]:
     with path.open(encoding="utf-8") as handle:
         payload = json.load(handle)
@@ -143,8 +151,9 @@ def _manifest(
     written: int,
     failures: list[dict[str, str]],
     provenance: Mapping[str, object],
+    outputs: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "schema_version": "prepare-edited-pairs-run/v1",
         "paper_sha256": PAPER_SHA256,
         "operation": "prepare-edited-pairs",
@@ -175,6 +184,47 @@ def _manifest(
         "started_at": started_at,
         "updated_at": _now(),
     }
+    if outputs is not None:
+        payload["outputs"] = dict(outputs)
+    return payload
+
+
+def _validate_completed_pairs(
+    manifest: Mapping[str, object],
+    *,
+    pairs_path: Path,
+) -> int:
+    outputs = manifest.get("outputs")
+    if not isinstance(outputs, Mapping):
+        raise ValueError(
+            "completed run is missing its pairs output identity; "
+            "rerun prepare-edited-pairs"
+        )
+    if set(outputs) != {"pairs"}:
+        raise ValueError("completed run output inventory must contain only pairs")
+    pairs = outputs.get("pairs")
+    if not isinstance(pairs, Mapping) or pairs.get("path") != pairs_path.name:
+        raise ValueError("completed run pairs output path differs")
+    digest = pairs.get("sha256")
+    if (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        raise ValueError("completed run pairs output SHA-256 is invalid")
+    if _sha256_file(pairs_path) != digest:
+        raise ValueError("completed run pairs output SHA-256 changed")
+    counts = manifest.get("counts")
+    written = counts.get("written") if isinstance(counts, Mapping) else None
+    if (
+        not isinstance(written, int)
+        or isinstance(written, bool)
+        or written <= 0
+        or type(pairs.get("records")) is not int
+        or pairs.get("records") != written
+    ):
+        raise ValueError("completed run pairs output record count differs")
+    return written
 
 
 def _validate_resume(
@@ -292,6 +342,7 @@ def run_prepare_edited_pairs(
                     "completed run is missing pairs.jsonl; restore the published file or use "
                     "a new output directory"
                 )
+            written = _validate_completed_pairs(previous, pairs_path=pairs_path)
             if runtime is None:
                 from typo_cot.experiments.prepare_edited_pairs.runtime import (
                     preload_provenance,
@@ -309,8 +360,6 @@ def run_prepare_edited_pairs(
                 current_preload_provenance,
                 protocol_only=runtime is None,
             )
-            counts = previous.get("counts")
-            written = int(counts.get("written", 0)) if isinstance(counts, Mapping) else 0
             return PrepareEditedPairsResult(pairs_path, run_path, written)
     else:
         started_at = _now()
@@ -453,6 +502,14 @@ def run_prepare_edited_pairs(
         os.fsync(handle.fileno())
     os.replace(temporary_pairs, pairs_path)
 
+    completed_outputs = {
+        "pairs": {
+            "path": pairs_path.name,
+            "sha256": _sha256_file(pairs_path),
+            "records": len(samples),
+        }
+    }
+
     _write_json_atomic(
         run_path,
         _manifest(
@@ -463,6 +520,7 @@ def run_prepare_edited_pairs(
             written=len(samples),
             failures=[],
             provenance=provenance,
+            outputs=completed_outputs,
         ),
     )
     shutil.rmtree(work_dir)

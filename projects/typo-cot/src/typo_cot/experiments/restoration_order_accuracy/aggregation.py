@@ -107,6 +107,9 @@ class RestorationOrderTableResult:
 class _Setting:
     model: str
     benchmark: str
+    source_model_revision: str
+    source_dataset_records_sha256: str
+    source_ordered_sample_ids_sha256: str
     run_path: Path
     run_sha256: str
     records_path: Path
@@ -1045,6 +1048,9 @@ def _validate_run(run_path: Path) -> _Setting:
     return _Setting(
         model=str(model),
         benchmark=str(benchmark),
+        source_model_revision=str(source["model_revision"]),
+        source_dataset_records_sha256=str(source["dataset_records_sha256"]),
+        source_ordered_sample_ids_sha256=str(source["ordered_sample_ids_sha256"]),
         run_path=run_path,
         run_sha256=initial_run_sha256,
         records_path=records_path,
@@ -1053,6 +1059,30 @@ def _validate_run(run_path: Path) -> _Setting:
         summary_sha256=_sha256_file(summary_path),
         rows=rows,
     )
+
+
+def _validate_cross_setting_source_identities(settings: Sequence[_Setting]) -> None:
+    for model in PAPER_MODELS:
+        revisions = {
+            setting.source_model_revision for setting in settings if setting.model == model
+        }
+        if len(revisions) != 1:
+            raise RestorationOrderTableInputError(
+                f"source model revision differs across benchmarks for {model}"
+            )
+    for benchmark in PAPER_BENCHMARKS:
+        identities = {
+            (
+                setting.source_dataset_records_sha256,
+                setting.source_ordered_sample_ids_sha256,
+            )
+            for setting in settings
+            if setting.benchmark == benchmark
+        }
+        if len(identities) != 1:
+            raise RestorationOrderTableInputError(
+                f"source dataset/sample identity differs across models for {benchmark}"
+            )
 
 
 def _discover(root: Path) -> tuple[_Setting, ...]:
@@ -1084,6 +1114,7 @@ def _discover(root: Path) -> tuple[_Setting, ...]:
         raise RestorationOrderTableInputError(
             f"Table 13 six-setting grid differs; missing={missing}, extras={extras}"
         )
+    _validate_cross_setting_source_identities(settings)
     return tuple(sorted(settings, key=lambda item: (item.model, item.benchmark)))
 
 
@@ -1365,6 +1396,13 @@ def build_restoration_order_table(
                     {
                         "model": setting.model,
                         "benchmark": setting.benchmark,
+                        "source_model_revision": setting.source_model_revision,
+                        "source_dataset_records_sha256": (
+                            setting.source_dataset_records_sha256
+                        ),
+                        "source_ordered_sample_ids_sha256": (
+                            setting.source_ordered_sample_ids_sha256
+                        ),
                         "run_path": str(setting.run_path),
                         "run_sha256": setting.run_sha256,
                         "records_sha256": setting.records_sha256,

@@ -948,6 +948,15 @@ high-first対randomの報告p値にはtwo-sided exact McNemar/binomial testを�
 source selectionの前に、保存された両endpointのcontinuationをfinal PDFの
 primary-then-empty-only-fallback ruleで再採点します。古いmetadataやprimary-onlyの
 stored answerはcohortの分母を黙って変えず、入力エラーとして拒否します。
+完了したproducer manifestは、`pairs.jsonl` の正確なbyte列とrecord数も固定します。
+この固定情報が導入される前に作成したsourceは `prepare-edited-pairs` で再生成する必要が
+あります。完了後にrelevanceやtoken位置metadataを変更したsourceはmodel load前に拒否します。
+
+runnerは保持する各itemについて、question、choices、subjectから完全なclean promptを再構築
+します。まず現在のGSM8K 8-shotまたはMMLU 5-shot templateを、保存済みの
+`*_cot_v1` probe SHA-256と照合し、続いて再構築したUTF-8 byte列とeditable spanがsourceと
+一致することを要求します。6設定のbuilderはさらに、各modelの2 taskが同じmodel revisionを
+使い、各taskの3 modelが同じdataset identityとordered-sample identityを使うことを要求します。
 
 PDFはarchived-selected 1,582 item、endpoint accuracy 12.0%/88.9%、3つの中間行を
 報告します。freshな公開source preparationは同じpaper protocolに従いますが、private

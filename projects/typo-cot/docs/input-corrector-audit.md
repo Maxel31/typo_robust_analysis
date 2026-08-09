@@ -72,10 +72,17 @@ all of the following hold:
   subset-cap, seeded-edit, generation, target-position, alignment, and greedy
   decoding provenance all match the frozen preparation contract;
 - model revision, dataset fingerprint, and final-PDF fingerprint are present
-  and valid; the loader computes and snapshots SHA-256 identities for both
-  source files; and
+  and valid; the completed manifest binds the exact `pairs.jsonl` path, record
+  count, and SHA-256, while the loader recomputes and snapshots identities for
+  both source files; and
 - sample IDs, editable spans, prompt spans, prompt reconstruction, and
   `aligned_words` counts satisfy the prepared-pair contract.
+
+The completed output inventory must contain only `pairs.jsonl`. This makes
+changes to relevance, token positions, edit events, or any other pair bytes
+detectable before a corrector or evaluator model is loaded. A legacy completed
+source without the output binding must be regenerated with
+`prepare-edited-pairs`.
 
 Every source record remains in the setting run, including a record for which no
 character change could be applied. `aligned_words` remains part of source
