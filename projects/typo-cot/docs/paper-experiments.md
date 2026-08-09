@@ -1,22 +1,23 @@
 # Paper-aligned experiment contract
 
-## Canonical source and naming
+## Paper reference and naming
 
 This document is transcribed from the final 19-page PDF:
 
 - Title: *Edited-Word Activation Patching Reverses Selected Typo-Induced Answer Changes after Tokenization*
 - Filename: `Edited-Word Activation Patching Reverses Selected Typo-Induced Answer Changes after Tokenization.pdf`
 
-Read the canonical SHA-256 from the catalog's single source of truth:
+For an optional integrity check, print the final PDF's recorded SHA-256:
 
 ```bash
 uv run --project projects/typo-cot typo-cot experiments source
 ```
 
-The PDF is authoritative. Old experiment numbers, worktree READMEs, analysis
-notes, archived outputs, and implementation comments are secondary evidence.
-When they conflict, implementation must follow the PDF and record the mismatch
-in provenance rather than silently preserving the old behavior.
+Use the final PDF for its experimental protocol and reported results. Old
+experiment numbers, worktree READMEs, analysis notes, archived outputs, and
+implementation comments are secondary evidence. When they conflict,
+implementation follows the PDF and records the mismatch in provenance rather
+than silently preserving the old behavior.
 
 The PDF itself is intentionally not added by this contract PR; the fingerprint
 anchors the user-supplied final submission without assuming publication rights

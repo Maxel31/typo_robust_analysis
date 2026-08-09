@@ -119,8 +119,8 @@ Delta  = Loss_P - Loss_C
 `Delta` is reported in percentage points. `n` counts records; each loss rate
 has `2*n` event opportunities. The extension pool is also split by the stored
 token order `P<C` (selected position before control) and `P>C` (selected
-position after control). Exact integer event counts and denominators are the
-source of truth; displayed percentages are rounded only when rendering.
+position after control). Every displayed percentage is calculated from the
+exact integer event counts and denominators, then rounded only when rendering.
 
 ### Final-PDF-literal denominator
 
