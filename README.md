@@ -45,10 +45,9 @@ uv run --project projects/typo-cot typo-cot experiments list
 uv run --project projects/typo-cot typo-cot experiments show layerwise-kl-patching
 ```
 
-The refactor is being published operation by operation. `catalogued` means the
-paper contract and future command are fixed but the public runner is not yet
-available; `implemented` means the command can run. The catalog reports this
-status explicitly, so the README does not imply that unfinished runners work.
+All paper operations in the catalog are implemented. `experiments list` reports
+the compute class, required arguments, outputs, and implementation status for
+each operation.
 
 GPU experiments use the paper-locked `lrp` environment. CPU-only catalog
 inspection and contract tests require no model download.
@@ -58,34 +57,27 @@ inspection and contract tests require no model download.
 ```text
 .
 ├── .github/workflows/              # automated PR review
-├── _sample_project/                # retained legacy project template
-├── datasets/                       # shared dataset storage and local caches
 ├── README.md
 ├── README.ja.md
-├── pyproject.toml                 # uv workspace
-├── uv.lock                        # shared environment lock
-├── projects/typo-cot/
-│   ├── README.md                  # package setup and current commands
-│   ├── README.ja.md               # Japanese setup and current commands
-│   ├── docs/                      # paper contract and provenance
-│   ├── results/                   # ignored local outputs (.gitkeep only)
-│   ├── src/typo_cot/              # importable implementation
-│   └── tests/                     # CPU unit/contract tests
-├── scripts/new_project.sh         # retained legacy scaffolding helper
-└── utils/                         # shared utilities used by typo-cot
+├── pyproject.toml                  # uv workspace
+├── uv.lock                         # locked reproduction environment
+└── projects/typo-cot/
+    ├── README.md                   # package setup and current commands
+    ├── README.ja.md                # Japanese setup and current commands
+    ├── docs/                       # paper contract and provenance
+    ├── results/                    # ignored local outputs (.gitkeep only)
+    ├── src/typo_cot/               # importable implementation
+    └── tests/                      # CPU unit/contract tests
 ```
 
-## Retained workspace support
+## Repository scope
 
-The repository-level development environment still includes the `typo-utils`
-workspace member in `utils/`; the public `projects/typo-cot` package itself no
-longer depends on it. The repository remains a `uv` workspace during the
-refactor. `_sample_project/` and `scripts/new_project.sh` are pre-existing
-generic scaffolding retained for now; they are not part of the paper
-reproduction path. Pull requests are reviewed by
-`.github/workflows/claude-code-review.yml`. Any later cleanup or removal of
-these retained tools will be handled in its own reviewed PR.
+The root `uv` workspace contains only the public reproduction package. Model
+and dataset caches, generated results, the supplied paper PDF, and the local
+archive used to audit historical figure/table sources are intentionally not
+tracked. Pull requests are reviewed by
+`.github/workflows/claude-code-review.yml`.
 
-Changes are developed as one operation per branch and pull request, always
-against `develop`. A subsequent operation starts only after CI and all
-actionable review feedback on the current PR have been resolved.
+Changes are developed as one operation per branch and pull request against
+`develop`. CI and actionable review feedback are resolved before the next
+operation is merged.

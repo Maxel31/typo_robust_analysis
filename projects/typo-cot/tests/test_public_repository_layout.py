@@ -14,6 +14,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = PROJECT_ROOT.parents[1]
 PROJECT_PREFIX = "projects/typo-cot/"
 
+OBSOLETE_REPOSITORY_ROOTS = {"_sample_project", "datasets", "scripts", "utils"}
+OBSOLETE_REPOSITORY_PATHS = {Path(".env.example"), Path("projects/.gitkeep")}
+
 LEGACY_PROJECT_DIRECTORIES = {"analysis", "configs", "scripts"}
 LEGACY_PACKAGE_DIRECTORIES = {
     "analysis",
@@ -83,6 +86,7 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/evaluation/__init__.py"),
     Path("src/typo_cot/evaluation/extractor.py"),
     Path("src/typo_cot/evaluation/fallback.py"),
+    Path("src/typo_cot/evaluation/generation.py"),
     Path("src/typo_cot/experiments/__init__.py"),
     Path("src/typo_cot/experiments/catalog.py"),
     Path("src/typo_cot/experiments/answer_line_deletion/__init__.py"),
@@ -223,6 +227,50 @@ def _tracked_existing_paths() -> set[Path]:
     return relative_paths
 
 
+def _tracked_repository_paths() -> set[Path]:
+    """Return every tracked path relative to the repository root."""
+    completed = subprocess.run(
+        ["git", "ls-files"],
+        cwd=REPOSITORY_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    tracked = {Path(line) for line in completed.stdout.splitlines() if line}
+    return {path for path in tracked if (REPOSITORY_ROOT / path).exists()}
+
+
+def test_obsolete_workspace_scaffolding_is_not_tracked() -> None:
+    tracked = _tracked_repository_paths()
+    tracked_roots = {path.parts[0] for path in tracked}
+    assert tracked_roots.isdisjoint(OBSOLETE_REPOSITORY_ROOTS)
+    assert tracked.isdisjoint(OBSOLETE_REPOSITORY_PATHS)
+
+
+def test_root_workspace_contains_only_the_reproduction_package() -> None:
+    with (REPOSITORY_ROOT / "pyproject.toml").open("rb") as stream:
+        root_project = tomllib.load(stream)
+
+    assert root_project["project"]["dependencies"] == []
+    assert "sources" not in root_project["tool"]["uv"]
+    assert root_project["tool"]["uv"]["workspace"]["members"] == ["projects/typo-cot"]
+    assert "exclude" not in root_project["tool"]["uv"]["workspace"]
+
+
+def test_development_dependencies_match_the_public_test_toolchain() -> None:
+    with (REPOSITORY_ROOT / "pyproject.toml").open("rb") as stream:
+        root_project = tomllib.load(stream)
+    with (PROJECT_ROOT / "pyproject.toml").open("rb") as stream:
+        reproduction_project = tomllib.load(stream)
+
+    root_dev = {_dependency_name(item) for item in root_project["dependency-groups"]["dev"]}
+    project_dev = {
+        _dependency_name(item) for item in reproduction_project["dependency-groups"]["dev"]
+    }
+    assert root_dev == {"pytest", "ruff"}
+    assert project_dev == {"pytest"}
+
+
 def _dependency_name(requirement: str) -> str:
     """Extract a normalized distribution name from a simple requirement."""
     boundary = min(
@@ -296,6 +344,35 @@ def test_local_legacy_output_locations_remain_ignored() -> None:
     )
     ignored = set(completed.stdout.splitlines())
     assert ignored == local_artifacts
+
+
+def test_existing_top_level_dataset_cache_remains_ignored() -> None:
+    local_cache_path = "datasets/local-cache.bin"
+    completed = subprocess.run(
+        ["git", "check-ignore", "--no-index", local_cache_path],
+        cwd=REPOSITORY_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0
+    assert completed.stdout.splitlines() == [local_cache_path]
+
+
+def test_existing_wandb_run_directories_remain_ignored() -> None:
+    local_run_paths = {
+        "wandb/latest-run/files/output.log",
+        "projects/typo-cot/wandb/run-legacy/files/config.yaml",
+    }
+    completed = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--stdin"],
+        cwd=REPOSITORY_ROOT,
+        input="\n".join(sorted(local_run_paths)),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert set(completed.stdout.splitlines()) == local_run_paths
 
 
 def test_cli_only_exposes_reviewed_public_commands() -> None:

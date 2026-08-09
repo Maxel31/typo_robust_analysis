@@ -299,15 +299,15 @@ def test_all_public_entry_points_read_the_pdf_fingerprint_from_the_catalog() -> 
         assert "typo-cot experiments source" in contents, document
 
 
-def test_root_readme_accounts_for_retained_workspace_support() -> None:
+def test_root_readme_describes_only_the_public_reproduction_layout() -> None:
     readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
 
     assert "sha256sum" in readme
-    for retained_path in (
+    assert "projects/typo-cot/" in readme
+    for obsolete_path in (
         "datasets/",
         "utils/",
         "_sample_project/",
         "scripts/new_project.sh",
-        ".github/workflows/claude-code-review.yml",
     ):
-        assert retained_path in readme
+        assert obsolete_path not in readme
