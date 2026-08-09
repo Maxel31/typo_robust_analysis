@@ -73,6 +73,9 @@ PROTOCOL = {
         ),
         "source": "completed-prepare-edited-pairs-attribution-4/v1",
         "source_records": PAPER_SOURCE_RECORD_COUNTS,
+        "source_outcome_revalidation": (
+            "stored-continuation-final-pdf-extraction-match/v1"
+        ),
         "fresh_endpoint_refilter": False,
     },
 }

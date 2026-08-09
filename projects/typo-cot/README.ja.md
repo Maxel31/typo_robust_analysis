@@ -945,6 +945,10 @@ model/task/sample identityでpairにし、6設定の等重み平均ではなくi
 high-first対randomの報告p値にはtwo-sided exact McNemar/binomial testを使います。
 論文と同じく、この3検定は記述的でmultiplicity未調整です。
 
+source selectionの前に、保存された両endpointのcontinuationをfinal PDFの
+primary-then-empty-only-fallback ruleで再採点します。古いmetadataやprimary-onlyの
+stored answerはcohortの分母を黙って変えず、入力エラーとして拒否します。
+
 PDFはarchived-selected 1,582 item、endpoint accuracy 12.0%/88.9%、3つの中間行を
 報告します。freshな公開source preparationは同じpaper protocolに従いますが、private
 archiveとbyte-identicalなmembershipを証明するものではありません。そのため掲載値は

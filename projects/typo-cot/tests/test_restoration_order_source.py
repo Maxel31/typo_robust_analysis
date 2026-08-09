@@ -47,6 +47,23 @@ def _record(
                 strict=True,
             )
         )
+    clean_value = "2" if clean_correct else "3"
+    edited_value = "2" if edited_correct else "3"
+
+    def source_arm(editable_text: str, value: str, *, correct: bool) -> dict[str, object]:
+        return {
+            "editable_text": editable_text,
+            "continuation": f"Reasoning. The answer is {value}.",
+            "continuation_token_count": 8,
+            "answer": {
+                "value": value,
+                "is_extracted": True,
+                "is_correct": correct,
+                "method": "primary:pattern_1",
+                "primary_method": "pattern_1",
+            },
+        }
+
     return {
         "schema_version": "prepare-edited-pairs/v1",
         "sample_id": sample_id,
@@ -58,17 +75,9 @@ def _record(
         "num_target_attempts": len(attempts),
         "target_attempts": list(attempts),
         "gold_answer": "2",
-        "clean": {
-            "editable_text": clean_text,
-            "answer": {"value": "2" if clean_correct else "3", "is_correct": clean_correct},
-        },
-        "edited": {
-            "editable_text": edited_text,
-            "answer": {
-                "value": "2" if edited_correct else "3",
-                "is_correct": edited_correct,
-            },
-        },
+        "clean": source_arm(clean_text, clean_value, correct=clean_correct),
+        "edited": source_arm(edited_text, edited_value, correct=edited_correct),
+        "answer_changed": clean_value != edited_value,
         # These simulate newly generated endpoint diagnostics. They must never
         # redefine the cohort selected from the archived source outcomes above.
         "fresh_endpoint_diagnostics": {
@@ -229,6 +238,58 @@ def test_selection_uses_only_source_clean_correct_and_four_edit_wrong_outcomes(
     }
 
 
+def test_loader_recomputes_final_pdf_source_outcomes_before_selection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = _record("stale-primary-only-metadata")
+    clean = record["clean"]
+    assert isinstance(clean, dict)
+    clean["continuation"] = "Reasoning only. **2**"
+    clean["continuation_token_count"] = 4
+    clean["answer"] = {
+        "value": "",
+        "is_extracted": False,
+        "is_correct": False,
+        "method": "unextractable",
+        "primary_method": "no_match",
+    }
+    strict = _StrictPreparedSource(records=(record,))
+    _install_strict_loader(monkeypatch, strict)
+
+    with pytest.raises(ValueError, match="final-PDF|recomputed|source answer"):
+        load_restoration_order_source(
+            tmp_path / "pairs.jsonl",
+            model=MODEL,
+            benchmark=BENCHMARK,
+        )
+
+
+def test_source_plan_uses_the_protocol_seed_constant(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    strict = _StrictPreparedSource(records=(_record("eligible"),))
+    _install_strict_loader(monkeypatch, strict)
+    observed: list[int] = []
+    real_builder = source_module.build_restoration_plan
+
+    def capture_seed(**kwargs: object) -> object:
+        observed.append(int(kwargs["seed"]))
+        return real_builder(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(source_module, "PAPER_SEED", 7, raising=False)
+    monkeypatch.setattr(source_module, "build_restoration_plan", capture_seed)
+
+    load_restoration_order_source(
+        tmp_path / "pairs.jsonl",
+        model=MODEL,
+        benchmark=BENCHMARK,
+    )
+
+    assert observed == [7]
+
+
 def test_inseparable_source_selected_items_are_excluded_with_explicit_provenance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -262,6 +323,31 @@ def test_inseparable_source_selected_items_are_excluded_with_explicit_provenance
         and exclusion.reason == "inseparable-edit-groups"
         for exclusion in source.exclusions
     )
+
+
+def test_more_than_four_edit_groups_are_an_explicit_source_exclusion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = _record(
+        "five-groups",
+        clean_text="aa bb cc dd ee ff",
+        edited_text="ax bx cx dx ex ff",
+        attempts=tuple(_attempt(index * 10, float(6 - index)) for index in range(1, 6)),
+    )
+    strict = _StrictPreparedSource(records=(record,))
+    _install_strict_loader(monkeypatch, strict)
+
+    source = load_restoration_order_source(
+        tmp_path / "pairs.jsonl",
+        model=MODEL,
+        benchmark=BENCHMARK,
+    )
+
+    assert source.source_selected_count == 1
+    assert source.separable_count == 0
+    assert source.records == ()
+    assert [item.reason for item in source.exclusions] == ["inseparable-edit-groups"]
 
 
 def test_limit_is_applied_after_archived_selection_and_inseparable_exclusion(

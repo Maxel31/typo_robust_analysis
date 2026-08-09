@@ -128,3 +128,6 @@ def test_restore_edit_groups_rejects_an_unknown_or_duplicate_group_index() -> No
 def test_dataset_cohort_sizes_are_public_implementation_evidence_not_pdf_facts() -> None:
     assert "source_records" not in PROTOCOL["paper_defined"]
     assert PROTOCOL["public_reproduction"]["source_records"] == PAPER_SOURCE_RECORD_COUNTS
+    assert PROTOCOL["public_reproduction"]["source_outcome_revalidation"] == (
+        "stored-continuation-final-pdf-extraction-match/v1"
+    )

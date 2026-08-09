@@ -469,7 +469,10 @@ def load_input_corrector_source(
     initial_run_sha256 = sha256_file(run_path)
     manifest_payload = _loads(run_path.read_text(encoding="utf-8"), context=str(run_path))
     records: list[dict[str, object]] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    lines = path.read_text(encoding="utf-8").split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    for line_number, line in enumerate(lines, start=1):
         if not line:
             raise InputCorrectorSourceError(f"empty JSONL line at {path}:{line_number}")
         payload = _loads(line, context=f"{path}:{line_number}")

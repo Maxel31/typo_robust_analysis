@@ -258,6 +258,29 @@ def test_pair_runtime_answer_uses_empty_only_fallback_and_exact_correctness() ->
     }
 
 
+def test_pair_runtime_disables_positional_fallback_at_the_generation_cap() -> None:
+    runtime = object.__new__(HuggingFacePairPreparationRuntime)
+    runtime.internal_benchmark = "gsm8k"
+    runtime.extractor = create_extractor("gsm8k")
+    text = "The computation is unfinished and currently reaches 2 dollars."
+
+    before_cap = runtime._answer(
+        text,
+        "2",
+        allow_positional=True,
+    )
+    at_cap = runtime._answer(
+        text,
+        "2",
+        allow_positional=False,
+    )
+
+    assert before_cap["method"] == "fallback:N5_tail_number"
+    assert before_cap["is_correct"] is True
+    assert at_cap["method"] == "unextractable"
+    assert at_cap["is_correct"] is False
+
+
 def test_pair_runtime_keeps_the_math_extractor_native_comparator() -> None:
     runtime = object.__new__(HuggingFacePairPreparationRuntime)
     runtime.internal_benchmark = "math"
@@ -771,7 +794,7 @@ def _pair_runtime_for_prompt(prompt: str) -> tuple[HuggingFacePairPreparationRun
     runtime._relevance_after_first_cot = lambda prompt_ids, _generated_ids: [
         1.0 - 0.5 * index for index in range(len(prompt_ids))
     ]
-    runtime._answer = lambda continuation, _correct: {
+    runtime._answer = lambda continuation, _correct, **_kwargs: {
         "value": continuation,
         "is_extracted": True,
         "is_correct": False,

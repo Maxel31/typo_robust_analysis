@@ -185,6 +185,34 @@ class _CloseFailRuntime(_Runtime):
         raise RuntimeError("fixture close failure")
 
 
+class _GenerationAndCloseFailRuntime(_CloseFailRuntime):
+    def generate_batch(
+        self,
+        prompts: tuple[str, ...] | list[str],
+        *,
+        sample_ids: tuple[str, ...] | list[str],
+        gold_answers: tuple[str, ...] | list[str],
+    ) -> tuple[RestorationGeneration, ...]:
+        del prompts, sample_ids, gold_answers
+        raise RuntimeError("fixture generation failure")
+
+
+class _UnicodeLineSeparatorRuntime(_Runtime):
+    def generate_batch(
+        self,
+        prompts: tuple[str, ...] | list[str],
+        *,
+        sample_ids: tuple[str, ...] | list[str],
+        gold_answers: tuple[str, ...] | list[str],
+    ) -> tuple[RestorationGeneration, ...]:
+        rows = super().generate_batch(
+            prompts,
+            sample_ids=sample_ids,
+            gold_answers=gold_answers,
+        )
+        return tuple(replace(row, text=f"{row.text}\u2028still one JSONL row") for row in rows)
+
+
 class _Allocation:
     pass
 
@@ -324,6 +352,29 @@ def test_completed_resume_validates_outputs_without_loading_the_model(
     monkeypatch.setattr(runner_module, "load_restoration_order_source", lambda *a, **k: source)
     first = run_restoration_order_accuracy(
         _config(tmp_path), runtime_factory=lambda *a, **k: _Runtime()
+    )
+
+    resumed = run_restoration_order_accuracy(
+        replace(_config(tmp_path), resume=True),
+        runtime_factory=lambda *a, **k: pytest.fail("completed resume loaded the model"),
+    )
+
+    assert resumed == first
+
+
+def test_completed_resume_treats_unicode_line_separators_as_json_content(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import typo_cot.experiments.restoration_order_accuracy.runner as runner_module
+
+    source = _Source((_pair_record(),))
+    monkeypatch.setattr(
+        runner_module, "load_restoration_order_source", lambda *a, **k: source
+    )
+    first = run_restoration_order_accuracy(
+        _config(tmp_path),
+        runtime_factory=lambda *a, **k: _UnicodeLineSeparatorRuntime(),
     )
 
     resumed = run_restoration_order_accuracy(
@@ -570,6 +621,39 @@ def test_producer_commit_uses_the_atomic_no_replace_primitive(
     assert calls == [(stage, destination)]
 
 
+def test_cleanup_ownership_error_after_commit_does_not_report_publication_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import typo_cot.experiments.restoration_order_accuracy.runner as runner_module
+
+    source = _Source((_pair_record(),))
+    output_dir = _config(tmp_path).output_dir.resolve()
+    monkeypatch.setattr(
+        runner_module, "load_restoration_order_source", lambda *a, **k: source
+    )
+    real_remove = runner_module._remove_owned_private_directory
+
+    def fail_work_cleanup(path: Path, **kwargs: object) -> None:
+        if output_dir.exists():
+            raise ValueError("fixture ownership changed after commit")
+        real_remove(path, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        runner_module,
+        "_remove_owned_private_directory",
+        fail_work_cleanup,
+    )
+
+    with pytest.warns(RuntimeWarning, match="ownership changed after commit"):
+        result = run_restoration_order_accuracy(
+            _config(tmp_path), runtime_factory=lambda *a, **k: _Runtime()
+        )
+
+    assert result.run_path == output_dir / "run.json"
+    assert _read_json(result.run_path)["status"] == "completed"
+
+
 def test_runtime_close_failure_marks_private_run_failed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -592,6 +676,27 @@ def test_runtime_close_failure_marks_private_run_failed(
     manifest = _read_json(manifests[0])
     assert manifest["status"] == "failed"
     assert manifest["failure"]["message"] == "fixture close failure"
+
+
+def test_runtime_close_failure_warns_without_masking_an_active_generation_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import typo_cot.experiments.restoration_order_accuracy.runner as runner_module
+
+    source = _Source((_pair_record(),))
+    monkeypatch.setattr(
+        runner_module, "load_restoration_order_source", lambda *a, **k: source
+    )
+
+    with (
+        pytest.warns(RuntimeWarning, match="runtime cleanup.*close failure"),
+        pytest.raises(RuntimeError, match="generation failure"),
+    ):
+        run_restoration_order_accuracy(
+            _config(tmp_path),
+            runtime_factory=lambda *a, **k: _GenerationAndCloseFailRuntime(),
+        )
 
 
 def test_source_change_before_publication_marks_the_run_failed(

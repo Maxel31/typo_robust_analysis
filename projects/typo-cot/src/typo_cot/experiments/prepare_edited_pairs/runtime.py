@@ -317,7 +317,13 @@ class HuggingFacePairPreparationRuntime:
         relevance = self.analyzer.compute_relevance(input_ids, target_position=len(prompt_ids))
         return [float(value) for value in relevance[: len(prompt_ids)].detach().cpu().tolist()]
 
-    def _answer(self, continuation: str, correct_answer: str) -> dict[str, object]:
+    def _answer(
+        self,
+        continuation: str,
+        correct_answer: str,
+        *,
+        allow_positional: bool = True,
+    ) -> dict[str, object]:
         primary = self.extractor.extract(continuation)
         answer = primary.extracted_answer
         if answer:
@@ -327,6 +333,7 @@ class HuggingFacePairPreparationRuntime:
             answer, fallback_method = fallback_answer(
                 continuation,
                 benchmark=self.internal_benchmark,
+                allow_positional=allow_positional,
             )
             method = f"fallback:{fallback_method}" if answer else "unextractable"
             confidence = 1.0 if answer else 0.0
@@ -421,8 +428,16 @@ class HuggingFacePairPreparationRuntime:
         if edited_prompt != clean_prompt and not aligned_words:
             raise PairProtocolError("edited prompt changed but produced no alignable changed word")
 
-        clean_answer = self._answer(clean_continuation, sample.correct_answer)
-        edited_answer = self._answer(edited_continuation, sample.correct_answer)
+        clean_answer = self._answer(
+            clean_continuation,
+            sample.correct_answer,
+            allow_positional=len(clean_generated_ids) < config.max_new_tokens,
+        )
+        edited_answer = self._answer(
+            edited_continuation,
+            sample.correct_answer,
+            allow_positional=len(edited_generated_ids) < config.max_new_tokens,
+        )
         return {
             "schema_version": "prepare-edited-pairs/v1",
             "sample_id": sample.sample_id,

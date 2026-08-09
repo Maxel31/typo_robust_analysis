@@ -1154,6 +1154,7 @@ def _aggregate(settings: Sequence[_Setting]) -> dict[str, object]:
         paired_tests[f"k{budget}"] = {
             "method": "two-sided-exact-mcnemar-binomial",
             "comparison": "high-relevance-first-vs-seeded-random",
+            "pooling": "micro-by-model-task-sample-identity",
             "high_only": high_only,
             "random_only": random_only,
             "both_correct": both_correct,

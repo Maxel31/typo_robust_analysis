@@ -391,7 +391,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     restoration_order.add_argument("--pairs", required=True, type=Path)
     restoration_order.add_argument(
-        "--orders", required=True, nargs="+", choices=RESTORATION_ORDERS
+        "--orders",
+        required=True,
+        nargs="+",
+        choices=RESTORATION_ORDERS,
+        help="Exact paper order list only; partial or reordered grids are rejected.",
     )
     restoration_order.add_argument(
         "--budgets",
@@ -399,9 +403,17 @@ def _parser() -> argparse.ArgumentParser:
         nargs="+",
         type=int,
         choices=RESTORATION_ORDER_BUDGETS,
+        help="Exact paper budget list only: 0 1 2 3 4.",
     )
-    restoration_order.add_argument("--seed", type=int, default=42)
-    restoration_order.add_argument("--batch-size", type=_positive_int, default=8)
+    restoration_order.add_argument(
+        "--seed", type=int, default=42, help="Paper seed only (default: 42)."
+    )
+    restoration_order.add_argument(
+        "--batch-size",
+        type=_positive_int,
+        default=8,
+        help="Paper condition-major batch size only (default: 8).",
+    )
     restoration_order.add_argument("--gpu-id", default="0")
     restoration_order.add_argument("--limit", type=_positive_int)
     restoration_order.add_argument("--output-dir", required=True, type=Path)

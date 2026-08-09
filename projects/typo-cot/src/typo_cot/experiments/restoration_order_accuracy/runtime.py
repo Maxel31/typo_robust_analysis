@@ -17,6 +17,7 @@ from typo_cot.experiments.restoration_order_accuracy.integrity import (
 )
 from typo_cot.experiments.restoration_order_accuracy.protocol import (
     GENERATION,
+    PAPER_SEED,
     PROTOCOL_SHA256,
     canonical_sha256,
 )
@@ -67,15 +68,15 @@ def _require_single_cuda(torch: object) -> None:
 
 
 def _seed_runtime(torch: object) -> None:
-    random.seed(42)
+    random.seed(PAPER_SEED)
     try:
         import numpy as np
 
-        np.random.seed(42)
+        np.random.seed(PAPER_SEED)
     except ImportError:  # pragma: no cover - NumPy is a project dependency
         pass
-    torch.manual_seed(42)  # type: ignore[attr-defined]
-    torch.cuda.manual_seed_all(42)  # type: ignore[attr-defined]
+    torch.manual_seed(PAPER_SEED)  # type: ignore[attr-defined]
+    torch.cuda.manual_seed_all(PAPER_SEED)  # type: ignore[attr-defined]
 
 
 def _token_ids(value: object, *, field: str) -> tuple[int, ...]:

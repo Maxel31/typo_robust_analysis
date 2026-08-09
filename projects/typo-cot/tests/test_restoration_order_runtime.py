@@ -256,6 +256,41 @@ def test_runtime_rejects_invalid_batch_shape_before_tokenization() -> None:
         runtime.generate_batch((), sample_ids=(), gold_answers=())
 
 
+def test_runtime_seeding_uses_the_protocol_seed_constant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import typo_cot.experiments.restoration_order_accuracy.runtime as runtime_module
+
+    observed: list[tuple[str, int]] = []
+    torch = SimpleNamespace(
+        manual_seed=lambda seed: observed.append(("torch", seed)),
+        cuda=SimpleNamespace(
+            manual_seed_all=lambda seed: observed.append(("cuda", seed))
+        ),
+    )
+    monkeypatch.setattr(runtime_module, "PAPER_SEED", 7, raising=False)
+    monkeypatch.setattr(
+        runtime_module.random,
+        "seed",
+        lambda seed: observed.append(("python", seed)),
+    )
+    numpy = pytest.importorskip("numpy")
+    monkeypatch.setattr(
+        numpy.random,
+        "seed",
+        lambda seed: observed.append(("numpy", seed)),
+    )
+
+    runtime_module._seed_runtime(torch)
+
+    assert observed == [
+        ("python", 7),
+        ("numpy", 7),
+        ("torch", 7),
+        ("cuda", 7),
+    ]
+
+
 def test_runtime_close_releases_model_and_cuda_cache(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

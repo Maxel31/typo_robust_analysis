@@ -603,8 +603,6 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
             "--pairs",
             "--orders",
             "--budgets",
-            "--seed",
-            "--batch-size",
             "--output-dir",
         ),
         outputs=(

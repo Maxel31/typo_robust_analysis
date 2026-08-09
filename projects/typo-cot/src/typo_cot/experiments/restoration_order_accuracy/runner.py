@@ -9,6 +9,7 @@ import re
 import shutil
 import sys
 import uuid
+import warnings
 from contextlib import contextmanager
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -719,7 +720,10 @@ def _validate_public_outputs(
     record_count = records_meta.get("records")
     if not isinstance(record_count, int) or isinstance(record_count, bool):
         raise ValueError("completed records count is invalid")
-    lines = records_path.read_text(encoding="utf-8").splitlines()
+    records_text = records_path.read_text(encoding="utf-8")
+    if not records_text.endswith("\n"):
+        raise ValueError("completed records JSONL lacks its final newline")
+    lines = records_text[:-1].split("\n")
     if len(lines) != record_count or any(not line for line in lines):
         raise ValueError("completed records count differs from JSONL")
     for index, line in enumerate(lines):
@@ -994,10 +998,15 @@ def _publish_completed_outputs(
             output_dir=output_dir,
             run_id=run_id,
         )
-    except OSError:
+    except (OSError, ValueError) as cleanup_error:
         # The final directory and completed run manifest are already committed.
         # A stale private checkpoint directory is safe to remove on --resume.
-        pass
+        warnings.warn(
+            "completed restoration-order output was published, but private "
+            f"checkpoint cleanup failed: {cleanup_error}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     return RestorationOrderResult(
         output_dir / _RECORDS_NAME,
         output_dir / _SUMMARY_NAME,
@@ -1295,7 +1304,14 @@ def _run_restoration_order_accuracy_locked(
             try:
                 runtime.close()
             except Exception as close_error:
-                if not active_exception:
+                if active_exception:
+                    warnings.warn(
+                        "restoration-order runtime cleanup also failed while "
+                        f"another error was active: {close_error}",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+                else:
                     _write_json_atomic(
                         run_path,
                         _core_manifest(

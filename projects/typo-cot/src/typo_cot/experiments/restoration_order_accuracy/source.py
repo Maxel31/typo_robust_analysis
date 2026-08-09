@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from typo_cot.evaluation.fallback import extract_with_fallback
 from typo_cot.experiments.input_corrector_audit.source import (
     InputCorrectorSource,
     load_input_corrector_source,
@@ -15,6 +16,8 @@ from typo_cot.experiments.restoration_order_accuracy.planning import (
     build_restoration_plan,
 )
 from typo_cot.experiments.restoration_order_accuracy.protocol import (
+    GENERATION,
+    PAPER_SEED,
     EditGroupingError,
     build_edit_groups,
     canonical_sha256,
@@ -107,13 +110,47 @@ def _object(value: object, *, field: str) -> Mapping[str, object]:
     return value
 
 
-def _source_outcome(record: Mapping[str, object], arm: str) -> bool:
+def _source_outcome(
+    record: Mapping[str, object],
+    arm: str,
+    *,
+    benchmark: str,
+) -> bool:
+    """Recompute and verify one stored endpoint under the final-PDF rule."""
+    sample_id = record.get("sample_id")
     payload = _object(record.get(arm), field=f"{arm} source arm")
+    continuation = payload.get("continuation")
+    token_count = payload.get("continuation_token_count")
+    gold_answer = record.get("gold_answer")
+    if not isinstance(continuation, str):
+        raise ValueError(f"{sample_id} {arm}.continuation must be a string")
+    if (
+        not isinstance(token_count, int)
+        or isinstance(token_count, bool)
+        or not 1 <= token_count <= int(GENERATION["max_new_tokens"])
+    ):
+        raise ValueError(f"{sample_id} {arm}.continuation_token_count is invalid")
+    if not isinstance(gold_answer, str) or not gold_answer:
+        raise ValueError(f"{sample_id} gold_answer must be a non-empty string")
     answer = _object(payload.get("answer"), field=f"{arm}.answer")
-    correct = answer.get("is_correct")
-    if type(correct) is not bool:
-        raise ValueError(f"{arm}.answer.is_correct must be boolean")
-    return correct
+    recomputed = extract_with_fallback(
+        continuation,
+        benchmark=benchmark,
+        correct_answer=gold_answer,
+        allow_positional=token_count < int(GENERATION["max_new_tokens"]),
+    )
+    expected = {
+        "value": recomputed.value,
+        "is_extracted": recomputed.is_extracted,
+        "is_correct": recomputed.is_correct,
+        "method": recomputed.method,
+        "primary_method": recomputed.primary_method,
+    }
+    if any(answer.get(field) != value for field, value in expected.items()):
+        raise ValueError(
+            f"{sample_id} {arm} source answer differs from final-PDF recomputation"
+        )
+    return recomputed.is_correct
 
 
 def _text(record: Mapping[str, object], arm: str) -> str:
@@ -148,7 +185,11 @@ def load_restoration_order_source(
     source_selected: list[dict[str, object]] = []
     for raw_record in getattr(prepared, "records"):
         record = dict(_object(raw_record, field="prepared pair record"))
-        if _source_outcome(record, "clean") and not _source_outcome(record, "edited"):
+        if _source_outcome(record, "clean", benchmark=benchmark) and not _source_outcome(
+            record,
+            "edited",
+            benchmark=benchmark,
+        ):
             source_selected.append(record)
 
     separable_records: list[dict[str, object]] = []
@@ -167,12 +208,16 @@ def load_restoration_order_source(
                 _text(record, "edited"),
                 attempts,
             )
+            if len(groups) > 4:
+                raise EditGroupingError(
+                    "Table 13 source must realize no more than four edit groups"
+                )
             plan = build_restoration_plan(
                 sample_id=sample_id,
                 clean_text=_text(record, "clean"),
                 edited_text=_text(record, "edited"),
                 groups=groups,
-                seed=42,
+                seed=PAPER_SEED,
             )
         except EditGroupingError as exc:
             exclusions.append(

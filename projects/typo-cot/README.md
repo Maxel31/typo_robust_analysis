@@ -1360,6 +1360,10 @@ settings, and computes the reported high-first-versus-random p values with a
 two-sided exact McNemar/binomial test. Those three tests are descriptive and
 unadjusted, as in the paper.
 
+Before source selection, both stored endpoint continuations are rescored with
+the final-PDF primary-then-empty-only-fallback rule. A stale or primary-only
+stored answer is rejected instead of silently changing the cohort denominator.
+
 The PDF reports 1,582 archived-selected items, endpoint accuracies 12.0% and
 88.9%, and the three intermediate rows. Fresh public preparation follows the
 same paper protocol but does not prove byte-identical membership in that

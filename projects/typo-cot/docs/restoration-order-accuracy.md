@@ -71,6 +71,14 @@ source unless all of the following are true:
   per-record prompt spans, edit events, and source outcomes pass integrity
   validation.
 
+The loader does not trust the stored endpoint `answer.is_correct` flag by
+itself. It reruns the task extractor and empty-primary-only fallback on each
+stored clean and edited continuation, using the recorded token count to disable
+positional fallback at the 512-token cap, and requires the stored value,
+extraction flag, correctness, method, and primary method to match. Thus an
+older primary-only result or self-consistent metadata edit cannot silently
+change source selection.
+
 The 1,319 and 2,850 source-record counts above identify the pinned public
 GSM8K and MMLU dataset cohorts used by this reproduction. They are public
 input-contract checks, not Table 13 result counts printed in the paper.
@@ -289,6 +297,11 @@ concatenates the six setting cohorts by full model/task/sample identity and
 computes `correct / n` for each condition. It does not give each model/task
 setting equal weight. The same benchmark sample evaluated under different
 models remains a different paired identity and is not collapsed.
+
+The three paired tests use that same pooled item identity, as specified by the
+paper's single pooled Table 13 analysis; they are not a stratified estimand.
+Per-setting integer rows remain in the JSON so heterogeneity can be inspected
+without substituting a different test for the published comparison.
 
 For each budget `k` in 1, 2, and 3, let:
 

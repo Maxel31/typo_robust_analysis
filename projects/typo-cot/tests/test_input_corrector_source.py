@@ -324,6 +324,22 @@ def test_loads_completed_unlimited_prepare_source_and_exposes_stable_hashes(
     assert sha256_file(run_path) == hashlib.sha256(run_path.read_bytes()).hexdigest()
 
 
+def test_jsonl_loader_keeps_unicode_line_separators_inside_a_record(
+    tmp_path: Path,
+) -> None:
+    row = _pair_record("sample-000")
+    clean = row["clean"]
+    assert isinstance(clean, dict)
+    clean["continuation"] = "first segment\u2028second segment"
+    pairs_path, _run_path = _write_source(tmp_path / "source", [row])
+
+    source = _load(pairs_path)
+
+    assert source.records[0]["clean"]["continuation"] == (
+        "first segment\u2028second segment"
+    )
+
+
 @pytest.mark.parametrize("benchmark", PUBLIC_BENCHMARKS)
 def test_accepts_every_public_benchmark_name(tmp_path: Path, benchmark: str) -> None:
     row = _pair_record("sample-000", benchmark=benchmark)

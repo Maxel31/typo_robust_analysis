@@ -469,6 +469,7 @@ def test_builder_micro_pools_six_settings_and_uses_exact_paired_binomial(
     assert paired["random_only"] == 0
     assert paired["p_value"] == pytest.approx(0.03125)
     assert paired["method"] == "two-sided-exact-mcnemar-binomial"
+    assert paired["pooling"] == "micro-by-model-task-sample-identity"
     assert result.csv_path.is_file()
     assert result.csv_path.read_text(encoding="utf-8").splitlines()[0] == (
         "Result kind,Cohort n,Restoration order,Zero restored,One,Two,Three,All restored"

@@ -74,6 +74,9 @@ def test_parser_exposes_exact_paper_grid_and_plural_order_budget_arguments(
     assert actions["budgets"].nargs == "+"
     assert actions["pairs"].type is Path
     assert actions["output_dir"].type is Path
+    for name in ("orders", "budgets", "seed", "batch_size"):
+        assert "paper" in str(actions[name].help).lower()
+        assert "only" in str(actions[name].help).lower()
 
     args = parser.parse_args(_producer_argv(tmp_path)[1:])
     assert tuple(args.orders) == PAPER_ORDERS
