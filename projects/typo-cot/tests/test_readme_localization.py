@@ -66,6 +66,21 @@ def test_japanese_project_readme_covers_every_implemented_operation() -> None:
             assert output in japanese, f"{spec.slug}: missing {output}"
 
 
+def test_japanese_project_readme_preserves_denominator_critical_details() -> None:
+    japanese = (PROJECT_ROOT / "README.ja.md").read_text(encoding="utf-8")
+
+    for fragment in (
+        "Qwen2.5-7B-Instruct、Gemma-3-12B-IT、Gemma-3-27B-IT",
+        "subjectごと100例（5,700件）",
+        "subjectごと50例（2,850件）",
+        "MMLU-Proは全modelでsubjectごと100例",
+        "zero-edit record",
+        "typo-induced restorationは未定義",
+        "historical 14.0% template exclusion",
+    ):
+        assert fragment in japanese
+
+
 def test_public_guides_lead_with_reproduction_instead_of_source_of_truth() -> None:
     public_guides = (
         REPOSITORY_ROOT / "README.md",

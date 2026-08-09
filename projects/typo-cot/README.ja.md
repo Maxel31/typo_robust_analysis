@@ -75,9 +75,12 @@ primary、空の場合だけ決定的fallbackの順で適用します。
 
 選択されたdataset itemは、適用可能な文字編集がない場合も `pairs.jsonl` に残ります。
 その場合、`target_attempts` と `aligned_words` は空で、後続のactivation patch対象には
-なりませんが、targeting fidelityの母集団には含まれます。MMLUの件数はmodelごとに
-論文設定を使い、MMLU-Proは全modelでsubjectごとに100例を使います。詳細なfieldと
-座標規約は [`docs/prepare-edited-pairs.md`](docs/prepare-edited-pairs.md) を参照してください。
+なりませんが、targeting fidelityの母集団には含まれます。MMLUは
+Qwen2.5-7B-Instruct、Gemma-3-12B-IT、Gemma-3-27B-ITで
+subjectごと100例（5,700件）、その他の論文modelでsubjectごと50例（2,850件）を使います。
+MMLU-Proは全modelでsubjectごと100例です。選択件数とversion付きselection ruleは
+`run.json` のprovenanceへ記録します。詳細なfieldと座標規約は
+[`docs/prepare-edited-pairs.md`](docs/prepare-edited-pairs.md) を参照してください。
 
 ## targeting fidelityを監査する
 
@@ -305,6 +308,10 @@ CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
 sourceは適用済み編集とanswer templateを持つpairです。change rateは再生成Aが正答の
 pairを分母とし、restorationはさらにBがAから変わったpairに条件づけます。回答比較には
 task固有のcanonical equalityを使います。
+
+zero-edit recordは別に報告します。typo-induced restorationは未定義であり、
+historical 14.0% template exclusionへ含めません。B、C、Dはgoldではなく抽出済みA回答と
+比較し、抽出不能は該当するequalityの失敗として分母に残します。
 
 出力は `cot_swap_records.jsonl`、`pair_status_records.jsonl`、
 `cot_swap_summary.json`、`run.json` です。summaryはBoth changed、Question only、
