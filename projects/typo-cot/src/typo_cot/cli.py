@@ -107,6 +107,12 @@ from typo_cot.experiments.targeting_fidelity_audit import (
     TargetingFidelityAuditError,
     run_targeting_fidelity_audit,
 )
+from typo_cot.experiments.typo_warning_prompt import (
+    BuildTypoWarningSummaryConfig,
+    WarningPromptConfig,
+    build_typo_warning_summary,
+    run_typo_warning_prompt,
+)
 
 
 def _experiment(value: str) -> ExperimentSpec:
@@ -296,6 +302,29 @@ def _parser() -> argparse.ArgumentParser:
     model_scale.add_argument("--cot-swap-runs-root", required=True, type=Path)
     model_scale.add_argument("--cohort", required=True, type=Path)
     model_scale.add_argument("--output-dir", required=True, type=Path)
+
+    warning = commands.add_parser(
+        "typo-warning-prompt",
+        help="Regenerate submitted edited inputs with and without the frozen typo warning.",
+    )
+    warning.add_argument("--model", required=True, help="Hugging Face model identifier.")
+    warning.add_argument("--benchmark", required=True, choices=("gsm8k", "mmlu"))
+    warning.add_argument(
+        "--input-fixture",
+        type=Path,
+        help="Advanced override for the bundled submitted-input edit manifest.",
+    )
+    warning.add_argument("--gpu-id", default="0")
+    warning.add_argument("--limit", type=_positive_int)
+    warning.add_argument("--output-dir", required=True, type=Path)
+    warning.add_argument("--resume", action="store_true")
+
+    warning_summary = commands.add_parser(
+        "build-typo-warning-summary",
+        help="Validate six typo-warning runs and build the Appendix E pooled summary.",
+    )
+    warning_summary.add_argument("--runs-root", required=True, type=Path)
+    warning_summary.add_argument("--output-dir", required=True, type=Path)
 
     targeting_audit = commands.add_parser(
         "targeting-fidelity-audit",
@@ -707,6 +736,45 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"model-scale-cot-swap: error: {exc}", file=sys.stderr)
             return 1
         print(f"built Table 9 from {result.settings} model setting(s): {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "typo-warning-prompt":
+        try:
+            result = run_typo_warning_prompt(
+                WarningPromptConfig(
+                    model=args.model,
+                    benchmark=args.benchmark,
+                    output_dir=args.output_dir,
+                    input_fixture=args.input_fixture,
+                    gpu_id=args.gpu_id,
+                    limit=args.limit,
+                    resume=args.resume,
+                )
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"typo-warning-prompt: error: {exc}", file=sys.stderr)
+            return 1
+        print(f"wrote {result.records} paired warning record(s): {result.records_path}")
+        print(f"warning summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "build-typo-warning-summary":
+        try:
+            result = build_typo_warning_summary(
+                BuildTypoWarningSummaryConfig(
+                    runs_root=args.runs_root,
+                    output_dir=args.output_dir,
+                )
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"build-typo-warning-summary: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"built typo-warning summary from {result.settings} setting(s): {result.summary_path}"
+        )
+        print(f"CSV: {result.csv_path}")
+        print(f"Markdown: {result.markdown_path}")
+        print(f"LaTeX: {result.latex_path}")
         print(f"run manifest: {result.run_path}")
         return 0
     if args.command == "targeting-fidelity-audit":
