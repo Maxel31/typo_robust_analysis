@@ -30,6 +30,16 @@ uv sync --project projects/typo-cot
 uv sync --project projects/typo-cot --extra lrp
 ```
 
+論文modelの一部はHugging Face上で事前承認が必要です。GPU実験を始める前に、
+[`google/gemma-3-4b-it`](https://huggingface.co/google/gemma-3-4b-it) と
+[`meta-llama/Llama-3.2-3B-Instruct`](https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct)
+のmodel pageへログインし、各利用条件を確認・承諾してください。承認されたaccountを
+ローカルで認証するか、そのread tokenを `HF_TOKEN` で渡します。
+
+```bash
+uv run --project projects/typo-cot --extra lrp hf auth login
+```
+
 ## 利用できるコマンド
 
 実験カタログの確認にはGPUは不要です。
@@ -674,6 +684,75 @@ restorationはBがAと異なる `n_B` subsetだけを使います。出力は
 `run.json` です。Qwen2.5-72Bはpublished `n_B=10` のためdirectionalな比較として残します。
 詳細は [`docs/model-scale-cot-swap.md`](docs/model-scale-cot-swap.md) にあります。
 
+## typo warning有無で編集済み入力の正答率を比較する
+
+`typo-warning-prompt` は、Appendix Eで報告されたGSM8Kの60.1%から54.1%、
+MMLUの57.6%から56.2%への変化を再現するauditです。同じAttribution-4編集済み
+questionを、submitted warningなし・ありの2条件で再生成します。warningはtask末尾の
+“Now solve/answer” markerの直前へ挿入し、編集済みquestion、選択肢、few-shot例、
+marker以後の全textはbyte単位で同一に保ちます。
+
+submitted 6 model-task設定を実行します。リポジトリには、固定した公開benchmark recordから
+各設定のsubmitted Attribution-4入力300件を正確に再構築するoutput-free edit manifestを
+同梱しています。過去の生成text、抽出answer、correctness label、accuracy結果は含みません。
+
+```bash
+WARNING_MODELS=(
+  google/gemma-3-4b-it
+  meta-llama/Llama-3.2-3B-Instruct
+  mistralai/Mistral-7B-Instruct-v0.3
+)
+WARNING_BENCHMARKS=(gsm8k mmlu)
+
+for MODEL in "${WARNING_MODELS[@]}"; do
+  MODEL_SLUG="${MODEL##*/}"
+  for BENCHMARK in "${WARNING_BENCHMARKS[@]}"; do
+    CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+      typo-cot typo-warning-prompt \
+      --model "${MODEL}" \
+      --benchmark "${BENCHMARK}" \
+      --gpu-id 0 \
+      --output-dir \
+        "results/typo-warning-prompt/${MODEL_SLUG}/${BENCHMARK}"
+  done
+done
+
+uv run --project projects/typo-cot \
+  typo-cot build-typo-warning-summary \
+  --runs-root results/typo-warning-prompt \
+  --output-dir results/typo-warning-summary
+```
+
+中断した設定commandを続行するときだけ `--resume` を追加します。`--limit 1` はsmoke runと
+明示され、paper-summary builderは受理しません。各設定は
+`warning_prompt_records.jsonl`、`warning_prompt_summary.json`、`run.json` を出力します。
+CPU builderは完全な6設定grid、submitted input manifestの正確なidentity、全source/output
+hash、厳密なpaired ID set、両armの結果を
+検証してから、benchmarkごとに300件×3設定をpoolします。出力は
+`typo_warning_summary.json`、`typo_warning_summary.csv`、
+`typo_warning_summary.md`、`typo_warning_summary.tex`、`run.json` です。p値は
+discordant pairに対するexact two-sided McNemar/binomial testです。
+
+各settingのsummaryは、byte hashを検証する派生成果物として保持しますが、その保存済み
+metricsはbuilderの入力にしません。公開用統計は検証済みpaired recordから再計算するため、
+CPU analysisを変更してもmodel generationを再実行する必要はありません。
+
+ここでCPU builderとは、model weightをloadせずGPUを使わないという意味です。submitted
+inputを検証するため、GSM8KとMMLUを固定revisionで再度開きます。そのためbase installに
+`datasets` を含め、cacheがない初回buildにはnetwork accessが必要です。互換性のある
+Hugging Face dataset cacheが完全ならofflineでも同じ読み込みを満たせます。
+
+PDFが規定するのはwarning比較、2 task、印刷された正答率、有意性の結論です。英語の
+instruction全文、3-model grid、seed 42 shared-ID shuffle、300件cohort、挿入境界、同一arm
+8件batch、submitted task-specific answer extractor、512-token greedy generationはsubmitted
+producerから復元し、`legacy-backed` と明記します。公開runnerもこの復元仕様に従い、
+sample×armごとに再開可能なcheckpointを書きます。model revisionはproducerに記録がないため、
+submission環境のcacheから同定した値です。fresh outputが公開再現結果であり、印刷値は
+descriptive historical referenceであって合否基準ではありません。論文の注意どおり、
+1 instruction・2 taskだけの結果は一般的なself-correction評価でもactivation patchingとの
+性能比較でもありません。prompt、selection、validation、schema、restart契約の全詳細は
+[`docs/typo-warning-prompt.md`](docs/typo-warning-prompt.md) にあります。
+
 ## テスト
 
 ```bash
@@ -691,6 +770,7 @@ uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/te
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_one_token_prefix_replacement.py
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_build_one_token_tables_*.py
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_edit_count_sensitivity.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_typo_warning_prompt.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 
@@ -703,5 +783,5 @@ exerciseします。
 
 ここで追跡するのは、公開実験カタログ、実装済みrunner、runtime依存、テストだけです。
 中間のExp1--20 script、machine固有設定、archived outputは論文再現インターフェースでは
-ないため除外しています。未実装の `typo-warning-prompt`、`input-corrector-audit`、
+ないため除外しています。未実装の `input-corrector-audit` と
 `restoration-order-accuracy` はカタログにのみ載り、各runnerの機能PRで追加します。

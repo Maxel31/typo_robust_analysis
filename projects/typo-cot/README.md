@@ -34,6 +34,17 @@ paper-locked GPU/LRP dependencies:
 uv sync --project projects/typo-cot --extra lrp
 ```
 
+Some paper models require gated Hugging Face access. Before running GPU
+experiments, sign in on the
+[`google/gemma-3-4b-it`](https://huggingface.co/google/gemma-3-4b-it) and
+[`meta-llama/Llama-3.2-3B-Instruct`](https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct)
+model pages, review and accept their access conditions, and authenticate the
+approved account locally (or provide its read token through `HF_TOKEN`):
+
+```bash
+uv run --project projects/typo-cot --extra lrp hf auth login
+```
+
 ## Available commands
 
 The experiment catalog is implemented and does not require a GPU:
@@ -1066,6 +1077,87 @@ Qwen2.5-72B remains directional because its published `n_B` is only 10. See
 [`docs/model-scale-cot-swap.md`](docs/model-scale-cot-swap.md) for the full
 cohort, denominator, validation, and hardware contracts.
 
+## Compare edited-input accuracy with and without a typo warning
+
+`typo-warning-prompt` implements the Appendix E audit behind the reported
+GSM8K change from 60.1% to 54.1% and MMLU change from 57.6% to 56.2%. It
+regenerates the same edited Attribution-4 question twice, once with the
+submitted warning disabled and once with it inserted immediately before the
+task's final “Now solve/answer” marker. The edited question, answer choices,
+few-shot examples, and all text after that marker remain byte-identical.
+
+Run the six submitted model-task settings. The repository includes an
+output-free edit manifest that reconstructs the exact 300 submitted
+Attribution-4 inputs in each setting from pinned public benchmark records. It
+contains no archived generations, extracted answers, correctness labels, or
+accuracy results.
+
+```bash
+WARNING_MODELS=(
+  google/gemma-3-4b-it
+  meta-llama/Llama-3.2-3B-Instruct
+  mistralai/Mistral-7B-Instruct-v0.3
+)
+WARNING_BENCHMARKS=(gsm8k mmlu)
+
+for MODEL in "${WARNING_MODELS[@]}"; do
+  MODEL_SLUG="${MODEL##*/}"
+  for BENCHMARK in "${WARNING_BENCHMARKS[@]}"; do
+    CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+      typo-cot typo-warning-prompt \
+      --model "${MODEL}" \
+      --benchmark "${BENCHMARK}" \
+      --gpu-id 0 \
+      --output-dir \
+        "results/typo-warning-prompt/${MODEL_SLUG}/${BENCHMARK}"
+  done
+done
+
+uv run --project projects/typo-cot \
+  typo-cot build-typo-warning-summary \
+  --runs-root results/typo-warning-prompt \
+  --output-dir results/typo-warning-summary
+```
+
+Add `--resume` only when continuing an interrupted setting command. `--limit 1`
+labels a smoke run and is not accepted by the paper-summary builder. Each
+setting publishes `warning_prompt_records.jsonl`,
+`warning_prompt_summary.json`, and `run.json`. The CPU builder validates the
+complete six-setting grid, the exact submitted input-manifest identity, all
+source/output hashes, the paired ID sets,
+and the two arm outcomes before pooling the three 300-item settings within each
+benchmark. It writes `typo_warning_summary.json`,
+`typo_warning_summary.csv`, `typo_warning_summary.md`,
+`typo_warning_summary.tex`, and `run.json`; the p-value is the exact two-sided
+McNemar/binomial test over discordant paired outcomes.
+
+Per-setting summaries remain byte-attested derived artifacts, but the builder
+does not use their stored metrics. It recomputes publication statistics from
+the validated paired records, so CPU-analysis changes do not require another
+model-generation run.
+
+“CPU builder” means that summary construction loads no model weights and needs
+no GPU. It still reopens GSM8K and MMLU at their pinned revisions to verify the
+submitted inputs, so the base installation includes `datasets` and the first
+uncached build requires network access. A complete compatible Hugging Face
+dataset cache can satisfy the same reads offline.
+
+The PDF defines the warning comparison, two tasks, printed accuracies, and
+significance conclusion. The exact English instruction, three-model grid,
+seed-42 shared-ID shuffle, 300-item cohort, insertion boundary, same-arm batches
+of eight, task-specific submitted answer extractor, and 512-token greedy
+generation are recovered from the submitted producer and labelled
+`legacy-backed`. The public runner follows those recovered details and writes
+one restartable checkpoint per sample and arm. Recovered model revisions are
+identified from the submission environment's cache because the producer did
+not record them. Fresh outputs are the public reproduction result; printed
+percentages are descriptive historical references, not acceptance targets. As
+the paper cautions, this one instruction over two tasks is not a general
+self-correction evaluation and is not a performance comparison with activation
+patching. See
+[`docs/typo-warning-prompt.md`](docs/typo-warning-prompt.md) for the complete
+prompt, selection, validation, schema, and restart contracts.
+
 ## Tests
 
 ```bash
@@ -1083,6 +1175,7 @@ uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/te
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_one_token_prefix_replacement.py
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_build_one_token_tables_*.py
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_edit_count_sensitivity.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_typo_warning_prompt.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 

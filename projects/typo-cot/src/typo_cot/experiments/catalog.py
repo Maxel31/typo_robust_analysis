@@ -541,12 +541,23 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         paper_question="Input-correction audit",
         paper_sections=("§4.3", "Appendix E"),
         summary="Compare edited-input accuracy with and without the frozen typo-warning prompt.",
-        cohort="One instruction and two tasks: GSM8K and MMLU.",
-        intervention="Prepend the explicit warning while leaving the edited question unchanged.",
+        cohort=(
+            "Three submitted models by GSM8K and MMLU, with the exact 300 "
+            "submitted Attribution-4 edited inputs per setting."
+        ),
+        intervention=(
+            "Insert the explicit warning before the unique task-final marker while leaving "
+            "the edited Attribution-4 question unchanged."
+        ),
         readout="Paired free-answer accuracy difference.",
-        required_arguments=("--model", "--benchmark", "--pairs", "--output-dir"),
-        outputs=("warning_prompt_records.jsonl", "warning_prompt_summary.json"),
+        required_arguments=(
+            "--model",
+            "--benchmark",
+            "--output-dir",
+        ),
+        outputs=("warning_prompt_records.jsonl", "warning_prompt_summary.json", "run.json"),
         compute="gpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="input-corrector-audit",

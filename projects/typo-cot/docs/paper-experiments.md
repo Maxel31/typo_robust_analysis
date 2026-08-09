@@ -312,10 +312,15 @@ uv run --project projects/typo-cot typo-cot model-scale-cot-swap \
   --cohort projects/typo-cot/data/cohorts/model_scale_mmlu_first500.json \
   --output-dir results/model-scale-cot-swap
 
-uv run typo-cot typo-warning-prompt \
+uv run --project projects/typo-cot --extra lrp typo-cot typo-warning-prompt \
   --model google/gemma-3-4b-it --benchmark gsm8k \
-  --pairs data/cohorts/input-correction/gemma-3-4b-it_gsm8k.jsonl \
+  --gpu-id 0 \
   --output-dir results/typo-warning-prompt/gemma-3-4b-it/gsm8k
+
+uv run --project projects/typo-cot \
+  typo-cot build-typo-warning-summary \
+  --runs-root results/typo-warning-prompt \
+  --output-dir results/typo-warning-summary
 
 uv run typo-cot input-corrector-audit \
   --corrector pyspellchecker --model google/gemma-3-4b-it --benchmark gsm8k \
@@ -328,6 +333,11 @@ uv run typo-cot restoration-order-accuracy \
   --order high-relevance seeded-random low-relevance --budgets 1 2 3 \
   --output-dir results/restoration-order-accuracy/gemma-3-4b-it/gsm8k
 ```
+
+The typo-warning summary command is CPU-only in that it loads no model weights
+and uses no GPU. It still reloads the pinned public benchmark revisions for
+source validation: `datasets` is a base dependency, and the first uncached
+summary build requires network access.
 
 ## Target package layout
 

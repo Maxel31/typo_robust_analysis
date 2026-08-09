@@ -164,6 +164,17 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/experiments/prepare_edited_pairs/runtime.py"),
     Path("src/typo_cot/experiments/targeting_fidelity_audit/__init__.py"),
     Path("src/typo_cot/experiments/targeting_fidelity_audit/runner.py"),
+    Path("src/typo_cot/experiments/typo_warning_prompt/__init__.py"),
+    Path("src/typo_cot/experiments/typo_warning_prompt/aggregation.py"),
+    Path("src/typo_cot/experiments/typo_warning_prompt/integrity.py"),
+    Path("src/typo_cot/experiments/typo_warning_prompt/planning.py"),
+    Path("src/typo_cot/experiments/typo_warning_prompt/protocol.py"),
+    Path("src/typo_cot/experiments/typo_warning_prompt/runner.py"),
+    Path("src/typo_cot/experiments/typo_warning_prompt/runtime.py"),
+    Path("src/typo_cot/experiments/typo_warning_prompt/scoring.py"),
+    Path("src/typo_cot/experiments/typo_warning_prompt/source.py"),
+    Path("src/typo_cot/experiments/typo_warning_prompt/statistics.py"),
+    Path("src/typo_cot/experiments/typo_warning_prompt/submitted_inputs.py"),
     Path("src/typo_cot/lrp/__init__.py"),
     Path("src/typo_cot/lrp/analyzer.py"),
     Path("src/typo_cot/models/__init__.py"),
@@ -226,6 +237,17 @@ def test_public_source_tree_is_the_reviewed_runtime_closure() -> None:
     assert tracked_sources == PUBLIC_SOURCE_FILES
 
 
+def test_submitted_warning_input_manifest_is_the_only_public_package_data() -> None:
+    tracked_package_data = {
+        path
+        for path in _tracked_existing_paths()
+        if path.parts[:2] == ("src", "typo_cot") and path.suffix != ".py"
+    }
+    assert tracked_package_data == {
+        Path("src/typo_cot/experiments/typo_warning_prompt/data/submitted_input_edits.json")
+    }
+
+
 def test_retired_packages_are_not_importable() -> None:
     for package in sorted(LEGACY_PACKAGE_DIRECTORIES):
         assert importlib.util.find_spec(f"typo_cot.{package}") is None
@@ -263,6 +285,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
     assert set(subparsers.choices) == {
         "answer-line-deletion",
         "build-one-token-tables",
+        "build-typo-warning-summary",
         "clean-prefix-scan",
         "one-token-prefix-replacement",
         "experiments",
@@ -277,6 +300,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         "patch-text-combination",
         "prepare-edited-pairs",
         "targeting-fidelity-audit",
+        "typo-warning-prompt",
     }
 
 
@@ -295,4 +319,5 @@ def test_legacy_only_dependencies_and_extras_are_removed() -> None:
 
     dependency_names = {_dependency_name(item) for item in project["dependencies"]}
     assert dependency_names.isdisjoint(LEGACY_DEPENDENCIES)
+    assert "datasets" in dependency_names
     assert set(project.get("optional-dependencies", {})) == {"lrp"}
