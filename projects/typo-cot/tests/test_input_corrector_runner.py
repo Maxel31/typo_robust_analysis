@@ -241,6 +241,7 @@ def _pair_record(
             "prompt_token_count": 12,
             "continuation": f"Source clean answer: {case['clean_answer']}",
             "continuation_token_count": 4,
+            "termination": "eos",
             "answer": _answer(case["clean_answer"], correct=True),
         },
         "edited": {
@@ -250,6 +251,7 @@ def _pair_record(
             "prompt_token_count": 12,
             "continuation": "Source edited answer: Z",
             "continuation_token_count": 4,
+            "termination": "eos",
             "answer": _answer("Z", correct=False),
         },
         "answer_changed": True,
@@ -355,6 +357,13 @@ def _source_manifest(
             "failed": 0,
         },
         "failures": [],
+        "outputs": {
+            "pairs": {
+                "path": "pairs.jsonl",
+                "sha256": _sha256_file(directory / "pairs.jsonl"),
+                "records": len(rows),
+            }
+        },
         "decoding": {
             "strategy": "greedy",
             "dtype": "bfloat16",
@@ -382,6 +391,7 @@ def _source_manifest(
             "dataset_records_sha256": dataset_sha256,
             "random_seed_algorithm": "sha256-first-64-bits/v1",
             "generation_protocol": "explicit-greedy-generation/v1",
+            "generation_termination_protocol": "effective-eos-vs-length-cap/v1",
             "target_position": "maximum-logit-after-first-cot-token",
             "alignment": "actual-edited-word-final-token",
             "historical_compatibility_notes": [],

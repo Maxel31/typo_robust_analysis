@@ -111,6 +111,7 @@ def _pair_record(
             "prompt_token_count": 12,
             "continuation": "Clean reasoning. The answer is 2.",
             "continuation_token_count": 8,
+            "termination": "eos",
             "answer": _answer("2", correct=True),
         },
         "edited": {
@@ -123,6 +124,7 @@ def _pair_record(
             "prompt_token_count": 12,
             "continuation": "Edited reasoning. The answer is 3.",
             "continuation_token_count": 8,
+            "termination": "eos",
             "answer": _answer("3", correct=False),
         },
         "answer_changed": True,
@@ -215,6 +217,7 @@ def _manifest(
             allow_nan=False,
         ).encode("utf-8")
     ).hexdigest()
+    pairs_path = directory / "pairs.jsonl"
     return {
         "schema_version": "prepare-edited-pairs-run/v1",
         "paper_sha256": PAPER_SHA256,
@@ -237,6 +240,13 @@ def _manifest(
             "failed": 0,
         },
         "failures": [],
+        "outputs": {
+            "pairs": {
+                "path": "pairs.jsonl",
+                "sha256": sha256_file(pairs_path),
+                "records": len(rows),
+            }
+        },
         "decoding": {
             "strategy": "greedy",
             "dtype": "bfloat16",
@@ -264,6 +274,7 @@ def _manifest(
             "dataset_records_sha256": dataset_sha256,
             "random_seed_algorithm": "sha256-first-64-bits/v1",
             "generation_protocol": "explicit-greedy-generation/v1",
+            "generation_termination_protocol": "effective-eos-vs-length-cap/v1",
             "target_position": "maximum-logit-after-first-cot-token",
             "alignment": "actual-edited-word-final-token",
             "historical_compatibility_notes": [],
@@ -322,6 +333,24 @@ def test_loads_completed_unlimited_prepare_source_and_exposes_stable_hashes(
     assert source is not None
     assert sha256_file(pairs_path) == hashlib.sha256(pairs_path.read_bytes()).hexdigest()
     assert sha256_file(run_path) == hashlib.sha256(run_path.read_bytes()).hexdigest()
+    manifest = json.loads(run_path.read_text(encoding="utf-8"))
+    assert source.pairs_sha256 == manifest["outputs"]["pairs"]["sha256"]
+
+
+def test_jsonl_loader_keeps_unicode_line_separators_inside_a_record(
+    tmp_path: Path,
+) -> None:
+    row = _pair_record("sample-000")
+    clean = row["clean"]
+    assert isinstance(clean, dict)
+    clean["continuation"] = "first segment\u2028second segment"
+    pairs_path, _run_path = _write_source(tmp_path / "source", [row])
+
+    source = _load(pairs_path)
+
+    assert source.records[0]["clean"]["continuation"] == (
+        "first segment\u2028second segment"
+    )
 
 
 @pytest.mark.parametrize("benchmark", PUBLIC_BENCHMARKS)
@@ -404,6 +433,11 @@ def test_rejects_nonpublic_benchmark_aliases(tmp_path: Path, benchmark: str) -> 
         ("provenance.dataset_samples_per_subset", 99, "samples_per_subset|subset"),
         ("provenance.random_seed_algorithm", "python-hash/v0", "random_seed_algorithm"),
         ("provenance.generation_protocol", "model-defaults/v0", "generation_protocol"),
+        (
+            "provenance.generation_termination_protocol",
+            "token-count-heuristic/v0",
+            "generation_termination_protocol",
+        ),
         ("provenance.target_position", "last-token", "target_position"),
         ("provenance.alignment", "token-substring", "alignment"),
         ("provenance.dataset_records_sha256", "not-a-sha", "dataset_records_sha256|SHA"),
@@ -413,6 +447,10 @@ def test_rejects_nonpublic_benchmark_aliases(tmp_path: Path, benchmark: str) -> 
         ("counts.written", 2, "count|written"),
         ("counts.failed", 1, "failure|failed"),
         ("failures", [{"sample_id": "failed"}], "failure"),
+        ("outputs", _DELETE, "output|pairs|SHA"),
+        ("outputs.pairs.path", "other.jsonl", "output|path|pairs"),
+        ("outputs.pairs.sha256", "0" * 64, "output|pairs|SHA|hash"),
+        ("outputs.pairs.records", 2, "output|record|count"),
     ],
 )
 def test_rejects_manifest_contract_drift(
@@ -452,6 +490,39 @@ def test_rejects_an_unlimited_explicit_sample_id_cohort(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("field", "value"),
+    (("relevance", 99.0), ("target_token_index", 9)),
+)
+def test_rejects_pairs_changed_after_the_completed_manifest_bound_them(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    row = _pair_record("sample-000")
+    pairs_path, _run_path = _write_source(tmp_path / "source", [row])
+    attempts = row["target_attempts"]
+    assert isinstance(attempts, list) and isinstance(attempts[0], dict)
+    attempts[0][field] = value
+    _write_jsonl(pairs_path, [row])
+
+    with pytest.raises(InputCorrectorSourceError, match="output|pairs|SHA|hash"):
+        _load(pairs_path)
+
+
+def test_rejects_an_unexpected_completed_output_inventory(tmp_path: Path) -> None:
+    pairs_path, run_path = _write_source(
+        tmp_path / "source",
+        [_pair_record("sample-000")],
+    )
+    manifest = json.loads(run_path.read_text(encoding="utf-8"))
+    manifest["outputs"]["unexpected"] = {"path": "unexpected.txt"}
+    _write_json(run_path, manifest)
+
+    with pytest.raises(InputCorrectorSourceError, match="output|inventory|pairs"):
+        _load(pairs_path)
+
+
+@pytest.mark.parametrize(
     ("field", "value", "message"),
     [
         ("schema_version", "prepare-edited-pairs/v0", "schema"),
@@ -477,6 +548,27 @@ def test_rejects_pair_record_schema_or_identity_drift(
     pairs_path, _run_path = _write_source(tmp_path / "source", [row])
 
     with pytest.raises(InputCorrectorSourceError, match=message):
+        _load(pairs_path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("clean.termination", _DELETE),
+        ("edited.termination", "unknown"),
+        ("clean.termination", "length-cap"),
+    ],
+)
+def test_rejects_missing_or_inconsistent_generation_termination(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    row = _pair_record("sample-000")
+    _set_path(row, field, value)
+    pairs_path, _run_path = _write_source(tmp_path / "source", [row])
+
+    with pytest.raises(InputCorrectorSourceError, match="termination|length-cap"):
         _load(pairs_path)
 
 

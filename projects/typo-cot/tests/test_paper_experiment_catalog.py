@@ -203,6 +203,19 @@ def test_catalog_exposes_the_input_corrector_setting_contract() -> None:
     )
 
 
+def test_catalog_marks_only_required_restoration_order_arguments_as_required() -> None:
+    spec = get_experiment("restoration-order-accuracy")
+
+    assert spec.required_arguments == (
+        "--model",
+        "--benchmark",
+        "--pairs",
+        "--orders",
+        "--budgets",
+        "--output-dir",
+    )
+
+
 def test_cli_text_show_includes_the_operation_summary(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

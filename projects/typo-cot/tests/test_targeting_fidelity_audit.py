@@ -628,9 +628,9 @@ def _producer_net_zero_pair() -> dict[str, object]:
         question_with_choices_end=len("alpha"),
     )
     runtime._prompt = lambda _sample: (prompt_result, "alpha")
-    runtime._generate = lambda text: ([3, 4], [2], f"continuation:{text}")
+    runtime._generate = lambda text: ([3, 4], [2], f"continuation:{text}", "eos")
     runtime._relevance_after_first_cot = lambda _prompt_ids, _generated_ids: [1.0, 0.5]
-    runtime._answer = lambda continuation, _correct: {
+    runtime._answer = lambda continuation, _correct, *, allow_positional: {
         "value": continuation,
         "is_extracted": True,
         "is_correct": False,
@@ -686,11 +686,12 @@ def _producer_random_zero_attempt_pair(question: str) -> dict[str, object]:
         list(prompt_token_ids),
         [2],
         f"continuation:{text}",
+        "eos",
     )
     runtime._relevance_after_first_cot = lambda _prompt_ids, _generated_ids: [
         float(len(words) - index) for index in range(len(words))
     ]
-    runtime._answer = lambda continuation, _correct: {
+    runtime._answer = lambda continuation, _correct, *, allow_positional: {
         "value": continuation,
         "is_extracted": True,
         "is_correct": False,

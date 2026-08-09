@@ -55,6 +55,9 @@ _PREPARATION_PROVENANCE = {
     "dataset_cohort_rule": "paper-model-benchmark-cohort/v1",
     "random_seed_algorithm": "sha256-first-64-bits/v1",
     "generation_protocol": "explicit-greedy-generation/v1",
+    "generation_termination_protocol": SOURCE_PROTOCOL[
+        "generation_termination_protocol"
+    ],
     "target_position": "maximum-logit-after-first-cot-token",
     "alignment": "actual-edited-word-final-token",
 }
@@ -139,6 +142,33 @@ def _validate_answer(value: object, *, field: str) -> None:
     for name in ("is_extracted", "is_correct"):
         if not isinstance(payload.get(name), bool):
             raise InputCorrectorSourceError(f"{field}.{name} must be boolean")
+
+
+def _validate_generation_arm(value: Mapping[str, object], *, field: str) -> None:
+    continuation = value.get("continuation")
+    if not isinstance(continuation, str):
+        raise InputCorrectorSourceError(f"{field}.continuation must be a string")
+    token_count = value.get("continuation_token_count")
+    if (
+        not isinstance(token_count, int)
+        or isinstance(token_count, bool)
+        or not 1 <= token_count <= int(_PREPARATION_DECODING["max_new_tokens"])
+    ):
+        raise InputCorrectorSourceError(
+            f"{field}.continuation_token_count must be between 1 and 512"
+        )
+    termination = value.get("termination")
+    if termination not in {"eos", "length-cap"}:
+        raise InputCorrectorSourceError(
+            f"{field}.termination must be 'eos' or 'length-cap'"
+        )
+    if (
+        termination == "length-cap"
+        and token_count != _PREPARATION_DECODING["max_new_tokens"]
+    ):
+        raise InputCorrectorSourceError(
+            f"{field}.length-cap termination requires exactly 512 tokens"
+        )
 
 
 def _validate_aligned_word(
@@ -289,6 +319,8 @@ def _validate_record(
         )
     _validate_answer(clean.get("answer"), field=f"pair record {sample_id}.clean.answer")
     _validate_answer(edited.get("answer"), field=f"pair record {sample_id}.edited.answer")
+    _validate_generation_arm(clean, field=f"pair record {sample_id}.clean")
+    _validate_generation_arm(edited, field=f"pair record {sample_id}.edited")
 
     aligned_words = _list(
         record.get("aligned_words"), field=f"pair record {sample_id}.aligned_words"
@@ -320,6 +352,7 @@ def _validate_manifest(
     benchmark: str,
     record_count: int,
     records: list[dict[str, object]],
+    pairs_sha256: str,
 ) -> dict[str, object]:
     manifest = dict(_object(value, field="source run manifest"))
     if manifest.get("schema_version") != SOURCE_PROTOCOL["run_schema"]:
@@ -368,6 +401,25 @@ def _validate_manifest(
     failures = _list(manifest.get("failures"), field="source run failures")
     if failures:
         raise InputCorrectorSourceError("source run contains failures")
+
+    outputs = _object(manifest.get("outputs"), field="source run outputs")
+    if set(outputs) != {"pairs"}:
+        raise InputCorrectorSourceError(
+            "source run output inventory must contain only pairs; "
+            "rerun prepare-edited-pairs"
+        )
+    pairs_output = _object(outputs.get("pairs"), field="source run outputs.pairs")
+    if pairs_output.get("path") != "pairs.jsonl":
+        raise InputCorrectorSourceError("source pairs output path must be pairs.jsonl")
+    if (
+        type(pairs_output.get("records")) is not int
+        or pairs_output.get("records") != record_count
+    ):
+        raise InputCorrectorSourceError("source pairs output record count does not match")
+    if pairs_output.get("sha256") != pairs_sha256:
+        raise InputCorrectorSourceError(
+            "source pairs output SHA-256 does not match pairs.jsonl"
+        )
 
     provenance = _object(manifest.get("provenance"), field="source run provenance")
     if provenance.get("model") != model:
@@ -469,7 +521,10 @@ def load_input_corrector_source(
     initial_run_sha256 = sha256_file(run_path)
     manifest_payload = _loads(run_path.read_text(encoding="utf-8"), context=str(run_path))
     records: list[dict[str, object]] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    lines = path.read_text(encoding="utf-8").split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    for line_number, line in enumerate(lines, start=1):
         if not line:
             raise InputCorrectorSourceError(f"empty JSONL line at {path}:{line_number}")
         payload = _loads(line, context=f"{path}:{line_number}")
@@ -492,6 +547,7 @@ def load_input_corrector_source(
         benchmark=benchmark,
         record_count=len(records),
         records=records,
+        pairs_sha256=initial_pairs_sha256,
     )
     if sha256_file(path) != initial_pairs_sha256:
         raise InputCorrectorSourceError("pairs source changed during hash validation")

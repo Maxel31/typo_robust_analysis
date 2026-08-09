@@ -26,7 +26,7 @@ Each line contains these top-level groups:
 | `sample_id`, `model`, `benchmark`, `subset` | Stable item and setting identity. |
 | `targeting`, `seed`, `num_edits_requested` | Frozen edit condition. |
 | `attribution_target` | First-CoT-token identity and the selected maximum-logit target position. |
-| `clean`, `edited` | Exact prompts, editable text, generated continuation, primary/fallback extraction provenance, exact canonical correctness, and token counts. |
+| `clean`, `edited` | Exact prompts, editable text, generated continuation, explicit `eos`/`length-cap` termination, primary/fallback extraction provenance, exact canonical correctness, and token counts. |
 | `target_attempts` | Ranked AttnLRP/token attempts and edit-landing provenance. |
 | `aligned_words` | Deduplicated actual edited words and clean/edited word-final token coordinates. |
 | `excluded_attribution_tokens` | Attribution top four excluded before within-item `random-4` sampling. Empty for `attribution-4`. |
@@ -87,17 +87,26 @@ benchmarks whose loaders do not apply a per-subset cap, the provenance value is
 `run.json` uses schema `prepare-edited-pairs-run/v1`. It records the canonical
 paper fingerprint, full arguments, greedy/bfloat16/left-padding settings,
 package and hardware provenance, model revision, a SHA-256 fingerprint of the
-loaded benchmark records, progress counts, and per-item failures.
+loaded benchmark records, progress counts, and per-item failures. A completed
+manifest also declares exactly one output, binding `pairs.jsonl` by path,
+record count, and SHA-256 computed after its final atomic publication.
 
 Greedy generation is fully explicit: `do_sample=false`, `num_beams=1`,
 `num_return_sequences=1`, `temperature/top_p/top_k=null`, `use_cache=true`, and
 no score-return mode. The manifest records these values and
 `generation_protocol: explicit-greedy-generation/v1`, so downstream patching and
 resume validation reject runs whose model defaults could have changed the
-answers. The task extractor is attempted first; only an empty result invokes the
-final-paper fallback for its registered benchmark. GSM8K numeric correctness is
-exact after canonicalization and never passes through binary floating-point
-comparison; MATH-500 retains its native symbolic normalizer.
+answers. It also records
+`generation_termination_protocol: effective-eos-vs-length-cap/v1`. Effective
+EOS IDs are resolved from the model generation config, with tokenizer EOS as a
+fallback, and passed explicitly to generation. The first effective EOS ends an
+arm even when it is the 512th generated token; only a 512-token continuation
+with no effective EOS is `length-cap`. Positional answer fallback is allowed
+for `eos` and disabled for `length-cap`. The task extractor is attempted first;
+only an empty result invokes the final-paper fallback for its registered
+benchmark. GSM8K numeric correctness is exact after canonicalization and never
+passes through binary floating-point comparison; MATH-500 retains its native
+symbolic normalizer.
 
 Records are checkpointed individually in a hidden work directory. A failed run
 does not publish a partial `pairs.jsonl`; after the cause is fixed, rerun the
@@ -110,15 +119,18 @@ no new computation, so its fast resume checks only static protocol/cohort
 identity and permits a different GPU or package environment. The manifest remains `running`
 while pending items are processed and becomes `failed` only after the run ends.
 It atomically publishes `pairs.jsonl` only when every selected item succeeds.
-If that published file is later removed, resuming a completed run reports an
-error instead of silently regenerating every item. Reusing a non-empty output
-directory without `--resume` is rejected. Conversely, `--resume` always
-requires an existing `run.json`; a missing or empty output directory is not
-silently treated as a new run.
+If that published file is later removed or its bytes differ from the completed
+manifest, resuming reports an error instead of silently accepting or
+regenerating it. Completed manifests created before this output identity or the
+explicit generation-termination protocol was introduced must be regenerated.
+Reusing a non-empty output directory without
+`--resume` is rejected. Conversely, `--resume` always requires an existing
+`run.json`; a missing or empty output directory is not silently treated as a
+new run.
 
 ## Historical implementation differences
 
-The final paper is the protocol authority. Five behaviors in the exploratory
+The final paper is the protocol authority. Several behaviors in the exploratory
 code were not portable or did not implement that protocol exactly, so fresh
 outputs intentionally differ from some archived machine-local artifacts:
 
@@ -142,6 +154,10 @@ outputs intentionally differ from some archived machine-local artifacts:
   prompt relabels choices as `(A)`–`(D)`. The loader now maps through the
   source choice order so stored gold answers and extracted letters use the
   same coordinate system.
+- Earlier pair records inferred completion solely from whether fewer than 512
+  tokens were generated. That misclassified an effective EOS in position 512
+  as a length cap. The public producer now records the actual stopping reason
+  from the effective EOS set and uses it for answer fallback.
 
 These differences are also listed under `historical_compatibility_notes` in
 the run provenance. Do not combine newly generated pairs with archived pairs

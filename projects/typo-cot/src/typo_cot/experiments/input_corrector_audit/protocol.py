@@ -59,6 +59,7 @@ SOURCE_PROTOCOL = {
     "seed": 42,
     "num_edits": 4,
     "max_new_tokens": 512,
+    "generation_termination_protocol": "effective-eos-vs-length-cap/v1",
     "limit": None,
     "records_per_model_benchmark": PAPER_BENCHMARK_ITEM_COUNTS,
 }

@@ -107,6 +107,9 @@ def test_preload_provenance_freezes_the_paper_cohort_rule() -> None:
     assert provenance["dataset_cohort_rule"] == "paper-model-benchmark-cohort/v1"
     assert provenance["dataset_samples_per_subset"] == 100
     assert provenance["generation_protocol"] == "explicit-greedy-generation/v1"
+    assert provenance["generation_termination_protocol"] == (
+        "effective-eos-vs-length-cap/v1"
+    )
 
 
 def test_preload_provenance_uses_null_when_subset_cap_is_not_applied() -> None:
@@ -191,6 +194,7 @@ def test_pair_runtime_generation_explicitly_freezes_greedy_decoding() -> None:
 
     class Tokenizer:
         pad_token_id = 0
+        eos_token_id = 99
 
         def __call__(self, _prompt: str, **_kwargs: object) -> dict[str, torch.Tensor]:
             return {
@@ -207,16 +211,19 @@ def test_pair_runtime_generation_explicitly_freezes_greedy_decoding() -> None:
     runtime.wrapper = SimpleNamespace(
         device=torch.device("cpu"),
         model=SimpleNamespace(
-            generate=lambda **kwargs: calls.append(kwargs) or torch.tensor([[10, 11, 20]])
+            generate=lambda **kwargs: calls.append(kwargs)
+            or torch.tensor([[10, 11, 20, 99]])
         ),
     )
     runtime._torch = torch
+    runtime.effective_eos_token_ids = (99,)
 
-    prompt_ids, continuation_ids, continuation = runtime._generate("prompt")
+    prompt_ids, continuation_ids, continuation, termination = runtime._generate("prompt")
 
     assert prompt_ids == [10, 11]
-    assert continuation_ids == [20]
+    assert continuation_ids == [20, 99]
     assert continuation == "The answer is 2."
+    assert termination == "eos"
     assert len(calls) == 1
     assert torch.equal(calls[0].pop("input_ids"), torch.tensor([[10, 11]]))
     assert torch.equal(
@@ -235,6 +242,7 @@ def test_pair_runtime_generation_explicitly_freezes_greedy_decoding() -> None:
         "return_dict_in_generate": False,
         "output_scores": False,
         "pad_token_id": 0,
+        "eos_token_id": [99],
     }
 
 
@@ -256,6 +264,118 @@ def test_pair_runtime_answer_uses_empty_only_fallback_and_exact_correctness() ->
         "primary_method": "no_match",
         "confidence": 1.0,
     }
+
+
+def test_pair_runtime_disables_positional_fallback_at_the_generation_cap() -> None:
+    runtime = object.__new__(HuggingFacePairPreparationRuntime)
+    runtime.internal_benchmark = "gsm8k"
+    runtime.extractor = create_extractor("gsm8k")
+    text = "The computation is unfinished and currently reaches 2 dollars."
+
+    before_cap = runtime._answer(
+        text,
+        "2",
+        allow_positional=True,
+    )
+    at_cap = runtime._answer(
+        text,
+        "2",
+        allow_positional=False,
+    )
+
+    assert before_cap["method"] == "fallback:N5_tail_number"
+    assert before_cap["is_correct"] is True
+    assert at_cap["method"] == "unextractable"
+    assert at_cap["is_correct"] is False
+
+
+def test_pair_runtime_treats_an_eos_at_the_generation_cap_as_complete() -> None:
+    class Tokenizer:
+        pad_token_id = 0
+        eos_token_id = 99
+
+        def __call__(self, _prompt: str, **_kwargs: object) -> dict[str, torch.Tensor]:
+            return {
+                "input_ids": torch.tensor([[10, 11]]),
+                "attention_mask": torch.ones(1, 2, dtype=torch.long),
+            }
+
+        def decode(self, _token_ids: list[int], **_kwargs: object) -> str:
+            return "The computation is complete and the final total is 2 dollars."
+
+    generated = [41] * 511 + [99]
+    runtime = object.__new__(HuggingFacePairPreparationRuntime)
+    runtime.config = SimpleNamespace(max_new_tokens=512)
+    runtime.tokenizer = Tokenizer()
+    runtime.wrapper = SimpleNamespace(
+        device=torch.device("cpu"),
+        model=SimpleNamespace(
+            generate=lambda **_kwargs: torch.tensor([[10, 11, *generated]])
+        ),
+    )
+    runtime._torch = torch
+    runtime.effective_eos_token_ids = (99,)
+    runtime.internal_benchmark = "gsm8k"
+    runtime.extractor = create_extractor("gsm8k")
+
+    _prompt_ids, continuation_ids, continuation, termination = runtime._generate(
+        "prompt"
+    )
+    answer = runtime._answer(
+        continuation,
+        "2",
+        allow_positional=termination == "eos",
+    )
+
+    assert len(continuation_ids) == 512
+    assert continuation_ids[-1] == 99
+    assert termination == "eos"
+    assert answer["method"] == "fallback:N5_tail_number"
+    assert answer["is_correct"] is True
+
+
+def test_pair_runtime_treats_512_tokens_without_eos_as_length_cap() -> None:
+    class Tokenizer:
+        pad_token_id = 0
+        eos_token_id = 99
+
+        def __call__(self, _prompt: str, **_kwargs: object) -> dict[str, torch.Tensor]:
+            return {
+                "input_ids": torch.tensor([[10, 11]]),
+                "attention_mask": torch.ones(1, 2, dtype=torch.long),
+            }
+
+        def decode(self, _token_ids: list[int], **_kwargs: object) -> str:
+            return "The computation is unfinished and currently reaches 2 dollars."
+
+    generated = [41] * 512
+    runtime = object.__new__(HuggingFacePairPreparationRuntime)
+    runtime.config = SimpleNamespace(max_new_tokens=512)
+    runtime.tokenizer = Tokenizer()
+    runtime.wrapper = SimpleNamespace(
+        device=torch.device("cpu"),
+        model=SimpleNamespace(
+            generate=lambda **_kwargs: torch.tensor([[10, 11, *generated]])
+        ),
+    )
+    runtime._torch = torch
+    runtime.effective_eos_token_ids = (99,)
+    runtime.internal_benchmark = "gsm8k"
+    runtime.extractor = create_extractor("gsm8k")
+
+    _prompt_ids, continuation_ids, continuation, termination = runtime._generate(
+        "prompt"
+    )
+    answer = runtime._answer(
+        continuation,
+        "2",
+        allow_positional=termination == "eos",
+    )
+
+    assert len(continuation_ids) == 512
+    assert termination == "length-cap"
+    assert answer["method"] == "unextractable"
+    assert answer["is_correct"] is False
 
 
 def test_pair_runtime_keeps_the_math_extractor_native_comparator() -> None:
@@ -762,16 +882,16 @@ def _pair_runtime_for_prompt(prompt: str) -> tuple[HuggingFacePairPreparationRun
     )
     runtime._prompt = lambda _sample: (prompt_result, prompt)
 
-    def generate(text: str) -> tuple[list[int], list[int], str]:
+    def generate(text: str) -> tuple[list[int], list[int], str, str]:
         generated_prompts.append(text)
         prompt_ids = runtime.tokenizer(text)["input_ids"]
-        return list(prompt_ids), [2], f"continuation:{text}"
+        return list(prompt_ids), [2], f"continuation:{text}", "eos"
 
     runtime._generate = generate
     runtime._relevance_after_first_cot = lambda prompt_ids, _generated_ids: [
         1.0 - 0.5 * index for index in range(len(prompt_ids))
     ]
-    runtime._answer = lambda continuation, _correct: {
+    runtime._answer = lambda continuation, _correct, **_kwargs: {
         "value": continuation,
         "is_extracted": True,
         "is_correct": False,
@@ -1089,6 +1209,13 @@ def test_runner_writes_versioned_pairs_and_completed_manifest(tmp_path: Path) ->
     assert manifest["schema_version"] == "prepare-edited-pairs-run/v1"
     assert manifest["status"] == "completed"
     assert manifest["counts"] == {"discovered": 2, "written": 2, "failed": 0}
+    assert manifest["outputs"] == {
+        "pairs": {
+            "path": "pairs.jsonl",
+            "sha256": hashlib.sha256(result.pairs_path.read_bytes()).hexdigest(),
+            "records": 2,
+        }
+    }
     assert result.pairs_path == output_dir / "pairs.jsonl"
 
 
@@ -1142,6 +1269,7 @@ def test_completed_resume_rejects_a_legacy_cohort_before_model_loading(
             "dataset_samples_per_subset": 100,
             "random_seed_algorithm": "sha256-first-64-bits/v1",
             "generation_protocol": "explicit-greedy-generation/v1",
+            "generation_termination_protocol": "effective-eos-vs-length-cap/v1",
             "target_position": "maximum-logit-after-first-cot-token",
             "alignment": "actual-edited-word-final-token",
             "historical_compatibility_notes": [],
@@ -1150,6 +1278,57 @@ def test_completed_resume_rejects_a_legacy_cohort_before_model_loading(
 
     def model_must_not_load(config: PrepareEditedPairsConfig) -> None:
         raise AssertionError("legacy cohort mismatch must fail before model loading")
+
+    monkeypatch.setattr(
+        runtime_module,
+        "HuggingFacePairPreparationRuntime",
+        model_must_not_load,
+    )
+
+    with pytest.raises(ValueError, match="resume provenance.*before model loading"):
+        run_prepare_edited_pairs(replace(config, resume=True))
+
+
+def test_completed_resume_rejects_legacy_token_count_termination_before_loading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_dir = tmp_path / "legacy-generation-termination"
+    config = PrepareEditedPairsConfig(
+        model="google/gemma-3-4b-it",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=output_dir,
+    )
+    current_protocol = {
+        "model": config.model,
+        "benchmark_dataset_loader": "gsm8k",
+        "dataset_cohort_rule": "paper-model-benchmark-cohort/v1",
+        "dataset_samples_per_subset": None,
+        "random_seed_algorithm": "sha256-first-64-bits/v1",
+        "generation_protocol": "explicit-greedy-generation/v1",
+        "generation_termination_protocol": "effective-eos-vs-length-cap/v1",
+        "target_position": "maximum-logit-after-first-cot-token",
+        "alignment": "actual-edited-word-final-token",
+        "historical_compatibility_notes": [],
+    }
+
+    class LegacyRuntime(_FakeRuntime):
+        def provenance(self) -> dict[str, object]:
+            legacy = dict(current_protocol)
+            legacy.pop("generation_termination_protocol")
+            return legacy
+
+    run_prepare_edited_pairs(config, runtime=LegacyRuntime())
+    monkeypatch.setattr(
+        runtime_module,
+        "preload_provenance",
+        lambda _config: current_protocol,
+    )
+
+    def model_must_not_load(config: PrepareEditedPairsConfig) -> None:
+        raise AssertionError("legacy termination protocol must fail before model loading")
 
     monkeypatch.setattr(
         runtime_module,
@@ -1181,6 +1360,7 @@ def test_completed_resume_ignores_environment_only_provenance_changes(
         "dataset_samples_per_subset": 100,
         "random_seed_algorithm": "sha256-first-64-bits/v1",
         "generation_protocol": "explicit-greedy-generation/v1",
+        "generation_termination_protocol": "effective-eos-vs-length-cap/v1",
         "target_position": "maximum-logit-after-first-cot-token",
         "alignment": "actual-edited-word-final-token",
         "historical_compatibility_notes": [],
@@ -1256,6 +1436,32 @@ def test_completed_resume_rejects_a_missing_published_pairs_file(tmp_path: Path)
             raise AssertionError("a completed run without pairs must fail before runtime access")
 
     with pytest.raises(ValueError, match="completed.*pairs.jsonl"):
+        run_prepare_edited_pairs(
+            replace(config, resume=True),
+            runtime=RuntimeMustNotLoad(),
+        )
+
+
+def test_completed_resume_rejects_a_changed_published_pairs_file(tmp_path: Path) -> None:
+    output_dir = tmp_path / "changed-pairs"
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        output_dir=output_dir,
+    )
+    result = run_prepare_edited_pairs(config, runtime=_FakeRuntime())
+    result.pairs_path.write_text(
+        result.pairs_path.read_text(encoding="utf-8") + "\n",
+        encoding="utf-8",
+    )
+
+    class RuntimeMustNotLoad(_FakeRuntime):
+        def load_samples(self, config: PrepareEditedPairsConfig) -> list[dict[str, str]]:
+            raise AssertionError("changed completed output must fail before runtime access")
+
+    with pytest.raises(ValueError, match="pairs.*SHA|hash|changed"):
         run_prepare_edited_pairs(
             replace(config, resume=True),
             runtime=RuntimeMustNotLoad(),
