@@ -27,7 +27,7 @@ lrp = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8", "ipykernel>=6"]
+dev = ["pytest>=8"]
 
 [build-system]
 requires = ["hatchling"]

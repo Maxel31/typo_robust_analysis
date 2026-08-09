@@ -14,6 +14,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = PROJECT_ROOT.parents[1]
 PROJECT_PREFIX = "projects/typo-cot/"
 
+OBSOLETE_REPOSITORY_ROOTS = {"_sample_project", "datasets", "scripts", "utils"}
+OBSOLETE_REPOSITORY_PATHS = {Path(".env.example")}
+
 LEGACY_PROJECT_DIRECTORIES = {"analysis", "configs", "scripts"}
 LEGACY_PACKAGE_DIRECTORIES = {
     "analysis",
@@ -83,6 +86,7 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/evaluation/__init__.py"),
     Path("src/typo_cot/evaluation/extractor.py"),
     Path("src/typo_cot/evaluation/fallback.py"),
+    Path("src/typo_cot/evaluation/generation.py"),
     Path("src/typo_cot/experiments/__init__.py"),
     Path("src/typo_cot/experiments/catalog.py"),
     Path("src/typo_cot/experiments/answer_line_deletion/__init__.py"),
@@ -221,6 +225,50 @@ def _tracked_existing_paths() -> set[Path]:
         if (PROJECT_ROOT / relative).exists():
             relative_paths.add(relative)
     return relative_paths
+
+
+def _tracked_repository_paths() -> set[Path]:
+    """Return every tracked path relative to the repository root."""
+    completed = subprocess.run(
+        ["git", "ls-files"],
+        cwd=REPOSITORY_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    tracked = {Path(line) for line in completed.stdout.splitlines() if line}
+    return {path for path in tracked if (REPOSITORY_ROOT / path).exists()}
+
+
+def test_obsolete_workspace_scaffolding_is_not_tracked() -> None:
+    tracked = _tracked_repository_paths()
+    tracked_roots = {path.parts[0] for path in tracked}
+    assert tracked_roots.isdisjoint(OBSOLETE_REPOSITORY_ROOTS)
+    assert tracked.isdisjoint(OBSOLETE_REPOSITORY_PATHS)
+
+
+def test_root_workspace_contains_only_the_reproduction_package() -> None:
+    with (REPOSITORY_ROOT / "pyproject.toml").open("rb") as stream:
+        root_project = tomllib.load(stream)
+
+    assert root_project["project"]["dependencies"] == []
+    assert "sources" not in root_project["tool"]["uv"]
+    assert root_project["tool"]["uv"]["workspace"]["members"] == ["projects/typo-cot"]
+    assert "exclude" not in root_project["tool"]["uv"]["workspace"]
+
+
+def test_development_dependencies_match_the_public_test_toolchain() -> None:
+    with (REPOSITORY_ROOT / "pyproject.toml").open("rb") as stream:
+        root_project = tomllib.load(stream)
+    with (PROJECT_ROOT / "pyproject.toml").open("rb") as stream:
+        reproduction_project = tomllib.load(stream)
+
+    root_dev = {_dependency_name(item) for item in root_project["dependency-groups"]["dev"]}
+    project_dev = {
+        _dependency_name(item) for item in reproduction_project["dependency-groups"]["dev"]
+    }
+    assert root_dev == {"pytest", "ruff"}
+    assert project_dev == {"pytest"}
 
 
 def _dependency_name(requirement: str) -> str:

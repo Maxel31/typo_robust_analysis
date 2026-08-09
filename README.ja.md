@@ -45,10 +45,8 @@ uv run --project projects/typo-cot typo-cot experiments list
 uv run --project projects/typo-cot typo-cot experiments show layerwise-kl-patching
 ```
 
-リファクタは操作単位で公開しています。`catalogued` は論文上の実験契約と将来の
-コマンドが確定しているものの、公開runnerが未実装であることを表します。
-`implemented` は実行可能です。カタログが状態を明示するため、未実装コマンドを
-README上で実行可能とは扱いません。
+カタログに記載された論文の全操作を実装済みです。`experiments list` で、各操作の
+compute class、必須引数、出力、実装状態を確認できます。
 
 GPU実験には論文に固定された `lrp` 環境を使用します。CPUだけで行うカタログ確認と
 契約テストには、モデルのダウンロードは不要です。
@@ -58,31 +56,25 @@ GPU実験には論文に固定された `lrp` 環境を使用します。CPUだ�
 ```text
 .
 ├── .github/workflows/              # PRの自動レビュー
-├── _sample_project/                # 当面残す旧プロジェクトテンプレート
-├── datasets/                       # 共有データセット置き場とローカルキャッシュ
 ├── README.md
 ├── README.ja.md
-├── pyproject.toml                 # uvワークスペース
-├── uv.lock                        # 共有環境ロック
-├── projects/typo-cot/
-│   ├── README.md                  # 英語版のセットアップと実行コマンド
-│   ├── README.ja.md               # 日本語版のセットアップと実行コマンド
-│   ├── docs/                      # 論文の実験契約とprovenance
-│   ├── results/                   # git対象外のローカル出力（.gitkeepのみ追跡）
-│   ├── src/typo_cot/              # import可能な実装
-│   └── tests/                     # CPU単体テスト／契約テスト
-├── scripts/new_project.sh         # 当面残す汎用scaffolding helper
-└── utils/                         # typo-cotから独立した共有utility
+├── pyproject.toml                  # uvワークスペース
+├── uv.lock                         # 固定された再現環境
+└── projects/typo-cot/
+    ├── README.md                   # 英語版のセットアップと実行コマンド
+    ├── README.ja.md                # 日本語版のセットアップと実行コマンド
+    ├── docs/                       # 論文の実験契約とprovenance
+    ├── results/                    # git対象外のローカル出力（.gitkeepのみ追跡）
+    ├── src/typo_cot/               # import可能な実装
+    └── tests/                      # CPU単体テスト／契約テスト
 ```
 
-## 当面残すワークスペース支援機能
+## リポジトリの範囲
 
-リポジトリ単位の開発環境には、引き続き `utils/` の `typo-utils` ワークスペースmemberが
-ありますが、公開パッケージ `projects/typo-cot` は依存していません。リファクタ中は
-リポジトリを `uv` ワークスペースとして維持します。`_sample_project/` と
-`scripts/new_project.sh` は既存の汎用scaffoldingで、論文再現の導線には含みません。
-PRは `.github/workflows/claude-code-review.yml` で自動レビューします。これら支援機能の
-削除や追加cleanupは、独立したPRで扱います。
+rootの `uv` workspaceには、公開する再現パッケージだけを含めます。model／datasetの
+cache、生成した実験結果、提供された論文PDF、過去の図表ソースを監査するローカル
+archiveは、意図的にgitで追跡しません。PRは
+`.github/workflows/claude-code-review.yml` で自動レビューします。
 
-変更は1操作につき1ブランチ・1PRとし、常に `develop` をbaseにします。現在のPRの
-CIと対応すべきレビュー指摘を解消してから、次の操作へ進みます。
+変更は1操作につき1ブランチ・1PRとし、`develop` をbaseにします。CIと対応すべき
+レビュー指摘を解消してから、次の操作をマージします。

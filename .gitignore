@@ -8,19 +8,13 @@ __pycache__/
 # uv
 # uv.lock is committed intentionally
 
-# experiment artifacts (プロジェクト配下のみ。中身は無視するが .gitkeep は残す)
-# 注: utils/ 配下の data モジュールなどソースコードは対象外にする
-_sample_project/results/*
+# experiment artifacts (中身は無視するが .gitkeep は残す)
 projects/*/results/*
 !**/results/.gitkeep
-_sample_project/data/*
 projects/*/data/*
 !**/data/.gitkeep
-_sample_project/analysis/figures/*
 projects/*/analysis/figures/*
 !**/analysis/figures/.gitkeep
-wandb/
-**/wandb/
 
 # env / secrets
 .env
