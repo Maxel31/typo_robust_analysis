@@ -1278,6 +1278,118 @@ corrector prompts, alignment metric, provenance, validation, and restart
 contracts. If the optional MATH-500 loop is skipped, omit
 `--math-runs-root` from the builder command as well.
 
+## Compare edited-word restoration orders with the Table 13 protocol
+
+`restoration-order-accuracy` is the Appendix E oracle diagnostic behind
+Table 13. It does not run a fourth input corrector. Starting from the
+Attribution-4 source outcome, it selects clean-correct/four-edit-wrong items,
+restores known clean substrings in high-relevance-first, seeded-random, or
+low-relevance-first order, and freshly regenerates the answer at equal budgets.
+This needs the paired clean input and AttnLRP relevance and is therefore an
+analysis upper bound, not a deployable typo detector or correction method. The
+public command produces a fresh final-PDF protocol replication; it does not
+claim to recover the private archived cohort byte for byte.
+
+Run the complete three-model by two-task grid below. The source-preparation
+loop is needed when these six completed runs were not already created for the
+Table 12 audit.
+
+```bash
+GPU_ID="${GPU_ID:-0}"
+RESTORATION_MODELS=(
+  google/gemma-3-4b-it
+  meta-llama/Llama-3.2-3B-Instruct
+  mistralai/Mistral-7B-Instruct-v0.3
+)
+RESTORATION_BENCHMARKS=(gsm8k mmlu)
+
+# Prepare the six complete Attribution-4 sources if they are not already present.
+for MODEL in "${RESTORATION_MODELS[@]}"; do
+  MODEL_SLUG="${MODEL##*/}"
+  MODEL_SLUG="${MODEL_SLUG,,}"
+  for BENCHMARK in "${RESTORATION_BENCHMARKS[@]}"; do
+    CUDA_VISIBLE_DEVICES="${GPU_ID}" \
+      uv run --project projects/typo-cot --extra lrp \
+      typo-cot prepare-edited-pairs \
+      --model "${MODEL}" \
+      --benchmark "${BENCHMARK}" \
+      --targeting attribution-4 \
+      --num-edits 4 \
+      --seed 42 \
+      --max-new-tokens 512 \
+      --gpu-id "${GPU_ID}" \
+      --output-dir \
+        "results/prepare-edited-pairs/${MODEL_SLUG}/${BENCHMARK}/attribution-4"
+  done
+done
+
+# Generate both shared endpoints and all nine intermediate conditions.
+for MODEL in "${RESTORATION_MODELS[@]}"; do
+  MODEL_SLUG="${MODEL##*/}"
+  MODEL_SLUG="${MODEL_SLUG,,}"
+  for BENCHMARK in "${RESTORATION_BENCHMARKS[@]}"; do
+    CUDA_VISIBLE_DEVICES="${GPU_ID}" \
+      uv run --project projects/typo-cot --extra lrp \
+      typo-cot restoration-order-accuracy \
+      --model "${MODEL}" \
+      --benchmark "${BENCHMARK}" \
+      --pairs \
+        "results/prepare-edited-pairs/${MODEL_SLUG}/${BENCHMARK}/attribution-4/pairs.jsonl" \
+      --orders high-relevance-first seeded-random low-relevance-first \
+      --budgets 0 1 2 3 4 \
+      --seed 42 \
+      --batch-size 8 \
+      --gpu-id "${GPU_ID}" \
+      --output-dir \
+        "results/restoration-order-accuracy/${MODEL_SLUG}/${BENCHMARK}"
+  done
+done
+
+# Validate the six settings and build a fresh Table 13 protocol replication on CPU.
+uv run --project projects/typo-cot \
+  typo-cot build-restoration-order-table \
+  --runs-root results/restoration-order-accuracy \
+  --output-dir results/restoration-order-table
+```
+
+The cohort is frozen from the source clean/four-edit outcomes before any of
+the eleven new conditions are generated. It is never re-filtered using the new
+`k=0` or `k=4` answers. The CPU builder pairs every condition by full
+model/task/sample identity, pools items rather than equally weighting six
+settings, and computes the reported high-first-versus-random p values with a
+two-sided exact McNemar/binomial test. Those three tests are descriptive and
+unadjusted, as in the paper.
+
+The PDF reports 1,582 archived-selected items, endpoint accuracies 12.0% and
+88.9%, and the three intermediate rows. Fresh public preparation follows the
+same paper protocol but does not prove byte-identical membership in that
+private archive, so printed values are retained as historical references rather
+than acceptance targets. The submitted producer's stable seed-42 random order
+is versioned unchanged because replacing its key derivation would change the
+random row and paired p values. The public schema records each source item's
+realized edit count and makes budgets at or above that count equal to the clean
+endpoint instead of silently dropping or padding that item.
+
+For submitted grouping compatibility, restoration uses contiguous
+`difflib` character edit groups. The paper describes these units as edited
+words, but one group is not guaranteed to correspond one-to-one with a
+whitespace-delimited word; the public records expose both the realized groups
+and their source events instead of hiding that distinction.
+
+Each setting writes `restoration_order_records.jsonl`,
+`restoration_order_summary.json`, and `run.json`. The builder writes
+`restoration_order_table.json`, `table13_restoration_order.csv`,
+`table13_restoration_order.md`, `table13_restoration_order.tex`, and
+`run.json`. Every rendered result labels its fresh pooled cohort size;
+Markdown and LaTeX also state the historical PDF cohort size. A setting's
+final output directory appears
+only after all artifacts commit atomically; add `--resume` only for an
+interrupted private work directory. `--limit 1` is a labelled GPU smoke run
+and is rejected by the complete-grid builder. See
+[`docs/restoration-order-accuracy.md`](docs/restoration-order-accuracy.md) for
+the source-selection, reconstruction, batching, provenance, inference, and
+restart contracts.
+
 ## Tests
 
 ```bash
@@ -1297,6 +1409,7 @@ uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_build_one
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_edit_count_sensitivity.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_typo_warning_prompt.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_input_corrector_*.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_restoration_order_*.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 

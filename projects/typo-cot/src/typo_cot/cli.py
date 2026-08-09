@@ -113,6 +113,18 @@ from typo_cot.experiments.prepare_edited_pairs.runner import (
     PrepareEditedPairsConfig,
     run_prepare_edited_pairs,
 )
+from typo_cot.experiments.restoration_order_accuracy import (
+    PAPER_BENCHMARKS as RESTORATION_ORDER_BENCHMARKS,
+    PAPER_BUDGETS as RESTORATION_ORDER_BUDGETS,
+    PAPER_MODELS as RESTORATION_ORDER_MODELS,
+    PAPER_ORDERS as RESTORATION_ORDERS,
+    BuildRestorationOrderTableConfig,
+    RestorationOrderConfig,
+    RestorationOrderRunError,
+    RestorationOrderTableInputError,
+    build_restoration_order_table,
+    run_restoration_order_accuracy,
+)
 from typo_cot.experiments.targeting_fidelity_audit import (
     TargetingFidelityAuditConfig,
     TargetingFidelityAuditError,
@@ -366,6 +378,41 @@ def _parser() -> argparse.ArgumentParser:
     corrector_summary.add_argument("--runs-root", required=True, type=Path)
     corrector_summary.add_argument("--math-runs-root", type=Path)
     corrector_summary.add_argument("--output-dir", required=True, type=Path)
+
+    restoration_order = commands.add_parser(
+        "restoration-order-accuracy",
+        help="Regenerate answers while restoring edit groups in three Table 13 orders.",
+    )
+    restoration_order.add_argument(
+        "--model", required=True, choices=RESTORATION_ORDER_MODELS
+    )
+    restoration_order.add_argument(
+        "--benchmark", required=True, choices=RESTORATION_ORDER_BENCHMARKS
+    )
+    restoration_order.add_argument("--pairs", required=True, type=Path)
+    restoration_order.add_argument(
+        "--orders", required=True, nargs="+", choices=RESTORATION_ORDERS
+    )
+    restoration_order.add_argument(
+        "--budgets",
+        required=True,
+        nargs="+",
+        type=int,
+        choices=RESTORATION_ORDER_BUDGETS,
+    )
+    restoration_order.add_argument("--seed", type=int, default=42)
+    restoration_order.add_argument("--batch-size", type=_positive_int, default=8)
+    restoration_order.add_argument("--gpu-id", default="0")
+    restoration_order.add_argument("--limit", type=_positive_int)
+    restoration_order.add_argument("--output-dir", required=True, type=Path)
+    restoration_order.add_argument("--resume", action="store_true")
+
+    restoration_table = commands.add_parser(
+        "build-restoration-order-table",
+        help="Build a fresh Appendix E Table 13 protocol replication.",
+    )
+    restoration_table.add_argument("--runs-root", required=True, type=Path)
+    restoration_table.add_argument("--output-dir", required=True, type=Path)
 
     targeting_audit = commands.add_parser(
         "targeting-fidelity-audit",
@@ -854,6 +901,56 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"built input-corrector summary from {result.settings} setting(s): "
             f"{result.summary_path}"
+        )
+        print(f"CSV: {result.csv_path}")
+        print(f"Markdown: {result.markdown_path}")
+        print(f"LaTeX: {result.latex_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "restoration-order-accuracy":
+        try:
+            result = run_restoration_order_accuracy(
+                RestorationOrderConfig(
+                    model=args.model,
+                    benchmark=args.benchmark,
+                    pairs=args.pairs,
+                    orders=tuple(args.orders),
+                    budgets=tuple(args.budgets),
+                    seed=args.seed,
+                    batch_size=args.batch_size,
+                    gpu_id=args.gpu_id,
+                    limit=args.limit,
+                    output_dir=args.output_dir,
+                    resume=args.resume,
+                )
+            )
+        except (OSError, RuntimeError, ValueError, RestorationOrderRunError) as exc:
+            print(f"restoration-order-accuracy: error: {exc}", file=sys.stderr)
+            return 1
+        print(f"wrote {result.records} restoration-order record(s): {result.records_path}")
+        print(f"restoration-order summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "build-restoration-order-table":
+        try:
+            result = build_restoration_order_table(
+                BuildRestorationOrderTableConfig(
+                    runs_root=args.runs_root,
+                    output_dir=args.output_dir,
+                )
+            )
+        except (
+            FileExistsError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            RestorationOrderTableInputError,
+        ) as exc:
+            print(f"build-restoration-order-table: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            "built a fresh Table 13 protocol replication from "
+            f"{result.settings} setting(s): {result.table_path}"
         )
         print(f"CSV: {result.csv_path}")
         print(f"Markdown: {result.markdown_path}")

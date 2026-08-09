@@ -867,6 +867,110 @@ metric、provenance、validation、restart契約の詳細は
 [`docs/input-corrector-audit.md`](docs/input-corrector-audit.md) にあります。任意の
 MATH-500 loopを省略する場合は、builder commandの `--math-runs-root` も省略します。
 
+## 編集語の復元順序をTable 13の手順で比較する
+
+`restoration-order-accuracy` はTable 13の根拠となるAppendix Eのoracle診断です。
+4番目の入力訂正器を動かす実験ではありません。Attribution-4 sourceの結果から
+clean正答・4編集不正答のitemを選び、既知のclean substringを高relevance順、seed付き
+random順、低relevance順に戻し、同じbudgetごとにanswerを新しく生成します。paired clean
+inputとAttnLRP relevanceを必要とする分析上限であり、deploy可能なtypo detectorや
+correction methodではありません。公開コマンドが生成するのはfinal PDFのprotocolによる
+freshな再現結果であり、privateなarchived cohortをbyte単位で復元したと主張するものでは
+ありません。
+
+以下で3 model×2 taskの完全gridを実行します。Table 12のauditでこの6つのsource runを
+まだ作成していない場合は、最初のsource-preparation loopも実行します。
+
+```bash
+GPU_ID="${GPU_ID:-0}"
+RESTORATION_MODELS=(
+  google/gemma-3-4b-it
+  meta-llama/Llama-3.2-3B-Instruct
+  mistralai/Mistral-7B-Instruct-v0.3
+)
+RESTORATION_BENCHMARKS=(gsm8k mmlu)
+
+# Prepare the six complete Attribution-4 sources if they are not already present.
+for MODEL in "${RESTORATION_MODELS[@]}"; do
+  MODEL_SLUG="${MODEL##*/}"
+  MODEL_SLUG="${MODEL_SLUG,,}"
+  for BENCHMARK in "${RESTORATION_BENCHMARKS[@]}"; do
+    CUDA_VISIBLE_DEVICES="${GPU_ID}" \
+      uv run --project projects/typo-cot --extra lrp \
+      typo-cot prepare-edited-pairs \
+      --model "${MODEL}" \
+      --benchmark "${BENCHMARK}" \
+      --targeting attribution-4 \
+      --num-edits 4 \
+      --seed 42 \
+      --max-new-tokens 512 \
+      --gpu-id "${GPU_ID}" \
+      --output-dir \
+        "results/prepare-edited-pairs/${MODEL_SLUG}/${BENCHMARK}/attribution-4"
+  done
+done
+
+# Generate both shared endpoints and all nine intermediate conditions.
+for MODEL in "${RESTORATION_MODELS[@]}"; do
+  MODEL_SLUG="${MODEL##*/}"
+  MODEL_SLUG="${MODEL_SLUG,,}"
+  for BENCHMARK in "${RESTORATION_BENCHMARKS[@]}"; do
+    CUDA_VISIBLE_DEVICES="${GPU_ID}" \
+      uv run --project projects/typo-cot --extra lrp \
+      typo-cot restoration-order-accuracy \
+      --model "${MODEL}" \
+      --benchmark "${BENCHMARK}" \
+      --pairs \
+        "results/prepare-edited-pairs/${MODEL_SLUG}/${BENCHMARK}/attribution-4/pairs.jsonl" \
+      --orders high-relevance-first seeded-random low-relevance-first \
+      --budgets 0 1 2 3 4 \
+      --seed 42 \
+      --batch-size 8 \
+      --gpu-id "${GPU_ID}" \
+      --output-dir \
+        "results/restoration-order-accuracy/${MODEL_SLUG}/${BENCHMARK}"
+  done
+done
+
+# Validate the six settings and build a fresh Table 13 protocol replication on CPU.
+uv run --project projects/typo-cot \
+  typo-cot build-restoration-order-table \
+  --runs-root results/restoration-order-accuracy \
+  --output-dir results/restoration-order-table
+```
+
+cohortは11個の新条件を生成する前に、sourceのclean/4-edit outcomeだけから固定します。
+新しく生成した `k=0` や `k=4` のanswerで再filterしません。CPU builderは全条件を完全な
+model/task/sample identityでpairにし、6設定の等重み平均ではなくitemをpoolします。
+high-first対randomの報告p値にはtwo-sided exact McNemar/binomial testを使います。
+論文と同じく、この3検定は記述的でmultiplicity未調整です。
+
+PDFはarchived-selected 1,582 item、endpoint accuracy 12.0%/88.9%、3つの中間行を
+報告します。freshな公開source preparationは同じpaper protocolに従いますが、private
+archiveとbyte-identicalなmembershipを証明するものではありません。そのため掲載値は
+合否条件ではなくhistorical referenceとして保持します。submitted producerのseed 42による
+安定したrandom順は、key derivationを変更するとrandom行とpaired p値が変わるため、そのまま
+version化します。public schemaは各source itemのrealized edit countを記録し、count以上の
+budgetをclean endpointとして扱います。該当itemを暗黙に除外したり、編集を水増ししたりは
+しません。
+
+submitted experimentのgroupingとの互換性のため、復元単位には連続した `difflib` の
+character edit groupを使います。論文では編集語と記述していますが、1 groupが
+空白区切りの1語と常に1対1対応するとは限りません。public recordではこの違いを
+隠さず、realized groupとsource eventの両方を記録します。
+
+各settingは `restoration_order_records.jsonl`、
+`restoration_order_summary.json`、`run.json` を出力します。builderは
+`restoration_order_table.json`、`table13_restoration_order.csv`、
+`table13_restoration_order.md`、`table13_restoration_order.tex`、`run.json` を
+出力します。renderした各結果にはfreshなpool済みcohort sizeを表示し、MarkdownとLaTeXには
+historical PDFのcohort sizeも併記します。settingの最終output directoryは全artifactを原子的に
+commitした後にだけ現れます。
+中断時はprivateな作業directoryに対してのみ `--resume` で続行します。`--limit 1` はGPU
+smoke runと明記され、完全grid builderは拒否します。source selection、reconstruction、batching、
+provenance、inference、restart契約の詳細は
+[`docs/restoration-order-accuracy.md`](docs/restoration-order-accuracy.md) にあります。
+
 ## テスト
 
 ```bash
@@ -886,6 +990,7 @@ uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_build_one
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_edit_count_sensitivity.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_typo_warning_prompt.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_input_corrector_*.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_restoration_order_*.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 
@@ -898,5 +1003,4 @@ exerciseします。
 
 ここで追跡するのは、公開実験カタログ、実装済みrunner、runtime依存、テストだけです。
 中間のExp1--20 script、machine固有設定、archived outputは論文再現インターフェースでは
-ないため除外しています。未実装の `restoration-order-accuracy` はカタログにのみ載り、
-そのrunnerの機能PRで追加します。
+ないため除外しています。

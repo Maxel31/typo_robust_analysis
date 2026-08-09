@@ -584,26 +584,36 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
     ),
     ExperimentSpec(
         slug="restoration-order-accuracy",
-        title="Restore edited words in relevance and random orders",
-        paper_question="Input-correction audit",
+        title="Compare edited-word restoration orders",
+        paper_question="Restoration-order oracle diagnostic",
         paper_sections=("§4.3", "Appendix E", "Table 13"),
         summary=(
-            "Restore equal numbers of edited words in high-relevance-first, seeded-random, "
-            "or low-relevance-first order and regenerate the answer."
+            "Restore equal numbers of submitted edit groups in high-relevance-first, "
+            "seeded-random, or low-relevance-first order and regenerate the answer."
         ),
-        cohort="The 1,582 archived-selected items from three models and two tasks.",
-        intervention="Restore one, two, or three of the four edited words in the chosen order.",
-        readout="Paired free-answer accuracy at each clean-word restoration budget.",
+        cohort=(
+            "Fresh source-selected items from three models and two tasks; the final PDF "
+            "reports a historical pooled n of 1,582 for comparison."
+        ),
+        intervention="Restore one, two, or three edit groups in the chosen order.",
+        readout="Paired free-answer accuracy at each restoration budget.",
         required_arguments=(
             "--model",
             "--benchmark",
             "--pairs",
-            "--order",
+            "--orders",
             "--budgets",
+            "--seed",
+            "--batch-size",
             "--output-dir",
         ),
-        outputs=("restoration_order_records.jsonl", "restoration_order_summary.json"),
+        outputs=(
+            "restoration_order_records.jsonl",
+            "restoration_order_summary.json",
+            "run.json",
+        ),
         compute="gpu",
+        status="implemented",
     ),
 )
 

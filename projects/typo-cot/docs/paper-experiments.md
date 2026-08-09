@@ -86,7 +86,7 @@ refactor, a direct command is executable only when its catalog status is
 | `model-scale-cot-swap` | Appendix C, Table 9 | Same first 500 MMLU IDs across the model scale ladder |
 | `typo-warning-prompt` | §4.3, Appendix E | Paired edited-input accuracy with/without the warning |
 | `input-corrector-audit` | §4.3, Appendix E, Table 12 | Edited-word restoration, intact-word changes, and provenance controls |
-| `restoration-order-accuracy` | §4.3, Appendix E, Table 13 | Accuracy after restoring 1/2/3 words in three orders |
+| `restoration-order-accuracy` | §4.3, Appendix E, Table 13 | Item-micro accuracy at shared endpoints and after restoring 1/2/3 words in three orders; paired high-first versus random inference |
 
 These rates are not interchangeable. In particular, layerwise KL, layerwise
 answer generation, fixed-window answer generation, complete-text CoT swap, and
@@ -95,11 +95,12 @@ never pool them into stages of a single causal path.
 
 ### Headline cohort invariants
 
-These counts are acceptance checks for later runner and aggregation PRs. A
-reproduction may expose additional sensitivity rows, but it must not silently
-substitute one row's denominator for another. The source column points to the
-submitted PDF page and labeled table, figure, or appendix paragraph used for
-the transcription; the PDF fingerprint above identifies that exact artifact.
+Unless a row is explicitly labelled historical or published, these counts are
+acceptance checks for later runner and aggregation PRs. A reproduction may
+expose additional sensitivity rows, but it must not silently substitute one
+row's denominator for another. The source column points to the submitted PDF
+page and labeled table, figure, or appendix paragraph used for the
+transcription; the PDF fingerprint above identifies that exact artifact.
 
 | Analysis | Paper cohort invariant | Final-PDF source |
 |---|---|---|
@@ -114,14 +115,16 @@ the transcription; the PDF fingerprint above identifies that exact artifact.
 | Answer-line deletion | GSM8K n=333 and MMLU n=450 in the three-model controls | p. 7, Table 1; p. 12, Table 3 |
 | Clean-prefix extensions | 2,100 deterministic targets from 5,918 capped candidates; 2,094 valid scans; 1,858 fresh k=0 errors | p. 12, Table 3 and Appendix A; p. 17, Table 10 |
 | One-token diagnostic | Primary n=153 and extensions n=1,629; distant common four-arm subset n=1,575; adjacent subset n=391 | p. 17, Table 10; p. 18, Table 11 |
+| Edited-word restoration order | Historical six-setting source-selected cohort n=1,582; freshly generated edited/clean endpoints 12.0%/88.9%; three intermediate budgets in each order | p. 19, Table 13 |
 
-The fixed-window counts in this table are publication references, not an
-acceptance requirement for a fresh run. Preserved historical records show that
-the published induction aggregate treated some unextractable patched answers as
-incorrect changes, whereas the final PDF explicitly defines an unextractable
-answer as a failed intervention readout. The public runner follows the latter
-rule, records this historical discrepancy, and never counts an unextractable
-patched answer as restoration or induction.
+The fixed-window counts and the Table 13 historical cohort and endpoints in
+this table are publication references, not acceptance requirements for a fresh
+run. Preserved historical records show that the published induction aggregate
+treated some unextractable patched answers as incorrect changes, whereas the
+final PDF explicitly defines an unextractable answer as a failed intervention
+readout. The public runner follows the latter rule, records this historical
+discrepancy, and never counts an unextractable patched answer as restoration or
+induction.
 
 For layerwise KL patching, the normalized restoration readout is
 
@@ -333,11 +336,16 @@ uv run --project projects/typo-cot \
   --runs-root results/input-corrector-audit/core \
   --output-dir results/input-corrector-summary
 
-uv run typo-cot restoration-order-accuracy \
+uv run --project projects/typo-cot --extra lrp typo-cot restoration-order-accuracy \
   --model google/gemma-3-4b-it --benchmark gsm8k \
-  --pairs data/cohorts/restoration-order/gemma-3-4b-it_gsm8k.jsonl \
-  --order high-relevance seeded-random low-relevance --budgets 1 2 3 \
+  --pairs results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/attribution-4/pairs.jsonl \
+  --orders high-relevance-first seeded-random low-relevance-first \
+  --budgets 0 1 2 3 4 --seed 42 --batch-size 8 --gpu-id 0 \
   --output-dir results/restoration-order-accuracy/gemma-3-4b-it/gsm8k
+
+uv run --project projects/typo-cot typo-cot build-restoration-order-table \
+  --runs-root results/restoration-order-accuracy \
+  --output-dir results/restoration-order-table
 ```
 
 The typo-warning summary command is CPU-only in that it loads no model weights
@@ -353,6 +361,17 @@ from the paper's separate archived-run comparison. Optional MATH-500
 collateral-change runs are reported as a diagnostic and never enter the core
 mean. The full grid and protocol are documented in
 [`input-corrector-audit.md`](input-corrector-audit.md).
+
+The Table 13 protocol-replication runner freezes its fresh cohort from complete
+source clean-correct and four-edit-wrong outcomes, then freshly generates two
+shared endpoints and nine intermediate conditions without re-filtering. Its
+strict six-setting grid, submitted edit-group reconstruction, frozen
+non-security MD5 random-order
+compatibility, micro-pooling, exact paired inference, and restart contract are
+documented in
+[`restoration-order-accuracy.md`](restoration-order-accuracy.md). The printed
+historical values are comparison references, not acceptance thresholds for a
+fresh public cohort.
 
 ## Target package layout
 
