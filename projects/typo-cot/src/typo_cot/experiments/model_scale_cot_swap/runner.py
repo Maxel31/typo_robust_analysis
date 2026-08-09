@@ -126,19 +126,29 @@ def _metadata(path: Path) -> dict[str, object]:
 
 
 def _code_identity() -> dict[str, object]:
-    package = Path(__file__).resolve().parent
-    paths = sorted(package.glob("*.py"))
+    package = Path(__file__).resolve().parents[2]
+    paths = sorted(
+        package.rglob("*.py"),
+        key=lambda path: path.relative_to(package).as_posix(),
+    )
     digest = hashlib.sha256()
     files: list[dict[str, object]] = []
     for path in paths:
+        relative_path = path.relative_to(package).as_posix()
         file_hash = _sha256(path)
-        digest.update(path.name.encode("utf-8"))
+        digest.update(relative_path.encode("utf-8"))
         digest.update(b"\0")
         digest.update(file_hash.encode("ascii"))
         digest.update(b"\0")
-        files.append({"path": path.name, "bytes": path.stat().st_size, "sha256": file_hash})
+        files.append(
+            {
+                "path": relative_path,
+                "bytes": path.stat().st_size,
+                "sha256": file_hash,
+            }
+        )
     return {
-        "algorithm": "sorted-relative-path-and-file-sha256/v1",
+        "algorithm": "sorted-typo-cot-python-relative-path-and-file-sha256/v1",
         "python_file_count": len(files),
         "sha256": digest.hexdigest(),
         "files": files,

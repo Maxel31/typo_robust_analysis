@@ -342,6 +342,12 @@ def run_prepare_edited_pairs(
     if len(sample_ids) != len(set(sample_ids)):
         raise ValueError("dataset returned duplicate sample IDs")
 
+    # The runner owns cohort/limit selection. The production runtime uses this
+    # optional hook only to fingerprint the exact records selected above.
+    record_selected_samples = getattr(runtime, "record_selected_samples", None)
+    if callable(record_selected_samples):
+        record_selected_samples(samples)
+
     provenance = _cohort_provenance(
         runtime.provenance(),
         cohort=cohort,

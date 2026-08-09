@@ -417,6 +417,45 @@ def _write_sample_id_cohort(
     return path
 
 
+def test_builtin_runtime_leaves_cohort_selection_to_the_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    samples = [
+        SimpleNamespace(
+            sample_id=sample_id,
+            question=f"question {sample_id}",
+            choices=["a", "b"],
+            correct_answer="A",
+            subset="subject",
+        )
+        for sample_id in ("a", "b")
+    ]
+
+    class FakeLoader:
+        def load(self) -> list[SimpleNamespace]:
+            return samples
+
+    monkeypatch.setattr(loader_module, "create_loader", lambda **_kwargs: FakeLoader())
+    cohort_path = _write_sample_id_cohort(tmp_path / "cohort.json", ["b"])
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        sample_ids=cohort_path,
+        output_dir=tmp_path / "out",
+    )
+    runtime = object.__new__(HuggingFacePairPreparationRuntime)
+    runtime.internal_benchmark = "gsm8k"
+    runtime._dataset_provenance = {}
+
+    assert runtime.load_samples(config) == samples
+
+    runtime.record_selected_samples([samples[1]])
+    assert runtime._dataset_provenance["dataset_sample_count"] == 1
+
+
 def test_sample_id_cohort_filters_before_pair_execution_and_is_manifested(
     tmp_path: Path,
 ) -> None:

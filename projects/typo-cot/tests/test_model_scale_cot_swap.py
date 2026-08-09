@@ -53,6 +53,19 @@ OUTPUT_NAMES = {
 }
 
 
+def test_implementation_identity_covers_shared_validation_dependencies() -> None:
+    identity = runner_module._code_identity()
+    paths = [entry["path"] for entry in identity["files"]]
+
+    assert paths == sorted(paths)
+    assert identity["python_file_count"] == len(paths)
+    assert {
+        "data/cohorts.py",
+        "experiments/edit_count_sensitivity/source.py",
+        "experiments/model_scale_cot_swap/aggregation.py",
+    }.issubset(paths)
+
+
 def _command_parser() -> argparse.ArgumentParser:
     parser = cli_module._parser()
     subparsers = next(
