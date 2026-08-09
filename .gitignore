@@ -19,6 +19,10 @@ projects/*/data/*
 projects/*/analysis/figures/*
 !**/analysis/figures/.gitkeep
 
+# Existing clones may still contain runs created by the retired tracker.
+wandb/
+**/wandb/
+
 # env / secrets
 .env
 

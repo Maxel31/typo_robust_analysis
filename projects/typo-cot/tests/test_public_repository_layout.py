@@ -359,6 +359,22 @@ def test_existing_top_level_dataset_cache_remains_ignored() -> None:
     assert completed.stdout.splitlines() == [local_cache_path]
 
 
+def test_existing_wandb_run_directories_remain_ignored() -> None:
+    local_run_paths = {
+        "wandb/latest-run/files/output.log",
+        "projects/typo-cot/wandb/run-legacy/files/config.yaml",
+    }
+    completed = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--stdin"],
+        cwd=REPOSITORY_ROOT,
+        input="\n".join(sorted(local_run_paths)),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert set(completed.stdout.splitlines()) == local_run_paths
+
+
 def test_cli_only_exposes_reviewed_public_commands() -> None:
     parser = cli_module._parser()
     subparsers = next(
