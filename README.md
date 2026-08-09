@@ -1,5 +1,7 @@
 # Edited-Word Activation Patching
 
+[English](README.md) | [日本語](README.ja.md)
+
 Reproduction code for **“Edited-Word Activation Patching Reverses Selected
 Typo-Induced Answer Changes after Tokenization.”**
 
@@ -8,11 +10,12 @@ Experiment names describe the operation they perform—for example,
 `layerwise-kl-patching`, `cot-swap`, and `clean-prefix-scan`. Paper labels such
 as RQ1 are used only as cross-references.
 
-## Source of truth
+## Paper and reproduction
 
-The final 19-page paper PDF is the primary source for experimental design,
-cohorts, denominators, and reported evidence. Its canonical SHA-256 is emitted
-from the experiment catalog's single source of truth:
+Start with the setup and per-experiment commands below. The final 19-page paper
+defines the experimental design, cohorts, denominators, and reported results
+that those commands reproduce. The catalog prints its SHA-256 so that a local
+copy of the paper can be checked when needed:
 
 ```bash
 uv run --project projects/typo-cot typo-cot experiments source
@@ -25,8 +28,9 @@ sha256sum "/path/to/Edited-Word Activation Patching Reverses Selected Typo-Induc
 uv run --project projects/typo-cot typo-cot experiments source
 ```
 
-If an old script, branch, result note, or README disagrees with that PDF, the
-PDF wins. The transcribed experiment contract is documented in
+The hash is an integrity check, not an extra input to the experiments. If an
+old script, branch, result note, or README disagrees with the final paper, use
+the paper's specification. The transcribed experiment contract is documented in
 [`paper-experiments.md`](projects/typo-cot/docs/paper-experiments.md).
 
 ## Quick start
@@ -57,10 +61,12 @@ inspection and contract tests require no model download.
 ├── _sample_project/                # retained legacy project template
 ├── datasets/                       # shared dataset storage and local caches
 ├── README.md
+├── README.ja.md
 ├── pyproject.toml                 # uv workspace
 ├── uv.lock                        # shared environment lock
 ├── projects/typo-cot/
 │   ├── README.md                  # package setup and current commands
+│   ├── README.ja.md               # Japanese setup and current commands
 │   ├── docs/                      # paper contract and provenance
 │   ├── results/                   # ignored local outputs (.gitkeep only)
 │   ├── src/typo_cot/              # importable implementation

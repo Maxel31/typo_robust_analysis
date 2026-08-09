@@ -1,11 +1,14 @@
 # typo-cot reproduction package
 
+[English](README.md) | [日本語](README.ja.md)
+
 This package contains the public reproduction interface for **“Edited-Word
 Activation Patching Reverses Selected Typo-Induced Answer Changes after
 Tokenization.”**
 
-The final paper is the primary experimental specification. Its canonical
-SHA-256 is available from the catalog's single source of truth:
+Use the setup and operation-specific commands in this guide to reproduce the
+paper. The final paper defines the experimental protocol and reported results;
+the catalog prints its SHA-256 for optional local-PDF integrity checks:
 
 ```bash
 uv run --project projects/typo-cot typo-cot experiments source
