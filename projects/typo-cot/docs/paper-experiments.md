@@ -305,14 +305,11 @@ uv run --project projects/typo-cot typo-cot edit-count-sensitivity \
   --edit-counts 1 2 4 \
   --output-dir results/edit-count-sensitivity
 
-uv run typo-cot model-scale-cot-swap \
-  --models google/gemma-3-1b-it google/gemma-3-4b-it \
-    google/gemma-3-12b-it google/gemma-3-27b-it \
-    meta-llama/Llama-3.2-1B-Instruct meta-llama/Llama-3.2-3B-Instruct \
-    meta-llama/Llama-3.1-70B-Instruct mistralai/Mistral-7B-Instruct-v0.3 \
-    Qwen/Qwen2.5-72B-Instruct \
-  --benchmark mmlu --pairs-root data/cohorts/model-scale-cot-swap \
-  --output-dir results/model-scale-cot-swap/mmlu
+uv run --project projects/typo-cot typo-cot model-scale-cot-swap \
+  --pairs-root results/model-scale-pairs \
+  --cot-swap-runs-root results/model-scale-cot-swap-runs \
+  --cohort projects/typo-cot/data/cohorts/model_scale_mmlu_first500.json \
+  --output-dir results/model-scale-cot-swap
 
 uv run typo-cot typo-warning-prompt \
   --model google/gemma-3-4b-it --benchmark gsm8k \

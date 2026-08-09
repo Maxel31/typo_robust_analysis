@@ -61,6 +61,11 @@ from typo_cot.experiments.layerwise_kl_patching import (
     LayerwiseKLPatchingRunError,
     run_layerwise_kl_patching,
 )
+from typo_cot.experiments.model_scale_cot_swap import (
+    ModelScaleCotSwapConfig,
+    ModelScaleCotSwapInputError,
+    run_model_scale_cot_swap,
+)
 from typo_cot.experiments.one_token_prefix_replacement import (
     POSITION_CONTROLS as ONE_TOKEN_POSITION_CONTROLS,
 )
@@ -166,6 +171,11 @@ def _parser() -> argparse.ArgumentParser:
     pairs.add_argument("--seed", type=int, default=42)
     pairs.add_argument("--max-new-tokens", type=_positive_int, default=512)
     pairs.add_argument("--gpu-id", default="0")
+    pairs.add_argument(
+        "--sample-ids",
+        type=Path,
+        help="Versioned sample-ID cohort; mutually exclusive with --limit.",
+    )
     pairs.add_argument("--limit", type=_positive_int)
     pairs.add_argument("--resume", action="store_true")
 
@@ -277,6 +287,15 @@ def _parser() -> argparse.ArgumentParser:
         choices=(1, 2, 4),
     )
     edit_count.add_argument("--output-dir", required=True, type=Path)
+
+    model_scale = commands.add_parser(
+        "model-scale-cot-swap",
+        help="Build Appendix C/Table 9 from verified model-scale producer runs.",
+    )
+    model_scale.add_argument("--pairs-root", required=True, type=Path)
+    model_scale.add_argument("--cot-swap-runs-root", required=True, type=Path)
+    model_scale.add_argument("--cohort", required=True, type=Path)
+    model_scale.add_argument("--output-dir", required=True, type=Path)
 
     targeting_audit = commands.add_parser(
         "targeting-fidelity-audit",
@@ -482,6 +501,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     seed=args.seed,
                     max_new_tokens=args.max_new_tokens,
                     gpu_id=args.gpu_id,
+                    sample_ids=args.sample_ids,
                     limit=args.limit,
                     resume=args.resume,
                 )
@@ -665,6 +685,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"built Table 8 from {result.accuracy_settings} accuracy setting(s) and "
             f"{result.restoration_settings} restoration setting(s): {result.summary_path}"
         )
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "model-scale-cot-swap":
+        try:
+            result = run_model_scale_cot_swap(
+                ModelScaleCotSwapConfig(
+                    pairs_root=args.pairs_root,
+                    cot_swap_runs_root=args.cot_swap_runs_root,
+                    cohort=args.cohort,
+                    output_dir=args.output_dir,
+                )
+            )
+        except (
+            FileExistsError,
+            OSError,
+            ModelScaleCotSwapInputError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            print(f"model-scale-cot-swap: error: {exc}", file=sys.stderr)
+            return 1
+        print(f"built Table 9 from {result.settings} model setting(s): {result.summary_path}")
         print(f"run manifest: {result.run_path}")
         return 0
     if args.command == "targeting-fidelity-audit":

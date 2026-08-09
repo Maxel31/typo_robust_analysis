@@ -46,7 +46,7 @@ _protocol_sha256_for = cot_swap_protocol.protocol_sha256_for
 
 COT_SWAP_BENCHMARKS = tuple(_BENCHMARK_NAMES)
 TARGETING_CONDITIONS = ("attribution-4", "random-4")
-_GPU_ID = re.compile(r"0|[1-9][0-9]*")
+_GPU_ID = re.compile(r"(?:0|[1-9][0-9]*)(?:,(?:0|[1-9][0-9]*))*")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 _MAIN_MODELS = frozenset(
@@ -135,7 +135,10 @@ class CotSwapConfig:
         if self.source_num_edits not in {1, 2, 4} or isinstance(self.source_num_edits, bool):
             raise ValueError("source_num_edits must be one of 1, 2, or 4")
         if not isinstance(self.gpu_id, str) or _GPU_ID.fullmatch(self.gpu_id) is None:
-            raise ValueError("gpu_id must be a single non-negative integer")
+            raise ValueError("gpu_id must be comma-separated non-negative integers")
+        gpu_ids = self.gpu_id.split(",")
+        if len(gpu_ids) != len(set(gpu_ids)):
+            raise ValueError("gpu_id values must be unique")
         if self.limit is not None and (
             not isinstance(self.limit, int) or isinstance(self.limit, bool) or self.limit <= 0
         ):
@@ -282,6 +285,7 @@ class _Source:
     model_revision: str
     dataset_records_sha256: str
     dataset_sample_count: int
+    sample_id_cohort: Mapping[str, object] | None
 
 
 def _now() -> str:
@@ -556,15 +560,17 @@ def _load_source(config: CotSwapConfig) -> _Source:
             raise ValueError(f"source run decoding.{field} must be {expected!r}")
 
     provenance = _mapping(manifest.get("provenance"), field="source run provenance")
+    cohort_rule = provenance.get("dataset_cohort_rule")
+    if cohort_rule not in {
+        "paper-model-benchmark-cohort/v1",
+        "explicit-sample-id-cohort/v1",
+    }:
+        raise ValueError("source run dataset cohort rule is unsupported")
     expected_source_provenance = {
         "model": (config.model, "model"),
         "benchmark_dataset_loader": (
             _BENCHMARK_NAMES[config.benchmark],
             "benchmark dataset loader",
-        ),
-        "dataset_cohort_rule": (
-            "paper-model-benchmark-cohort/v1",
-            "dataset cohort rule",
         ),
         "random_seed_algorithm": ("sha256-first-64-bits/v1", "seed algorithm"),
         "generation_protocol": (
@@ -586,6 +592,39 @@ def _load_source(config: CotSwapConfig) -> _Source:
     )
     if provenance.get("dataset_samples_per_subset") != expected_subset_cap:
         raise ValueError(f"source run samples-per-subset cap must be {expected_subset_cap!r}")
+    sample_id_cohort: Mapping[str, object] | None = None
+    if cohort_rule == "explicit-sample-id-cohort/v1":
+        _nonempty_string(arguments.get("sample_ids"), field="source run arguments.sample_ids")
+        sample_id_cohort = _mapping(
+            provenance.get("sample_id_cohort"),
+            field="source run provenance.sample_id_cohort",
+        )
+        required_cohort = {
+            "schema_version": "sample-id-cohort/v1",
+            "benchmark": config.benchmark,
+            "model_samples_per_subset": expected_subset_cap,
+        }
+        for field, expected in required_cohort.items():
+            if sample_id_cohort.get(field) != expected:
+                raise ValueError(f"source run sample-ID cohort {field} must be {expected!r}")
+        for field in ("cohort_id", "selection", "provenance"):
+            _nonempty_string(
+                sample_id_cohort.get(field),
+                field=f"source run provenance.sample_id_cohort.{field}",
+            )
+        for field in ("sample_ids_sha256", "artifact_sha256"):
+            digest = _nonempty_string(
+                sample_id_cohort.get(field),
+                field=f"source run provenance.sample_id_cohort.{field}",
+            )
+            if _SHA256.fullmatch(digest) is None:
+                raise ValueError(f"source run sample-ID cohort {field} must be SHA-256")
+        _positive_int(
+            sample_id_cohort.get("sample_count"),
+            field="source run provenance.sample_id_cohort.sample_count",
+        )
+    elif "sample_ids" in arguments or "sample_id_cohort" in provenance:
+        raise ValueError("source run default cohort cannot contain explicit sample-ID metadata")
     model_revision = _nonempty_string(
         provenance.get("model_revision"), field="source run provenance.model_revision"
     )
@@ -610,6 +649,10 @@ def _load_source(config: CotSwapConfig) -> _Source:
         raise ValueError(
             "source run must contain the complete dataset: discovered, written, and "
             "dataset_sample_count must match"
+        )
+    if sample_id_cohort is not None and sample_id_cohort.get("selected_sample_count") != written:
+        raise ValueError(
+            "source run sample-ID cohort selected count must match the complete pair source"
         )
 
     source_pairs: list[_SourcePair] = []
@@ -652,11 +695,12 @@ def _load_source(config: CotSwapConfig) -> _Source:
         model_revision=model_revision,
         dataset_records_sha256=dataset_records_sha256,
         dataset_sample_count=dataset_sample_count,
+        sample_id_cohort=sample_id_cohort,
     )
 
 
 def _source_payload(source: _Source) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "pairs": str(source.path.resolve()),
         "pairs_sha256": source.pairs_sha256,
         "source_run": str(source.run_path.resolve()),
@@ -667,6 +711,9 @@ def _source_payload(source: _Source) -> dict[str, object]:
         "dataset_sample_count": source.dataset_sample_count,
         "record_count": len(source.pairs),
     }
+    if source.sample_id_cohort is not None:
+        payload["sample_id_cohort"] = dict(source.sample_id_cohort)
+    return payload
 
 
 def _build_plans(

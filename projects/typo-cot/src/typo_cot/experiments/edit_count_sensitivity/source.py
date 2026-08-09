@@ -10,6 +10,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from typo_cot.data.cohorts import SampleIdCohort
 from typo_cot.evaluation.fallback import answers_equal
 from typo_cot.experiments.catalog import PAPER_SHA256
 from typo_cot.experiments.cot_swap.protocol import protocol_for as cot_swap_protocol_for
@@ -72,6 +73,7 @@ class PreparedEditCountRun:
     model_revision: str
     dataset_records_sha256: str
     dataset_sample_count: int
+    sample_id_cohort: Mapping[str, object] | None = None
 
     @property
     def setting(self) -> tuple[str, str]:
@@ -93,6 +95,7 @@ class CotSwapEditCountRun:
     records_sha256: str
     source_pairs_sha256: str
     source_run_sha256: str
+    source_record_count: int = 0
 
     @property
     def setting(self) -> tuple[str, str]:
@@ -285,6 +288,8 @@ def _validate_prepare_manifest(
     manifest: dict[str, object],
     *,
     edit_counts: frozenset[int],
+    expected_settings: frozenset[tuple[str, str]] | None = None,
+    sample_id_cohort: SampleIdCohort | None = None,
 ) -> PreparedEditCountRun | None:
     if manifest.get("operation") != "prepare-edited-pairs":
         return None
@@ -305,6 +310,8 @@ def _validate_prepare_manifest(
     benchmark = _string(arguments.get("benchmark"), context=f"{path}.arguments.benchmark")
     if benchmark not in _DATASET_LOADERS:
         raise EditCountSensitivityInputError(f"{path}: unsupported benchmark {benchmark!r}")
+    if expected_settings is not None and (model, benchmark) not in expected_settings:
+        return None
     if arguments.get("seed") != 42:
         raise EditCountSensitivityInputError(f"{path}: prepare seed must be 42")
     if arguments.get("max_new_tokens") != 512:
@@ -316,10 +323,15 @@ def _validate_prepare_manifest(
         if decoding.get(field) != expected or type(decoding.get(field)) is not type(expected):
             raise EditCountSensitivityInputError(f"{path}: decoding.{field} must be {expected!r}")
     provenance = _mapping(manifest.get("provenance"), context=f"{path}.provenance")
+    expected_cohort_rule = (
+        "explicit-sample-id-cohort/v1"
+        if sample_id_cohort is not None
+        else "paper-model-benchmark-cohort/v1"
+    )
     for field, expected in (
         ("model", model),
         ("benchmark_dataset_loader", _DATASET_LOADERS[benchmark]),
-        ("dataset_cohort_rule", "paper-model-benchmark-cohort/v1"),
+        ("dataset_cohort_rule", expected_cohort_rule),
         ("random_seed_algorithm", "sha256-first-64-bits/v1"),
         ("generation_protocol", "explicit-greedy-generation/v1"),
         ("target_position", "maximum-logit-after-first-cot-token"),
@@ -331,6 +343,29 @@ def _validate_prepare_manifest(
     if provenance.get("dataset_samples_per_subset") != expected_subset_cap:
         raise EditCountSensitivityInputError(
             f"{path}: dataset_samples_per_subset does not match the paper cohort"
+        )
+    cohort_provenance: Mapping[str, object] | None = None
+    if sample_id_cohort is not None:
+        if benchmark != sample_id_cohort.benchmark:
+            raise EditCountSensitivityInputError(
+                f"{path}: prepare benchmark does not match the sample-ID cohort"
+            )
+        if not isinstance(arguments.get("sample_ids"), str) or not arguments.get("sample_ids"):
+            raise EditCountSensitivityInputError(
+                f"{path}: explicit cohort prepare run is missing arguments.sample_ids"
+            )
+        cohort_provenance = _mapping(
+            provenance.get("sample_id_cohort"),
+            context=f"{path}.provenance.sample_id_cohort",
+        )
+        expected_cohort_provenance = sample_id_cohort.provenance_for(model)
+        if dict(cohort_provenance) != expected_cohort_provenance:
+            raise EditCountSensitivityInputError(
+                f"{path}: sample-ID cohort provenance does not match the requested artifact"
+            )
+    elif "sample_ids" in arguments or "sample_id_cohort" in provenance:
+        raise EditCountSensitivityInputError(
+            f"{path}: default cohort run contains unexpected explicit sample-ID metadata"
         )
     model_revision = _string(
         provenance.get("model_revision"), context=f"{path}.provenance.model_revision"
@@ -353,6 +388,16 @@ def _validate_prepare_manifest(
         raise EditCountSensitivityInputError(
             f"{path}: prepare run is not a complete unlimited dataset cohort"
         )
+    if sample_id_cohort is not None:
+        expected_count = sample_id_cohort.expected_count_for(model)
+        if expected_count is None:
+            raise EditCountSensitivityInputError(
+                f"{path}: sample-ID cohort has no coverage contract for {model}"
+            )
+        if written != expected_count:
+            raise EditCountSensitivityInputError(
+                f"{path}: prepare count does not match the sample-ID cohort"
+            )
     pairs_path = path.parent / "pairs.jsonl"
     rows = _load_jsonl(pairs_path)
     if len(rows) != written:
@@ -380,6 +425,12 @@ def _validate_prepare_manifest(
         record_sha256_by_id[sample_id] = hashlib.sha256(
             raw_lines[line_number - 1].encode("utf-8")
         ).hexdigest()
+    if sample_id_cohort is not None and not set(records_by_id).issubset(
+        sample_id_cohort.sample_ids
+    ):
+        raise EditCountSensitivityInputError(
+            f"{pairs_path}: pair sample IDs fall outside the requested cohort"
+        )
     return PreparedEditCountRun(
         model=model,
         benchmark=benchmark,
@@ -394,6 +445,7 @@ def _validate_prepare_manifest(
         model_revision=model_revision,
         dataset_records_sha256=dataset_hash,
         dataset_sample_count=dataset_count,
+        sample_id_cohort=cohort_provenance,
     )
 
 
@@ -401,16 +453,25 @@ def discover_prepared_runs(
     root: Path,
     *,
     edit_counts: Sequence[int],
+    expected_settings: Sequence[tuple[str, str]] | None = None,
+    sample_id_cohort: SampleIdCohort | None = None,
 ) -> tuple[PreparedEditCountRun, ...]:
     """Discover relevant completed pair preparations below an arbitrary layout."""
     root = Path(root)
     if not root.is_dir():
         raise EditCountSensitivityInputError(f"pairs_root is not a directory: {root}")
     requested = frozenset(edit_counts)
+    settings = frozenset(expected_settings) if expected_settings is not None else None
     found: dict[tuple[str, str, int], PreparedEditCountRun] = {}
     for path in sorted(root.rglob("run.json")):
         manifest = _load_json(path)
-        validated = _validate_prepare_manifest(path, manifest, edit_counts=requested)
+        validated = _validate_prepare_manifest(
+            path,
+            manifest,
+            edit_counts=requested,
+            expected_settings=settings,
+            sample_id_cohort=sample_id_cohort,
+        )
         if validated is None:
             continue
         key = (validated.model, validated.benchmark, validated.edit_count)
@@ -467,6 +528,8 @@ def _validate_cot_source(
         "dataset_sample_count": prepared.dataset_sample_count,
         "record_count": len(prepared.records),
     }
+    if prepared.sample_id_cohort is not None:
+        expected["sample_id_cohort"] = dict(prepared.sample_id_cohort)
     for field, expected_value in expected.items():
         if source.get(field) != expected_value or type(source.get(field)) is not type(
             expected_value
@@ -654,6 +717,7 @@ def _validate_cot_manifest(
     *,
     edit_counts: frozenset[int],
     prepared_by_key: Mapping[tuple[str, str, int], PreparedEditCountRun],
+    expected_settings: frozenset[tuple[str, str]],
 ) -> CotSwapEditCountRun | None:
     if manifest.get("operation") != "cot-swap":
         return None
@@ -662,7 +726,7 @@ def _validate_cot_manifest(
         return None
     model = _string(arguments.get("model"), context=f"{path}.arguments.model")
     benchmark = _string(arguments.get("benchmark"), context=f"{path}.arguments.benchmark")
-    if (model, benchmark) not in EXPECTED_RESTORATION_SETTINGS:
+    if (model, benchmark) not in expected_settings:
         return None
     protocol = _mapping(manifest.get("protocol"), context=f"{path}.protocol")
     edit_count = _source_num_edits(arguments, protocol, path=path)
@@ -910,6 +974,7 @@ def _validate_cot_manifest(
         records_sha256=_sha256(outputs["cot_swap_records.jsonl"]),
         source_pairs_sha256=source_pairs_hash,
         source_run_sha256=source_run_hash,
+        source_record_count=len(prepared.records),
     )
 
 
@@ -918,6 +983,7 @@ def discover_cot_swap_runs(
     *,
     edit_counts: Sequence[int],
     prepared_runs: Sequence[PreparedEditCountRun],
+    expected_settings: Sequence[tuple[str, str]] = EXPECTED_RESTORATION_SETTINGS,
 ) -> tuple[CotSwapEditCountRun, ...]:
     """Discover the six-setting restoration grid and bind every run to its source."""
     root = Path(root)
@@ -925,6 +991,7 @@ def discover_cot_swap_runs(
         raise EditCountSensitivityInputError(f"cot_swap_runs_root is not a directory: {root}")
     requested = frozenset(edit_counts)
     prepared = {(run.model, run.benchmark, run.edit_count): run for run in prepared_runs}
+    settings = frozenset(expected_settings)
     found: dict[tuple[str, str, int], CotSwapEditCountRun] = {}
     for path in sorted(root.rglob("run.json")):
         manifest = _load_json(path)
@@ -933,6 +1000,7 @@ def discover_cot_swap_runs(
             manifest,
             edit_counts=requested,
             prepared_by_key=prepared,
+            expected_settings=settings,
         )
         if validated is None:
             continue

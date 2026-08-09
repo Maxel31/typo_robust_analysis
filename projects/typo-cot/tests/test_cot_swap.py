@@ -149,6 +149,7 @@ def _write_pair_source(
     targeting: str = "attribution-4",
     limit: int | None = None,
     num_edits: int = 4,
+    sample_id_cohort: Mapping[str, object] | None = None,
 ) -> Path:
     root.mkdir(parents=True)
     ordered = sorted(pairs, key=lambda row: str(row["sample_id"]))
@@ -171,6 +172,11 @@ def _write_pair_source(
                 "gpu_id": "0",
                 "limit": limit,
                 "output_dir": str(root.resolve()),
+                **(
+                    {"sample_ids": str((root / "cohort.json").resolve())}
+                    if sample_id_cohort is not None
+                    else {}
+                ),
             },
             "counts": {
                 "discovered": len(ordered),
@@ -200,7 +206,11 @@ def _write_pair_source(
                     "mmlu-pro": "mmlu_pro",
                     "csqa": "commonsense_qa",
                 }.get(benchmark, benchmark),
-                "dataset_cohort_rule": "paper-model-benchmark-cohort/v1",
+                "dataset_cohort_rule": (
+                    "explicit-sample-id-cohort/v1"
+                    if sample_id_cohort is not None
+                    else "paper-model-benchmark-cohort/v1"
+                ),
                 "dataset_sample_count": len(ordered),
                 "dataset_records_sha256": "d" * 64,
                 "dataset_samples_per_subset": {
@@ -212,6 +222,11 @@ def _write_pair_source(
                 "target_position": "maximum-logit-after-first-cot-token",
                 "alignment": "actual-edited-word-final-token",
                 "historical_compatibility_notes": [],
+                **(
+                    {"sample_id_cohort": dict(sample_id_cohort)}
+                    if sample_id_cohort is not None
+                    else {}
+                ),
             },
         },
     )
@@ -424,7 +439,8 @@ def test_catalog_and_cli_expose_the_completed_cot_swap_operation(
         ({"model": ""}, "model must not be empty"),
         ({"benchmark": "math-500"}, "unsupported benchmark"),
         ({"targeting": "top-4"}, "unsupported targeting"),
-        ({"gpu_id": "0,1"}, "single non-negative integer"),
+        ({"gpu_id": "0,0"}, "unique"),
+        ({"gpu_id": "00"}, "comma-separated"),
         ({"limit": 0}, "positive integer"),
         ({"source_num_edits": 3}, "one of 1, 2, or 4"),
     ),
@@ -436,6 +452,65 @@ def test_config_rejects_non_paper_or_ambiguous_arguments(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         _config(tmp_path / "pairs.jsonl", tmp_path / "out", **changes)
+
+
+def test_config_accepts_ordered_unique_model_parallel_gpu_ids(tmp_path: Path) -> None:
+    config = _config(
+        tmp_path / "pairs.jsonl",
+        tmp_path / "out",
+        gpu_id="0,2,3",
+    )
+
+    assert config.gpu_id == "0,2,3"
+    assert config.public_arguments()["gpu_id"] == "0,2,3"
+
+
+def test_explicit_sample_id_cohort_is_preserved_in_cot_swap_sources(
+    tmp_path: Path,
+) -> None:
+    cohort = {
+        "schema_version": "sample-id-cohort/v1",
+        "cohort_id": "fixture-mmlu-first500",
+        "benchmark": "gsm8k",
+        "selection": "fixture-order/v1",
+        "provenance": "test-fixture",
+        "sample_count": 1,
+        "sample_ids_sha256": "a" * 64,
+        "artifact_sha256": "b" * 64,
+        "model_samples_per_subset": None,
+        "selected_sample_count": 1,
+    }
+    source = _write_pair_source(
+        tmp_path / "prepared",
+        [_pair("sample", model="test/model", benchmark="gsm8k")],
+        model="test/model",
+        benchmark="gsm8k",
+        sample_id_cohort=cohort,
+    )
+    runtime = _Runtime(
+        provenance_changes={
+            "model": "test/model",
+            "requested_revision": "source-revision",
+            "model_revision": "source-revision",
+            "tokenizer_revision": "source-revision",
+        }
+    )
+
+    result = run_cot_swap(
+        CotSwapConfig(
+            model="test/model",
+            benchmark="gsm8k",
+            pairs=source,
+            targeting="attribution-4",
+            output_dir=tmp_path / "cot",
+        ),
+        runtime=runtime,
+    )
+
+    manifest = json.loads(result.run_path.read_text(encoding="utf-8"))
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert manifest["source"]["sample_id_cohort"] == cohort
+    assert summary["source"]["sample_id_cohort"] == cohort
 
 
 def test_runner_labels_a_two_edit_cot_swap_as_table8_sensitivity(
@@ -1467,6 +1542,74 @@ def test_runtime_scan_builds_and_extracts_all_cells_in_paper_order() -> None:
     assert generated_order == list(CELL_ORDER)
     assert list(scan.input_uses) == list(CELL_ORDER)
     assert list(scan.generations) == list(CELL_ORDER)
+
+
+def test_runtime_uses_all_requested_visible_devices_for_model_sharding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    torch = pytest.importorskip("torch")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 2)
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda index: f"gpu-{index}")
+    monkeypatch.setattr(
+        torch.cuda,
+        "get_device_properties",
+        lambda index: SimpleNamespace(total_memory=(index + 1) * 1024),
+    )
+
+    class FakeModel:
+        config = SimpleNamespace(_commit_hash="source-revision")
+        generation_config = SimpleNamespace(
+            stop_strings=None,
+            forced_eos_token_id=None,
+            eos_token_id=1,
+        )
+        hf_device_map = {"model.embed_tokens": 0, "lm_head": 1}
+
+        def eval(self) -> None:
+            return None
+
+        def parameters(self) -> object:
+            return iter((torch.tensor(0),))
+
+    tokenizer = SimpleNamespace(
+        init_kwargs={"_commit_hash": "source-revision"},
+        eos_token_id=1,
+        padding_side="right",
+    )
+    calls: list[dict[str, object]] = []
+
+    def fake_wrapper(**kwargs: object) -> object:
+        calls.append(dict(kwargs))
+        return SimpleNamespace(model=FakeModel(), tokenizer=tokenizer)
+
+    import typo_cot.models.wrapper as wrapper_module
+
+    monkeypatch.setattr(wrapper_module, "create_model_wrapper", fake_wrapper)
+    config = CotSwapConfig(
+        model="test/model",
+        benchmark="mmlu",
+        pairs=tmp_path / "pairs.jsonl",
+        targeting="attribution-4",
+        output_dir=tmp_path / "out",
+        gpu_id="0,1",
+    )
+
+    runtime = HuggingFaceCotSwapRuntime(config, revision="source-revision")
+    provenance = runtime.provenance()
+
+    assert calls[0]["gpu_id"] == "0,1"
+    assert calls[0]["wrap_for_lxt"] is False
+    assert provenance["cuda_visible_devices"] == "0,1"
+    assert provenance["model_parallel"] is True
+    assert provenance["gpu_names"] == ["gpu-0", "gpu-1"]
+    assert provenance["gpu_total_memory_bytes"] == [1024, 2048]
+    assert provenance["model_device_map"] == {
+        "lm_head": 1,
+        "model.embed_tokens": 0,
+    }
 
 
 def test_runtime_batch_trims_each_row_at_its_own_eos_and_preserves_a_16_token_cap(

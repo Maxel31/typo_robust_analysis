@@ -83,10 +83,11 @@ class HuggingFaceCotSwapRuntime:
 
         if not torch.cuda.is_available():
             raise RuntimeError("cot-swap requires the requested CUDA GPU")
-        if torch.cuda.device_count() != 1:
+        requested_device_count = len(config.gpu_id.split(","))
+        if torch.cuda.device_count() != requested_device_count:
             raise RuntimeError(
-                "cot-swap requires exactly one visible GPU; set CUDA_VISIBLE_DEVICES "
-                "to one physical device"
+                "cot-swap visible GPU count does not match --gpu-id: "
+                f"expected {requested_device_count}, found {torch.cuda.device_count()}"
             )
 
         from typo_cot.models.wrapper import create_model_wrapper
@@ -359,7 +360,7 @@ class HuggingFaceCotSwapRuntime:
         model_revision = model_metadata_revision or self.revision
         tokenizer_metadata_revision = getattr(self.tokenizer, "init_kwargs", {}).get("_commit_hash")
         tokenizer_revision = tokenizer_metadata_revision or self.revision
-        return {
+        payload: dict[str, object] = {
             "operation": "cot-swap",
             "runtime": "HuggingFaceCotSwapRuntime",
             "python": platform.python_version(),
@@ -382,8 +383,6 @@ class HuggingFaceCotSwapRuntime:
             "device": str(self.device),
             "cuda": torch.version.cuda,
             "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
-            "gpu_name": torch.cuda.get_device_name(0),
-            "gpu_total_memory_bytes": torch.cuda.get_device_properties(0).total_memory,
             "generation": {
                 **_GENERATION,
                 "eos_token_id": list(self.effective_eos_token_ids),
@@ -396,3 +395,23 @@ class HuggingFaceCotSwapRuntime:
             "answer_extraction": _ANSWER_EXTRACTION,
             "text_intervention": dict(_TEXT_INTERVENTION),
         }
+        device_count = torch.cuda.device_count()
+        if device_count == 1:
+            # Retain the established single-GPU manifest byte shape.
+            payload["gpu_name"] = torch.cuda.get_device_name(0)
+            payload["gpu_total_memory_bytes"] = torch.cuda.get_device_properties(0).total_memory
+        else:
+            payload["model_parallel"] = True
+            payload["gpu_names"] = [
+                torch.cuda.get_device_name(index) for index in range(device_count)
+            ]
+            payload["gpu_total_memory_bytes"] = [
+                torch.cuda.get_device_properties(index).total_memory
+                for index in range(device_count)
+            ]
+            raw_device_map = getattr(self.model, "hf_device_map", {})
+            payload["model_device_map"] = {
+                str(key): value if isinstance(value, (int, str)) else str(value)
+                for key, value in sorted(raw_device_map.items())
+            }
+        return payload
