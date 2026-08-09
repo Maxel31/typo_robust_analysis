@@ -22,7 +22,6 @@ from typo_cot.evaluation.fallback import answers_equal, extract_with_fallback
 from typo_cot.experiments.catalog import PAPER_SHA256
 from typo_cot.experiments.cot_swap.planning import (
     CELL_ORDER,
-    CELL_SIDES,
     CellPlan,
     CotSwapPlan,
     build_cell_plan,
@@ -39,72 +38,16 @@ _BENCHMARK_NAMES = cot_swap_protocol.BENCHMARK_DATASET_NAMES
 _GENERATION = cot_swap_protocol.GENERATION
 _IMPLEMENTATION = cot_swap_protocol.IMPLEMENTATION
 _TEXT_INTERVENTION = cot_swap_protocol.TEXT_INTERVENTION
+_ANSWER_EXTRACTION_DETAIL = cot_swap_protocol.ANSWER_EXTRACTION_DETAIL
+_EDIT_VALIDITY = cot_swap_protocol.EDIT_VALIDITY
+_PROTOCOL = cot_swap_protocol.PROTOCOL
+_protocol_for = cot_swap_protocol.protocol_for
+_protocol_sha256_for = cot_swap_protocol.protocol_sha256_for
 
 COT_SWAP_BENCHMARKS = tuple(_BENCHMARK_NAMES)
 TARGETING_CONDITIONS = ("attribution-4", "random-4")
 _GPU_ID = re.compile(r"0|[1-9][0-9]*")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
-
-_EDIT_VALIDITY = {
-    "policy": "stored-prompts-differ-and-positive-target-attempts/v1",
-    "requires_prompt_difference": True,
-    "requires_positive_target_attempts": True,
-    "zero_edit_restoration": "undefined-excluded-before-template-filter",
-}
-_ANSWER_EXTRACTION_DETAIL = {
-    "primary_precedence": "task-extractor-preserve-nonempty/v1",
-    "fallback_invocation": "empty-primary-only-symmetric-a-b-c-d/v1",
-    "max_token_cap_gate": "disable-positional-numeric-n4-n5-only/v1",
-    "regex_and_cap_gate_source": "legacy-backed-detail-not-specified-by-final-pdf",
-}
-_PROGRESS_PERSISTENCE = "atomic-checkpoints-power-of-two-manifest-flush/v1"
-_PROTOCOL = {
-    "schema_version": "cot-swap-protocol/v1",
-    "source": "completed-unlimited-prepare-edited-pairs-v1",
-    "source_generation": {
-        "seed": 42,
-        "num_edits_requested": 4,
-        "max_new_tokens": 512,
-    },
-    "edit_validity": dict(_EDIT_VALIDITY),
-    "template_filter": {
-        "policy": "submitted-first-[Tt]he-answer-is-filter/v1",
-        "implementation_source": "legacy-backed-detail-not-specified-by-final-pdf",
-        "requires_both_sides": True,
-        "requires_one_trigger": True,
-        "early_trigger_ratio_exclusive": 0.25,
-        "rejects_residual_answer_fragment": True,
-    },
-    "cells": {cell: list(CELL_SIDES[cell]) for cell in CELL_ORDER},
-    "implementation": _IMPLEMENTATION,
-    "batching": dict(_BATCHING),
-    "answer_span_decoding": dict(_ANSWER_SPAN_DECODING),
-    "generation": dict(_GENERATION),
-    "answer_extraction": _ANSWER_EXTRACTION,
-    "answer_extraction_detail": dict(_ANSWER_EXTRACTION_DETAIL),
-    "progress_persistence": _PROGRESS_PERSISTENCE,
-    "change_denominator": (
-        "edit-valid-template-eligible-successfully-executed-regenerated-a-correct"
-    ),
-    "both_changed": "canonical-b-does-not-equal-canonical-a",
-    "question_only_changed": "canonical-c-does-not-equal-canonical-a",
-    "cot_only_changed": "canonical-d-does-not-equal-canonical-a",
-    "restoration": "canonical-c-equals-canonical-a-conditioned-on-b-not-equal-a",
-    "unextractable": "non-equality-failure-retained-in-applicable-denominator",
-    "analysis": "descriptive-four-cell-counts-only",
-    "historical_conflict": (
-        "final-pdf-requires-symmetric-fallback-but-printed-headline-kept-legacy-a-correct"
-    ),
-}
-_PROTOCOL_SHA256 = hashlib.sha256(
-    json.dumps(
-        _PROTOCOL,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
-).hexdigest()
 
 _MAIN_MODELS = frozenset(
     {
@@ -175,6 +118,7 @@ class CotSwapConfig:
     pairs: Path
     targeting: Literal["attribution-4", "random-4"]
     output_dir: Path
+    source_num_edits: int = 4
     gpu_id: str = "0"
     limit: int | None = None
     resume: bool = False
@@ -188,6 +132,8 @@ class CotSwapConfig:
             raise ValueError(f"unsupported benchmark: {self.benchmark!r}")
         if self.targeting not in TARGETING_CONDITIONS:
             raise ValueError(f"unsupported targeting condition: {self.targeting!r}")
+        if self.source_num_edits not in {1, 2, 4} or isinstance(self.source_num_edits, bool):
+            raise ValueError("source_num_edits must be one of 1, 2, or 4")
         if not isinstance(self.gpu_id, str) or _GPU_ID.fullmatch(self.gpu_id) is None:
             raise ValueError("gpu_id must be a single non-negative integer")
         if self.limit is not None and (
@@ -202,6 +148,8 @@ class CotSwapConfig:
         payload["pairs"] = str(self.pairs.resolve())
         payload["output_dir"] = str(self.output_dir.resolve())
         payload.pop("resume")
+        if self.source_num_edits == 4:
+            payload.pop("source_num_edits")
         return payload
 
 
@@ -503,8 +451,9 @@ def _validate_pair_record(
             raise ValueError(f"{context}: record {field} does not match the requested source")
     if record.get("seed") != 42:
         raise ValueError(f"{context}: record seed must be paper seed 42")
-    if record.get("num_edits_requested") != 4:
-        raise ValueError(f"{context}: record must request four edits")
+    if record.get("num_edits_requested") != config.source_num_edits:
+        label = {1: "one edit", 2: "two edits", 4: "four edits"}[config.source_num_edits]
+        raise ValueError(f"{context}: record must request {label}")
     _nonempty_string(record.get("gold_answer"), field=f"{context}.gold_answer")
 
     validated_counts: dict[str, int] = {}
@@ -523,8 +472,9 @@ def _validate_pair_record(
         ):
             raise ValueError(f"{context}: {count_field} must match {list_field}")
         validated_counts[count_field] = count
-    if validated_counts["num_target_attempts"] > 4:
-        raise ValueError(f"{context}: record must contain at most four target attempts")
+    if validated_counts["num_target_attempts"] > config.source_num_edits:
+        label = {1: "one", 2: "two", 4: "four"}[config.source_num_edits]
+        raise ValueError(f"{context}: record must contain at most {label} target attempts")
     if validated_counts["num_aligned_words"] > validated_counts["num_target_attempts"]:
         raise ValueError(f"{context}: aligned words cannot exceed target attempts")
 
@@ -576,8 +526,9 @@ def _load_source(config: CotSwapConfig) -> _Source:
             raise ValueError(f"source run {field} does not match the requested setting")
     if arguments.get("seed") != 42:
         raise ValueError("source run must use paper seed 42")
-    if arguments.get("num_edits") != 4:
-        raise ValueError("source run must request four edits")
+    if arguments.get("num_edits") != config.source_num_edits:
+        label = {1: "one edit", 2: "two edits", 4: "four edits"}[config.source_num_edits]
+        raise ValueError(f"source run must request {label}")
     if "limit" not in arguments or arguments.get("limit") is not None:
         raise ValueError("source pair preparation must not be limited")
     if arguments.get("max_new_tokens") != 512:
@@ -765,7 +716,7 @@ def _comparability(config: CotSwapConfig) -> dict[str, object]:
     requirements = {
         "final_paper_protocol": True,
         "unlimited_complete_preparation_source": True,
-        "four_requested_edits": True,
+        "four_requested_edits": config.source_num_edits == 4,
         "seed_42": True,
         "answer_span_cap_16": True,
         "symmetric_fallback_all_cells": True,
@@ -786,9 +737,14 @@ def _comparability(config: CotSwapConfig) -> dict[str, object]:
         "printed-headline-used-asymmetric-legacy-a-correct-while-final-pdf-requires-symmetry",
         "appendix-c-table-9-model-scale-grid-is-a-separate-operation",
     ]
+    if config.source_num_edits != 4:
+        requirements["requested_edit_count"] = config.source_num_edits
     if config.limit is not None:
         limitations.append("run-is-limit-truncated")
         status = "partial-smoke-run"
+    elif config.source_num_edits in {1, 2}:
+        limitations.append("appendix-c-edit-count-sensitivity-source")
+        status = "fresh-edit-count-sensitivity-setting"
     elif config.model in _MAIN_MODELS:
         status = "fresh-paper-protocol-setting"
     else:
@@ -1002,10 +958,11 @@ def _checkpoint_payload(
     return {
         "schema_version": "cot-swap-checkpoint/v1",
         "paper_sha256": PAPER_SHA256,
-        "protocol_sha256": _PROTOCOL_SHA256,
+        "protocol_sha256": _protocol_sha256_for(config.source_num_edits),
         "model": config.model,
         "benchmark": config.benchmark,
         "targeting": config.targeting,
+        **({"source_num_edits": config.source_num_edits} if config.source_num_edits != 4 else {}),
         "sample_id": pair.sample_id,
         "source_pairs_sha256": source.pairs_sha256,
         "source_run_sha256": source.run_sha256,
@@ -1030,10 +987,11 @@ def _scan_from_checkpoint(
     expected = {
         "schema_version": "cot-swap-checkpoint/v1",
         "paper_sha256": PAPER_SHA256,
-        "protocol_sha256": _PROTOCOL_SHA256,
+        "protocol_sha256": _protocol_sha256_for(config.source_num_edits),
         "model": config.model,
         "benchmark": config.benchmark,
         "targeting": config.targeting,
+        **({"source_num_edits": config.source_num_edits} if config.source_num_edits != 4 else {}),
         "sample_id": pair.sample_id,
         "source_pairs_sha256": source.pairs_sha256,
         "source_run_sha256": source.run_sha256,
@@ -1214,6 +1172,7 @@ def _record(
         "model": config.model,
         "benchmark": config.benchmark,
         "targeting": config.targeting,
+        **({"source_num_edits": config.source_num_edits} if config.source_num_edits != 4 else {}),
         "sample_id": pair.sample_id,
         "gold_answer": pair.record["gold_answer"],
         "source": {
@@ -1349,6 +1308,7 @@ def _summary(
         "model": config.model,
         "benchmark": config.benchmark,
         "targeting": config.targeting,
+        **({"source_num_edits": config.source_num_edits} if config.source_num_edits != 4 else {}),
         "source": _source_payload(source),
         "counts": {
             "source_records": len(all_plans),
@@ -1448,8 +1408,8 @@ def _manifest(
         "operation": "cot-swap",
         "status": status,
         "arguments": config.public_arguments(),
-        "protocol": _PROTOCOL,
-        "protocol_sha256": _PROTOCOL_SHA256,
+        "protocol": _protocol_for(config.source_num_edits),
+        "protocol_sha256": _protocol_sha256_for(config.source_num_edits),
         "source": _source_payload(source),
         "plan": dict(plan),
         "runtime": dict(runtime) if runtime is not None else None,
@@ -1482,7 +1442,9 @@ def _validate_resume_core(
         raise ValueError("resume status is not recognized")
     if previous.get("arguments") != config.public_arguments():
         raise ValueError("resume arguments do not match the existing run")
-    if previous.get("protocol") != _PROTOCOL or previous.get("protocol_sha256") != _PROTOCOL_SHA256:
+    if previous.get("protocol") != _protocol_for(config.source_num_edits) or previous.get(
+        "protocol_sha256"
+    ) != _protocol_sha256_for(config.source_num_edits):
         raise ValueError("resume protocol fingerprint does not match")
     if previous.get("source") != _source_payload(source):
         raise ValueError("resume source input fingerprint does not match")

@@ -90,6 +90,7 @@ def _pair(
     ),
     edited_continuation: str = ("The edited calculation instead produces three.\nThe answer is 3."),
     edited: bool = True,
+    num_edits: int = 4,
 ) -> dict[str, object]:
     clean_prompt = f"few-shot context\nQuestion: clean {sample_id}\nAnswer:"
     edited_prompt = (
@@ -113,7 +114,7 @@ def _pair(
         "benchmark": benchmark,
         "targeting": targeting,
         "seed": 42,
-        "num_edits_requested": 4,
+        "num_edits_requested": num_edits,
         "num_candidates": 8,
         "num_target_attempts": len(attempts),
         "num_aligned_words": 0,
@@ -147,6 +148,7 @@ def _write_pair_source(
     benchmark: str = "gsm8k",
     targeting: str = "attribution-4",
     limit: int | None = None,
+    num_edits: int = 4,
 ) -> Path:
     root.mkdir(parents=True)
     ordered = sorted(pairs, key=lambda row: str(row["sample_id"]))
@@ -163,7 +165,7 @@ def _write_pair_source(
                 "model": model,
                 "benchmark": benchmark,
                 "targeting": targeting,
-                "num_edits": 4,
+                "num_edits": num_edits,
                 "seed": 42,
                 "max_new_tokens": 512,
                 "gpu_id": "0",
@@ -387,6 +389,8 @@ def test_catalog_and_cli_expose_the_completed_cot_swap_operation(
                 "results/prepared/pairs.jsonl",
                 "--targeting",
                 "attribution-4",
+                "--source-num-edits",
+                "2",
                 "--gpu-id",
                 "0",
                 "--limit",
@@ -405,6 +409,7 @@ def test_catalog_and_cli_expose_the_completed_cot_swap_operation(
             pairs=Path("results/prepared/pairs.jsonl"),
             targeting="attribution-4",
             output_dir=Path("results/cot-swap"),
+            source_num_edits=2,
             gpu_id="0",
             limit=1,
             resume=True,
@@ -421,6 +426,7 @@ def test_catalog_and_cli_expose_the_completed_cot_swap_operation(
         ({"targeting": "top-4"}, "unsupported targeting"),
         ({"gpu_id": "0,1"}, "single non-negative integer"),
         ({"limit": 0}, "positive integer"),
+        ({"source_num_edits": 3}, "one of 1, 2, or 4"),
     ),
 )
 def test_config_rejects_non_paper_or_ambiguous_arguments(
@@ -430,6 +436,30 @@ def test_config_rejects_non_paper_or_ambiguous_arguments(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         _config(tmp_path / "pairs.jsonl", tmp_path / "out", **changes)
+
+
+def test_runner_labels_a_two_edit_cot_swap_as_table8_sensitivity(
+    tmp_path: Path,
+) -> None:
+    source = _write_pair_source(
+        tmp_path / "prepared",
+        [_pair("sample", num_edits=2)],
+        num_edits=2,
+    )
+
+    result = run_cot_swap(
+        _config(source, tmp_path / "output", source_num_edits=2),
+        runtime=_Runtime(),
+    )
+
+    manifest = json.loads(result.run_path.read_text(encoding="utf-8"))
+    summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
+    assert manifest["arguments"]["source_num_edits"] == 2
+    assert manifest["protocol"]["source_generation"]["num_edits_requested"] == 2
+    assert manifest["comparability"]["requirements"]["requested_edit_count"] == 2
+    assert manifest["comparability"]["status"] == "fresh-edit-count-sensitivity-setting"
+    assert summary["source_num_edits"] == 2
+    assert summary["comparability"] == manifest["comparability"]
 
 
 @pytest.mark.parametrize(

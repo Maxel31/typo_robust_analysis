@@ -859,6 +859,121 @@ prespecified settings. Cluster keys, resampling counts, seed derivation, and
 the Figure 5 field-by-field scope are documented in
 [`docs/build-one-token-tables.md`](docs/build-one-token-tables.md).
 
+## Measure sensitivity to the number of edits
+
+`edit-count-sensitivity` builds Appendix C/Table 8 from fresh, verified
+setting-level artifacts. The accuracy and CoT-swap parts have different grids
+and denominators, so their GPU producers remain explicit rather than being
+hidden inside the CPU aggregation command.
+
+First run `prepare-edited-pairs` with Attribution-4 separately for one, two,
+and four requested edits in the exact 51-setting accuracy grid:
+
+```bash
+ACCURACY_FULL_MODELS=(
+  google/gemma-3-1b-it
+  google/gemma-3-4b-it
+  google/gemma-3-12b-it
+  meta-llama/Llama-3.2-1B-Instruct
+  meta-llama/Llama-3.2-3B-Instruct
+  mistralai/Mistral-7B-Instruct-v0.3
+  Qwen/Qwen2.5-0.5B-Instruct
+  Qwen/Qwen2.5-1.5B-Instruct
+)
+ACCURACY_BENCHMARKS=(arc csqa gsm8k math-500 mmlu mmlu-pro)
+
+prepare_edit_count_setting() {
+  local MODEL="$1"
+  local BENCHMARK="$2"
+  local MODEL_SLUG="${MODEL##*/}"
+  for EDIT_COUNT in 1 2 4; do
+    CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+      typo-cot prepare-edited-pairs \
+      --model "${MODEL}" \
+      --benchmark "${BENCHMARK}" \
+      --targeting attribution-4 \
+      --num-edits "${EDIT_COUNT}" \
+      --gpu-id 0 \
+      --output-dir \
+        "results/edit-count-pairs/${MODEL_SLUG}/${BENCHMARK}/${EDIT_COUNT}"
+  done
+}
+
+for MODEL in "${ACCURACY_FULL_MODELS[@]}"; do
+  for BENCHMARK in "${ACCURACY_BENCHMARKS[@]}"; do
+    prepare_edit_count_setting "${MODEL}" "${BENCHMARK}"
+  done
+done
+for BENCHMARK in gsm8k mmlu mmlu-pro; do
+  prepare_edit_count_setting Qwen/Qwen2.5-3B-Instruct "${BENCHMARK}"
+done
+```
+
+For the six restoration settings—Gemma-3-4B, Llama-3.2-3B, and Mistral-7B
+crossed with GSM8K and MMLU—run the same four-cell CoT swap from each edit-count
+source. `--source-num-edits` defaults to four for the main CoT-swap experiment;
+the explicit value below labels the Table 8 sensitivity protocol:
+
+```bash
+RESTORATION_MODELS=(
+  google/gemma-3-4b-it
+  meta-llama/Llama-3.2-3B-Instruct
+  mistralai/Mistral-7B-Instruct-v0.3
+)
+for MODEL in "${RESTORATION_MODELS[@]}"; do
+  MODEL_SLUG="${MODEL##*/}"
+  for BENCHMARK in gsm8k mmlu; do
+    for EDIT_COUNT in 1 2 4; do
+      CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
+        typo-cot cot-swap \
+        --model "${MODEL}" \
+        --benchmark "${BENCHMARK}" \
+        --pairs \
+          "results/edit-count-pairs/${MODEL_SLUG}/${BENCHMARK}/${EDIT_COUNT}/pairs.jsonl" \
+        --targeting attribution-4 \
+        --source-num-edits "${EDIT_COUNT}" \
+        --gpu-id 0 \
+        --output-dir \
+          "results/edit-count-cot-swap/${MODEL_SLUG}/${BENCHMARK}/${EDIT_COUNT}"
+    done
+  done
+done
+```
+
+After all producers finish, build Table 8 on CPU:
+
+```bash
+uv run --project projects/typo-cot \
+  typo-cot edit-count-sensitivity \
+  --pairs-root results/edit-count-pairs \
+  --cot-swap-runs-root results/edit-count-cot-swap \
+  --edit-counts 1 2 4 \
+  --output-dir results/edit-count-sensitivity
+```
+
+The builder recursively discovers completed producer manifests and verifies the
+paper fingerprint, protocol, setting identity, source and output hashes, full
+unlimited cohorts, and record-level integer events. Accuracy uses complete
+Attribution-4 model–benchmark settings. Its equal-setting row keeps each
+condition's full denominator, while its matched row intersects sample IDs over
+clean, one-, two-, and four-edit conditions. Clean answers must agree across
+the three independently prepared sources. CoT restoration is undefined at zero
+edits and conditions separately at each edit count on a regenerated correct A
+whose B answer changes; those three denominators are never intersected.
+
+The final-PDF grid is complete only with the exact 51 accuracy settings above
+and all eighteen CoT-swap runs (six settings by three edit counts). The PDF
+specifies the count and six benchmarks; setting identities are recovered from
+the submitted Table 8 source and frozen only to prevent a different 51-cell
+grid from being mislabeled. Partial valid inputs remain
+auditable, but the corresponding paper-pooled comparison is omitted. The
+output directory must not already exist and is published atomically with
+`edit_count_records.jsonl`, `edit_count_summary.json`,
+`table8_edit_count.csv`, `table8_edit_count.md`, `table8_edit_count.tex`, and
+`run.json`. See
+[`docs/edit-count-sensitivity.md`](docs/edit-count-sensitivity.md) for the
+denominator, validation, historical-reference, and comparability contracts.
+
 ## Tests
 
 ```bash
@@ -875,6 +990,7 @@ uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/te
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_clean_prefix_scan.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_one_token_prefix_replacement.py
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_build_one_token_tables_*.py
+uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_edit_count_sensitivity.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 

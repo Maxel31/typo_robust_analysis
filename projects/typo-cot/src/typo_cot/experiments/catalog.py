@@ -478,17 +478,27 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         paper_sections=("Appendix C", "Table 8"),
         summary="Repeat accuracy and the six-setting CoT-swap pool at one, two, and four edits.",
         cohort="Complete accuracy settings and edit-count-specific CoT-swap change cohorts.",
-        intervention="Prepare and evaluate inputs with an explicit number of edits.",
+        intervention=(
+            "No additional model intervention; validate explicit-count pair preparation "
+            "and CoT-swap producers, then assemble their distinct denominators."
+        ),
         readout="Accuracy and conditional complete-clean-CoT restoration by edit count.",
         required_arguments=(
-            "--model",
-            "--benchmark",
-            "--edit-counts",
             "--pairs-root",
+            "--cot-swap-runs-root",
+            "--edit-counts",
             "--output-dir",
         ),
-        outputs=("edit_count_records.jsonl", "edit_count_summary.json"),
-        compute="gpu",
+        outputs=(
+            "edit_count_records.jsonl",
+            "edit_count_summary.json",
+            "table8_edit_count.csv",
+            "table8_edit_count.md",
+            "table8_edit_count.tex",
+            "run.json",
+        ),
+        compute="cpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="model-scale-cot-swap",
