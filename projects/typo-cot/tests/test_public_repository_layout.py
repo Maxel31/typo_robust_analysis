@@ -129,6 +129,15 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/experiments/fixed_window_answer_patching/patching.py"),
     Path("src/typo_cot/experiments/fixed_window_answer_patching/runner.py"),
     Path("src/typo_cot/experiments/fixed_window_answer_patching/runtime.py"),
+    Path("src/typo_cot/experiments/input_corrector_audit/__init__.py"),
+    Path("src/typo_cot/experiments/input_corrector_audit/aggregation.py"),
+    Path("src/typo_cot/experiments/input_corrector_audit/correctors.py"),
+    Path("src/typo_cot/experiments/input_corrector_audit/integrity.py"),
+    Path("src/typo_cot/experiments/input_corrector_audit/protocol.py"),
+    Path("src/typo_cot/experiments/input_corrector_audit/restoration.py"),
+    Path("src/typo_cot/experiments/input_corrector_audit/runner.py"),
+    Path("src/typo_cot/experiments/input_corrector_audit/runtime.py"),
+    Path("src/typo_cot/experiments/input_corrector_audit/source.py"),
     Path("src/typo_cot/experiments/layerwise_answer_patching/__init__.py"),
     Path("src/typo_cot/experiments/layerwise_answer_patching/metrics.py"),
     Path("src/typo_cot/experiments/layerwise_answer_patching/patching.py"),
@@ -286,6 +295,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         "answer-line-deletion",
         "build-one-token-tables",
         "build-typo-warning-summary",
+        "build-input-corrector-summary",
         "clean-prefix-scan",
         "one-token-prefix-replacement",
         "experiments",
@@ -301,6 +311,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         "prepare-edited-pairs",
         "targeting-fidelity-audit",
         "typo-warning-prompt",
+        "input-corrector-audit",
     }
 
 
@@ -321,3 +332,4 @@ def test_legacy_only_dependencies_and_extras_are_removed() -> None:
     assert dependency_names.isdisjoint(LEGACY_DEPENDENCIES)
     assert "datasets" in dependency_names
     assert set(project.get("optional-dependencies", {})) == {"lrp"}
+    assert "pyspellchecker==0.9.0" in project["optional-dependencies"]["lrp"]

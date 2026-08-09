@@ -45,6 +45,17 @@ from typo_cot.experiments.fixed_window_answer_patching import (
     parse_layer_window,
     run_fixed_window_answer_patching,
 )
+from typo_cot.experiments.input_corrector_audit import (
+    CORRECTOR_IDS,
+    PAPER_MODELS as INPUT_CORRECTOR_MODELS,
+    SUPPORTED_BENCHMARKS as INPUT_CORRECTOR_BENCHMARKS,
+    BuildInputCorrectorSummaryConfig,
+    InputCorrectorAuditConfig,
+    InputCorrectorAuditRunError,
+    InputCorrectorSummaryInputError,
+    run_build_input_corrector_summary,
+    run_input_corrector_audit,
+)
 from typo_cot.experiments.layerwise_answer_patching import (
     DIRECTION_NAMES as ANSWER_DIRECTION_NAMES,
 )
@@ -325,6 +336,36 @@ def _parser() -> argparse.ArgumentParser:
     )
     warning_summary.add_argument("--runs-root", required=True, type=Path)
     warning_summary.add_argument("--output-dir", required=True, type=Path)
+
+    corrector = commands.add_parser(
+        "input-corrector-audit",
+        help="Correct edited inputs and audit Table 12 restoration endpoints.",
+    )
+    corrector.add_argument("--corrector", required=True, choices=CORRECTOR_IDS)
+    corrector.add_argument(
+        "--model",
+        required=True,
+        choices=INPUT_CORRECTOR_MODELS,
+        help="Paper model identifier.",
+    )
+    corrector.add_argument(
+        "--benchmark",
+        required=True,
+        choices=INPUT_CORRECTOR_BENCHMARKS,
+    )
+    corrector.add_argument("--pairs", required=True, type=Path)
+    corrector.add_argument("--gpu-id", default="0")
+    corrector.add_argument("--limit", type=_positive_int)
+    corrector.add_argument("--output-dir", required=True, type=Path)
+    corrector.add_argument("--resume", action="store_true")
+
+    corrector_summary = commands.add_parser(
+        "build-input-corrector-summary",
+        help="Validate the Table 12 grid and build public summary artifacts.",
+    )
+    corrector_summary.add_argument("--runs-root", required=True, type=Path)
+    corrector_summary.add_argument("--math-runs-root", type=Path)
+    corrector_summary.add_argument("--output-dir", required=True, type=Path)
 
     targeting_audit = commands.add_parser(
         "targeting-fidelity-audit",
@@ -771,6 +812,48 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         print(
             f"built typo-warning summary from {result.settings} setting(s): {result.summary_path}"
+        )
+        print(f"CSV: {result.csv_path}")
+        print(f"Markdown: {result.markdown_path}")
+        print(f"LaTeX: {result.latex_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "input-corrector-audit":
+        try:
+            result = run_input_corrector_audit(
+                InputCorrectorAuditConfig(
+                    corrector=args.corrector,
+                    model=args.model,
+                    benchmark=args.benchmark,
+                    pairs=args.pairs,
+                    output_dir=args.output_dir,
+                    gpu_id=args.gpu_id,
+                    limit=args.limit,
+                    resume=args.resume,
+                )
+            )
+        except (OSError, RuntimeError, ValueError, InputCorrectorAuditRunError) as exc:
+            print(f"input-corrector-audit: error: {exc}", file=sys.stderr)
+            return 1
+        print(f"wrote {result.records} corrector record(s): {result.records_path}")
+        print(f"corrector summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "build-input-corrector-summary":
+        try:
+            result = run_build_input_corrector_summary(
+                BuildInputCorrectorSummaryConfig(
+                    runs_root=args.runs_root,
+                    math_runs_root=args.math_runs_root,
+                    output_dir=args.output_dir,
+                )
+            )
+        except (OSError, RuntimeError, ValueError, InputCorrectorSummaryInputError) as exc:
+            print(f"build-input-corrector-summary: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"built input-corrector summary from {result.settings} setting(s): "
+            f"{result.summary_path}"
         )
         print(f"CSV: {result.csv_path}")
         print(f"Markdown: {result.markdown_path}")

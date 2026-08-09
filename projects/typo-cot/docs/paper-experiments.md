@@ -322,10 +322,16 @@ uv run --project projects/typo-cot \
   --runs-root results/typo-warning-prompt \
   --output-dir results/typo-warning-summary
 
-uv run typo-cot input-corrector-audit \
+uv run --project projects/typo-cot --extra lrp typo-cot input-corrector-audit \
   --corrector pyspellchecker --model google/gemma-3-4b-it --benchmark gsm8k \
-  --pairs data/cohorts/input-correction/gemma-3-4b-it_gsm8k.jsonl \
-  --output-dir results/input-corrector-audit/pyspellchecker/gemma-3-4b-it/gsm8k
+  --pairs results/prepare-edited-pairs/gemma-3-4b-it/gsm8k/attribution-4/pairs.jsonl \
+  --gpu-id 0 \
+  --output-dir results/input-corrector-audit/core/pyspellchecker/gemma-3-4b-it/gsm8k
+
+uv run --project projects/typo-cot \
+  typo-cot build-input-corrector-summary \
+  --runs-root results/input-corrector-audit/core \
+  --output-dir results/input-corrector-summary
 
 uv run typo-cot restoration-order-accuracy \
   --model google/gemma-3-4b-it --benchmark gsm8k \
@@ -338,6 +344,15 @@ The typo-warning summary command is CPU-only in that it loads no model weights
 and uses no GPU. It still reloads the pinned public benchmark revisions for
 source validation: `datasets` is a base dependency, and the first uncached
 summary build requires network access.
+
+The input-corrector producer runs one explicitly selected corrector per
+model-task setting. Its Table 12 builder requires all 75 core runs and computes
+`Word` as an equal-weighted mean of 25 setting rates for each corrector. The
+strict final-prompt equality and same-batch duplicate comparison are distinct
+from the paper's separate archived-run comparison. Optional MATH-500
+collateral-change runs are reported as a diagnostic and never enter the core
+mean. The full grid and protocol are documented in
+[`input-corrector-audit.md`](input-corrector-audit.md).
 
 ## Target package layout
 

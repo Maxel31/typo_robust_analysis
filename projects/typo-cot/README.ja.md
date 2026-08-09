@@ -753,6 +753,120 @@ descriptive historical referenceであって合否基準ではありません。
 性能比較でもありません。prompt、selection、validation、schema、restart契約の全詳細は
 [`docs/typo-warning-prompt.md`](docs/typo-warning-prompt.md) にあります。
 
+## 入力訂正器を監査してTable 12を構築する
+
+`input-corrector-audit` は、明示的に選んだ1つの訂正器を、1つのmodel-taskの
+Attribution-4入力集合へ適用します。主実験は5評価model、5 task、3 correctorの
+完全gridです。入力はseed 42、4編集、`attribution-4` targetingで完了した無制限の
+`prepare-edited-pairs` runでなければならず、runnerは訂正器をloadする前に隣接する
+`run.json` を検証します。
+
+最初のloopで、論文の件数（各modelについてcoreは
+1,319/2,850/1,400/1,172/1,221件、MATH-500は500件）を持つ30個のAttribution-4
+model-task入力をすべて準備します。次のloopで75の主corrector設定を実行して表を
+構築します。任意のMATH-500 loopは、T5とQwen訂正器に対するAppendix Eの
+collateral-change診断を再現します。この10 runはTable 12の25-setting meanには入りません。
+
+```bash
+GPU_ID="${GPU_ID:-0}"
+INPUT_CORRECTOR_MODELS=(
+  google/gemma-3-1b-it
+  google/gemma-3-4b-it
+  meta-llama/Llama-3.2-1B-Instruct
+  meta-llama/Llama-3.2-3B-Instruct
+  mistralai/Mistral-7B-Instruct-v0.3
+)
+INPUT_CORRECTOR_BENCHMARKS=(gsm8k mmlu mmlu-pro arc csqa)
+INPUT_CORRECTORS=(pyspellchecker t5-large-spell qwen2.5-7b-instruct)
+INPUT_CORRECTOR_SOURCE_BENCHMARKS=(gsm8k mmlu mmlu-pro arc csqa math-500)
+
+# Prepare the complete Attribution-4 source matrix consumed below.
+for MODEL in "${INPUT_CORRECTOR_MODELS[@]}"; do
+  MODEL_SLUG="${MODEL##*/}"
+  MODEL_SLUG="${MODEL_SLUG,,}"
+  for BENCHMARK in "${INPUT_CORRECTOR_SOURCE_BENCHMARKS[@]}"; do
+    CUDA_VISIBLE_DEVICES="${GPU_ID}" \
+      uv run --project projects/typo-cot --extra lrp \
+      typo-cot prepare-edited-pairs \
+      --model "${MODEL}" \
+      --benchmark "${BENCHMARK}" \
+      --targeting attribution-4 \
+      --num-edits 4 \
+      --seed 42 \
+      --max-new-tokens 512 \
+      --gpu-id "${GPU_ID}" \
+      --output-dir \
+        "results/prepare-edited-pairs/${MODEL_SLUG}/${BENCHMARK}/attribution-4"
+  done
+done
+
+# Run the 75 core corrector settings.
+for MODEL in "${INPUT_CORRECTOR_MODELS[@]}"; do
+  MODEL_SLUG="${MODEL##*/}"
+  MODEL_SLUG="${MODEL_SLUG,,}"
+  for BENCHMARK in "${INPUT_CORRECTOR_BENCHMARKS[@]}"; do
+    for CORRECTOR in "${INPUT_CORRECTORS[@]}"; do
+      CUDA_VISIBLE_DEVICES="${GPU_ID}" \
+        uv run --project projects/typo-cot --extra lrp \
+        typo-cot input-corrector-audit \
+        --corrector "${CORRECTOR}" \
+        --model "${MODEL}" \
+        --benchmark "${BENCHMARK}" \
+        --pairs \
+          "results/prepare-edited-pairs/${MODEL_SLUG}/${BENCHMARK}/attribution-4/pairs.jsonl" \
+        --gpu-id "${GPU_ID}" \
+        --output-dir \
+          "results/input-corrector-audit/core/${CORRECTOR}/${MODEL_SLUG}/${BENCHMARK}"
+    done
+  done
+done
+
+INPUT_CORRECTOR_MATH_CORRECTORS=(t5-large-spell qwen2.5-7b-instruct)
+# Run the optional ten-setting MATH-500 diagnostic.
+for MODEL in "${INPUT_CORRECTOR_MODELS[@]}"; do
+  MODEL_SLUG="${MODEL##*/}"
+  MODEL_SLUG="${MODEL_SLUG,,}"
+  for CORRECTOR in "${INPUT_CORRECTOR_MATH_CORRECTORS[@]}"; do
+    CUDA_VISIBLE_DEVICES="${GPU_ID}" \
+      uv run --project projects/typo-cot --extra lrp \
+      typo-cot input-corrector-audit \
+      --corrector "${CORRECTOR}" \
+      --model "${MODEL}" \
+      --benchmark math-500 \
+      --pairs \
+        "results/prepare-edited-pairs/${MODEL_SLUG}/math-500/attribution-4/pairs.jsonl" \
+      --gpu-id "${GPU_ID}" \
+      --output-dir \
+        "results/input-corrector-audit/math-500/${CORRECTOR}/${MODEL_SLUG}"
+  done
+done
+
+# Build Table 12 and the optional diagnostic summary on CPU.
+uv run --project projects/typo-cot \
+  typo-cot build-input-corrector-summary \
+  --runs-root results/input-corrector-audit/core \
+  --math-runs-root results/input-corrector-audit/math-500 \
+  --output-dir results/input-corrector-summary
+```
+
+`Word` は25個のsetting内完全復元率を等重みで平均した値であり、全語をpoolした比では
+ありません。`Exact clean` はfew-shot textと空白を含む最終clean/corrected promptを
+byte単位で比較します。そのexact promptについて、`Same` は1回の呼び出しで隣接した
+duplicate行を `[p, p, q, q]` として生成します。空白正規化後のrestoration flagは
+診断としてのみ残し、`Exact clean` の定義には使いません。
+
+各設定は `corrector_records.jsonl`、`corrector_audit_summary.json`、`run.json` を
+出力します。builderは `input_corrector_summary.json`、
+`table12_input_correctors.csv`、`table12_input_correctors.md`、
+`table12_input_correctors.tex`、`run.json` を出力します。論文の `archive` 列は
+corrected-generation runと別に保存されたclean runを比較したものです。freshなsource-pair
+比較は別項目として報告しますが、掲載archive件数の代わりにはせず、訂正器の効果や
+差し引けるnoiseとも解釈しません。中断した設定を続行するときだけ `--resume` を追加します。
+`--limit 1` はsmoke runと明記され、完全grid builderは受理しません。訂正prompt、alignment
+metric、provenance、validation、restart契約の詳細は
+[`docs/input-corrector-audit.md`](docs/input-corrector-audit.md) にあります。任意の
+MATH-500 loopを省略する場合は、builder commandの `--math-runs-root` も省略します。
+
 ## テスト
 
 ```bash
@@ -771,6 +885,7 @@ uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/te
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_build_one_token_tables_*.py
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_edit_count_sensitivity.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_typo_warning_prompt.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_input_corrector_*.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 
@@ -783,5 +898,5 @@ exerciseします。
 
 ここで追跡するのは、公開実験カタログ、実装済みrunner、runtime依存、テストだけです。
 中間のExp1--20 script、machine固有設定、archived outputは論文再現インターフェースでは
-ないため除外しています。未実装の `input-corrector-audit` と
-`restoration-order-accuracy` はカタログにのみ載り、各runnerの機能PRで追加します。
+ないため除外しています。未実装の `restoration-order-accuracy` はカタログにのみ載り、
+そのrunnerの機能PRで追加します。
