@@ -20,6 +20,7 @@ from typo_cot.experiments.typo_warning_prompt.protocol import (
 from typo_cot.experiments.typo_warning_prompt.source import DEFAULT_SUBMITTED_INPUTS
 from typo_cot.experiments.typo_warning_prompt.submitted_inputs import (
     SubmittedInputPatch,
+    _subset_from_id,
     apply_submitted_patches,
     load_submitted_input_fixture,
 )
@@ -54,6 +55,14 @@ def test_readmes_explain_gated_model_access_and_authentication() -> None:
         assert "https://huggingface.co/google/gemma-3-4b-it" in readme
         assert "https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct" in readme
         assert "uv run --project projects/typo-cot --extra lrp hf auth login" in readme
+
+
+def test_summary_documentation_discloses_pinned_dataset_network_access() -> None:
+    project = Path(__file__).parents[1]
+    for relative in ("README.md", "README.ja.md", "docs/typo-warning-prompt.md"):
+        document = (project / relative).read_text(encoding="utf-8")
+        assert "network access" in document
+        assert "datasets" in document
 
 
 def test_submitted_patch_application_is_ordered_and_fail_closed() -> None:
@@ -94,6 +103,19 @@ def test_fixture_validates_setting_and_record_hashes(tmp_path: Path) -> None:
     fixture.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="records SHA-256"):
         load_submitted_input_fixture(fixture)
+
+
+@pytest.mark.parametrize(
+    "sample_id",
+    (
+        "mmlu_../../../../tmp/x_0000",
+        "mmlu_subject-name_0000",
+        "mmlu_Subject_0000",
+    ),
+)
+def test_mmlu_sample_id_rejects_unsafe_subset_characters(sample_id: str) -> None:
+    with pytest.raises(ValueError, match="MMLU"):
+        _subset_from_id(sample_id, benchmark="mmlu")
 
 
 def test_plan_rejects_same_length_non_warning_insertion() -> None:

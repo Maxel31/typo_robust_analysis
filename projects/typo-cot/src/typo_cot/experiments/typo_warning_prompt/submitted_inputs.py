@@ -156,7 +156,7 @@ def _subset_from_id(sample_id: str, *, benchmark: str) -> str:
             subset, index = body.rsplit("_", 1)
         except ValueError as exc:
             raise ValueError(f"invalid MMLU sample ID: {sample_id!r}") from exc
-        if not subset or re.fullmatch(r"[0-9]{4}", index) is None:
+        if re.fullmatch(r"[a-z0-9_]+", subset) is None or re.fullmatch(r"[0-9]{4}", index) is None:
             raise ValueError(f"invalid MMLU sample ID: {sample_id!r}")
         return subset
     raise ValueError(f"unsupported submitted benchmark: {benchmark!r}")

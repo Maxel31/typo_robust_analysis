@@ -16,6 +16,7 @@ from pathlib import Path
 
 from typo_cot.experiments.catalog import PAPER_SHA256
 from typo_cot.experiments.typo_warning_prompt.integrity import (
+    analysis_code_identity,
     implementation_code_identity,
     validate_paper_runtime_environment,
 )
@@ -597,7 +598,7 @@ def _load_setting(run_path: Path) -> _Setting | None:
     if plan.get("executed_source_sha256") != selected_source_sha256:
         raise ValueError("setting executed source fingerprint differs from its selected cohort")
     metrics = _metrics(records, model=model, benchmark=benchmark)
-    summary = load_json(summary_path)
+    summary = _mapping(load_json(summary_path), field="setting summary")
     expected_comparability = {
         "status": "exact-submitted-input-paper-grid-setting",
         "requirements": {
@@ -614,19 +615,31 @@ def _load_setting(run_path: Path) -> _Setting | None:
         raise ValueError("setting comparability metadata differs from the paper-grid contract")
     if manifest.get("historical_reference") != HISTORICAL_REFERENCE:
         raise ValueError("setting historical reference metadata differs")
-    expected_summary = {
+    expected_summary_identity = {
         "schema_version": "typo-warning-prompt-summary/v1",
         "paper_sha256": PAPER_SHA256,
         "operation": "typo-warning-prompt",
         "model": model,
         "benchmark": benchmark,
-        **metrics,
+        "n": metrics["n"],
         "selection": dict(plan),
         "comparability": expected_comparability,
         "historical_reference": HISTORICAL_REFERENCE["pooled_by_benchmark"][benchmark],
     }
-    if summary != expected_summary:
-        raise ValueError("setting summary differs from the complete recomputed contract")
+    expected_summary_fields = set(expected_summary_identity) | {
+        "counts",
+        "accuracy",
+        "mcnemar",
+    }
+    if set(summary) != expected_summary_fields:
+        raise ValueError("setting summary has an invalid schema")
+    for field, expected in expected_summary_identity.items():
+        if summary.get(field) != expected:
+            raise ValueError(f"setting summary {field} differs")
+    for field in ("counts", "accuracy"):
+        if summary.get(field) != metrics[field]:
+            raise ValueError(f"setting summary {field} differs from the paired records")
+    _mapping(summary.get("mcnemar"), field="setting summary mcnemar")
     if sha256_file(run_path) != initial_run_sha256:
         raise ValueError(f"setting run snapshot changed while validating: {run_path}")
     if sha256_file(records_path) != initial_records_sha256:
@@ -998,6 +1011,7 @@ def build_typo_warning_summary(
                     "output_dir": str(config.output_dir.resolve()),
                 },
                 "analysis": payload["analysis"],
+                "analysis_code": analysis_code_identity(),
                 "input_settings": input_metadata,
                 "input_grid_sha256": canonical_sha256(input_metadata),
                 "outputs": output_metadata,

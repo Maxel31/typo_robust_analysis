@@ -335,6 +335,25 @@ def test_completed_resume_revalidates_outputs_without_loading_a_runtime(
     assert resumed == result
 
 
+def test_completed_resume_does_not_recompute_the_derived_setting_statistics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _source(tmp_path, count=2)
+    _install_source(monkeypatch, source)
+    config = _config(source, tmp_path / "out")
+    result = run_typo_warning_prompt(config, runtime=FakeRuntime())
+
+    def reject_recomputation(*, b10: int, b01: int) -> dict[str, object]:
+        raise AssertionError(f"statistics were recomputed: {b10=}, {b01=}")
+
+    monkeypatch.setattr(warning_runner, "exact_mcnemar", reject_recomputation)
+
+    resumed = run_typo_warning_prompt(replace(config, resume=True), runtime=None)
+
+    assert resumed == result
+
+
 def test_completed_resume_rejects_semantically_tampered_records(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -414,6 +433,28 @@ def test_runtime_provenance_rejects_non_paper_runtime_or_dependency_versions(
             config=_config(source, tmp_path / "out"),
             source=source,
         )
+
+
+def test_limit_run_retains_every_custom_comparability_limitation(tmp_path: Path) -> None:
+    source = replace(
+        _source(tmp_path, count=1),
+        model="custom/model",
+        fixture_is_bundled_submitted_input=False,
+    )
+    config = replace(
+        _config(source, tmp_path / "out"),
+        model="custom/model",
+        limit=1,
+    )
+
+    comparability = warning_runner._comparability(config, source)
+
+    assert comparability["status"] == "partial-smoke-run"
+    assert set(comparability["limitations"]) >= {
+        "run-is-limit-truncated",
+        "input-fixture-is-not-the-bundled-submitted-artifact",
+        "model-is-outside-submitted-grid",
+    }
 
 
 @pytest.mark.parametrize(

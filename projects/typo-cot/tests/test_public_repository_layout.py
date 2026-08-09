@@ -319,4 +319,5 @@ def test_legacy_only_dependencies_and_extras_are_removed() -> None:
 
     dependency_names = {_dependency_name(item) for item in project["dependencies"]}
     assert dependency_names.isdisjoint(LEGACY_DEPENDENCIES)
+    assert "datasets" in dependency_names
     assert set(project.get("optional-dependencies", {})) == {"lrp"}

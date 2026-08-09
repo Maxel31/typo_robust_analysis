@@ -733,6 +733,15 @@ hash、厳密なpaired ID set、両armの結果を
 `typo_warning_summary.md`、`typo_warning_summary.tex`、`run.json` です。p値は
 discordant pairに対するexact two-sided McNemar/binomial testです。
 
+各settingのsummaryは、byte hashを検証する派生成果物として保持しますが、その保存済み
+metricsはbuilderの入力にしません。公開用統計は検証済みpaired recordから再計算するため、
+CPU analysisを変更してもmodel generationを再実行する必要はありません。
+
+ここでCPU builderとは、model weightをloadせずGPUを使わないという意味です。submitted
+inputを検証するため、GSM8KとMMLUを固定revisionで再度開きます。そのためbase installに
+`datasets` を含め、cacheがない初回buildにはnetwork accessが必要です。互換性のある
+Hugging Face dataset cacheが完全ならofflineでも同じ読み込みを満たせます。
+
 PDFが規定するのはwarning比較、2 task、印刷された正答率、有意性の結論です。英語の
 instruction全文、3-model grid、seed 42 shared-ID shuffle、300件cohort、挿入境界、同一arm
 8件batch、submitted task-specific answer extractor、512-token greedy generationはsubmitted

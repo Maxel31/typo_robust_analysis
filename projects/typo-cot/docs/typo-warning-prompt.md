@@ -113,6 +113,17 @@ and one common protocol/code identity. It revalidates source and output bytes,
 reconstructs every correctness event from generated text, and never trusts a
 stored percentage.
 
+The per-setting summary is retained and byte-attested as a derived artifact,
+but neither completed resume nor the paper builder reinterprets its stored
+McNemar payload with the current statistics code. The builder computes all
+publication metrics afresh from the semantically validated paired records.
+
+CPU-only here means that the builder loads no model weights and uses no GPU. It
+does reload GSM8K and MMLU at the pinned revisions to validate the exact source
+records. The base install therefore includes `datasets`, and an uncached build
+requires network access; a complete compatible Hugging Face dataset cache can
+satisfy those reads offline.
+
 For each benchmark it micro-pools three 300-item settings (`n=900`). With
 `b10 = count(without-warning correct, with-warning wrong)` and
 `b01 = count(without-warning wrong, with-warning correct)`, it reports the exact
@@ -124,9 +135,11 @@ is 1 when there are no discordant pairs.
 A new setting requires an empty output directory. Each completed sample-arm is
 written as an atomic private checkpoint. `--resume` requires identical
 arguments, protocol, submitted input, selected cohort, runtime identity,
-executable Python-file hashes, and checkpoint hashes. It skips only validated
-sample-arms. A completed resume revalidates public outputs and returns without
-loading model weights.
+generation/input/scoring Python-file hashes, and checkpoint hashes. CPU-only
+aggregation and rendering files have a separate identity in the paper-summary
+manifest, so changing them does not invalidate completed GPU generations. It
+skips only validated sample-arms. A completed resume revalidates public outputs
+and returns without loading model weights.
 
 Final setting files are written atomically and private checkpoints are removed
 only after complete validation. The CPU builder stages all artifacts beside the

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,9 @@ from typo_cot.experiments.typo_warning_prompt.planning import (
     WARNING_TEXT,
     inject_typo_warning,
 )
+from typo_cot.experiments.typo_warning_prompt.protocol import PAPER_GRID
 from typo_cot.experiments.typo_warning_prompt.source import (
+    DEFAULT_SUBMITTED_INPUTS,
     canonical_sha256,
     load_warning_sources,
     validate_source_snapshot,
@@ -164,3 +167,50 @@ def test_source_snapshot_detects_fixture_mutation_after_loading(tmp_path: Path) 
 
     with pytest.raises(ValueError, match="source snapshot changed"):
         validate_source_snapshot(source)
+
+
+@pytest.mark.skipif(
+    os.environ.get("TYPO_COT_RUN_NETWORK_TESTS") != "1",
+    reason="set TYPO_COT_RUN_NETWORK_TESTS=1 to load pinned public datasets",
+)
+def test_bundled_sources_reconstruct_all_settings_from_pinned_public_datasets() -> None:
+    expected = {
+        (
+            "google/gemma-3-4b-it",
+            "gsm8k",
+        ): "e53f69bf13bfd6f9dae57f5ddb67e13be33b0fbf2fd7b586d45f8830e90c7c56",
+        (
+            "google/gemma-3-4b-it",
+            "mmlu",
+        ): "a73791adf239bbf7695d935039f5690a5cf0c69af9a3ed7345ae51f6e6943304",
+        (
+            "meta-llama/Llama-3.2-3B-Instruct",
+            "gsm8k",
+        ): "d7dea51f6ff458f8e16010991f2dca72fbad6ba3ab0edda480e64fd761cd0c26",
+        (
+            "meta-llama/Llama-3.2-3B-Instruct",
+            "mmlu",
+        ): "ceee5b83b47bb362810e761d885c7c267afb74cc9d52b0aaa249eeb363dbe61b",
+        (
+            "mistralai/Mistral-7B-Instruct-v0.3",
+            "gsm8k",
+        ): "fe90db1bb040e82e02c443804e6f1ab26c3ce4c75b48b9cafe6b483423f1c46c",
+        (
+            "mistralai/Mistral-7B-Instruct-v0.3",
+            "mmlu",
+        ): "0ceb1ed5ed3c5b3dc7a4c33526eed740858d5cac20208800438c45ecae46ce73",
+    }
+
+    reconstructed = {
+        (model, benchmark): load_warning_sources(
+            DEFAULT_SUBMITTED_INPUTS,
+            model=model,
+            benchmark=benchmark,
+        )
+        for model, benchmark in PAPER_GRID
+    }
+
+    assert {
+        key: (source.shared_sample_count, source.source_sha256)
+        for key, source in reconstructed.items()
+    } == {key: (300, digest) for key, digest in expected.items()}

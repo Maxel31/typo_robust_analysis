@@ -1131,6 +1131,17 @@ benchmark. It writes `typo_warning_summary.json`,
 `typo_warning_summary.tex`, and `run.json`; the p-value is the exact two-sided
 McNemar/binomial test over discordant paired outcomes.
 
+Per-setting summaries remain byte-attested derived artifacts, but the builder
+does not use their stored metrics. It recomputes publication statistics from
+the validated paired records, so CPU-analysis changes do not require another
+model-generation run.
+
+“CPU builder” means that summary construction loads no model weights and needs
+no GPU. It still reopens GSM8K and MMLU at their pinned revisions to verify the
+submitted inputs, so the base installation includes `datasets` and the first
+uncached build requires network access. A complete compatible Hugging Face
+dataset cache can satisfy the same reads offline.
+
 The PDF defines the warning comparison, two tasks, printed accuracies, and
 significance conclusion. The exact English instruction, three-model grid,
 seed-42 shared-ID shuffle, 300-item cohort, insertion boundary, same-arm batches

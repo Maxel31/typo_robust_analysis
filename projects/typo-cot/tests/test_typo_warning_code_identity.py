@@ -29,14 +29,12 @@ def test_warning_code_identity_returns_stable_relative_file_hashes() -> None:
     second = warning_integrity.implementation_code_identity()
 
     assert first == second
-    assert first["algorithm"] == "typo-warning-executable-python-files-sha256/v1"
+    assert first["algorithm"] == "typo-warning-generation-python-files-sha256/v2"
     files = first["files"]
     assert isinstance(files, dict)
     assert list(files) == sorted(files)
-    assert set(files) >= {
+    assert set(files) == {
         "evaluation/extractor.py",
-        "experiments/typo_warning_prompt/__init__.py",
-        "experiments/typo_warning_prompt/aggregation.py",
         "experiments/typo_warning_prompt/integrity.py",
         "experiments/typo_warning_prompt/planning.py",
         "experiments/typo_warning_prompt/protocol.py",
@@ -44,7 +42,6 @@ def test_warning_code_identity_returns_stable_relative_file_hashes() -> None:
         "experiments/typo_warning_prompt/runtime.py",
         "experiments/typo_warning_prompt/scoring.py",
         "experiments/typo_warning_prompt/source.py",
-        "experiments/typo_warning_prompt/statistics.py",
         "experiments/typo_warning_prompt/submitted_inputs.py",
         "models/prompts.py",
         "models/wrapper.py",
@@ -53,6 +50,25 @@ def test_warning_code_identity_returns_stable_relative_file_hashes() -> None:
     assert first["sha256"] == _aggregate_sha256(files)
     for relative, digest in files.items():
         assert not Path(relative).is_absolute()
+        assert digest == hashlib.sha256((package_root / relative).read_bytes()).hexdigest()
+
+
+def test_warning_analysis_identity_records_the_full_cpu_builder_closure() -> None:
+    package_root = Path(warning_integrity.__file__).resolve().parents[2]
+
+    identity = warning_integrity.analysis_code_identity()
+
+    assert identity["algorithm"] == "typo-warning-analysis-python-files-sha256/v1"
+    files = identity["files"]
+    assert isinstance(files, dict)
+    assert set(files) >= {
+        "experiments/typo_warning_prompt/__init__.py",
+        "experiments/typo_warning_prompt/aggregation.py",
+        "experiments/typo_warning_prompt/statistics.py",
+    }
+    assert identity["python_file_count"] == len(files)
+    assert identity["sha256"] == _aggregate_sha256(files)
+    for relative, digest in files.items():
         assert digest == hashlib.sha256((package_root / relative).read_bytes()).hexdigest()
 
 

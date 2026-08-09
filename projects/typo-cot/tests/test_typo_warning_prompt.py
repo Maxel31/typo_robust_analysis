@@ -594,6 +594,48 @@ def test_summary_builder_reproduces_the_printed_pooled_metrics(
                 outcomes=outcomes[index * 300 : (index + 1) * 300],
             )
 
+    tampered_run_path = sorted(runs.rglob("run.json"))[0]
+    tampered_summary_path = tampered_run_path.parent / "warning_prompt_summary.json"
+    original_summary = json.loads(tampered_summary_path.read_text(encoding="utf-8"))
+    original_manifest = json.loads(tampered_run_path.read_text(encoding="utf-8"))
+    for field, value in (("counts", 0), ("accuracy", 0.123)):
+        tampered_summary = json.loads(json.dumps(original_summary))
+        tampered_summary[field][
+            "without_warning_correct" if field == "counts" else "without_warning"
+        ] = value
+        _write_json(tampered_summary_path, tampered_summary)
+        tampered_manifest = json.loads(json.dumps(original_manifest))
+        tampered_output = tampered_manifest["outputs"][tampered_summary_path.name]
+        tampered_output["sha256"] = _sha256(tampered_summary_path)
+        tampered_output["bytes"] = tampered_summary_path.stat().st_size
+        _write_json(tampered_run_path, tampered_manifest)
+
+        with pytest.raises(TypoWarningSummaryInputError, match=field):
+            build_typo_warning_summary(
+                BuildTypoWarningSummaryConfig(
+                    runs_root=runs,
+                    output_dir=tmp_path / f"tampered-{field}",
+                )
+            )
+
+        _write_json(tampered_summary_path, original_summary)
+        _write_json(tampered_run_path, original_manifest)
+
+    # Setting summaries are derived CPU artifacts. Simulate six summaries made
+    # by an older statistics implementation while preserving their manifest
+    # byte attestations; the paper builder must derive current statistics from
+    # the validated paired records instead of trusting or reinterpreting them.
+    for run_path in runs.rglob("run.json"):
+        summary_path = run_path.parent / "warning_prompt_summary.json"
+        stale_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        stale_summary["mcnemar"]["method"] = "exact-two-sided-mcnemar-binomial/v0"
+        _write_json(summary_path, stale_summary)
+        manifest = json.loads(run_path.read_text(encoding="utf-8"))
+        output = manifest["outputs"][summary_path.name]
+        output["sha256"] = _sha256(summary_path)
+        output["bytes"] = summary_path.stat().st_size
+        _write_json(run_path, manifest)
+
     result = build_typo_warning_summary(
         BuildTypoWarningSummaryConfig(
             runs_root=runs,
@@ -615,6 +657,8 @@ def test_summary_builder_reproduces_the_printed_pooled_metrics(
         b10=75,
         b01=63,
     )
+    builder_manifest = json.loads(result.run_path.read_text(encoding="utf-8"))
+    assert builder_manifest["analysis_code"] == warning_aggregation.analysis_code_identity()
     assert "one-pair-two-arm" not in payload["interpretation_limits"]
     assert "Model & Benchmark" in result.latex_path.read_text(encoding="utf-8")
 

@@ -13,10 +13,8 @@ from typo_cot.experiments.typo_warning_prompt.protocol import RUNTIME_ENVIRONMEN
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 _WARNING_PACKAGE = Path("experiments/typo_warning_prompt")
-_REQUIRED_WARNING_FILES = frozenset(
+_GENERATION_WARNING_FILES = frozenset(
     {
-        "__init__.py",
-        "aggregation.py",
         "integrity.py",
         "planning.py",
         "protocol.py",
@@ -24,10 +22,14 @@ _REQUIRED_WARNING_FILES = frozenset(
         "runtime.py",
         "scoring.py",
         "source.py",
-        "statistics.py",
         "submitted_inputs.py",
     }
 )
+_ANALYSIS_WARNING_FILES = _GENERATION_WARNING_FILES | {
+    "__init__.py",
+    "aggregation.py",
+    "statistics.py",
+}
 _REQUIRED_EXTERNAL_FILES = (
     Path("evaluation/extractor.py"),
     Path("models/prompts.py"),
@@ -47,16 +49,15 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _source_paths() -> tuple[Path, ...]:
+def _source_paths(warning_file_names: frozenset[str] | set[str]) -> tuple[Path, ...]:
     warning_root = _PACKAGE_ROOT / _WARNING_PACKAGE
     if not warning_root.is_dir():
         raise RuntimeError(
             f"typo-warning executable code bundle is incomplete: missing {warning_root}"
         )
 
-    warning_files = tuple(path for path in warning_root.rglob("*.py") if path.is_file())
-    present_warning_files = {path.relative_to(warning_root).as_posix() for path in warning_files}
-    missing_warning_files = sorted(_REQUIRED_WARNING_FILES - present_warning_files)
+    warning_files = tuple(warning_root / name for name in warning_file_names)
+    missing_warning_files = sorted(path.name for path in warning_files if not path.is_file())
     external_files = tuple(_PACKAGE_ROOT / relative for relative in _REQUIRED_EXTERNAL_FILES)
     missing_external_files = sorted(
         path.relative_to(_PACKAGE_ROOT).as_posix() for path in external_files if not path.is_file()
@@ -78,9 +79,21 @@ def _source_paths() -> tuple[Path, ...]:
 
 
 def implementation_file_sha256s() -> dict[str, str]:
-    """Return deterministic package-relative SHA-256s for result-affecting sources."""
+    """Return hashes for sources that affect setting generation and scoring."""
 
-    return {path.relative_to(_PACKAGE_ROOT).as_posix(): _sha256(path) for path in _source_paths()}
+    return {
+        path.relative_to(_PACKAGE_ROOT).as_posix(): _sha256(path)
+        for path in _source_paths(_GENERATION_WARNING_FILES)
+    }
+
+
+def analysis_file_sha256s() -> dict[str, str]:
+    """Return hashes for the complete CPU paper-summary implementation."""
+
+    return {
+        path.relative_to(_PACKAGE_ROOT).as_posix(): _sha256(path)
+        for path in _source_paths(_ANALYSIS_WARNING_FILES)
+    }
 
 
 def implementation_code_identity() -> dict[str, object]:
@@ -95,7 +108,26 @@ def implementation_code_identity() -> dict[str, object]:
         allow_nan=False,
     ).encode("utf-8")
     return {
-        "algorithm": "typo-warning-executable-python-files-sha256/v1",
+        "algorithm": "typo-warning-generation-python-files-sha256/v2",
+        "python_file_count": len(files),
+        "files": files,
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+    }
+
+
+def analysis_code_identity() -> dict[str, object]:
+    """Return provenance for the CPU validation, aggregation, and rendering code."""
+
+    files = analysis_file_sha256s()
+    encoded = json.dumps(
+        files,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return {
+        "algorithm": "typo-warning-analysis-python-files-sha256/v1",
         "python_file_count": len(files),
         "files": files,
         "sha256": hashlib.sha256(encoded).hexdigest(),
@@ -148,6 +180,8 @@ def validate_paper_runtime_environment(
 
 
 __all__ = [
+    "analysis_code_identity",
+    "analysis_file_sha256s",
     "implementation_code_identity",
     "implementation_file_sha256s",
     "validate_paper_runtime_environment",

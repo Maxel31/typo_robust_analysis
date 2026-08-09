@@ -348,16 +348,16 @@ def _comparability(
         "not_limit_truncated": config.limit is None,
     }
     limitations = list(warning_protocol.COMPARABILITY_LIMITATIONS)
+    if not exact_submitted_inputs:
+        limitations.append("input-fixture-is-not-the-bundled-submitted-artifact")
+    if config.model not in warning_protocol.PAPER_MODELS:
+        limitations.append("model-is-outside-submitted-grid")
     if config.limit is not None:
         limitations.append("run-is-limit-truncated")
         status = "partial-smoke-run"
     elif exact_submitted_inputs and config.model in warning_protocol.PAPER_MODELS:
         status = "exact-submitted-input-paper-grid-setting"
     else:
-        if not exact_submitted_inputs:
-            limitations.append("input-fixture-is-not-the-bundled-submitted-artifact")
-        if config.model not in warning_protocol.PAPER_MODELS:
-            limitations.append("model-is-outside-submitted-grid")
         status = "custom-input-protocol-setting"
     return {
         "status": status,
@@ -711,13 +711,13 @@ def _record(
     }
 
 
-def _summary(
+def _summary_core(
     records: Sequence[Mapping[str, object]],
     *,
     config: WarningPromptConfig,
     source: WarningSourceBundle,
     plan: Mapping[str, object],
-) -> dict[str, object]:
+) -> tuple[dict[str, object], int, int]:
     n = len(records)
     if n <= 0:
         raise ValueError("warning summary requires at least one record")
@@ -726,26 +726,48 @@ def _summary(
     on = sum(event.get("with_warning_correct") is True for event in events)
     b10 = sum(event.get("without_warning_only") is True for event in events)
     b01 = sum(event.get("with_warning_only") is True for event in events)
+    return (
+        {
+            "schema_version": "typo-warning-prompt-summary/v1",
+            "paper_sha256": PAPER_SHA256,
+            "operation": "typo-warning-prompt",
+            "model": config.model,
+            "benchmark": config.benchmark,
+            "n": n,
+            "counts": {
+                "without_warning_correct": off,
+                "with_warning_correct": on,
+            },
+            "accuracy": {
+                "without_warning": off / n,
+                "with_warning": on / n,
+                "with_minus_without": (on - off) / n,
+            },
+            "selection": dict(plan),
+            "comparability": _comparability(config, source),
+            "historical_reference": _HISTORICAL_REFERENCE["pooled_by_benchmark"][config.benchmark],
+        },
+        b10,
+        b01,
+    )
+
+
+def _summary(
+    records: Sequence[Mapping[str, object]],
+    *,
+    config: WarningPromptConfig,
+    source: WarningSourceBundle,
+    plan: Mapping[str, object],
+) -> dict[str, object]:
+    core, b10, b01 = _summary_core(
+        records,
+        config=config,
+        source=source,
+        plan=plan,
+    )
     return {
-        "schema_version": "typo-warning-prompt-summary/v1",
-        "paper_sha256": PAPER_SHA256,
-        "operation": "typo-warning-prompt",
-        "model": config.model,
-        "benchmark": config.benchmark,
-        "n": n,
-        "counts": {
-            "without_warning_correct": off,
-            "with_warning_correct": on,
-        },
-        "accuracy": {
-            "without_warning": off / n,
-            "with_warning": on / n,
-            "with_minus_without": (on - off) / n,
-        },
+        **core,
         "mcnemar": exact_mcnemar(b10=b10, b01=b01),
-        "selection": dict(plan),
-        "comparability": _comparability(config, source),
-        "historical_reference": _HISTORICAL_REFERENCE["pooled_by_benchmark"][config.benchmark],
     }
 
 
@@ -911,14 +933,19 @@ def _validate_completed(
                 plan=plan,
                 effective_eos_token_ids=effective_eos_token_ids,
             )
-        expected_summary = _summary(
+        expected_summary, _, _ = _summary_core(
             records,
             config=config,
             source=source,
             plan=plan_payload,
         )
-        if load_json(summary_path) != expected_summary:
-            raise ValueError("completed summary differs from recomputed integer events")
+        stored_summary = dict(_mapping(load_json(summary_path), field="completed setting summary"))
+        _mapping(
+            stored_summary.pop("mcnemar", None),
+            field="completed setting summary mcnemar",
+        )
+        if stored_summary != expected_summary:
+            raise ValueError("completed summary core differs from recomputed integer events")
         if outputs[records_path.name] != _output_metadata(records_path, len(records)):
             raise ValueError("completed records metadata differs")
         if outputs[summary_path.name] != _output_metadata(summary_path, 1):

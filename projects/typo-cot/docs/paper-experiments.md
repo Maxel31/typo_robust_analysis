@@ -334,6 +334,11 @@ uv run typo-cot restoration-order-accuracy \
   --output-dir results/restoration-order-accuracy/gemma-3-4b-it/gsm8k
 ```
 
+The typo-warning summary command is CPU-only in that it loads no model weights
+and uses no GPU. It still reloads the pinned public benchmark revisions for
+source validation: `datasets` is a base dependency, and the first uncached
+summary build requires network access.
+
 ## Target package layout
 
 Each operation moves behind an importable module with a thin CLI adapter. Shared
