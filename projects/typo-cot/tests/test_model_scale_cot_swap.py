@@ -61,6 +61,7 @@ def test_implementation_identity_covers_shared_validation_dependencies() -> None
     identity = runner_module._code_identity()
     paths = [entry["path"] for entry in identity["files"]]
 
+    assert identity["scope"] == "all-typo-cot-python-source"
     assert paths == sorted(paths)
     assert identity["python_file_count"] == len(paths)
     assert {
@@ -370,6 +371,28 @@ def test_aggregation_uses_clean_correct_and_flip_specific_denominators() -> None
         }
         for model, values in PUBLISHED_REFERENCE.items()
     }
+
+
+@pytest.mark.parametrize("invalid", (None, 0, True, "250"))
+def test_aggregation_rejects_an_invalid_source_record_count(invalid: object) -> None:
+    run = _run(
+        EXPECTED_MODELS[0],
+        (
+            _event_record(
+                "a",
+                clean_correct=True,
+                both_changed=False,
+                question_changed=False,
+                cot_changed=False,
+                restored=None,
+            ),
+        ),
+        source_records=250,
+    )
+    run.source_record_count = invalid
+
+    with pytest.raises(ValueError, match="source_record_count must be a positive integer"):
+        build_analysis((run,))
 
 
 def test_runner_publishes_partial_valid_grid_atomically(

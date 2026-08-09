@@ -30,10 +30,10 @@ def _events(record: Mapping[str, object]) -> Mapping[str, object]:
 
 
 def _source_record_count(run: Any) -> int:
-    explicit = getattr(run, "source_record_count", 0)
-    if isinstance(explicit, int) and not isinstance(explicit, bool) and explicit > 0:
-        return explicit
-    return len(run.records)
+    explicit = getattr(run, "source_record_count", None)
+    if not isinstance(explicit, int) or isinstance(explicit, bool) or explicit <= 0:
+        raise ValueError("source_record_count must be a positive integer")
+    return explicit
 
 
 def _row(run: Any) -> dict[str, object]:

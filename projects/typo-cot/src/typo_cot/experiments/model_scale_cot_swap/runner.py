@@ -149,6 +149,7 @@ def _code_identity() -> dict[str, object]:
         )
     return {
         "algorithm": "sorted-typo-cot-python-relative-path-and-file-sha256/v1",
+        "scope": "all-typo-cot-python-source",
         "python_file_count": len(files),
         "sha256": digest.hexdigest(),
         "files": files,

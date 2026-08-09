@@ -31,8 +31,15 @@ MODEL_SCALE_COHORT_SAMPLES_PER_SUBSET = {
     "Qwen/Qwen2.5-72B-Instruct": 100,
 }
 MODEL_SCALE_COHORT_SELECTED_SAMPLE_COUNTS = {
-    model: 500 if count == 100 else 250
-    for model, count in MODEL_SCALE_COHORT_SAMPLES_PER_SUBSET.items()
+    "google/gemma-3-1b-it": 250,
+    "google/gemma-3-4b-it": 250,
+    "google/gemma-3-12b-it": 500,
+    "google/gemma-3-27b-it": 500,
+    "meta-llama/Llama-3.2-1B-Instruct": 250,
+    "meta-llama/Llama-3.2-3B-Instruct": 250,
+    "meta-llama/Llama-3.1-70B-Instruct": 500,
+    "mistralai/Mistral-7B-Instruct-v0.3": 250,
+    "Qwen/Qwen2.5-72B-Instruct": 500,
 }
 _MODEL_SCALE_250_SAMPLE_IDS_SHA256 = (
     "36f979645502a57429b5e1507d79b03054423ae13271c02a770bba23eb7fe56e"
