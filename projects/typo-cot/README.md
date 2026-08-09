@@ -974,6 +974,95 @@ output directory must not already exist and is published atomically with
 [`docs/edit-count-sensitivity.md`](docs/edit-count-sensitivity.md) for the
 denominator, validation, historical-reference, and comparability contracts.
 
+## Compare complete-CoT swaps across model scale
+
+`model-scale-cot-swap` builds Appendix C/Table 9 from independently resumable
+MMLU Attribution-4 producer runs. The paper fixes nine models and applies one
+shared selector containing the first 500 seed-42 MMLU loader IDs. The selector
+is versioned at
+`projects/typo-cot/data/cohorts/model_scale_mmlu_first500.json`; it contains
+dataset IDs, the exact model-specific selected-ID set hashes, and protocol
+metadata, not historical model outputs.
+
+Run pair preparation and CoT swap separately for each model. The commands
+below default to physical GPU 0. Set `MODEL_SCALE_GPU_IDS` to a comma-separated
+set only when a 70B/72B model requires model sharding on the reproduction
+machine; each setting still produces its own manifest and resumable output.
+
+```bash
+MODEL_SCALE_GPU_IDS="${MODEL_SCALE_GPU_IDS:-0}"
+MODEL_SCALE_MODELS=(
+  google/gemma-3-1b-it
+  google/gemma-3-4b-it
+  google/gemma-3-12b-it
+  google/gemma-3-27b-it
+  meta-llama/Llama-3.2-1B-Instruct
+  meta-llama/Llama-3.2-3B-Instruct
+  meta-llama/Llama-3.1-70B-Instruct
+  mistralai/Mistral-7B-Instruct-v0.3
+  Qwen/Qwen2.5-72B-Instruct
+)
+MODEL_SCALE_COHORT=projects/typo-cot/data/cohorts/model_scale_mmlu_first500.json
+
+for MODEL in "${MODEL_SCALE_MODELS[@]}"; do
+  MODEL_SLUG="${MODEL##*/}"
+  CUDA_VISIBLE_DEVICES="${MODEL_SCALE_GPU_IDS}" \
+    uv run --project projects/typo-cot --extra lrp \
+    typo-cot prepare-edited-pairs \
+    --model "${MODEL}" \
+    --benchmark mmlu \
+    --targeting attribution-4 \
+    --num-edits 4 \
+    --sample-ids "${MODEL_SCALE_COHORT}" \
+    --gpu-id "${MODEL_SCALE_GPU_IDS}" \
+    --output-dir "results/model-scale-pairs/${MODEL_SLUG}"
+
+  CUDA_VISIBLE_DEVICES="${MODEL_SCALE_GPU_IDS}" \
+    uv run --project projects/typo-cot --extra lrp \
+    typo-cot cot-swap \
+    --model "${MODEL}" \
+    --benchmark mmlu \
+    --pairs "results/model-scale-pairs/${MODEL_SLUG}/pairs.jsonl" \
+    --targeting attribution-4 \
+    --gpu-id "${MODEL_SCALE_GPU_IDS}" \
+    --output-dir "results/model-scale-cot-swap-runs/${MODEL_SLUG}"
+done
+```
+
+If either producer is interrupted, rerun that model's identical command with
+`--resume`; a new output directory must be started without that flag.
+
+After all nine producer settings complete, build Table 9 on CPU:
+
+```bash
+uv run --project projects/typo-cot \
+  typo-cot model-scale-cot-swap \
+  --pairs-root results/model-scale-pairs \
+  --cot-swap-runs-root results/model-scale-cot-swap-runs \
+  --cohort projects/typo-cot/data/cohorts/model_scale_mmlu_first500.json \
+  --output-dir results/model-scale-cot-swap
+```
+
+The shared selector is intersected with each model's final-paper MMLU source
+cohort before inference. The submitted setup used 50 examples per subject for
+five smaller-model settings and 100 for Gemma-12B/27B and the 70B/72B scale
+checks; consequently the selector retains 250 or 500 source IDs respectively.
+This model-specific cap and exact ID-set identity are recovered producer
+details, not claims added to the PDF. Pair preparation, CoT swap, and the CPU
+builder each verify those details. The builder also verifies all source and
+output hashes, the exact nine-setting grid, binds every gold answer to its
+prepared pair, and recomputes A/B/C/D correctness and event semantics.
+
+`n_s` is the number of executed, regenerated-A-correct pairs and is the common
+denominator for Both, Question only, and CoT only. Restoration uses only the
+`n_B` subset for which B differs from A. The output directory is published
+atomically with `model_scale_records.jsonl`, `model_scale_summary.json`,
+`table9_model_scale.csv`, `table9_model_scale.md`, `table9_model_scale.tex`, and
+`run.json`. Fresh results are compared descriptively with the final-PDF table;
+Qwen2.5-72B remains directional because its published `n_B` is only 10. See
+[`docs/model-scale-cot-swap.md`](docs/model-scale-cot-swap.md) for the full
+cohort, denominator, validation, and hardware contracts.
+
 ## Tests
 
 ```bash

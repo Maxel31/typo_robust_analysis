@@ -7,9 +7,11 @@ import importlib.metadata
 import json
 import platform
 import random
+from collections.abc import Sequence
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
+from typo_cot.data.cohorts import load_sample_id_cohort
 from typo_cot.evaluation.fallback import answers_equal, fallback_answer
 from typo_cot.experiments.prepare_edited_pairs.protocol import (
     PairProtocolError,
@@ -37,6 +39,8 @@ _MMLU_100_PER_SUBJECT_PAPER_MODELS = frozenset(
         "qwen2.5-7b-instruct",
         "gemma-3-12b-it",
         "gemma-3-27b-it",
+        "llama-3.1-70b-instruct",
+        "qwen2.5-72b-instruct",
     }
 )
 _DATASET_COHORT_RULE = "paper-model-benchmark-cohort/v1"
@@ -116,7 +120,7 @@ def preload_provenance(
         if torch_module.cuda.is_available()
         else []
     )
-    return {
+    provenance: dict[str, object] = {
         "python": platform.python_version(),
         "torch": _package_version("torch"),
         "transformers": _package_version("transformers"),
@@ -135,6 +139,16 @@ def preload_provenance(
         "alignment": "actual-edited-word-final-token",
         "historical_compatibility_notes": list(_HISTORICAL_COMPATIBILITY_NOTES),
     }
+    if config.sample_ids is not None:
+        cohort = load_sample_id_cohort(config.sample_ids)
+        if cohort.benchmark != config.benchmark:
+            raise ValueError(
+                "sample-ID cohort benchmark does not match pair preparation: "
+                f"cohort={cohort.benchmark!r}, argument={config.benchmark!r}"
+            )
+        provenance["dataset_cohort_rule"] = "explicit-sample-id-cohort/v1"
+        provenance["sample_id_cohort"] = cohort.provenance_for(config.model)
+    return provenance
 
 
 def _tokenize_with_offsets(tokenizer: Any, text: str) -> tuple[list[int], list[tuple[int, int]]]:
@@ -218,7 +232,10 @@ class HuggingFacePairPreparationRuntime:
             seed=config.seed,
             num_samples=None,
         )
-        samples = loader.load()
+        return loader.load()
+
+    def record_selected_samples(self, samples: Sequence[Any]) -> None:
+        """Fingerprint the exact runner-selected records for run provenance."""
         fingerprint_rows = [
             {
                 "sample_id": sample.sample_id,
@@ -239,7 +256,6 @@ class HuggingFacePairPreparationRuntime:
             "dataset_sample_count": len(samples),
             "dataset_records_sha256": hashlib.sha256(serialized).hexdigest(),
         }
-        return samples
 
     def _prompt(self, sample: Any) -> tuple[Any, str]:
         if self.internal_benchmark in {"mmlu", "mmlu_pro", "arc", "commonsense_qa"}:

@@ -502,19 +502,38 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
     ),
     ExperimentSpec(
         slug="model-scale-cot-swap",
-        title="Run MMLU CoT-swap checks across model scales",
+        title="Compare MMLU CoT-swap checks across model scales",
         paper_question="RQ2 scale check",
         paper_sections=("Appendix C", "Table 9"),
         summary=(
             "Apply the CoT-swap cells to the fixed first 500 MMLU sample IDs across the "
             "reported Gemma, Llama, Mistral, and Qwen scale ladder."
         ),
-        cohort="Clean-correct cases among the same first 500 MMLU IDs for each model.",
-        intervention="The complete four-cell CoT swap for every requested model.",
-        readout="Question/CoT change rates and conditional clean-CoT restoration.",
-        required_arguments=("--models", "--benchmark", "--pairs-root", "--output-dir"),
-        outputs=("scale_cot_swap_records.jsonl", "scale_cot_swap_summary.json"),
-        compute="gpu",
+        cohort=(
+            "Clean-correct cases after intersecting the submitted model-specific MMLU "
+            "source cohort with one versioned first-500 ID selector."
+        ),
+        intervention=(
+            "No additional model intervention; validate the nine independent four-cell "
+            "CoT-swap producers and assemble their distinct denominators."
+        ),
+        readout="Question/CoT change counts and conditional clean-CoT restoration by model.",
+        required_arguments=(
+            "--pairs-root",
+            "--cot-swap-runs-root",
+            "--cohort",
+            "--output-dir",
+        ),
+        outputs=(
+            "model_scale_records.jsonl",
+            "model_scale_summary.json",
+            "table9_model_scale.csv",
+            "table9_model_scale.md",
+            "table9_model_scale.tex",
+            "run.json",
+        ),
+        compute="cpu",
+        status="implemented",
     ),
     ExperimentSpec(
         slug="typo-warning-prompt",

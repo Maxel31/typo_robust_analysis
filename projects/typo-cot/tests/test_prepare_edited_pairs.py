@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import asdict, replace
@@ -14,6 +15,7 @@ import typo_cot.cli as cli_module
 import typo_cot.data.loader as loader_module
 import typo_cot.experiments.prepare_edited_pairs.runtime as runtime_module
 from typo_cot.cli import main
+from typo_cot.data.cohorts import load_sample_id_cohort
 from typo_cot.evaluation.extractor import create_extractor
 from typo_cot.experiments.catalog import get_experiment
 from typo_cot.experiments.prepare_edited_pairs.protocol import (
@@ -55,9 +57,10 @@ def test_pair_preparation_allows_the_documented_qwen_72b_scale_model() -> None:
         ("qwen2.5-7b-instruct", "mmlu", 100),
         ("google/gemma-3-12b-it", "mmlu", 100),
         ("google/GEMMA-3-27B-IT", "mmlu", 100),
+        ("meta-llama/Llama-3.1-70B-Instruct", "mmlu", 100),
         ("google/gemma-3-4b-it", "mmlu", 50),
         ("meta-llama/Llama-3.2-3B-Instruct", "mmlu", 50),
-        ("Qwen/Qwen2.5-72B-Instruct", "mmlu", 50),
+        ("Qwen/Qwen2.5-72B-Instruct", "mmlu", 100),
         ("google/gemma-3-4b-it", "mmlu-pro", 100),
         ("Qwen/Qwen2.5-7B-Instruct", "gsm8k", 50),
     ),
@@ -326,6 +329,222 @@ def test_cli_dispatches_experiment_specific_pair_arguments(
         "wrote 2 pair(s): results/pairs/pairs.jsonl",
         "run manifest: results/pairs/run.json",
     ]
+
+
+def test_cli_forwards_an_explicit_sample_id_cohort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[PrepareEditedPairsConfig] = []
+
+    def fake_run(config: PrepareEditedPairsConfig) -> PrepareEditedPairsResult:
+        captured.append(config)
+        return PrepareEditedPairsResult(
+            pairs_path=config.output_dir / "pairs.jsonl",
+            run_path=config.output_dir / "run.json",
+            written=2,
+        )
+
+    monkeypatch.setattr(cli_module, "run_prepare_edited_pairs", fake_run)
+    assert (
+        main(
+            [
+                "prepare-edited-pairs",
+                "--model",
+                "google/gemma-3-12b-it",
+                "--benchmark",
+                "mmlu",
+                "--targeting",
+                "attribution-4",
+                "--num-edits",
+                "4",
+                "--sample-ids",
+                "data/cohort.json",
+                "--output-dir",
+                "results/pairs",
+            ]
+        )
+        == 0
+    )
+    assert captured == [
+        PrepareEditedPairsConfig(
+            model="google/gemma-3-12b-it",
+            benchmark="mmlu",
+            targeting="attribution-4",
+            num_edits=4,
+            sample_ids=Path("data/cohort.json"),
+            output_dir=Path("results/pairs"),
+        )
+    ]
+
+
+def test_explicit_sample_id_cohort_cannot_be_combined_with_limit(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="sample_ids.*limit"):
+        PrepareEditedPairsConfig(
+            model="google/gemma-3-12b-it",
+            benchmark="mmlu",
+            targeting="attribution-4",
+            num_edits=4,
+            sample_ids=tmp_path / "cohort.json",
+            limit=1,
+            output_dir=tmp_path / "out",
+        )
+
+
+def _write_sample_id_cohort(
+    path: Path,
+    sample_ids: list[str],
+    *,
+    benchmark: str = "gsm8k",
+    model: str = "test/model",
+) -> Path:
+    sample_ids_sha256 = hashlib.sha256(
+        json.dumps(sample_ids, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    payload = {
+        "schema_version": "sample-id-cohort/v1",
+        "paper_sha256": ("2cfb736e4636ee8db8dc6a92a6004c6e36914538a9acadcd66073289580a39d0"),
+        "cohort_id": "fixture-cohort",
+        "benchmark": benchmark,
+        "selection": "fixture-order/v1",
+        "provenance": "test-fixture",
+        "sample_count": len(sample_ids),
+        "sample_ids_sha256": sample_ids_sha256,
+        "sample_ids": sample_ids,
+        "model_samples_per_subset": {model: None},
+        "model_selected_sample_counts": {model: len(sample_ids)},
+        "model_selected_sample_ids_sha256": {
+            model: hashlib.sha256(
+                json.dumps(
+                    sorted(sample_ids),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+        },
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def test_builtin_runtime_leaves_cohort_selection_to_the_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    samples = [
+        SimpleNamespace(
+            sample_id=sample_id,
+            question=f"question {sample_id}",
+            choices=["a", "b"],
+            correct_answer="A",
+            subset="subject",
+        )
+        for sample_id in ("a", "b")
+    ]
+
+    class FakeLoader:
+        def load(self) -> list[SimpleNamespace]:
+            return samples
+
+    monkeypatch.setattr(loader_module, "create_loader", lambda **_kwargs: FakeLoader())
+    cohort_path = _write_sample_id_cohort(tmp_path / "cohort.json", ["b"])
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        sample_ids=cohort_path,
+        output_dir=tmp_path / "out",
+    )
+    runtime = object.__new__(HuggingFacePairPreparationRuntime)
+    runtime.internal_benchmark = "gsm8k"
+    runtime._dataset_provenance = {}
+
+    assert runtime.load_samples(config) == samples
+
+    runtime.record_selected_samples([samples[1]])
+    assert runtime._dataset_provenance["dataset_sample_count"] == 1
+
+
+def test_sample_id_cohort_filters_before_pair_execution_and_is_manifested(
+    tmp_path: Path,
+) -> None:
+    cohort_path = _write_sample_id_cohort(tmp_path / "cohort.json", ["b"])
+    output_dir = tmp_path / "pairs"
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        sample_ids=cohort_path,
+        output_dir=output_dir,
+    )
+
+    run_prepare_edited_pairs(config, runtime=_FakeRuntime())
+
+    rows = [json.loads(line) for line in (output_dir / "pairs.jsonl").read_text().splitlines()]
+    manifest = json.loads((output_dir / "run.json").read_text())
+    cohort = load_sample_id_cohort(cohort_path)
+    assert [row["sample_id"] for row in rows] == ["b"]
+    assert manifest["arguments"]["sample_ids"] == str(cohort_path.resolve())
+    assert manifest["arguments"]["limit"] is None
+    assert manifest["counts"] == {"discovered": 1, "written": 1, "failed": 0}
+    assert manifest["provenance"]["dataset_cohort_rule"] == "explicit-sample-id-cohort/v1"
+    assert manifest["provenance"]["sample_id_cohort"] == cohort.provenance_for("test/model")
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ({"benchmark": "mmlu"}, "benchmark"),
+        ({"sample_count": 2}, "sample_count"),
+        ({"sample_ids_sha256": "0" * 64}, "SHA-256"),
+        ({"sample_ids": ["b", "b"]}, "unique"),
+    ),
+)
+def test_malformed_sample_id_cohort_fails_before_gpu_runtime_initialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: dict[str, object],
+    message: str,
+) -> None:
+    cohort_path = _write_sample_id_cohort(tmp_path / "cohort.json", ["b"])
+    payload = json.loads(cohort_path.read_text(encoding="utf-8"))
+    payload.update(mutation)
+    cohort_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    def runtime_must_not_initialize(config: PrepareEditedPairsConfig) -> None:
+        raise AssertionError("invalid cohort must fail before GPU runtime initialization")
+
+    monkeypatch.setattr(
+        runtime_module,
+        "HuggingFacePairPreparationRuntime",
+        runtime_must_not_initialize,
+    )
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        sample_ids=cohort_path,
+        output_dir=tmp_path / "out",
+    )
+    with pytest.raises(ValueError, match=message):
+        run_prepare_edited_pairs(config)
+
+
+def test_sample_id_cohort_rejects_missing_expected_model_ids(tmp_path: Path) -> None:
+    cohort_path = _write_sample_id_cohort(tmp_path / "cohort.json", ["missing"])
+    config = PrepareEditedPairsConfig(
+        model="test/model",
+        benchmark="gsm8k",
+        targeting="attribution-4",
+        num_edits=4,
+        sample_ids=cohort_path,
+        output_dir=tmp_path / "out",
+    )
+
+    with pytest.raises(ValueError, match="expected 1.*selected.*found 0"):
+        run_prepare_edited_pairs(config, runtime=_FakeRuntime())
 
 
 @pytest.mark.parametrize(

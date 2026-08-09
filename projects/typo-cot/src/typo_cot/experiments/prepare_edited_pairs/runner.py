@@ -14,6 +14,11 @@ from typing import Any, Literal, Protocol
 
 from tqdm.auto import tqdm
 
+from typo_cot.data.cohorts import (
+    SampleIdCohort,
+    load_sample_id_cohort,
+    select_cohort_samples,
+)
 from typo_cot.experiments.catalog import PAPER_SHA256
 
 PUBLIC_BENCHMARKS = ("gsm8k", "math-500", "mmlu", "mmlu-pro", "arc", "csqa")
@@ -36,11 +41,14 @@ class PrepareEditedPairsConfig:
     seed: int = 42
     max_new_tokens: int = 512
     gpu_id: str = "0"
+    sample_ids: Path | None = None
     limit: int | None = None
     resume: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "output_dir", Path(self.output_dir))
+        if self.sample_ids is not None:
+            object.__setattr__(self, "sample_ids", Path(self.sample_ids))
         if not self.model.strip():
             raise ValueError("model must not be empty")
         if self.benchmark not in PUBLIC_BENCHMARKS:
@@ -53,11 +61,17 @@ class PrepareEditedPairsConfig:
             raise ValueError("max_new_tokens must be positive")
         if self.limit is not None and self.limit <= 0:
             raise ValueError("limit must be positive when provided")
+        if self.sample_ids is not None and self.limit is not None:
+            raise ValueError("sample_ids cannot be combined with limit")
 
     def public_arguments(self) -> dict[str, object]:
         """Return stable manifest arguments, excluding the transport-only resume flag."""
         payload = asdict(self)
         payload["output_dir"] = str(self.output_dir.resolve())
+        if self.sample_ids is None:
+            payload.pop("sample_ids")
+        else:
+            payload["sample_ids"] = str(self.sample_ids.resolve())
         payload.pop("resume")
         return payload
 
@@ -188,6 +202,35 @@ _COMPLETED_RESUME_PROTOCOL_FIELDS = (
 )
 
 
+def _load_configured_cohort(config: PrepareEditedPairsConfig) -> SampleIdCohort | None:
+    if config.sample_ids is None:
+        return None
+    cohort = load_sample_id_cohort(config.sample_ids)
+    if cohort.benchmark != config.benchmark:
+        raise ValueError(
+            "sample-ID cohort benchmark does not match pair preparation: "
+            f"cohort={cohort.benchmark!r}, argument={config.benchmark!r}"
+        )
+    return cohort
+
+
+def _cohort_provenance(
+    provenance: Mapping[str, object],
+    *,
+    cohort: SampleIdCohort | None,
+    config: PrepareEditedPairsConfig,
+    selected_count: int | None = None,
+) -> dict[str, object]:
+    result = dict(provenance)
+    if cohort is None:
+        return result
+    result["dataset_cohort_rule"] = "explicit-sample-id-cohort/v1"
+    result["sample_id_cohort"] = cohort.provenance_for(config.model)
+    if selected_count is not None and "dataset_sample_count" in result:
+        result["dataset_sample_count"] = selected_count
+    return result
+
+
 def _validate_preload_resume_provenance(
     previous_manifest: Mapping[str, object],
     current_provenance: Mapping[str, object],
@@ -196,15 +239,16 @@ def _validate_preload_resume_provenance(
 ) -> None:
     previous_provenance = previous_manifest.get("provenance")
     if protocol_only:
-        missing = [
-            key for key in _COMPLETED_RESUME_PROTOCOL_FIELDS if key not in current_provenance
-        ]
+        protocol_fields = list(_COMPLETED_RESUME_PROTOCOL_FIELDS)
+        if "sample_id_cohort" in current_provenance:
+            protocol_fields.append("sample_id_cohort")
+        missing = [key for key in protocol_fields if key not in current_provenance]
         if missing:
             raise ValueError(
                 "resume is missing required protocol provenance before model loading: "
                 + ", ".join(missing)
             )
-        fields = list(_COMPLETED_RESUME_PROTOCOL_FIELDS)
+        fields = protocol_fields
     else:
         fields = list(current_provenance)
     if not isinstance(previous_provenance, Mapping) or any(
@@ -235,6 +279,7 @@ def run_prepare_edited_pairs(
         raise FileExistsError(
             f"output directory is not empty: {output_dir}; pass --resume only for this run"
         )
+    cohort = _load_configured_cohort(config)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     previous_manifest: dict[str, object] | None = None
@@ -254,7 +299,11 @@ def run_prepare_edited_pairs(
 
                 current_preload_provenance = preload_provenance(config)
             else:
-                current_preload_provenance = runtime.provenance()
+                current_preload_provenance = _cohort_provenance(
+                    runtime.provenance(),
+                    cohort=cohort,
+                    config=config,
+                )
             _validate_preload_resume_provenance(
                 previous,
                 current_preload_provenance,
@@ -283,6 +332,8 @@ def run_prepare_edited_pairs(
         runtime = HuggingFacePairPreparationRuntime(config)
 
     samples = sorted(runtime.load_samples(config), key=_sample_id)
+    if cohort is not None:
+        samples = select_cohort_samples(samples, cohort, model=config.model)
     if config.limit is not None:
         samples = samples[: config.limit]
     if not samples:
@@ -291,7 +342,18 @@ def run_prepare_edited_pairs(
     if len(sample_ids) != len(set(sample_ids)):
         raise ValueError("dataset returned duplicate sample IDs")
 
-    provenance = dict(runtime.provenance())
+    # The runner owns cohort/limit selection. The production runtime uses this
+    # optional hook only to fingerprint the exact records selected above.
+    record_selected_samples = getattr(runtime, "record_selected_samples", None)
+    if callable(record_selected_samples):
+        record_selected_samples(samples)
+
+    provenance = _cohort_provenance(
+        runtime.provenance(),
+        cohort=cohort,
+        config=config,
+        selected_count=len(samples),
+    )
     if previous_manifest is not None:
         previous_provenance = previous_manifest.get("provenance")
         if not isinstance(previous_provenance, Mapping) or dict(previous_provenance) != provenance:

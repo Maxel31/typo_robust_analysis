@@ -832,6 +832,51 @@ def test_cot_swap_output_hash_tampering_fails_before_publication(tmp_path: Path)
         )
 
 
+def test_cot_swap_record_gold_answer_must_match_the_prepared_pair(tmp_path: Path) -> None:
+    pairs_root, cot_root, _ = _write_partial_fixture(tmp_path)
+    records_path = next(cot_root.rglob("cot_swap_records.jsonl"))
+    records = [json.loads(line) for line in records_path.read_text().splitlines()]
+    records[0]["gold_answer"] = "999"
+    _write_jsonl(records_path, records)
+    manifest_path = records_path.parent / "run.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["outputs"][records_path.name]["sha256"] = _sha256(records_path)
+    _write_json(manifest_path, manifest)
+
+    with pytest.raises(EditCountSensitivityInputError, match="gold answer.*prepared pair"):
+        run_edit_count_sensitivity(
+            EditCountSensitivityConfig(
+                pairs_root=pairs_root,
+                cot_swap_runs_root=cot_root,
+                edit_counts=(1, 2, 4),
+                output_dir=tmp_path / "out",
+            )
+        )
+
+
+def test_clean_correctness_is_recomputed_from_answer_a_and_gold(tmp_path: Path) -> None:
+    pairs_root, cot_root, _ = _write_partial_fixture(tmp_path)
+    records_path = next(cot_root.rglob("cot_swap_records.jsonl"))
+    records = [json.loads(line) for line in records_path.read_text().splitlines()]
+    for cell, value in {"A": "3", "B": "4", "C": "3", "D": "3"}.items():
+        records[0]["cells"][cell]["answer"]["value"] = value
+    _write_jsonl(records_path, records)
+    manifest_path = records_path.parent / "run.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["outputs"][records_path.name]["sha256"] = _sha256(records_path)
+    _write_json(manifest_path, manifest)
+
+    with pytest.raises(EditCountSensitivityInputError, match="is_correct.*gold answer"):
+        run_edit_count_sensitivity(
+            EditCountSensitivityConfig(
+                pairs_root=pairs_root,
+                cot_swap_runs_root=cot_root,
+                edit_counts=(1, 2, 4),
+                output_dir=tmp_path / "out",
+            )
+        )
+
+
 def test_restoration_cannot_succeed_outside_its_denominator(tmp_path: Path) -> None:
     pairs_root = tmp_path / "pairs"
     cot_root = tmp_path / "cot"
