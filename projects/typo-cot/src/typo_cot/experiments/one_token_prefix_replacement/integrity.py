@@ -33,7 +33,6 @@ def implementation_code_identity() -> dict[str, object]:
         "experiments/patch_coordinate_controls",
     )
     file_scopes = (
-        "experiments/catalog.py",
         "experiments/clean_prefix_scan/planning.py",
         "experiments/clean_prefix_scan/source.py",
         "models/__init__.py",
@@ -63,7 +62,7 @@ def implementation_code_identity() -> dict[str, object]:
         allow_nan=False,
     ).encode("utf-8")
     return {
-        "algorithm": "one-token-executable-code-bundle-sha256/v1",
+        "algorithm": "one-token-executable-code-bundle-sha256/v2",
         "python_file_count": len(entries),
         "sha256": hashlib.sha256(encoded).hexdigest(),
     }

@@ -815,6 +815,50 @@ and restart contracts. The fourteen-setting clustered intervals and table
 assembly consume these integer events in the later CPU artifact-building step;
 the single-setting GPU command does not silently pool the primary cell.
 
+## Build the one-token paper tables
+
+After the fifteen setting-level `one-token-prefix-replacement` runs finish,
+build the Appendix D tables and the reproducible part of Figure 5 on CPU:
+
+```bash
+uv run --project projects/typo-cot \
+  typo-cot build-one-token-tables \
+  --runs-root results/one-token-prefix-replacement \
+  --output-dir results/one-token-tables
+```
+
+The command recursively discovers producer `run.json` files below
+`--runs-root`, verifies their paper/protocol identities and output checksums,
+then recomputes every rate from the integer events in the JSONL records. It
+never imports model, tokenizer, `torch`, or `transformers` code. Inputs must be
+unlimited `fresh-paper-protocol-run` outputs from the expected primary or
+fourteen extension settings; unexpected, duplicate, mixed-identity, or
+tampered runs fail closed. Missing expected settings remain visible in the
+coverage report, and a paper-labelled pooled estimate is omitted whenever its
+required grid is incomplete.
+
+The output directory must not already exist. It is published atomically with:
+
+- `one_token_tables.json`: machine-readable cells, pools, inference metadata,
+  historical references, and comparability decisions;
+- `table10_one_token.csv`: the per-setting Table 10 token columns and the
+  fourteen-extension aggregate when complete;
+- `table11_position_controls.csv`: distant and adjacent position controls;
+- `one_token_tables.md` and `one_token_tables.tex`: deterministic readable
+  table fragments;
+- `figure5_validation.json`: validation of the one-token panel fields present
+  in producer records, with unavailable token text marked unverifiable; and
+- `run.json`: input/output hashes and the frozen analysis protocol.
+
+For the distant Table 11 analysis, the output keeps both the PDF-literal
+four-non-noop denominator and the stricter submitted-producer denominator.
+Only the latter is compared with the printed historical row. The primary
+Gemma-3-4B/GSM8K setting is always reported separately and is never pooled
+into the fourteen extensions. Adjacent controls use only the three
+prespecified settings. Cluster keys, resampling counts, seed derivation, and
+the Figure 5 field-by-field scope are documented in
+[`docs/build-one-token-tables.md`](docs/build-one-token-tables.md).
+
 ## Tests
 
 ```bash
@@ -830,6 +874,7 @@ uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/te
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_answer_line_deletion.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_clean_prefix_scan.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_one_token_prefix_replacement.py
+uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_build_one_token_tables_*.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests
 ```
 

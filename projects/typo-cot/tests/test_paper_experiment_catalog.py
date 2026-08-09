@@ -34,6 +34,7 @@ EXPECTED_EXPERIMENTS = (
     "answer-line-deletion",
     "clean-prefix-scan",
     "one-token-prefix-replacement",
+    "build-one-token-tables",
     "edit-count-sensitivity",
     "model-scale-cot-swap",
     "typo-warning-prompt",

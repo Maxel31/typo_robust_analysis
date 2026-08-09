@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 import typo_cot.cli as cli_module
 import typo_cot.experiments.one_token_prefix_replacement as token_api
+import typo_cot.experiments.one_token_prefix_replacement.integrity as token_integrity
 import typo_cot.experiments.one_token_prefix_replacement.runner as token_runner
 import typo_cot.experiments.one_token_prefix_replacement.runtime as token_runtime
 from typo_cot.evaluation.fallback import extract_with_fallback
@@ -332,12 +333,30 @@ def test_public_api_exposes_position_profile_runtime_and_runner_contracts() -> N
 def test_runtime_code_identity_fingerprints_the_installed_python_source_tree() -> None:
     identity = token_runtime.implementation_code_identity()
 
-    assert identity["algorithm"] == "one-token-executable-code-bundle-sha256/v1"
+    assert identity["algorithm"] == "one-token-executable-code-bundle-sha256/v2"
     assert isinstance(identity["python_file_count"], int)
     assert identity["python_file_count"] > 0
     assert isinstance(identity["sha256"], str)
     assert len(identity["sha256"]) == 64
     int(identity["sha256"], 16)
+
+
+def test_runtime_code_identity_excludes_unrelated_experiment_catalog_edits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adding a later CPU artifact command must not invalidate GPU checkpoints."""
+
+    observed: list[Path] = []
+    original = token_integrity._sha256
+
+    def trace(path: Path) -> str:
+        observed.append(path)
+        return original(path)
+
+    monkeypatch.setattr(token_integrity, "_sha256", trace)
+    token_integrity.implementation_code_identity()
+
+    assert all(path.name != "catalog.py" for path in observed)
 
 
 def test_selected_position_excludes_edited_top1_clean_tokens_and_breaks_ties_by_index() -> None:

@@ -2702,6 +2702,7 @@ name = "typo-cot"
 version = "0.1.0"
 source = { editable = "projects/typo-cot" }
 dependencies = [
+    { name = "numpy" },
     { name = "tqdm" },
 ]
 
@@ -2728,6 +2729,7 @@ requires-dist = [
     { name = "accelerate", marker = "extra == 'lrp'", specifier = "==1.12.0" },
     { name = "datasets", marker = "extra == 'lrp'", specifier = ">=4" },
     { name = "lxt", marker = "extra == 'lrp'", specifier = "==2.1" },
+    { name = "numpy", specifier = ">=2" },
     { name = "numpy", marker = "extra == 'lrp'", specifier = ">=2" },
     { name = "protobuf", marker = "extra == 'lrp'", specifier = ">=4" },
     { name = "sentencepiece", marker = "extra == 'lrp'", specifier = ">=0.2.1" },
