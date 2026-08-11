@@ -298,14 +298,16 @@ def test_obsolete_workspace_scaffolding_is_not_tracked() -> None:
     assert tracked.isdisjoint(OBSOLETE_REPOSITORY_PATHS)
 
 
-def test_root_workspace_contains_only_the_reproduction_package() -> None:
+def test_root_workspace_isolates_training_from_the_reproduction_package() -> None:
     with (REPOSITORY_ROOT / "pyproject.toml").open("rb") as stream:
         root_project = tomllib.load(stream)
 
     assert root_project["project"]["dependencies"] == []
     assert "sources" not in root_project["tool"]["uv"]
     assert root_project["tool"]["uv"]["workspace"]["members"] == ["projects/typo-cot"]
-    assert "exclude" not in root_project["tool"]["uv"]["workspace"]
+    assert root_project["tool"]["uv"]["workspace"]["exclude"] == [
+        "projects/typo-robust-training"
+    ]
 
 
 def test_development_dependencies_match_the_public_test_toolchain() -> None:
