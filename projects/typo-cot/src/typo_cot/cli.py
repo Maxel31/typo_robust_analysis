@@ -324,6 +324,7 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         nargs="+",
         choices=("first", "final", "all"),
+        help="Frozen mode grid; must be exactly: first final all",
     )
     subword.add_argument(
         "--token-count-policy",

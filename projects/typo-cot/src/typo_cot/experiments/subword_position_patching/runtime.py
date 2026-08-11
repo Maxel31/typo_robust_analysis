@@ -29,9 +29,11 @@ class HuggingFaceSubwordPositionPatchingRuntime(HuggingFaceSixSettingPatchContro
 
         self._patch_type = PrefillBlockOutputWindowPatch
 
-    def _validated_word_tokens(
+    def _tokenize_subwords(
         self, pair: Mapping[str, object], side: str
-    ) -> tuple[tuple[int, ...], ...]:
+    ) -> tuple[Any, Any, tuple[tuple[int, ...], ...]]:
+        """Tokenize one side once and validate both tensors and all edit coordinates."""
+
         if side not in {"clean", "typo"}:
             raise ValueError("subword token validation side must be clean or typo")
         text_field = "clean_text" if side == "clean" else "typo_text"
@@ -53,6 +55,7 @@ class HuggingFaceSubwordPositionPatchingRuntime(HuggingFaceSixSettingPatchContro
         except (NotImplementedError, TypeError) as exc:
             raise ValueError("subword patching requires tokenizer offset mappings") from exc
         input_ids = encoded["input_ids"]
+        attention_mask = encoded.get("attention_mask")
         offsets = encoded.get("offset_mapping")
         if (
             input_ids.ndim != 2
@@ -62,6 +65,8 @@ class HuggingFaceSubwordPositionPatchingRuntime(HuggingFaceSixSettingPatchContro
         ):
             raise ValueError(f"runtime {side} tokenization differs from the manifest")
         raw_offsets = offsets[0].tolist()
+        if len(raw_offsets) != int(input_ids.shape[1]):
+            raise ValueError(f"runtime {side} offset count differs from input IDs")
         edits = pair.get("edits")
         if not isinstance(edits, list) or not edits:
             raise ValueError("subword patching requires aligned edits")
@@ -95,7 +100,11 @@ class HuggingFaceSubwordPositionPatchingRuntime(HuggingFaceSixSettingPatchContro
         flattened = tuple(position for word in words for position in word)
         if len(flattened) != len(set(flattened)):
             raise ValueError(f"runtime {side} edited-word subtoken coordinates overlap")
-        return tuple(words)
+        if attention_mask is None:
+            attention_mask = self._torch.ones_like(input_ids)
+        if attention_mask.shape != input_ids.shape or not bool(attention_mask.all()):
+            raise ValueError(f"runtime {side} prompt must be unpadded and fully attended")
+        return input_ids.to(self.device), attention_mask.to(self.device), tuple(words)
 
     @staticmethod
     def _runtime_edits(
@@ -176,15 +185,8 @@ class HuggingFaceSubwordPositionPatchingRuntime(HuggingFaceSixSettingPatchContro
         ):
             raise ValueError("subword runtime requires a clean-correct/typo-wrong pair")
         runtime_pair = manifest_runtime_pair(pair)
-        clean_ids, clean_mask, clean_final = self._tokenize_and_validate(runtime_pair, side="clean")
-        typo_ids, typo_mask, typo_final = self._tokenize_and_validate(runtime_pair, side="edited")
-        clean_words = self._validated_word_tokens(pair, "clean")
-        typo_words = self._validated_word_tokens(pair, "typo")
-        if (
-            tuple(word[-1] for word in clean_words) != clean_final
-            or tuple(word[-1] for word in typo_words) != typo_final
-        ):
-            raise ValueError("subword and word-final tokenizer validations disagree")
+        clean_ids, clean_mask, clean_words = self._tokenize_subwords(pair, "clean")
+        typo_ids, typo_mask, typo_words = self._tokenize_subwords(pair, "typo")
         edits = self._runtime_edits(clean_words, typo_words)
         plans = {mode: plan_subword_patch(edits, mode=mode) for mode in modes}
         capture_positions = tuple(position for word in clean_words for position in word)

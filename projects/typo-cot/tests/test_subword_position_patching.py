@@ -236,6 +236,10 @@ def test_default_protocol_catalog_and_cli_match_the_frozen_readme() -> None:
         action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
     )
     assert "subword-position-patching" in subparsers.choices
+    assert (
+        "must be exactly: first final all"
+        in subparsers.choices["subword-position-patching"].format_help()
+    )
 
 
 def test_protocol_rejects_mode_policy_or_alignment_drift(tmp_path: Path) -> None:
@@ -333,14 +337,16 @@ def test_runtime_reindexes_duplicate_donors_and_patches_layers_zero_through_five
     runtime.layers = tuple(SimpleNamespace() for _ in range(12))
     runtime._torch = SimpleNamespace(inference_mode=nullcontext)
 
-    def tokenize(_pair: Mapping[str, object], *, side: str) -> tuple[str, str, tuple[int, ...]]:
-        positions = (6, 12) if side == "clean" else (9, 13)
-        return f"{side}-ids", f"{side}-mask", positions
+    tokenized_sides: list[str] = []
 
-    runtime._tokenize_and_validate = tokenize
-    runtime._validated_word_tokens = lambda _pair, side: (  # type: ignore[method-assign]
-        ((5, 6), (10, 11, 12)) if side == "clean" else ((7, 8, 9), (13,))
-    )
+    def tokenize_subwords(
+        _pair: Mapping[str, object], side: str
+    ) -> tuple[str, str, tuple[tuple[int, ...], ...]]:
+        tokenized_sides.append(side)
+        words = ((5, 6), (10, 11, 12)) if side == "clean" else ((7, 8, 9), (13,))
+        return f"{side}-ids", f"{side}-mask", words
+
+    runtime._tokenize_subwords = tokenize_subwords  # type: ignore[method-assign]
     captured: dict[str, object] = {}
 
     def capture(**kwargs: object) -> list[list[str]]:
@@ -373,6 +379,7 @@ def test_runtime_reindexes_duplicate_donors_and_patches_layers_zero_through_five
 
     scan = runtime.scan_pair(pair, modes=("all",))
 
+    assert tokenized_sides == ["clean", "typo"]
     assert scan.scans["all"].source_positions == (5, 6, 6, 12)
     assert scan.scans["all"].destination_positions == (7, 8, 9, 13)
     patch = captured["patches"][0]  # type: ignore[index]
