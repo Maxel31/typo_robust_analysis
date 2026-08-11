@@ -203,21 +203,24 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --config "${TRAIN_PROJECT}/configs/baselines/noisy-language-model.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --seed 42 --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/training/noisy-language-model/seed-42"
+  --output-dir "${TRAIN_ROOT}/training/noisy-language-model/seed-42" \
+  --resume
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-output-matching \
   --config "${TRAIN_PROJECT}/configs/baselines/output-matching.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --seed 42 --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/training/output-matching/seed-42"
+  --output-dir "${TRAIN_ROOT}/training/output-matching/seed-42" \
+  --resume
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-global-state-alignment \
   --config "${TRAIN_PROJECT}/configs/baselines/global-state-alignment.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --seed 42 --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/training/global-state-alignment/seed-42"
+  --output-dir "${TRAIN_ROOT}/training/global-state-alignment/seed-42" \
+  --resume
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-localized-state-distillation \
@@ -226,7 +229,8 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --layer-selection "${TRAIN_ROOT}/localization/layers/layer_selection.json" \
   --component-selection "${TRAIN_ROOT}/localization/components/component_selection.json" \
   --seed 42 --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/training/localized-state-distillation/seed-42"
+  --output-dir "${TRAIN_ROOT}/training/localized-state-distillation/seed-42" \
+  --resume
 ```
 
 Repeat every condition with seeds 42, 43, and 44. The teacher receives clean
