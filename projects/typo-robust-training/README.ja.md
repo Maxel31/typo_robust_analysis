@@ -164,7 +164,8 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --components mlp-neuron attention-head \
   --causal-readouts answer multitoken-kl \
   --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/localization/components"
+  --output-dir "${TRAIN_ROOT}/localization/components" \
+  --resume
 ```
 
 activation差とgradient attributionは候補のshortlistにだけ使います。

@@ -1,0 +1,61 @@
+{
+  "schema_version": "robustness-component-localization-config/v1",
+  "model": {
+    "id": "google/gemma-3-4b-it",
+    "revision": "093f9f388b31de276ce2de164bdc2081324b9767",
+    "dtype": "bfloat16"
+  },
+  "architecture": {
+    "decoder_layers": 34,
+    "hidden_size": 2560,
+    "mlp_intermediate_size": 10240,
+    "attention_heads": 8,
+    "attention_head_dim": 256,
+    "mlp_site": "input-to-down-proj-post-swiglu/v1",
+    "attention_site": "input-to-o-proj-concatenated-query-head-output/v1"
+  },
+  "partition": {
+    "tasks": ["gsm8k", "mmlu", "arc"],
+    "algorithm": "sha256-order-half-per-task/v1",
+    "seed": 42,
+    "screening_role": "component-screening",
+    "causal_role": "component-causal-validation",
+    "require_disjoint": true
+  },
+  "screening": {
+    "coordinate": "edited-word-final-token/v1",
+    "objective": "mean-kl-clean-to-typo-tokens-2-through-16/v1",
+    "activation_difference": "mean-absolute-neuron-or-head-l2/v1",
+    "gradient_attribution": "negative-gradient-dot-clean-minus-typo/v1",
+    "normalization": "within-task-layer-type-midrank-percentile/v1",
+    "activation_weight": 0.5,
+    "attribution_weight": 0.5,
+    "minimum_positive_attribution_tasks": 2,
+    "mlp_shortlist_per_layer": 32,
+    "attention_shortlist_per_layer": 8,
+    "causal_candidate_limits": {
+      "mlp-neuron": 12,
+      "attention-head": 6
+    },
+    "ranking": "equal-task-macro-descending-then-component-id/v1"
+  },
+  "causal_validation": {
+    "direction": "clean-to-typo",
+    "readouts": ["answer", "multitoken-kl"],
+    "teacher_forced_targets": "reuse-layer-scan-clean-targets/v1",
+    "untreated_mean_kl_min_exclusive": 0.000001,
+    "minimum_kl_eligible_per_task": 40,
+    "minimum_kl_eligible_fraction_per_task": 0.80,
+    "minimum_answer_cohort_per_task": 5,
+    "score_formula": "R_KL_2:16+beta*R_answer-gamma*H/v1",
+    "beta": 0.5,
+    "gamma": 1.0,
+    "minimum_beneficial_tasks": 2,
+    "maximum_harm_rate_per_task": 0.05,
+    "component_weighting": "positive-macro-causal-score-normalized/v1",
+    "minimum_selected_components": 1,
+    "bootstrap_replicates": 10000,
+    "bootstrap_seed": 42,
+    "confidence_level": 0.95
+  }
+}

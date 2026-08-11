@@ -252,6 +252,27 @@ violation. The output records the complete candidate universe, shortlist rule,
 causal validation denominator, task scores, selected set, and normalized
 non-negative component weights.
 
+The diagnostic IDs are split before screening by SHA-256 order within each
+task: one half screens and ranks components, and the disjoint half performs
+causal validation. At the MLP site, a neuron is one coordinate of the
+post-SwiGLU input to `down_proj`; at the attention site, a head is its complete
+`head_dim` slice of the concatenated input to `o_proj`. The screen combines
+within-task/layer/type percentile ranks of clean--typo activation difference
+and the predicted KL reduction `-gradient dot (clean - typo)`. For the Gemma
+pilot, the screen retains 32 MLP neurons and all 8 attention heads per selected
+layer, then equal-task macro ranking sends at most 12 neurons and 6 heads to
+causal validation. These quotas are computational gates, not evidence of
+causality.
+
+Causal validation uses the frozen clean continuation and baselines from layer
+selection. It replaces exactly one candidate component at edited-word-final
+positions and recomputes KL restoration plus answer restoration/harm. Each task
+requires at least 40 KL-eligible records, 80% KL eligibility, and five records
+in each answer cohort. A component must have a positive composite effect on at
+least two tasks and no task may exceed a 5% right-to-wrong harm rate. Selected
+component weights are the normalized non-negative macro causal scores; an empty
+selected set fails closed instead of silently reverting to layer-level loss.
+
 The selected component set controls where state loss is measured. LoRA remains
 on the containing selected layers because one SwiGLU MLP channel spans
 `gate_proj`, `up_proj`, and `down_proj`, and direct row-only updates would
