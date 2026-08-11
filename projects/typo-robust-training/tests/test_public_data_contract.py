@@ -44,6 +44,7 @@ def test_readmes_freeze_matching_operation_commands_and_artifacts() -> None:
         assert f"typo-cot {command}" in "\n".join(_bash_blocks(english))
     for artifact in (
         "training_sources.jsonl",
+        "typo_statistics.json",
         "diagnostic_manifest.jsonl",
         "tune_manifest.jsonl",
         "pre_pr_gate_manifest.jsonl",
@@ -128,4 +129,3 @@ def test_config_rejects_duplicate_keys_nonstandard_numbers_and_moving_revisions(
     moving.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="revision"):
         load_training_data_config(moving)
-

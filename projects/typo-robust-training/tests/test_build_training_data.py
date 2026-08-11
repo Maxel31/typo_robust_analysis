@@ -60,7 +60,13 @@ class _Provider(DataSourceProvider):
         self.calls.append(source_name)
         if source_name == "github_typo_corpus":
             for index in range(120):
-                operation = "adjacent-transposition" if index % 7 == 0 else "deletion"
+                operation = (
+                    "adjacent-transposition"
+                    if index % 7 == 0
+                    else "natural-statistics-substitution"
+                    if index % 3 == 0
+                    else "deletion"
+                )
                 yield NaturalTypoRecord(
                     source="github_typo_corpus",
                     source_revision=source.revision,
@@ -71,6 +77,8 @@ class _Provider(DataSourceProvider):
                     typo_text=(
                         f"The reliable ariport example {index} remains readable."
                         if operation == "adjacent-transposition"
+                        else f"The reliable airpirt example {index} remains readable."
+                        if operation == "natural-statistics-substitution"
                         else f"The reliable arport example {index} remains readable."
                     ),
                     repository=f"https://github.com/fixture/repository-{index // 3}",
@@ -126,6 +134,7 @@ def test_builder_writes_hash_bound_disjoint_replayable_artifacts(tmp_path: Path)
     assert set(provider.calls) == set(protocol.sources)
     expected = {
         "training_sources.jsonl",
+        "typo_statistics.json",
         "diagnostic_manifest.jsonl",
         "tune_manifest.jsonl",
         "pre_pr_gate_manifest.jsonl",
@@ -173,6 +182,11 @@ def test_builder_writes_hash_bound_disjoint_replayable_artifacts(tmp_path: Path)
     assert evaluation["source_revisions"] == {
         name: source.revision for name, source in sorted(protocol.sources.items())
     }
+    statistics = json.loads((output / "typo_statistics.json").read_text(encoding="utf-8"))
+    assert statistics["source_role"] == "natural-training-repositories-only"
+    assert statistics["input_records"] > 0
+    assert statistics["operation_counts"]["adjacent-transposition"] == 0
+    assert statistics["substitutions"]
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["status"] == "completed"
     assert run["source_provider"] == {"provider": "offline-fixture/v1"}
@@ -195,6 +209,7 @@ def test_builder_is_byte_deterministic_except_for_run_provenance(tmp_path: Path)
         outputs.append(output)
     for filename in (
         "training_sources.jsonl",
+        "typo_statistics.json",
         "diagnostic_manifest.jsonl",
         "tune_manifest.jsonl",
         "pre_pr_gate_manifest.jsonl",

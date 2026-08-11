@@ -14,6 +14,11 @@ from typo_robust_training.data.perturb import (
 from typo_robust_training.data.records import CleanRecord
 
 
+NATURAL_SUBSTITUTIONS = {
+    character: {"z" if character != "z" else "x": 1} for character in "abcdefghijklmnopqrstuvwxyz"
+}
+
+
 def _record(source_id: str, text: str) -> CleanRecord:
     return CleanRecord(
         source="fixture",
@@ -47,7 +52,7 @@ def test_eligible_words_exclude_urls_emails_identifiers_and_short_words() -> Non
 @pytest.mark.parametrize("operation", sorted(TRAINING_OPERATIONS))
 def test_every_training_operation_produces_valid_replayable_spans(operation: str) -> None:
     record = _record("row-1", "The airport supports reliable international travel.")
-    generator = TypoGenerator(seed=42)
+    generator = TypoGenerator(seed=42, natural_substitutions=NATURAL_SUBSTITUTIONS)
     first = generator.generate(
         record,
         epoch=3,
@@ -74,7 +79,7 @@ def test_every_training_operation_produces_valid_replayable_spans(operation: str
 
 
 def test_counter_based_generation_is_independent_of_iteration_and_resume_order() -> None:
-    generator = TypoGenerator(seed=44)
+    generator = TypoGenerator(seed=44, natural_substitutions=NATURAL_SUBSTITUTIONS)
     records = tuple(
         _record(f"row-{index}", f"Educational passage number {index} contains useful context.")
         for index in range(12)
@@ -90,7 +95,7 @@ def test_counter_based_generation_is_independent_of_iteration_and_resume_order()
 
 def test_adjacent_transposition_is_rejected_from_training_but_classified_for_evaluation() -> None:
     assert classify_character_edit(clean="airport", typo="ariport") == "adjacent-transposition"
-    generator = TypoGenerator(seed=42)
+    generator = TypoGenerator(seed=42, natural_substitutions=NATURAL_SUBSTITUTIONS)
     with pytest.raises(ValueError, match="held-out"):
         generator.generate(
             _record("row", "Airport traffic remains predictable."),
@@ -98,6 +103,26 @@ def test_adjacent_transposition_is_rejected_from_training_but_classified_for_eva
             force_operations=("adjacent-transposition",),
             force_edit_count=1,
         )
+
+
+def test_natural_statistics_substitution_uses_only_the_supplied_character_table() -> None:
+    generator = TypoGenerator(
+        seed=42,
+        operation_weights={"natural-statistics-substitution": 1.0},
+        natural_substitutions={"a": {"q": 7, "x": 0}},
+    )
+    pair = generator.generate(
+        _record("natural", "Aaaaa aaaaa aaaaa."),
+        epoch=0,
+        force_edit_count=1,
+    )
+    edit = pair.edits[0]
+    differences = [
+        (clean, typo)
+        for clean, typo in zip(edit.clean_word.lower(), edit.typo_word.lower(), strict=True)
+        if clean != typo
+    ]
+    assert differences == [("a", "q")]
 
 
 def test_github_typo_corpus_orientation_repository_gate_and_operation_filter() -> None:
@@ -142,4 +167,8 @@ def test_github_typo_corpus_orientation_repository_gate_and_operation_filter() -
     assert records[1].operation == "adjacent-transposition"
 
     assert not parse_github_typo_commit(payload, approved_repositories={})
-    assert all(record.operation != "adjacent-transposition" for record in records if record.training_eligible)
+    assert all(
+        record.operation != "adjacent-transposition"
+        for record in records
+        if record.training_eligible
+    )
