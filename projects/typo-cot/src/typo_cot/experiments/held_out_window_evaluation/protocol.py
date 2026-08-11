@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+
+from typo_cot.experiments.build_rebuttal_manifest.records import strict_loads
 
 _CANDIDATES = ((0, 6), (6, 12), (12, 18), (18, 24), (22, 28))
 _ARMS = ("selected", "runner-up")
@@ -134,9 +135,10 @@ def load_held_out_window_protocol(path: Path) -> HeldOutWindowProtocol:
         raise ValueError(f"held-out window config is not a file: {resolved}")
     raw = resolved.read_bytes()
     try:
-        payload = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError(f"held-out window config is not valid UTF-8 JSON: {resolved}") from exc
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"held-out window config is not valid UTF-8: {resolved}") from exc
+    payload = strict_loads(text, context=str(resolved))
     root = _mapping(
         payload,
         field="config",

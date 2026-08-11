@@ -325,6 +325,22 @@ def test_protocol_rejects_candidate_metric_and_tie_break_drift(tmp_path: Path) -
         load_held_out_window_protocol(changed)
 
 
+def test_protocol_rejects_duplicate_keys_and_nonstandard_numbers(tmp_path: Path) -> None:
+    source = DEFAULT_CONFIG.read_text(encoding="utf-8")
+    duplicate = tmp_path / "duplicate.yaml"
+    duplicate.write_text(
+        '{"schema_version":"duplicate",' + source.lstrip()[1:],
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="duplicate JSON key"):
+        load_held_out_window_protocol(duplicate)
+
+    nonstandard = tmp_path / "nonstandard.yaml"
+    nonstandard.write_text(source.replace("1e-9", "NaN"), encoding="utf-8")
+    with pytest.raises(ValueError, match="non-standard JSON constant"):
+        load_held_out_window_protocol(nonstandard)
+
+
 def test_scan_payloads_reject_partial_or_inconsistent_results() -> None:
     with pytest.raises(ValueError, match="unavailable"):
         WindowSelectionScan(
