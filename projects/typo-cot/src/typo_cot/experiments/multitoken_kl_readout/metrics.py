@@ -4,7 +4,18 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
+
+
+@dataclass(frozen=True, slots=True)
+class RestorationSummary:
+    """Means, normalized value, and validity for one inclusive token range."""
+
+    untreated_mean_kl: float
+    patched_mean_kl: float
+    value: float | None
+    invalid_reason: str | None
 
 
 def kl_trajectory_from_logits(
@@ -62,14 +73,14 @@ def _trajectory(values: Sequence[float], *, field: str) -> tuple[float, ...]:
     return normalized
 
 
-def restoration_score(
+def summarize_restoration(
     *,
     untreated_kl: Sequence[float],
     patched_kl: Sequence[float],
     token_range: tuple[int, int],
     denominator_epsilon: float,
-) -> float:
-    """Return unclipped normalized restoration for a 1-indexed inclusive range."""
+) -> RestorationSummary:
+    """Compute means and normalized restoration once for an inclusive range."""
 
     untreated = _trajectory(untreated_kl, field="untreated_kl")
     patched = _trajectory(patched_kl, field="patched_kl")
@@ -88,13 +99,50 @@ def restoration_score(
         raise ValueError("denominator_epsilon must be finite and positive")
     selection = slice(start - 1, stop)
     denominator = sum(untreated[selection]) / (stop - start + 1)
-    if denominator <= denominator_epsilon:
-        raise ValueError("denominator_le_1e-9")
     patched_mean = sum(patched[selection]) / (stop - start + 1)
+    if denominator <= denominator_epsilon:
+        return RestorationSummary(
+            untreated_mean_kl=denominator,
+            patched_mean_kl=patched_mean,
+            value=None,
+            invalid_reason="denominator_le_1e-9",
+        )
     value = 1.0 - patched_mean / denominator
     if not math.isfinite(value):
         raise ValueError("nonfinite_restoration")
-    return value
+    return RestorationSummary(
+        untreated_mean_kl=denominator,
+        patched_mean_kl=patched_mean,
+        value=value,
+        invalid_reason=None,
+    )
 
 
-__all__ = ["kl_trajectory_from_logits", "restoration_score"]
+def restoration_score(
+    *,
+    untreated_kl: Sequence[float],
+    patched_kl: Sequence[float],
+    token_range: tuple[int, int],
+    denominator_epsilon: float,
+) -> float:
+    """Return unclipped normalized restoration for a valid token range."""
+
+    summary = summarize_restoration(
+        untreated_kl=untreated_kl,
+        patched_kl=patched_kl,
+        token_range=token_range,
+        denominator_epsilon=denominator_epsilon,
+    )
+    if summary.invalid_reason is not None:
+        raise ValueError(summary.invalid_reason)
+    if summary.value is None:  # pragma: no cover - guarded by the dataclass contract
+        raise RuntimeError("valid restoration summary has no value")
+    return summary.value
+
+
+__all__ = [
+    "RestorationSummary",
+    "kl_trajectory_from_logits",
+    "restoration_score",
+    "summarize_restoration",
+]

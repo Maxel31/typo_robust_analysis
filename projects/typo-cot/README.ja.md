@@ -151,6 +151,8 @@ targeting metricに使った最初のCoT tokenを意図的に除外し、token 2
 負のrestoration値は保持します。`--limit-per-setting` は非confirmatoryなsmoke test
 専用で、`--resume` は入力内容でaddressしhashで拘束したpair checkpointを検証して
 から再利用します。
+token単位の診断labelには、byte断片を独立したtextとしてdecodeせず、tokenizer固有の
+語彙pieceを使います。
 
 ```bash
 GPU_ID=0

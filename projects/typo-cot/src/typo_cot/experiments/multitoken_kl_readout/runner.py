@@ -28,7 +28,7 @@ from typo_cot.experiments.build_rebuttal_manifest.records import (
     sha256_file,
 )
 from typo_cot.experiments.catalog import PAPER_SHA256
-from typo_cot.experiments.multitoken_kl_readout.metrics import restoration_score
+from typo_cot.experiments.multitoken_kl_readout.metrics import summarize_restoration
 from typo_cot.experiments.multitoken_kl_readout.protocol import (
     MultiTokenKLReadoutProtocol,
     load_multitoken_kl_readout_protocol,
@@ -501,32 +501,25 @@ def _metric_payload(
     token_range: tuple[int, int],
     epsilon: float,
 ) -> dict[str, object]:
-    start, stop = token_range
-    selection = slice(start - 1, stop)
-    denominator = sum(untreated[selection]) / (stop - start + 1)
-    patched_mean = sum(patched[selection]) / (stop - start + 1)
-    try:
-        value = restoration_score(
-            untreated_kl=untreated,
-            patched_kl=patched,
-            token_range=token_range,
-            denominator_epsilon=epsilon,
-        )
-    except ValueError as exc:
-        if str(exc) != "denominator_le_1e-9":
-            raise
+    summary = summarize_restoration(
+        untreated_kl=untreated,
+        patched_kl=patched,
+        token_range=token_range,
+        denominator_epsilon=epsilon,
+    )
+    if summary.invalid_reason is not None:
         return {
             "valid": False,
             "value": None,
-            "untreated_mean_kl": denominator,
-            "patched_mean_kl": patched_mean,
-            "invalid_reason": str(exc),
+            "untreated_mean_kl": summary.untreated_mean_kl,
+            "patched_mean_kl": summary.patched_mean_kl,
+            "invalid_reason": summary.invalid_reason,
         }
     return {
         "valid": True,
-        "value": value,
-        "untreated_mean_kl": denominator,
-        "patched_mean_kl": patched_mean,
+        "value": summary.value,
+        "untreated_mean_kl": summary.untreated_mean_kl,
+        "patched_mean_kl": summary.patched_mean_kl,
         "invalid_reason": None,
     }
 
@@ -769,7 +762,7 @@ def _trajectory_svg(rows: Sequence[Mapping[str, object]]) -> str:
             f'{x(int(row["token_index"])):.2f},{y(float(row["median_raw_kl_reduction"])):.2f}'
             for row in setting_rows
         )
-        color = colors[index]
+        color = colors[index % len(colors)]
         lines.append(
             f'<polyline points="{points}" fill="none" stroke="{color}" '
             'stroke-width="2"/>'

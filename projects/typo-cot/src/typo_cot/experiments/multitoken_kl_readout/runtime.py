@@ -59,16 +59,12 @@ def clean_continuation_target_ids(
     if len(suffix) < count:
         raise ValueError(f"clean continuation contains fewer than {count} token IDs")
     targets = suffix[:count]
-    token_text = tuple(
-        tokenizer.decode(
-            [token],
-            skip_special_tokens=False,
-            clean_up_tokenization_spaces=False,
-        )
-        for token in targets
-    )
+    raw_token_text = tokenizer.convert_ids_to_tokens(list(targets))
+    if not isinstance(raw_token_text, list) or len(raw_token_text) != len(targets):
+        raise ValueError("tokenizer must return one vocabulary piece per target token")
+    token_text = tuple(raw_token_text)
     if any(not isinstance(text, str) for text in token_text):
-        raise ValueError("tokenizer.decode must return strings")
+        raise ValueError("tokenizer vocabulary pieces must be strings")
     return targets, token_text
 
 

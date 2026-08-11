@@ -19,6 +19,7 @@ from typo_cot.experiments.multitoken_kl_readout import runner as readout_runner
 from typo_cot.experiments.multitoken_kl_readout.metrics import (
     kl_trajectory_from_logits,
     restoration_score,
+    summarize_restoration,
 )
 from typo_cot.experiments.multitoken_kl_readout.protocol import (
     load_multitoken_kl_readout_protocol,
@@ -234,12 +235,11 @@ class _Tokenizer:
         assert kwargs == {"add_special_tokens": True, "return_attention_mask": False}
         return {"input_ids": self.values[text]}
 
-    def decode(self, token_ids: list[int], **kwargs: object) -> str:
-        assert kwargs == {
-            "skip_special_tokens": False,
-            "clean_up_tokenization_spaces": False,
-        }
-        return f"<{token_ids[0]}>"
+    def convert_ids_to_tokens(self, token_ids: list[int]) -> list[str]:
+        return [f"<{token}>" for token in token_ids]
+
+    def decode(self, *_args: object, **_kwargs: object) -> str:
+        raise AssertionError("target labels must not independently decode token IDs")
 
 
 def test_clean_continuation_targets_require_an_exact_prompt_prefix() -> None:
@@ -286,6 +286,46 @@ def test_checkpoint_name_is_content_addressed() -> None:
     assert path.stem != record["pair_id"]
     assert len(path.stem) == 64
     assert path.suffix == ".json"
+
+
+def test_restoration_summary_is_the_single_source_for_means_and_validity() -> None:
+    valid = summarize_restoration(
+        untreated_kl=(1.0, 3.0, 5.0),
+        patched_kl=(0.5, 1.5, 2.5),
+        token_range=(2, 3),
+        denominator_epsilon=1e-9,
+    )
+    assert valid.untreated_mean_kl == 4.0
+    assert valid.patched_mean_kl == 2.0
+    assert valid.value == 0.5
+    assert valid.invalid_reason is None
+
+    invalid = summarize_restoration(
+        untreated_kl=(0.0, 0.0),
+        patched_kl=(0.0, 0.0),
+        token_range=(1, 2),
+        denominator_epsilon=1e-9,
+    )
+    assert invalid.value is None
+    assert invalid.invalid_reason == "denominator_le_1e-9"
+
+
+def test_trajectory_svg_cycles_its_palette_for_additional_series() -> None:
+    rows = [
+        {
+            "model": f"model-{setting}",
+            "task": "fixture",
+            "token_index": token,
+            "median_raw_kl_reduction": float(setting + token),
+        }
+        for setting in range(7)
+        for token in range(1, 17)
+    ]
+
+    svg = readout_runner._trajectory_svg(rows)
+
+    assert svg.startswith("<svg")
+    assert "model-6 / fixture" in svg
 
 
 def test_runtime_appends_only_15_prefix_tokens_and_reads_all_16_predictions() -> None:

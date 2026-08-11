@@ -164,6 +164,8 @@ denominators are excluded according to the frozen analysis plan; negative
 restoration values are retained. `--limit-per-setting` is available only for
 non-confirmatory smoke tests, and `--resume` verifies input-content-addressed,
 hash-bound pair checkpoints before reuse.
+Per-token diagnostic labels use the tokenizer's native vocabulary pieces,
+rather than independently decoding byte fragments as if each were text.
 
 ```bash
 GPU_ID=0
