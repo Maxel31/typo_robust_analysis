@@ -40,7 +40,7 @@ def _observations() -> tuple[ComponentCausalObservation, ...]:
         for component in (good, one_task, harmful):
             rows.append(
                 ComponentCausalObservation(
-                    record_id=f"{task}-{component.identifier}-repair",
+                    record_id=f"{task}-repair",
                     task=task,
                     component=component,
                     untreated_mean_kl=2.0,
@@ -52,7 +52,7 @@ def _observations() -> tuple[ComponentCausalObservation, ...]:
             )
             rows.append(
                 ComponentCausalObservation(
-                    record_id=f"{task}-{component.identifier}-harm",
+                    record_id=f"{task}-harm",
                     task=task,
                     component=component,
                     untreated_mean_kl=2.0,
@@ -76,15 +76,51 @@ def test_causal_gate_requires_two_beneficial_tasks_and_no_harm_violation() -> No
     )
     assert [selected.component.identifier for selected in result.selected] == ["mlp-neuron:L0:N1"]
     assert result.selected[0].weight == pytest.approx(1.0)
+    assert result.bootstrap["method"] == "task-and-base-cohort-stratified-pair-bootstrap/v1"
+    assert result.bootstrap["replicates"] == 20
+    intervals = {item["identifier"]: item for item in result.bootstrap["components"]}
+    assert intervals["mlp-neuron:L0:N1"]["macro_ci_lower"] == pytest.approx(1.0)
+    assert intervals["mlp-neuron:L0:N1"]["macro_ci_upper"] == pytest.approx(1.0)
+    assert intervals["mlp-neuron:L0:N1"]["gate_pass_frequency"] == pytest.approx(1.0)
     rejected = {item.component.identifier: item.rejection_reasons for item in result.components}
     assert "beneficial_tasks_lt_2" in rejected["attention-head:L0:H0"]
     assert any(reason.startswith("harm_rate_gt_0.05") for reason in rejected["mlp-neuron:L0:N2"])
 
 
 def test_causal_gate_fails_closed_when_no_component_survives() -> None:
+    candidate = ComponentRef("attention-head", 0, 0)
     with pytest.raises(ValueError, match="no causally validated component"):
         select_training_components(
-            tuple(row for row in _observations() if row.component.index != 1),
-            candidates=(ComponentRef("attention-head", 0, 0),),
+            tuple(row for row in _observations() if row.component == candidate),
+            candidates=(candidate,),
+            protocol=_protocol(),
+        )
+
+
+def test_causal_bootstrap_is_reproducible_and_observations_form_a_complete_pair_grid() -> None:
+    candidates = (
+        ComponentRef("mlp-neuron", 0, 1),
+        ComponentRef("attention-head", 0, 0),
+        ComponentRef("mlp-neuron", 0, 2),
+    )
+    first = select_training_components(_observations(), candidates=candidates, protocol=_protocol())
+    second = select_training_components(
+        _observations(), candidates=candidates, protocol=_protocol()
+    )
+    assert first.bootstrap == second.bootstrap
+
+    duplicated = _observations() + (_observations()[0],)
+    with pytest.raises(ValueError, match="record/component keys are duplicated"):
+        select_training_components(
+            duplicated,
+            candidates=candidates,
+            protocol=_protocol(),
+        )
+
+    missing = _observations()[:-1]
+    with pytest.raises(ValueError, match="complete record/component grid"):
+        select_training_components(
+            missing,
+            candidates=candidates,
             protocol=_protocol(),
         )

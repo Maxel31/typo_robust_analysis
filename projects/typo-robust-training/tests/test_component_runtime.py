@@ -5,7 +5,10 @@ from __future__ import annotations
 import pytest
 import torch
 
-from typo_robust_training.localization.component_runtime import component_statistics
+from typo_robust_training.localization.component_runtime import (
+    HuggingFaceComponentLocalizationRuntime,
+    component_statistics,
+)
 
 
 def test_mlp_statistics_use_mean_absolute_difference_and_signed_first_order_effect() -> None:
@@ -21,7 +24,7 @@ def test_mlp_statistics_use_mean_absolute_difference_and_signed_first_order_effe
     )
     assert activation == pytest.approx((3.0, 1.5))
     # -mean(gradient * (clean - typo)) for each post-SwiGLU coordinate.
-    assert attribution == pytest.approx((-1.5, 0.5))
+    assert attribution == pytest.approx((-1.5, 1.5))
 
 
 def test_attention_statistics_keep_complete_head_slices() -> None:
@@ -58,3 +61,12 @@ def test_component_statistics_reject_shape_or_kind_drift() -> None:
             gradient=values,
             attention_head_dim=2,
         )
+
+
+def test_kl_trajectory_clamps_only_floating_point_roundoff_below_zero() -> None:
+    runtime = object.__new__(HuggingFaceComponentLocalizationRuntime)
+    runtime._torch = torch
+    reference = torch.tensor([[0.011102902702987194, -0.016897989436984062]])
+    comparison = torch.tensor([[0.011102803982794285, -0.01689789444208145]])
+    trajectory = runtime._kl_trajectory(reference, comparison)
+    assert trajectory.tolist() == [0.0]

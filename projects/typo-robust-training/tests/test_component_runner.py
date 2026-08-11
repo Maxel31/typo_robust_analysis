@@ -6,6 +6,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from typo_robust_training.localization.component_causal import ComponentCausalObservation
 from typo_robust_training.localization.component_runner import (
     ComponentLocalizationRunConfig,
@@ -57,6 +59,14 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     manifest_rows: list[dict[str, object]] = []
     scans: list[LayerScan] = []
     for task in ("gsm8k", "mmlu", "arc"):
+        task_ids = tuple(f"{task}-{index}" for index in range(4))
+        ordered = sorted(
+            task_ids,
+            key=lambda record_id: hashlib.sha256(
+                f"component-partition/v1\0{42}\0{record_id}".encode()
+            ).hexdigest(),
+        )
+        harm_id = ordered[2]
         for index in range(4):
             record_id = f"{task}-{index}"
             manifest_rows.append(
@@ -91,7 +101,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
                     ],
                 }
             )
-            repair = index % 2 == 0
+            repair = record_id != harm_id
             scans.append(
                 LayerScan(
                     record_id=record_id,
@@ -136,12 +146,17 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
 
 
 class _Runtime:
+    def __init__(self) -> None:
+        self.screen_calls = 0
+        self.causal_calls = 0
+
     def screen_pair(
         self,
         record: dict[str, object],
         layer_scan: LayerScan,
         selected_layers: tuple[int, ...],
     ) -> tuple[ComponentScreenMetric, ...]:
+        self.screen_calls += 1
         del layer_scan
         task = str(record["task"])
         metrics: list[ComponentScreenMetric] = []
@@ -165,6 +180,7 @@ class _Runtime:
         layer_scan: LayerScan,
         candidates: tuple[ComponentRef, ...],
     ) -> tuple[ComponentCausalObservation, ...]:
+        self.causal_calls += 1
         task = str(record["task"])
         rows: list[ComponentCausalObservation] = []
         for component in candidates:
@@ -221,3 +237,64 @@ def test_component_runner_binds_layers_partitions_and_causal_outputs(tmp_path: P
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["status"] == "completed"
     assert run["layer_selection_sha256"] == hashlib.sha256(selection_path.read_bytes()).hexdigest()
+
+
+def test_component_runner_resumes_only_hash_bound_checkpoints(tmp_path: Path) -> None:
+    config_path, manifest_path, selection_path = _fixture(tmp_path)
+    output_dir = tmp_path / "output"
+    first_runtime = _Runtime()
+    first = run_localize_robustness_components(
+        ComponentLocalizationRunConfig(
+            config_path=config_path,
+            diagnostic_manifest_path=manifest_path,
+            layer_selection_path=selection_path,
+            components=("mlp-neuron", "attention-head"),
+            causal_readouts=("answer", "multitoken-kl"),
+            gpu_id="3",
+            output_dir=output_dir,
+            resume=False,
+        ),
+        runtime=first_runtime,
+    )
+    assert first_runtime.screen_calls == 6
+    assert first_runtime.causal_calls == 6
+    original_selection = first.selection_path.read_bytes()
+
+    resumed_runtime = _Runtime()
+    resumed = run_localize_robustness_components(
+        ComponentLocalizationRunConfig(
+            config_path=config_path,
+            diagnostic_manifest_path=manifest_path,
+            layer_selection_path=selection_path,
+            components=("mlp-neuron", "attention-head"),
+            causal_readouts=("answer", "multitoken-kl"),
+            gpu_id="3",
+            output_dir=output_dir,
+            resume=True,
+        ),
+        runtime=resumed_runtime,
+    )
+    assert resumed_runtime.screen_calls == 0
+    assert resumed_runtime.causal_calls == 0
+    assert resumed.selection_path.read_bytes() == original_selection
+
+    checkpoint = next(
+        (output_dir / ".localize-robustness-components-work" / "screen").glob("*.json")
+    )
+    payload = json.loads(checkpoint.read_text(encoding="utf-8"))
+    payload["record_sha256"] = "0" * 64
+    _write_json(checkpoint, payload)
+    with pytest.raises(ValueError, match="checkpoint binding differs"):
+        run_localize_robustness_components(
+            ComponentLocalizationRunConfig(
+                config_path=config_path,
+                diagnostic_manifest_path=manifest_path,
+                layer_selection_path=selection_path,
+                components=("mlp-neuron", "attention-head"),
+                causal_readouts=("answer", "multitoken-kl"),
+                gpu_id="3",
+                output_dir=output_dir,
+                resume=True,
+            ),
+            runtime=_Runtime(),
+        )
