@@ -81,7 +81,8 @@ The command writes:
 - `training_sources.jsonl`: ordered clean training records and source metadata;
 - `typo_statistics.json`: character-edit statistics derived only from natural
   pairs in training repositories;
-- `diagnostic_manifest.jsonl`: GSM8K/MMLU/ARC train/dev localization records;
+- `diagnostic_manifest.jsonl`: fixed GSM8K/MMLU/ARC train/dev clean-typo
+  localization pairs;
 - `tune_manifest.jsonl`: fixed iteration-only evaluation pairs;
 - `pre_pr_gate_manifest.jsonl`: fixed one-use pre-PR gate pairs;
 - `final_test_manifest.jsonl`: sealed final paper-test identities;

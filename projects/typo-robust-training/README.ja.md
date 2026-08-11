@@ -74,7 +74,8 @@ PR前gateを通過したcheckpointが固定されるまで封印します。
 
 - `training_sources.jsonl`: 順序付きclean training recordとsource metadata。
 - `typo_statistics.json`: training repositoryのnatural pairだけから得た文字編集統計。
-- `diagnostic_manifest.jsonl`: GSM8K/MMLU/ARC train/devのlocalization record。
+- `diagnostic_manifest.jsonl`: 固定したGSM8K/MMLU/ARC train/devのclean-typo
+  localization pair。
 - `tune_manifest.jsonl`: iteration専用の固定評価pair。
 - `pre_pr_gate_manifest.jsonl`: 一度だけ使う固定PR前gate pair。
 - `final_test_manifest.jsonl`: 封印された最終論文test identity。
