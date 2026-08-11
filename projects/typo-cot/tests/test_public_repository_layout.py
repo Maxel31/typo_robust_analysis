@@ -188,6 +188,12 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/experiments/model_scale_cot_swap/render.py"),
     Path("src/typo_cot/experiments/model_scale_cot_swap/runner.py"),
     Path("src/typo_cot/experiments/model_scale_cot_swap/source.py"),
+    Path("src/typo_cot/experiments/multitoken_kl_readout/__init__.py"),
+    Path("src/typo_cot/experiments/multitoken_kl_readout/metrics.py"),
+    Path("src/typo_cot/experiments/multitoken_kl_readout/protocol.py"),
+    Path("src/typo_cot/experiments/multitoken_kl_readout/runner.py"),
+    Path("src/typo_cot/experiments/multitoken_kl_readout/runtime.py"),
+    Path("src/typo_cot/experiments/multitoken_kl_readout/statistics.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/__init__.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/metrics.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/planning.py"),
@@ -225,6 +231,7 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/models/wrapper.py"),
 }
 PUBLIC_CONFIG_FILES = {
+    Path("configs/rebuttal/multitoken-kl-readout.yaml"),
     Path("configs/rebuttal/six-setting-patch-controls.yaml"),
     Path("configs/rebuttal/source-write-coordinate-grid.yaml"),
 }
@@ -433,6 +440,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         "restoration-order-accuracy",
         "six-setting-patch-controls",
         "source-write-coordinate-grid",
+        "multitoken-kl-readout",
     }
 
 

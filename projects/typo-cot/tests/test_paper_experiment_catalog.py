@@ -30,6 +30,7 @@ EXPECTED_EXPERIMENTS = (
     "build-rebuttal-manifest",
     "six-setting-patch-controls",
     "source-write-coordinate-grid",
+    "multitoken-kl-readout",
     "patch-coordinate-controls",
     "patch-position-controls",
     "patch-text-combination",

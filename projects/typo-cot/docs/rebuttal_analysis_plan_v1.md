@@ -180,11 +180,23 @@ Interpretation is fixed before results:
 
 ## Multi-token distributional readout
 
-`multitoken-kl-readout` evaluates all 1,241 restoration pairs without free
-generation. It teacher-forces the same clean continuation tokens `y_1..y_16`
-after the clean question, typo question, and `[0,6)` patched typo question.
-At each position it stores raw `KL(clean || typo)` and
-`KL(clean || patched)` in float64 after model logits are materialized.
+`multitoken-kl-readout` audits all 1,241 restoration pairs without free
+generation. Before any model forward, it derives the clean-continuation target
+IDs. A continuation with fewer than 16 tokens is retained as an unavailable
+per-item record with reason `clean_continuation_lt_16`. If appending the
+continuation changes the prompt-side tokenization, exact target isolation is
+not possible; that pair is retained with reason
+`clean_prompt_not_exact_token_prefix`. Both checks happen before model forward,
+and both reasons are excluded from all readout and bootstrap denominators. The setting table reports
+`n_target_available`, and the run summary reports `target_available_pairs`.
+Both result-independent rules are frozen as
+`record-unavailable-before-forward/v1`.
+
+For every target-available pair, the command teacher-forces the same clean
+continuation tokens `y_1..y_16` after the clean question, typo question, and
+`[0,6)` patched typo question. At each position it stores raw
+`KL(clean || typo)` and `KL(clean || patched)` in float64 after model logits
+are materialized.
 
 The primary metric excludes the adjacent first token:
 
