@@ -132,6 +132,7 @@ def test_window_split_is_stratified_disjoint_complete_and_order_invariant() -> N
         WindowSplitCandidate(
             pair_id=f"{targeting}-{index}",
             stratum=("m1", "gsm8k", targeting),
+            sample_group=f"sample-{index}",
         )
         for targeting in ("attribution-4", "random-4")
         for index in range(5)
@@ -150,18 +151,42 @@ def test_window_split_is_stratified_disjoint_complete_and_order_invariant() -> N
         assert sum(pair_id.startswith(targeting) for pair_id in evaluation) == 3
 
 
+def test_window_split_keeps_the_same_task_sample_group_across_models_and_targets() -> None:
+    candidates = tuple(
+        WindowSplitCandidate(
+            pair_id=f"{model}-{target}-{sample}",
+            stratum=(model, "gsm8k", target),
+            sample_group=sample,
+        )
+        for model in ("gemma", "llama", "mistral")
+        for target in ("attribution-4", "random-4")
+        for sample in ("sample-0", "sample-1", "sample-2", "sample-3")
+    )
+
+    plan = plan_window_split(candidates, seed=42)
+    selection = set(plan.selection_pair_ids)
+
+    for sample in ("sample-0", "sample-1", "sample-2", "sample-3"):
+        phases = {
+            "selection" if candidate.pair_id in selection else "evaluation"
+            for candidate in candidates
+            if candidate.sample_group == sample
+        }
+        assert len(phases) == 1
+
+
 def test_window_split_rejects_duplicate_ids_and_singleton_strata() -> None:
     with pytest.raises(ValueError, match="duplicate pair_id"):
         plan_window_split(
             (
-                WindowSplitCandidate("same", ("m1", "gsm8k", "attribution-4")),
-                WindowSplitCandidate("same", ("m1", "gsm8k", "random-4")),
+                WindowSplitCandidate("same", ("m1", "gsm8k", "attribution-4"), "s1"),
+                WindowSplitCandidate("same", ("m1", "gsm8k", "random-4"), "s1"),
             ),
             seed=42,
         )
 
     with pytest.raises(ValueError, match="at least two"):
         plan_window_split(
-            (WindowSplitCandidate("only", ("m1", "gsm8k", "attribution-4")),),
+            (WindowSplitCandidate("only", ("m1", "gsm8k", "attribution-4"), "s1"),),
             seed=42,
         )

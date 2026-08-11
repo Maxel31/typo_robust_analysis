@@ -208,6 +208,10 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/experiments/subword_position_patching/runner.py"),
     Path("src/typo_cot/experiments/subword_position_patching/runtime.py"),
     Path("src/typo_cot/experiments/subword_position_patching/statistics.py"),
+    Path("src/typo_cot/experiments/held_out_window_evaluation/__init__.py"),
+    Path("src/typo_cot/experiments/held_out_window_evaluation/protocol.py"),
+    Path("src/typo_cot/experiments/held_out_window_evaluation/runner.py"),
+    Path("src/typo_cot/experiments/held_out_window_evaluation/runtime.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/__init__.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/metrics.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/planning.py"),
@@ -245,6 +249,7 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/models/wrapper.py"),
 }
 PUBLIC_CONFIG_FILES = {
+    Path("configs/rebuttal/held-out-window-evaluation.yaml"),
     Path("configs/rebuttal/multitoken-kl-readout.yaml"),
     Path("configs/rebuttal/patch-harm-audit.yaml"),
     Path("configs/rebuttal/tokenization-severity-analysis.yaml"),
@@ -461,6 +466,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         "patch-harm-audit",
         "tokenization-severity-analysis",
         "subword-position-patching",
+        "held-out-window-evaluation",
     }
 
 

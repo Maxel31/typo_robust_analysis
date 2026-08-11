@@ -107,10 +107,11 @@ def plan_strict_offset_control(
 
 @dataclass(frozen=True, slots=True)
 class WindowSplitCandidate:
-    """One restoration pair and its model/task/target-rule split stratum."""
+    """One restoration pair and its model/task/target-rule split identity."""
 
     pair_id: str
     stratum: tuple[str, ...]
+    sample_group: str
 
     def __post_init__(self) -> None:
         if not isinstance(self.pair_id, str) or not self.pair_id:
@@ -119,6 +120,10 @@ class WindowSplitCandidate:
             raise ValueError("split stratum must be a non-empty tuple")
         if any(not isinstance(value, str) or not value for value in self.stratum):
             raise ValueError("split stratum must contain only non-empty strings")
+        if len(self.stratum) < 2:
+            raise ValueError("split stratum must identify model and shared task strata")
+        if not isinstance(self.sample_group, str) or not self.sample_group:
+            raise ValueError("sample_group must be a non-empty string")
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,9 +134,9 @@ class WindowSplitPlan:
     evaluation_pair_ids: tuple[str, ...]
 
 
-def _split_key(pair_id: str, *, seed: int) -> tuple[str, str]:
-    payload = f"held-out-window-split/v1\0{seed}\0{pair_id}".encode("utf-8")
-    return hashlib.sha256(payload).hexdigest(), pair_id
+def _split_key(group_key: str, *, seed: int) -> tuple[str, str]:
+    payload = f"held-out-window-split/v2\0{seed}\0{group_key}".encode("utf-8")
+    return hashlib.sha256(payload).hexdigest(), group_key
 
 
 def plan_window_split(
@@ -143,7 +148,9 @@ def plan_window_split(
 
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise TypeError("split seed must be an integer")
-    groups: dict[tuple[str, ...], list[str]] = defaultdict(list)
+    groups: dict[tuple[str, ...], dict[str, list[WindowSplitCandidate]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
     seen: set[str] = set()
     for candidate in candidates:
         if not isinstance(candidate, WindowSplitCandidate):
@@ -151,19 +158,36 @@ def plan_window_split(
         if candidate.pair_id in seen:
             raise ValueError(f"duplicate pair_id in window split: {candidate.pair_id!r}")
         seen.add(candidate.pair_id)
-        groups[candidate.stratum].append(candidate.pair_id)
+        # The benchmark item, not the model/targeting realization, is the
+        # independent split unit. Keeping only task here prevents the same
+        # clean question from informing selection through another model or
+        # typo-targeting condition.
+        shared_stratum = candidate.stratum[1:2]
+        group = groups[shared_stratum][candidate.sample_group]
+        if any(existing.stratum == candidate.stratum for existing in group):
+            raise ValueError(
+                "window split contains duplicate model/sample membership: "
+                f"{candidate.stratum!r}/{candidate.sample_group!r}"
+            )
+        group.append(candidate)
 
     selection: list[str] = []
     evaluation: list[str] = []
-    for stratum, pair_ids in sorted(groups.items()):
-        if len(pair_ids) < 2:
+    for stratum, sample_groups in sorted(groups.items()):
+        if len(sample_groups) < 2:
             raise ValueError(
-                f"every window-split stratum requires at least two pairs: stratum={stratum!r}"
+                "every window-split shared stratum requires at least two sample groups: "
+                f"stratum={stratum!r}"
             )
-        ordered = sorted(pair_ids, key=lambda pair_id: _split_key(pair_id, seed=seed))
+        ordered = sorted(
+            sample_groups,
+            key=lambda sample_group: _split_key("\0".join((*stratum, sample_group)), seed=seed),
+        )
         split_at = len(ordered) // 2
-        selection.extend(ordered[:split_at])
-        evaluation.extend(ordered[split_at:])
+        for sample_group in ordered[:split_at]:
+            selection.extend(candidate.pair_id for candidate in sample_groups[sample_group])
+        for sample_group in ordered[split_at:]:
+            evaluation.extend(candidate.pair_id for candidate in sample_groups[sample_group])
 
     return WindowSplitPlan(tuple(sorted(selection)), tuple(sorted(evaluation)))
 

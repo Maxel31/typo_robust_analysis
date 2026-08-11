@@ -304,17 +304,37 @@ The command writes `subword_patch_records.jsonl`,
 An empty table cell uses JSON `null` and a blank CSV value together with
 `restoration_rate_defined=false`; it is never represented as a numeric zero.
 
-## Frozen interfaces for remaining ARR additions
+## Held-out layer-window evaluation
 
-The following command is `interface-frozen` and **not yet runnable**.
-They were written before implementation so every additional experiment has its
-own operation, arguments, inputs, and output directory. The statistical and
-cohort contracts are fixed in
-[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md).
-`interface-frozen` is a prose-only pre-implementation label, not a third
-experiment-catalog status. Such commands are deliberately absent from the CLI
-and `experiments list`; each command's implementation PR registers it directly
-as an `implemented` operation after its contract tests pass.
+`held-out-window-evaluation` is implemented and GPU-only. It addresses the
+paper's explicit limitation that
+`[0,6)` was selected data-adaptively. It uses the outcome-independent,
+stratified `window_selection` and `window_evaluation` ID lists already frozen
+by `build-rebuttal-manifest`. The split unit is `(task, sample_id)`, so the same
+benchmark sample remains in one phase across every model and typo-targeting
+condition as well as being pair-ID disjoint.
+
+The diagnostic phase compares five prespecified six-layer candidates:
+`[0,6)`, `[6,12)`, `[12,18)`, `[18,24)`, and `[22,28)`. Matching the paper's
+12-cell depth evidence, it keeps Attribution-4 and Random-4 separate within
+each of the six model--task settings. For each model--task--target-rule cell
+and candidate it takes the median normalized restoration of the clean first-
+CoT-token distribution, then selects the largest equal-12-cell macro mean.
+The runner-up is fixed by the same score; exact score ties prefer the lower
+layer start. Unavailable targets and untreated KL values at or below `1e-9`
+remain visible but do not enter selection. Every one of the 12 cells must have
+at least one score for every candidate. A smoke run therefore requires
+`--limit-per-setting` of at least `2` and deterministically retains one record
+from each targeting condition before filling any remaining budget. The command
+commits and hashes `window_selection.json` before any held-out model call.
+
+The evaluation phase generates answers once under the selected and runner-up
+windows on the disjoint IDs. It reports per-setting paired risk differences,
+exact McNemar tests with one six-test Holm family, paired bootstrap intervals,
+and an equal-setting nested-bootstrap macro difference. The mechanical
+`initial_six_advantage_reproduced` flag is true only when `[0,6)` wins the
+diagnostic phase and the held-out macro interval is strictly above zero. This
+new test never relabels the paper's historical `[0,6)` result as prespecified.
 
 ```bash
 GPU_ID=0
@@ -329,6 +349,13 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
   --output-dir "${REBUTTAL_ROOT}/held-out-window-evaluation"
 ```
 
+The command writes `window_selection_records.jsonl`, the pre-evaluation
+`window_selection.json`, `held_out_window_records.jsonl`,
+`held_out_window_table.csv`, `held_out_window_contrasts.csv`,
+`held_out_window_summary.json`, `pair_status_records.jsonl`, and a hash-bound
+`run.json`. `--resume` can reuse only complete pair checkpoints and the exact
+committed diagnostic selection.
+
 ## Frozen interfaces for typo-robustness training
 
 Training uses a separately locked project so adding PEFT does not change the
@@ -339,6 +366,9 @@ fixed in
 These `interface-frozen` commands are also **not yet runnable**. In particular,
 the training implementation is not opened as a PR until held-out evaluation
 shows improved typo robustness with clean performance preserved.
+Here `interface-frozen` remains a prose-only pre-implementation label; training
+commands are absent from the runnable experiment catalog until their empirical
+gate is met.
 
 ```bash
 GPU_ID=0

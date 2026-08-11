@@ -74,9 +74,7 @@ class RebuttalManifestProtocol:
                     "task-model-target-rule-aligned-word-count-cyclic-derangement/v1"
                 ),
                 "window_split_seed": self.window_split_seed,
-                "window_split_algorithm": (
-                    "sha256-order-first-floor-half-per-model-task-target-rule/v1"
-                ),
+                "window_split_algorithm": ("sha256-order-sample-group-half-per-task/v2"),
                 "harm_selection": ("all-prepared-clean-correct-typo-correct-aligned-uncapped/v1"),
                 "clean_correct_coverage": ("full-plus-patch-eligible-plus-alignment-ineligible/v1"),
                 "restoration_selection": "fixed-regenerated-paper-denominator/v1",

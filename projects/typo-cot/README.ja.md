@@ -276,15 +276,33 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
 空cellのrateはJSONでは `null`、CSVでは空欄とし、同時に
 `restoration_rate_defined=false` を出力します。数値0として扱いません。
 
-## 残りのARR追加実験の固定インターフェース
+## held-out layer-window評価
 
-以下のコマンドは `interface-frozen` であり、**まだ実行できません**。実装より先に、
-追加実験ごとの操作、引数、入力、出力directoryを固定するために記載しています。
-統計とcohortの契約は
-[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md) にあります。
-`interface-frozen` はREADME上の実装前ラベルであり、3つ目のexperiment catalog
-statusではありません。この段階のコマンドはCLIと `experiments list` には登録せず、
-契約testに通過した各実装PRで `implemented` 操作として直接登録します。
+`held-out-window-evaluation` は実装済みのGPU専用コマンドです。論文の `[0,6)` が
+data-adaptiveに選ばれたという
+明記済みの制約を検証します。`build-rebuttal-manifest` がoutcomeを使わず層別化して
+固定した `window_selection` と `window_evaluation` のID listを使い、同じpairが両phaseへ
+入ることを禁止します。分割単位は `(task, sample_id)` であるため、同じbenchmark
+sampleはモデルやtypo-targeting条件が異なっても必ず同じphaseに入ります。
+
+診断phaseは、事前固定した5つの6層候補 `[0,6)`、`[6,12)`、`[12,18)`、
+`[18,24)`、`[22,28)` を比較します。論文の12 cellのdepth evidenceに合わせ、6つの
+model--task setting内でもAttribution-4とRandom-4を分けます。model--task--target-rule
+cellごと・候補ごとにclean first-CoT-token分布のnormalized restorationのmedianを求め、
+12 cellを等重みとしたmacro meanが最大の候補を選びます。同じscoreでrunner-upも固定し、
+scoreが完全に同じ場合は開始層が小さい候補を優先します。targetを利用できないpairと
+untreated KLが `1e-9` 以下のpairは記録に残しますが選択には使いません。全候補について
+12 cellの各cellに少なくとも1件のscoreを要求します。そのためsmoke runの
+`--limit-per-setting` は2以上とし、まず各targeting条件から1件ずつ決定的に残してから
+残りのbudgetを埋めます。held-out model callを始める前に `window_selection.json` を
+commitしてhashを記録します。
+
+評価phaseは、分離されたID上でselected windowとrunner-up windowによる回答を一度だけ
+生成します。setting別のpaired risk difference、6検定を1 familyとしたHolm補正付き
+exact McNemar test、paired bootstrap区間、setting等重みnested-bootstrap macro差を
+報告します。`initial_six_advantage_reproduced` は、診断phaseで `[0,6)` が選ばれ、かつ
+held-out macro区間の下限が0より大きい場合だけtrueです。この追加実験によって論文の
+historicalな `[0,6)` 結果をprespecifiedへ読み替えることはありません。
 
 ```bash
 GPU_ID=0
@@ -299,6 +317,13 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
   --output-dir "${REBUTTAL_ROOT}/held-out-window-evaluation"
 ```
 
+出力は `window_selection_records.jsonl`、評価開始前に固定される
+`window_selection.json`、`held_out_window_records.jsonl`、
+`held_out_window_table.csv`、`held_out_window_contrasts.csv`、
+`held_out_window_summary.json`、`pair_status_records.jsonl`、hashで拘束した
+`run.json` です。`--resume` は完全なpair checkpointと、完全一致する診断phaseの
+selectionだけを再利用できます。
+
 ## typo頑健化学習の固定インターフェース
 
 PEFTを追加しても論文再現環境を変更しないよう、学習には別のlockfileを持つprojectを
@@ -307,6 +332,8 @@ baseline、PR前の実測gateは
 [`docs/robustness_training_plan_v1.md`](docs/robustness_training_plan_v1.md) で固定しています。
 以下も `interface-frozen` であり、**まだ実行できません**。特に学習実装は、held-out
 評価でclean性能を維持しながらtypo頑健性が向上するまでPRを作成しません。
+ここでの `interface-frozen` はREADME上の実装前ラベル（prose-only label）であり、
+実測gateを満たすまで学習commandを実行可能なexperiment catalogには登録しません。
 
 ```bash
 GPU_ID=0
