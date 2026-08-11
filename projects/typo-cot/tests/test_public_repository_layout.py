@@ -194,6 +194,10 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/experiments/multitoken_kl_readout/runner.py"),
     Path("src/typo_cot/experiments/multitoken_kl_readout/runtime.py"),
     Path("src/typo_cot/experiments/multitoken_kl_readout/statistics.py"),
+    Path("src/typo_cot/experiments/patch_harm_audit/__init__.py"),
+    Path("src/typo_cot/experiments/patch_harm_audit/protocol.py"),
+    Path("src/typo_cot/experiments/patch_harm_audit/runner.py"),
+    Path("src/typo_cot/experiments/patch_harm_audit/runtime.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/__init__.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/metrics.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/planning.py"),
@@ -232,6 +236,7 @@ PUBLIC_SOURCE_FILES = {
 }
 PUBLIC_CONFIG_FILES = {
     Path("configs/rebuttal/multitoken-kl-readout.yaml"),
+    Path("configs/rebuttal/patch-harm-audit.yaml"),
     Path("configs/rebuttal/six-setting-patch-controls.yaml"),
     Path("configs/rebuttal/source-write-coordinate-grid.yaml"),
 }
@@ -441,6 +446,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         "six-setting-patch-controls",
         "source-write-coordinate-grid",
         "multitoken-kl-readout",
+        "patch-harm-audit",
     }
 
 

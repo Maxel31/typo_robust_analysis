@@ -192,17 +192,24 @@ The command writes `multitoken_kl_records.jsonl`, `setting_metrics.csv`,
 `token_position_trajectory.csv`, `token_position_trajectory.svg`,
 `multitoken_summary.json`, and a hash-bound `run.json`.
 
-## Frozen interfaces for remaining ARR additions
+`patch-harm-audit` is implemented and GPU-only. It selects every aligned
+clean-correct/typo-correct pair in the manifest without a per-setting cap,
+copies the clean edited-word-final states to the corresponding typo positions
+over layers `[0,6)`, and greedily regenerates the patched answer. The stored,
+deterministically re-extracted typo answer is the pre-intervention baseline.
+`preserve` means patched-correct; `harm` means patched-incorrect and therefore
+includes unextractable generations, which are also reported separately.
+`answer_changed` compares the canonical extracted values and is true for an
+unextractable patched answer because the baseline answer is extracted.
 
-The following four commands are `interface-frozen` and **not yet runnable**.
-They were written before implementation so every additional experiment has its
-own operation, arguments, inputs, and output directory. The statistical and
-cohort contracts are fixed in
-[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md).
-`interface-frozen` is a prose-only pre-implementation label, not a third
-experiment-catalog status. Such commands are deliberately absent from the CLI
-and `experiments list`; each command's implementation PR registers it directly
-as an `implemented` operation after its contract tests pass.
+The command also combines the complete harm audit with the manifest-bound
+800/1,241 fixed-window repair partition. This output is explicitly labelled a
+`repair-harm-conditional-composite`, not population net accuracy, because the
+manifest retains prepared typo-wrong records outside that paper denominator.
+`--limit-per-setting` exists only for a non-confirmatory smoke test; composite
+transition estimates are unavailable whenever that limit is used. `--resume`
+reuses only input-content-addressed checkpoints after hash and runtime
+validation.
 
 ```bash
 GPU_ID=0
@@ -215,6 +222,27 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
   --cohort clean-correct-typo-correct \
   --gpu-id "${GPU_ID}" \
   --output-dir "${REBUTTAL_ROOT}/patch-harm-audit"
+```
+
+The command writes `patch_harm_records.jsonl`, `setting_harm_table.csv`,
+`repair_harm_composite.csv`, `patch_harm_summary.json`, and a hash-bound
+`run.json`.
+
+## Frozen interfaces for remaining ARR additions
+
+The following three commands are `interface-frozen` and **not yet runnable**.
+They were written before implementation so every additional experiment has its
+own operation, arguments, inputs, and output directory. The statistical and
+cohort contracts are fixed in
+[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md).
+`interface-frozen` is a prose-only pre-implementation label, not a third
+experiment-catalog status. Such commands are deliberately absent from the CLI
+and `experiments list`; each command's implementation PR registers it directly
+as an `implemented` operation after its contract tests pass.
+
+```bash
+GPU_ID=0
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
 
 uv run --project projects/typo-cot typo-cot tokenization-severity-analysis \
   --config projects/typo-cot/configs/rebuttal/tokenization-severity-analysis.yaml \
