@@ -15,6 +15,7 @@
   "modes": ["first", "final", "all"],
   "alignment": {
     "token_count_policy": "equal-count-primary",
+    "subset_scope": "pair-level-shared-across-all-modes/v1",
     "primary_subset": "all-edited-words-equal-subtoken-count/v1",
     "primary_all": "exact-within-word-ordinal/v1",
     "secondary_subset": "any-edited-word-subtoken-count-mismatch/v1",
@@ -31,6 +32,7 @@
   },
   "reporting": {
     "subsets": ["equal-count-primary", "mismatch-monotone-secondary"],
-    "historical_final_audit": true
+    "historical_final_audit": true,
+    "empty_rate_policy": "json-null-csv-blank-with-defined-flag/v1"
   }
 }

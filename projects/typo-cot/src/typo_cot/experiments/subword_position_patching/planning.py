@@ -95,6 +95,10 @@ def plan_subword_patch(edits: Sequence[Mapping[str, object]], *, mode: str) -> S
         raise ValueError("mode must be first, final, or all")
     words = _words(edits)
     equal = all(len(clean) == len(typo) for clean, typo in words)
+    # The confirmatory comparison is paired across all three modes.  Keep one
+    # pair-level subset label even though first/final coordinates themselves do
+    # not require equal token counts; otherwise the modes would use different
+    # denominators and cease to be a paired first/final/all comparison.
     subset = _PRIMARY if equal else _SECONDARY
     source: list[int] = []
     destination: list[int] = []

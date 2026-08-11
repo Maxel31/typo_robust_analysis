@@ -203,8 +203,10 @@ def test_default_protocol_catalog_and_cli_match_the_frozen_readme() -> None:
     assert protocol.window == (0, 6)
     assert protocol.modes == ("first", "final", "all")
     assert protocol.token_count_policy == "equal-count-primary"
+    assert protocol.subset_scope == "pair-level-shared-across-all-modes/v1"
     assert protocol.secondary_alignment == ("nearest-normalized-position-half-up-endpoints/v1")
     assert protocol.answer_target == "manifest-stored-clean-answer/v1"
+    assert protocol.empty_rate_policy == "json-null-csv-blank-with-defined-flag/v1"
 
     spec = get_experiment("subword-position-patching")
     assert spec.status == "implemented"
@@ -272,8 +274,12 @@ def test_equal_count_plans_first_final_and_exact_all_subwords() -> None:
 def test_mismatch_all_subwords_uses_frozen_monotone_endpoint_mapping() -> None:
     edits = [_edit([10, 11], [20, 21, 22, 23]), _edit([30, 31, 32], [40])]
 
+    first = plan_subword_patch(edits, mode="first")
+    final = plan_subword_patch(edits, mode="final")
     plan = plan_subword_patch(edits, mode="all")
 
+    assert first.analysis_subset == "mismatch-monotone-secondary"
+    assert final.analysis_subset == "mismatch-monotone-secondary"
     assert plan.analysis_subset == "mismatch-monotone-secondary"
     assert plan.source_positions == (10, 10, 11, 11, 32)
     assert plan.destination_positions == (20, 21, 22, 23, 40)
@@ -409,6 +415,7 @@ def test_runner_compiles_primary_and_secondary_tables_then_resumes(
     assert int(primary_first["n_pairs"]) == 100
     assert int(primary_first["successes"]) == 50
     assert float(primary_first["restoration_rate"]) == pytest.approx(0.5)
+    assert primary_first["restoration_rate_defined"] == "True"
     summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
     assert summary["confirmatory"] is True
     assert summary["historical_final_audit"]["compared"] == 172
@@ -422,6 +429,17 @@ def test_runner_compiles_primary_and_secondary_tables_then_resumes(
         ),
     )
     assert resumed == result
+
+
+def test_empty_analysis_cells_use_explicit_undefined_rate_metadata() -> None:
+    from typo_cot.experiments.subword_position_patching import runner
+
+    rows = runner._analysis_rows([], modes=("first", "final", "all"))
+
+    assert len(rows) == 6
+    assert all(row["n_pairs"] == 0 for row in rows)
+    assert all(row["restoration_rate"] is None for row in rows)
+    assert all(row["restoration_rate_defined"] is False for row in rows)
 
 
 def test_limit_is_nonconfirmatory_and_checkpoint_resume_is_content_bound(

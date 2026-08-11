@@ -244,7 +244,8 @@ first subtoken、final subtoken、全aligned subtokenの3 modeを同一pair上�
 
 confirmatoryな `equal-count-primary` subsetでは、全edited wordについてclean/typoのsubtoken数が
 一致することを要求し、`all` modeは語内ordinalをそのまま対応させます。token数不一致pairを
-primary rateへ混ぜません。不一致pairは `mismatch-monotone-secondary` として別集計し、
+primary rateへ混ぜません。このpair-level labelは3 modeで共通にし、first/final/allを同一分母で
+paired比較します。不一致pairは `mismatch-monotone-secondary` として別集計し、
 各typo subtokenへ正規化した語内位置が最も近いclean stateを割り当てて両endpointを保持します。
 片側が1 tokenの場合はclean word-final stateを使います。per-pair recordには全source/write対応、
 停止理由、抽出回答、監査用のhistorical final-token eventを残します。`--limit` は
@@ -267,6 +268,8 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
 出力は `subword_patch_records.jsonl`、`subword_patch_table.csv`、
 `subword_alignment_flow.csv`、`subword_patch_summary.json`、hashで拘束した
 `run.json` です。
+空cellのrateはJSONでは `null`、CSVでは空欄とし、同時に
+`restoration_rate_defined=false` を出力します。数値0として扱いません。
 
 ## 残りのARR追加実験の固定インターフェース
 

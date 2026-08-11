@@ -240,6 +240,9 @@ for every stratum; empty or tiny cells are shown, not silently merged.
 the primary 172-pair cohort. The primary analysis is the equal-subtoken-count
 subset. A separately labelled secondary analysis may use an explicit monotone
 alignment heuristic when counts differ; it cannot be pooled with the primary.
+Subset membership is defined once per pair and shared across all three modes,
+so their confirmatory rates use the same paired denominator even though first
+and final coordinates do not themselves require equal token counts.
 
 `held-out-window-evaluation` selects a contiguous six-layer window using only a
 diagnostic split and evaluates it once on a disjoint sample-ID split. A single

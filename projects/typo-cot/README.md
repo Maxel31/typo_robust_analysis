@@ -268,8 +268,9 @@ clean answer.
 
 The confirmatory `equal-count-primary` subset requires every edited word to
 have the same clean and typo subtoken count; `all` then uses exact within-word
-ordinal correspondence. Count-mismatched pairs are never pooled into that
-primary rate. They are reported separately as
+ordinal correspondence. This is one pair-level label shared by all three modes,
+so first/final/all rates remain paired on the same denominator. Count-mismatched
+pairs are never pooled into that primary rate. They are reported separately as
 `mismatch-monotone-secondary`: each typo subtoken receives the clean state at
 the nearest normalized within-word position, preserving both endpoints; when
 either side has one token, the clean word-final state is used. The per-pair
@@ -295,6 +296,8 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
 The command writes `subword_patch_records.jsonl`,
 `subword_patch_table.csv`, `subword_alignment_flow.csv`,
 `subword_patch_summary.json`, and a hash-bound `run.json`.
+An empty table cell uses JSON `null` and a blank CSV value together with
+`restoration_rate_defined=false`; it is never represented as a numeric zero.
 
 ## Frozen interfaces for remaining ARR additions
 

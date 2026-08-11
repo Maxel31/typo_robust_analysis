@@ -29,6 +29,7 @@ class SubwordPositionPatchingProtocol:
     coordinate_source: str
     modes: tuple[str, ...]
     token_count_policy: str
+    subset_scope: str
     primary_subset: str
     primary_alignment: str
     secondary_subset: str
@@ -40,6 +41,7 @@ class SubwordPositionPatchingProtocol:
     answer_target: str
     answer_extraction: str
     historical_final_audit: bool
+    empty_rate_policy: str
     config_sha256: str
 
     def as_dict(self) -> dict[str, object]:
@@ -60,6 +62,7 @@ class SubwordPositionPatchingProtocol:
             "modes": list(self.modes),
             "alignment": {
                 "token_count_policy": self.token_count_policy,
+                "subset_scope": self.subset_scope,
                 "primary_subset": self.primary_subset,
                 "primary_all": self.primary_alignment,
                 "secondary_subset": self.secondary_subset,
@@ -77,6 +80,7 @@ class SubwordPositionPatchingProtocol:
             "reporting": {
                 "subsets": [self.primary_subset, self.secondary_subset],
                 "historical_final_audit": self.historical_final_audit,
+                "empty_rate_policy": self.empty_rate_policy,
             },
         }
 
@@ -144,6 +148,7 @@ def load_subword_position_patching_protocol(
         field="alignment",
         fields={
             "token_count_policy",
+            "subset_scope",
             "primary_subset",
             "primary_all",
             "secondary_subset",
@@ -153,6 +158,7 @@ def load_subword_position_patching_protocol(
     )
     expected_alignment = {
         "token_count_policy": _POLICY,
+        "subset_scope": "pair-level-shared-across-all-modes/v1",
         "primary_subset": "all-edited-words-equal-subtoken-count/v1",
         "primary_all": "exact-within-word-ordinal/v1",
         "secondary_subset": "any-edited-word-subtoken-count-mismatch/v1",
@@ -186,11 +192,12 @@ def load_subword_position_patching_protocol(
     reporting = _mapping(
         payload["reporting"],
         field="reporting",
-        fields={"subsets", "historical_final_audit"},
+        fields={"subsets", "historical_final_audit", "empty_rate_policy"},
     )
     if reporting != {
         "subsets": ["equal-count-primary", "mismatch-monotone-secondary"],
         "historical_final_audit": True,
+        "empty_rate_policy": "json-null-csv-blank-with-defined-flag/v1",
     }:
         raise ValueError("subword-position reporting contract differs")
     return SubwordPositionPatchingProtocol(
@@ -205,6 +212,7 @@ def load_subword_position_patching_protocol(
         coordinate_source="manifest-edit-token-indices-retokenized/v1",
         modes=_MODES,
         token_count_policy=_POLICY,
+        subset_scope="pair-level-shared-across-all-modes/v1",
         primary_subset="equal-count-primary",
         primary_alignment="exact-within-word-ordinal/v1",
         secondary_subset="mismatch-monotone-secondary",
@@ -216,6 +224,7 @@ def load_subword_position_patching_protocol(
         answer_target="manifest-stored-clean-answer/v1",
         answer_extraction="primary-then-empty-only-positional/v1",
         historical_final_audit=True,
+        empty_rate_policy="json-null-csv-blank-with-defined-flag/v1",
         config_sha256=hashlib.sha256(raw).hexdigest(),
     )
 
