@@ -34,21 +34,21 @@ uv sync --project "${TRAIN_PROJECT}" --locked
 
 ## 1. leakageを防いだ学習・評価dataを構築する
 
-初回構築前に、GitHub Typo Corpus v1.0.0とDolma v1.5 sampleを、それぞれの
-利用条件および元repositoryの条件に従って取得します。本repositoryからcorpus
-自体は再配布しません。GitHub承認ファイルは、利用を許可するrepository URLから
-確認済みlicenseへのJSON objectとし、未記載repositoryは除外します。Dolmaは
-JSONLまたはJSONL.GZ形式で用意します。
+初回構築前に、GitHub Typo Corpus v1.0.0を元repositoryの条件に従って取得します。
+本repositoryからcorpus自体は再配布しません。承認ファイルは、利用を許可する
+repository URLから確認済みlicenseへのJSON objectとし、未記載repositoryは除外します。
+Dolmaは固定したdataset revisionのURL inventoryからstreamします。任意のcacheとして、
+利用条件に従って取得したJSONLまたはJSONL.GZ sampleも指定できます。
 
 ```bash
 export TYPO_GITHUB_CORPUS_PATH=/absolute/path/to/github-typo-corpus.v1.0.0.jsonl.gz
 export TYPO_GITHUB_APPROVED_REPOSITORIES=/absolute/path/to/github-typo-approved-repositories.json
-export TYPO_DOLMA_CORPUS_PATH=/absolute/path/to/dolma-v1_5-sample.jsonl.gz
+# Optional: export TYPO_DOLMA_CORPUS_PATH=/absolute/path/to/dolma-v1_5-sample.jsonl.gz
 ```
 
-builderは3つのlocal inputすべてのSHA-256を記録します。ファイル欠落、未承認の
-natural-typo repository、不正record、source revisionのずれがあれば、mixtureを
-暗黙に変えずrunを明示的に失敗させます。
+builderはnatural inputと、local Dolma archiveまたは固定URL inventoryのSHA-256に加え、
+選択したshard URLを記録します。必須ファイル欠落、未承認のnatural-typo repository、
+不正record、source revisionのずれがあれば、mixtureを暗黙に変えずrunを明示的に失敗させます。
 
 ```bash
 uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-robustness-training-data \

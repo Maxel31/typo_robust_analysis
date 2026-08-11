@@ -39,21 +39,24 @@ public clone may select any single available physical GPU.
 
 ## 1. Build leakage-resistant training and evaluation data
 
-Before the first build, obtain GitHub Typo Corpus v1.0.0 and the Dolma v1.5
-sample under their respective access and origin-repository terms. Neither
-corpus is redistributed by this repository. The GitHub approval file must be a
-JSON object mapping each repository URL that may be used to its verified
-license; unlisted repositories are dropped. Dolma must be JSONL or JSONL.GZ.
+Before the first build, obtain GitHub Typo Corpus v1.0.0 under its
+origin-repository terms. It is not redistributed by this repository. The
+approval file must be a JSON object mapping each repository URL that may be
+used to its verified license; unlisted repositories are dropped. Dolma is
+streamed from the URL inventory at its pinned dataset revision. A locally
+obtained JSONL or JSONL.GZ Dolma sample may be supplied as an optional cache.
 
 ```bash
 export TYPO_GITHUB_CORPUS_PATH=/absolute/path/to/github-typo-corpus.v1.0.0.jsonl.gz
 export TYPO_GITHUB_APPROVED_REPOSITORIES=/absolute/path/to/github-typo-approved-repositories.json
-export TYPO_DOLMA_CORPUS_PATH=/absolute/path/to/dolma-v1_5-sample.jsonl.gz
+# Optional: export TYPO_DOLMA_CORPUS_PATH=/absolute/path/to/dolma-v1_5-sample.jsonl.gz
 ```
 
-The builder records SHA-256 digests of all three local inputs. A missing file,
-unapproved natural-typo repository, malformed record, or source revision drift
-fails the run visibly rather than silently changing the mixture.
+The builder records SHA-256 digests of the natural inputs and either the local
+Dolma archive or its pinned URL inventory, together with the selected shard
+URLs. A missing required file, unapproved natural-typo repository, malformed
+record, or source revision drift fails the run visibly rather than silently
+changing the mixture.
 
 ```bash
 uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-robustness-training-data \
