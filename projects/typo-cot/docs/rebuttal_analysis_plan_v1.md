@@ -65,9 +65,10 @@ remain local experiment artifacts and are not committed.
 The six-setting restoration cohort is the fixed-window run's ordered
 clean-to-typo denominator. The harm cohort is selected independently from
 validated prepared pairs with `clean_correct == true` and
-`typo_correct == true`. If a harm setting exceeds 500 records, the first 500 in
-canonical sample-ID order are retained. No outcome-dependent random sampling is
-allowed.
+`typo_correct == true`. Every eligible record is retained: neither cohort is
+capped or reweighted. This makes the restoration and harm partitions exhaustive
+within the full clean-correct population and gives the combined net-accuracy
+audit one population denominator. No outcome-dependent sampling is allowed.
 
 Every aligned edit records clean and typo character spans, token spans, and
 word-final token coordinates. A record is invalid for an arm only under that
@@ -173,10 +174,14 @@ right-to-wrong harm, any extracted-answer change, and unextractable patched
 answers without removing them from the denominator.
 
 The required table contains, per setting, `n_typo_correct`, `preserve`, `harm`,
-and `answer_changed`. A combined accuracy audit joins these records with the
-failure cohort and reports wrong-to-right, right-to-wrong, and net accuracy.
-Until this audit is complete, all prose must call 800/1,241 a conditional
-recovery result on selected clean-correct/typo-wrong failures.
+and `answer_changed`. A combined accuracy audit joins the complete harm records
+with the complete restoration partition. The two partitions must exhaust the
+same validated full clean-correct population under the same coordinate-validity
+rule; missing or capped records make net accuracy invalid rather than estimable.
+The audit reports wrong-to-right, right-to-wrong, and the accuracy difference
+over that single denominator. Until this audit is complete, all prose must call
+800/1,241 a conditional recovery result on selected clean-correct/typo-wrong
+failures.
 
 ## Low-compute and held-out analyses
 
@@ -217,12 +222,20 @@ labelled post-hoc and kept out of the confirmatory Holm family.
 
 This **negative-result claim rule** is binding:
 
-- if correct exceeds both controls in at least five of six settings, the
-  rebuttal may describe cross-setting specificity;
-- if effects vary materially, reversibility may remain cross-setting but
-  specificity must be called setting-dependent;
+- a correct-versus-control contrast is "clearly separated" only when its paired
+  risk difference is at least **10 percentage points** and its two-sided exact
+  McNemar test has **Holm-adjusted** `p < 0.05` in the frozen 12-test family;
+- a control "approaches correct" whenever either part of that rule fails; this
+  definition is applied mechanically rather than after inspecting rates;
+- if both controls are clearly separated in at least five of six settings, the
+  rebuttal may describe cross-setting specificity while naming every
+  non-supporting setting;
+- otherwise, if at least one setting supports both contrasts, reversibility may
+  remain cross-setting but specificity must be called setting-dependent; if no
+  setting supports both, no specificity claim is retained;
 - if either control approaches correct in any setting, the Introduction,
-  contribution list, abstract, and rebuttal must weaken the specificity claim;
+  contribution list, abstract, and rebuttal cannot make an unconditional
+  all-setting specificity claim;
 - if multi-token effects vanish after token 1, the distributional claim is
   restricted to the adjacent readout;
 - if harm offsets repair, no net robustness benefit may be claimed;

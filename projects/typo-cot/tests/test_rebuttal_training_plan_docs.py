@@ -49,15 +49,19 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
     for contents in (project_english, project_japanese):
         examples = _bash_blocks(contents)
         assert "interface-frozen" in contents
-        assert "not yet runnable" in project_english
-        assert "まだ実行できません" in project_japanese
         for command in (*REBUTTAL_COMMANDS, *TRAINING_COMMANDS):
             assert f"typo-cot {command}" in examples
+
+    assert "not yet runnable" in project_english
+    assert "prose-only pre-implementation label" in project_english
+    assert "まだ実行できません" in project_japanese
+    assert "README上の実装前ラベル" in project_japanese
 
     english_examples = _bash_blocks(project_english)
     japanese_examples = _bash_blocks(project_japanese)
     assert japanese_examples == english_examples
     assert "--selection-run" not in english_examples
+    assert "--max-per-setting" not in english_examples
     assert '--cohort-ids "${REBUTTAL_ROOT}/manifest/cohort_ids.json"' in english_examples
 
     for command in (*REBUTTAL_COMMANDS, *TRAINING_COMMANDS):
@@ -88,6 +92,9 @@ def test_rebuttal_plan_freezes_cohorts_arms_statistics_and_claim_rules() -> None
         "right-to-wrong",
         "negative-result claim rule",
         "cohort_ids.json",
+        "full clean-correct population",
+        "10 percentage points",
+        "Holm-adjusted",
     ):
         assert fragment in normalized
 
@@ -122,6 +129,9 @@ def test_training_plan_freezes_data_separation_localization_and_pr_gate() -> Non
         "additional patch gain",
         "three seeds",
         "no training pull request",
+        "Adjacent transpositions are excluded from every training and tuning source",
+        "1e-6 nats",
+        "same evaluated checkpoint",
     ):
         assert fragment in normalized
 

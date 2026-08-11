@@ -72,7 +72,7 @@ has one prespecified role.
 |---|---|---|
 | FineWeb-Edu | Primary broad clean corpus for sanity and MVP training | Documents are split by stable content ID before sampling; held-out documents never enter training |
 | GSM8K train, MMLU public train/dev, ARC-Challenge train | 10--20% reasoning/instruction mixture and layer/component diagnostics | Official test portions are excluded; sample IDs are disjoint from evaluation |
-| GitHub Typo Corpus | Small natural-pair mixture, empirical operation statistics, and natural-typo evaluation | Split by repository before extracting edits; held-out repositories cannot influence the generator |
+| GitHub Typo Corpus | Small natural-pair mixture, empirical operation statistics, and natural-typo evaluation | Split by repository before extracting edits; adjacent transpositions are removed from train/tune and train-derived statistics; held-out repositories cannot influence the generator |
 | Dolma | Unseen-domain evaluation for the initial MVP | No Dolma document enters MVP training or tuning |
 | CoT Collection | Optional reasoning supplement after a license/terms review | Disabled by default; evaluation-task families and near duplicates are removed |
 
@@ -89,6 +89,13 @@ biased. Its English records are partitioned by repository: 70% generator/train,
 may be natural clean/typo pairs from train repositories. Only the train split
 may estimate operation, character, or edit-distance frequencies. Tune and test
 repositories remain opaque to generation.
+
+Adjacent transpositions are excluded from every training and tuning source,
+including the natural-pair mixture, typo-frequency estimation, generator tuning,
+and optional reasoning data. They may occur only in untouched gate/test records,
+where synthetic and natural-transposition results are reported separately. This
+keeps the v1 unseen-operation label valid rather than limiting it to the
+synthetic source.
 
 The CoT Collection is not enabled in the default reproducible configuration:
 its repository describes non-commercial/terms restrictions that require an
@@ -191,6 +198,14 @@ materialized once and content-hashed.
 `select-distillation-layers` uses 200--300 diagnostic examples per task from
 GSM8K, MMLU, and ARC-Challenge train/dev. It runs every single-layer edited-word
 patch and computes multi-token KL restoration, answer restoration, and harm.
+Before any patch outcome is read, a record is KL-eligible only when its finite
+untreated mean `KL(clean || typo)` over tokens 2--16 is greater than **1e-6 nats**.
+Eligibility is computed once from unpatched logits and is identical for every
+layer. `R_KL_2:16,l` is the ratio of cohort-level mean patched and untreated KL,
+not a mean of per-record ratios. Ineligible records remain in answer/harm terms
+and in the audit output but never receive a normalized KL value. A task with
+fewer than 50 KL-eligible records or less than 80% eligibility makes selection
+fail closed; no epsilon substitution or fallback layer metric is allowed.
 For layer `l`:
 
 ```text
@@ -326,6 +341,14 @@ An accepted model should reduce additional patch gain by at least 30% relative
 to Base, indicating less dependence on the diagnostic clean-state transplant.
 This is secondary to the accuracy and harm gates and cannot rescue a model that
 damages clean performance.
+
+The paired patch audit never mixes model states. For Base, both the clean donor
+run and typo recipient run use the frozen base model with no adapter. For every
+trained condition, both runs use the same evaluated checkpoint with that
+condition's adapters enabled; the clean donor activation is captured from that
+adapted model and written into its own adapted typo run. Adapter-disabled or
+base-donor-to-adapted-recipient variants are optional diagnostics, are labelled
+separately, and cannot satisfy the 30% acceptance gate.
 
 ## Test requirements
 

@@ -68,7 +68,10 @@ written before implementation so every additional experiment has its own
 operation, arguments, inputs, and output directory. The statistical and cohort
 contracts are fixed in
 [`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md).
-Each command becomes runnable only in its own reviewed PR.
+`interface-frozen` is a prose-only pre-implementation label, not a third
+experiment-catalog status. Such commands are deliberately absent from the CLI
+and `experiments list`; each command's implementation PR registers it directly
+as an `implemented` operation after its contract tests pass.
 
 ```bash
 GPU_ID=0
@@ -112,7 +115,6 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
   --config projects/typo-cot/configs/rebuttal/patch-harm-audit.yaml \
   --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
   --cohort clean-correct-typo-correct \
-  --max-per-setting 500 \
   --gpu-id "${GPU_ID}" \
   --output-dir "${REBUTTAL_ROOT}/patch-harm-audit"
 

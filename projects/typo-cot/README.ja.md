@@ -61,7 +61,9 @@ uv run --project projects/typo-cot typo-cot experiments show clean-prefix-scan -
 追加実験ごとの操作、引数、入力、出力directoryを固定するために記載しています。
 統計とcohortの契約は
 [`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md) にあります。
-各コマンドは、個別のレビュー済みPRがmergeされた時点で実行可能になります。
+`interface-frozen` はREADME上の実装前ラベルであり、3つ目のexperiment catalog
+statusではありません。この段階のコマンドはCLIと `experiments list` には登録せず、
+契約testに通過した各実装PRで `implemented` 操作として直接登録します。
 
 ```bash
 GPU_ID=0
@@ -105,7 +107,6 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
   --config projects/typo-cot/configs/rebuttal/patch-harm-audit.yaml \
   --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
   --cohort clean-correct-typo-correct \
-  --max-per-setting 500 \
   --gpu-id "${GPU_ID}" \
   --output-dir "${REBUTTAL_ROOT}/patch-harm-audit"
 
