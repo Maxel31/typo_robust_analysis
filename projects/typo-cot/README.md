@@ -61,7 +61,7 @@ operation-specific arguments, cohort, intervention, readout, outputs, compute
 class, and implementation status. Direct experiment runners are added in
 separate reviewed PRs; only entries marked `implemented` are runnable.
 
-## Implemented ARR manifest preparation
+## Implemented ARR manifest and six-setting controls
 
 `build-rebuttal-manifest` is implemented and CPU-only. It accepts the twelve
 completed `prepare-edited-pairs` sources and six completed fixed-window runs
@@ -86,17 +86,14 @@ The command writes `pair_manifest.jsonl`, `cohort_ids.json`,
 `source_audit.json`, and `run.json`. These generated artifacts remain local and
 are inputs to every result-producing ARR command below.
 
-## Frozen interfaces for remaining ARR additions
-
-The following seven commands are `interface-frozen` and **not yet runnable**.
-They were written before implementation so every additional experiment has its
-own operation, arguments, inputs, and output directory. The statistical and
-cohort contracts are fixed in
-[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md).
-`interface-frozen` is a prose-only pre-implementation label, not a third
-experiment-catalog status. Such commands are deliberately absent from the CLI
-and `experiments list`; each command's implementation PR registers it directly
-as an `implemented` operation after its contract tests pass.
+`six-setting-patch-controls` is implemented and GPU-only. It reuses the
+hash-validated correct-coordinate outcomes from the six fixed-window runs and
+generates the prospective strict offset-2 and deterministic cross-item arms.
+The primary analysis uses only each setting's common-valid pairs, runs 12 exact
+McNemar tests with one Holm family, and computes paired and equal-setting nested
+bootstrap intervals. Use exactly one physical GPU; `--limit-per-setting` is a
+non-confirmatory smoke-test option and `--resume` verifies and reuses completed
+pair checkpoints.
 
 ```bash
 GPU_ID=0
@@ -110,6 +107,29 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
   --fixed-window-root "${FIXED_ROOT}" \
   --gpu-id "${GPU_ID}" \
   --output-dir "${REBUTTAL_ROOT}/six-setting-patch-controls"
+```
+
+The command writes `control_records.jsonl`, `pair_status_records.jsonl`,
+`six_setting_control_table.csv`, `common_denominator_flow.csv`,
+`multiplicity_table.csv`, `macro_average.json`,
+`risk_difference_forest.svg`, and a hash-bound `run.json`.
+
+## Frozen interfaces for remaining ARR additions
+
+The following six commands are `interface-frozen` and **not yet runnable**.
+They were written before implementation so every additional experiment has its
+own operation, arguments, inputs, and output directory. The statistical and
+cohort contracts are fixed in
+[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md).
+`interface-frozen` is a prose-only pre-implementation label, not a third
+experiment-catalog status. Such commands are deliberately absent from the CLI
+and `experiments list`; each command's implementation PR registers it directly
+as an `implemented` operation after its contract tests pass.
+
+```bash
+GPU_ID=0
+FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
   typo-cot source-write-coordinate-grid \

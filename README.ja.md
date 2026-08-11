@@ -57,11 +57,12 @@ ARR rebuttalの追加実験と、今後のtypo頑健化学習については、�
 [`rebuttal_analysis_plan_v1.md`](projects/typo-cot/docs/rebuttal_analysis_plan_v1.md)
 と
 [`robustness_training_plan_v1.md`](projects/typo-cot/docs/robustness_training_plan_v1.md)
-で解析契約を固定しています。CPU専用の `build-rebuttal-manifest` は実装済みで、
-新しい介入を行う前に論文6設定のsource cohortを検証して固定します。パッケージ
-READMEでは残りの実験ごとに操作内容が分かるコマンドを示し、未実装のものを
-`interface-frozen` と表示します。学習機能は、held-out評価でclean性能を維持しながら
-頑健性が改善したことを確認してから公開します。
+で解析契約を固定しています。CPU専用の `build-rebuttal-manifest` が論文6設定の
+source cohortを検証・固定し、GPU用の `six-setting-patch-controls` がhashで入力を
+拘束したcheckpoint再開可能な最初の追加実験と事前規定済みpaired解析を実行します。
+パッケージREADMEでは残りの実験ごとに操作内容が分かるコマンドを示し、未実装の
+ものを `interface-frozen` と表示します。学習機能は、held-out評価でclean性能を
+維持しながら頑健性が改善したことを確認してから公開します。
 
 ## リポジトリ構成
 
@@ -75,6 +76,7 @@ READMEでは残りの実験ごとに操作内容が分かるコマンドを示�
 └── projects/typo-cot/
     ├── README.md                   # 英語版のセットアップと実行コマンド
     ├── README.ja.md                # 日本語版のセットアップと実行コマンド
+    ├── configs/                    # 固定済みの公開実験protocol
     ├── docs/                       # 論文の実験契約とprovenance
     ├── results/                    # git対象外のローカル出力（.gitkeepのみ追跡）
     ├── src/typo_cot/               # import可能な実装

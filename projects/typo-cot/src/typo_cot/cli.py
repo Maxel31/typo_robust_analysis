@@ -129,6 +129,11 @@ from typo_cot.experiments.restoration_order_accuracy import (
     build_restoration_order_table,
     run_restoration_order_accuracy,
 )
+from typo_cot.experiments.six_setting_patch_controls import (
+    SixSettingPatchControlsConfig,
+    SixSettingPatchControlsRunError,
+    run_six_setting_patch_controls,
+)
 from typo_cot.experiments.targeting_fidelity_audit import (
     TargetingFidelityAuditConfig,
     TargetingFidelityAuditError,
@@ -199,6 +204,18 @@ def _parser() -> argparse.ArgumentParser:
     rebuttal_manifest.add_argument("--prepared-pairs-root", required=True, type=Path)
     rebuttal_manifest.add_argument("--fixed-window-root", required=True, type=Path)
     rebuttal_manifest.add_argument("--output-dir", required=True, type=Path)
+
+    six_setting_controls = commands.add_parser(
+        "six-setting-patch-controls",
+        help="Run correct, offset, and cross-item patch arms over all six settings.",
+    )
+    six_setting_controls.add_argument("--config", required=True, type=Path)
+    six_setting_controls.add_argument("--manifest", required=True, type=Path)
+    six_setting_controls.add_argument("--fixed-window-root", required=True, type=Path)
+    six_setting_controls.add_argument("--gpu-id", required=True)
+    six_setting_controls.add_argument("--output-dir", required=True, type=Path)
+    six_setting_controls.add_argument("--limit-per-setting", type=_positive_int)
+    six_setting_controls.add_argument("--resume", action="store_true")
 
     pairs = commands.add_parser(
         "prepare-edited-pairs",
@@ -654,6 +671,38 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(f"cohort IDs: {result.cohort_ids_path}")
         print(f"source audit: {result.source_audit_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "six-setting-patch-controls":
+        try:
+            result = run_six_setting_patch_controls(
+                SixSettingPatchControlsConfig(
+                    protocol_path=args.config,
+                    manifest_path=args.manifest,
+                    fixed_window_root=args.fixed_window_root,
+                    output_dir=args.output_dir,
+                    gpu_id=args.gpu_id,
+                    limit_per_setting=args.limit_per_setting,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            SixSettingPatchControlsRunError,
+        ) as exc:
+            print(f"six-setting-patch-controls: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.control_records:,} arm record(s) for "
+            f"{result.pairs:,} pair(s) across {result.settings} settings: "
+            f"{result.control_records_path}"
+        )
+        print(f"control table: {result.control_table_path}")
+        print(f"multiplicity table: {result.multiplicity_table_path}")
+        print(f"forest plot: {result.forest_plot_path}")
         print(f"run manifest: {result.run_path}")
         return 0
     if args.command == "prepare-edited-pairs":
