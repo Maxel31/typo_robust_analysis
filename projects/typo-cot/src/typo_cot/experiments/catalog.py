@@ -441,6 +441,45 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         status="implemented",
     ),
     ExperimentSpec(
+        slug="subword-position-patching",
+        title="Compare first, final, and all edited-word subtoken patches",
+        paper_question="ARR addition",
+        paper_sections=("Rebuttal analysis plan v1: Low-compute analyses",),
+        summary=(
+            "Freshly regenerate three clean-to-typo patch modes while separating exact "
+            "equal-count alignments from a prespecified count-mismatch analysis."
+        ),
+        cohort=(
+            "The 172 Gemma-3-4B/GSM8K primary restoration pairs, partitioned into an "
+            "equal-subtoken-count primary subset and a mismatch secondary subset."
+        ),
+        intervention=(
+            "Copy first, final, or all aligned edited-word residual states over layers "
+            "[0,6); all-subword mismatch mapping uses frozen normalized positions."
+        ),
+        readout=(
+            "Clean-answer restoration by mode and subset, complete source/write mappings, "
+            "and an audit against the historical final-token event."
+        ),
+        required_arguments=(
+            "--config",
+            "--manifest",
+            "--modes",
+            "--token-count-policy",
+            "--gpu-id",
+            "--output-dir",
+        ),
+        outputs=(
+            "subword_patch_records.jsonl",
+            "subword_patch_table.csv",
+            "subword_alignment_flow.csv",
+            "subword_patch_summary.json",
+            "run.json",
+        ),
+        compute="gpu",
+        status="implemented",
+    ),
+    ExperimentSpec(
         slug="patch-coordinate-controls",
         title="Compare edited-word patches with coordinate and donor controls",
         paper_question="RQ1",

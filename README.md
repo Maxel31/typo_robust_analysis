@@ -65,8 +65,10 @@ six-setting source cohort. The GPU `six-setting-patch-controls`,
 `patch-harm-audit` commands run the first result-producing additions with
 hash-bound inputs and resumable checkpoints. The CPU-only
 `tokenization-severity-analysis` then stratifies all three patch arms without
-additional inference. The package README shows one descriptive command per
-remaining experiment and labels unimplemented commands `interface-frozen`.
+additional inference. The GPU-only `subword-position-patching` separately
+compares first-, final-, and all-subword transfers. The package README shows
+one descriptive command per remaining experiment and labels unimplemented
+commands `interface-frozen`.
 Training is published only after held-out evaluation demonstrates a robustness
 improvement while preserving clean performance.
 

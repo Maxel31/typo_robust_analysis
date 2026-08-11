@@ -149,6 +149,11 @@ from typo_cot.experiments.source_write_coordinate_grid import (
     SourceWriteCoordinateGridRunError,
     run_source_write_coordinate_grid,
 )
+from typo_cot.experiments.subword_position_patching import (
+    SubwordPositionPatchingConfig,
+    SubwordPositionPatchingRunError,
+    run_subword_position_patching,
+)
 from typo_cot.experiments.targeting_fidelity_audit import (
     TargetingFidelityAuditConfig,
     TargetingFidelityAuditError,
@@ -307,6 +312,28 @@ def _parser() -> argparse.ArgumentParser:
     severity.add_argument("--controls-run", required=True, type=Path)
     severity.add_argument("--output-dir", required=True, type=Path)
     severity.add_argument("--resume", action="store_true")
+
+    subword = commands.add_parser(
+        "subword-position-patching",
+        help="Compare first, final, and all-subword patches in the primary cohort.",
+    )
+    subword.add_argument("--config", required=True, type=Path)
+    subword.add_argument("--manifest", required=True, type=Path)
+    subword.add_argument(
+        "--modes",
+        required=True,
+        nargs="+",
+        choices=("first", "final", "all"),
+    )
+    subword.add_argument(
+        "--token-count-policy",
+        required=True,
+        choices=("equal-count-primary",),
+    )
+    subword.add_argument("--gpu-id", required=True)
+    subword.add_argument("--output-dir", required=True, type=Path)
+    subword.add_argument("--limit", type=_positive_int)
+    subword.add_argument("--resume", action="store_true")
 
     pairs = commands.add_parser(
         "prepare-edited-pairs",
@@ -917,6 +944,42 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(f"empty severity cells retained: {result.empty_cells:,}")
         print(f"per-pair records: {result.records_path}")
+        print(f"summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "subword-position-patching":
+        try:
+            result = run_subword_position_patching(
+                SubwordPositionPatchingConfig(
+                    protocol_path=args.config,
+                    manifest_path=args.manifest,
+                    modes=tuple(args.modes),
+                    token_count_policy=args.token_count_policy,
+                    gpu_id=args.gpu_id,
+                    output_dir=args.output_dir,
+                    limit=args.limit,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            SubwordPositionPatchingRunError,
+        ) as exc:
+            print(f"subword-position-patching: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"generated first/final/all patches for {result.evaluated_pairs:,}/"
+            f"{result.pairs:,} pair(s): {result.records_path}"
+        )
+        print(
+            f"equal-count primary / mismatch secondary: "
+            f"{result.primary_pairs:,}/{result.secondary_pairs:,}"
+        )
+        print(f"subword table: {result.table_path}")
+        print(f"alignment flow: {result.flow_path}")
         print(f"summary: {result.summary_path}")
         print(f"run manifest: {result.run_path}")
         return 0
