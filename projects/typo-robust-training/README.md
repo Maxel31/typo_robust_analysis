@@ -2,8 +2,8 @@
 
 This project trains and evaluates typo-robust adapters without changing the
 locked environment used to reproduce the submitted activation-patching paper.
-The method is prospective: implementation branches remain local and no
-training pull request is opened until the frozen pre-PR gate demonstrates
+The method is prospective: implementation branches remain local and no training pull request
+is opened until the frozen pre-PR gate demonstrates
 better held-out typo robustness while preserving clean performance.
 
 The scientific order is fixed as:
@@ -39,6 +39,22 @@ public clone may select any single available physical GPU.
 
 ## 1. Build leakage-resistant training and evaluation data
 
+Before the first build, obtain GitHub Typo Corpus v1.0.0 and the Dolma v1.5
+sample under their respective access and origin-repository terms. Neither
+corpus is redistributed by this repository. The GitHub approval file must be a
+JSON object mapping each repository URL that may be used to its verified
+license; unlisted repositories are dropped. Dolma must be JSONL or JSONL.GZ.
+
+```bash
+export TYPO_GITHUB_CORPUS_PATH=/absolute/path/to/github-typo-corpus.v1.0.0.jsonl.gz
+export TYPO_GITHUB_APPROVED_REPOSITORIES=/absolute/path/to/github-typo-approved-repositories.json
+export TYPO_DOLMA_CORPUS_PATH=/absolute/path/to/dolma-v1_5-sample.jsonl.gz
+```
+
+The builder records SHA-256 digests of all three local inputs. A missing file,
+unapproved natural-typo repository, malformed record, or source revision drift
+fails the run visibly rather than silently changing the mixture.
+
 ```bash
 uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-robustness-training-data \
   --config "${TRAIN_PROJECT}/configs/gemma4b-sanity.yaml" \
@@ -61,6 +77,8 @@ hyperparameters, stopping rules, and the passing pre-PR checkpoint are frozen.
 The command writes:
 
 - `training_sources.jsonl`: ordered clean training records and source metadata;
+- `typo_statistics.json`: character-edit statistics derived only from natural
+  pairs in training repositories;
 - `diagnostic_manifest.jsonl`: GSM8K/MMLU/ARC train/dev localization records;
 - `tune_manifest.jsonl`: fixed iteration-only evaluation pairs;
 - `pre_pr_gate_manifest.jsonl`: fixed one-use pre-PR gate pairs;

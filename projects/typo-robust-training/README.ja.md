@@ -34,6 +34,22 @@ uv sync --project "${TRAIN_PROJECT}" --locked
 
 ## 1. leakageを防いだ学習・評価dataを構築する
 
+初回構築前に、GitHub Typo Corpus v1.0.0とDolma v1.5 sampleを、それぞれの
+利用条件および元repositoryの条件に従って取得します。本repositoryからcorpus
+自体は再配布しません。GitHub承認ファイルは、利用を許可するrepository URLから
+確認済みlicenseへのJSON objectとし、未記載repositoryは除外します。Dolmaは
+JSONLまたはJSONL.GZ形式で用意します。
+
+```bash
+export TYPO_GITHUB_CORPUS_PATH=/absolute/path/to/github-typo-corpus.v1.0.0.jsonl.gz
+export TYPO_GITHUB_APPROVED_REPOSITORIES=/absolute/path/to/github-typo-approved-repositories.json
+export TYPO_DOLMA_CORPUS_PATH=/absolute/path/to/dolma-v1_5-sample.jsonl.gz
+```
+
+builderは3つのlocal inputすべてのSHA-256を記録します。ファイル欠落、未承認の
+natural-typo repository、不正record、source revisionのずれがあれば、mixtureを
+暗黙に変えずrunを明示的に失敗させます。
+
 ```bash
 uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-robustness-training-data \
   --config "${TRAIN_PROJECT}/configs/gemma4b-sanity.yaml" \
@@ -55,6 +71,7 @@ PR前gateを通過したcheckpointが固定されるまで封印します。
 出力は次のとおりです。
 
 - `training_sources.jsonl`: 順序付きclean training recordとsource metadata。
+- `typo_statistics.json`: training repositoryのnatural pairだけから得た文字編集統計。
 - `diagnostic_manifest.jsonl`: GSM8K/MMLU/ARC train/devのlocalization record。
 - `tune_manifest.jsonl`: iteration専用の固定評価pair。
 - `pre_pr_gate_manifest.jsonl`: 一度だけ使う固定PR前gate pair。
