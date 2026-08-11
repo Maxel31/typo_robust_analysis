@@ -54,6 +54,12 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
         for command in (*REBUTTAL_COMMANDS, *TRAINING_COMMANDS):
             assert f"typo-cot {command}" in examples
 
+    english_examples = _bash_blocks(project_english)
+    japanese_examples = _bash_blocks(project_japanese)
+    assert japanese_examples == english_examples
+    assert "--selection-run" not in english_examples
+    assert '--cohort-ids "${REBUTTAL_ROOT}/manifest/cohort_ids.json"' in english_examples
+
     for command in (*REBUTTAL_COMMANDS, *TRAINING_COMMANDS):
         assert re.search(r"(?:^|-)rq\d+(?:-|$)", command, flags=re.IGNORECASE) is None
         assert re.search(r"(?:^|-)p[01](?:-[a-d])?(?:-|$)", command, flags=re.IGNORECASE) is None

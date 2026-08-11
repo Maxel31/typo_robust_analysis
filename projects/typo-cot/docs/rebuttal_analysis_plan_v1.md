@@ -192,10 +192,14 @@ subset. A separately labelled secondary analysis may use an explicit monotone
 alignment heuristic when counts differ; it cannot be pooled with the primary.
 
 `held-out-window-evaluation` selects a contiguous six-layer window using only a
-diagnostic split and evaluates it once on a disjoint sample-ID split. Split IDs,
-the window scoring rule, tie breaking, and the selected window are recorded
-before held-out outcomes are read. `[0,6)` remains the paper's historical,
-data-adaptive reference and is not relabelled prespecified.
+diagnostic split and evaluates it once on a disjoint sample-ID split. A single
+invocation reads both ordered split lists from the manifest's
+`cohort_ids.json`; it does not consume an outcome-bearing `--selection-run`.
+It completes and hashes `window_selection.json` before loading any held-out
+record, then writes held-out per-item records and the final comparison. Split
+IDs, the window scoring rule, tie breaking, and the selected window are thus
+recorded before held-out outcomes are read. `[0,6)` remains the paper's
+historical, data-adaptive reference and is not relabelled prespecified.
 
 ## Exclusions, failures, and multiplicity
 

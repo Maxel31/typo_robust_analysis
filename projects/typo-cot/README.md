@@ -135,9 +135,9 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
   typo-cot held-out-window-evaluation \
   --config projects/typo-cot/configs/rebuttal/held-out-window-evaluation.yaml \
   --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
-  --selection-run "${REBUTTAL_ROOT}/held-out-window-evaluation/selection" \
+  --cohort-ids "${REBUTTAL_ROOT}/manifest/cohort_ids.json" \
   --gpu-id "${GPU_ID}" \
-  --output-dir "${REBUTTAL_ROOT}/held-out-window-evaluation/evaluation"
+  --output-dir "${REBUTTAL_ROOT}/held-out-window-evaluation"
 ```
 
 ## Frozen interfaces for typo-robustness training
