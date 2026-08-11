@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import io
 import json
 from pathlib import Path
 
@@ -109,16 +110,8 @@ def test_provider_passes_pinned_revision_and_declared_split_to_datasets(
     assert all(call["name"] == "main" for call in calls)
 
 
-def test_dolma_requires_a_locally_accepted_archive_and_hashes_it(tmp_path: Path) -> None:
+def test_dolma_local_cache_is_hashed(tmp_path: Path) -> None:
     protocol = load_training_data_config(DEFAULT_CONFIG)
-    missing = tmp_path / "missing.jsonl.gz"
-    provider = HuggingFaceDataSourceProvider(
-        protocol=protocol,
-        dolma_corpus_path=missing,
-    )
-    with pytest.raises(ValueError, match="TYPO_DOLMA_CORPUS_PATH"):
-        tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
-
     archive = tmp_path / "dolma.jsonl.gz"
     with gzip.open(archive, "wt", encoding="utf-8") as handle:
         handle.write(
@@ -140,6 +133,54 @@ def test_dolma_requires_a_locally_accepted_archive_and_hashes_it(tmp_path: Path)
     assert len(records) == 1
     assert records[0].source == "dolma"
     assert records[0].text.startswith("A held-out domain")
-    assert provider.provenance()["dolma_corpus_sha256"] == hashlib.sha256(
-        archive.read_bytes()
-    ).hexdigest()
+    assert (
+        provider.provenance()["dolma_corpus_sha256"]
+        == hashlib.sha256(archive.read_bytes()).hexdigest()
+    )
+
+
+def test_dolma_default_streams_selected_shards_from_pinned_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    protocol = load_training_data_config(DEFAULT_CONFIG)
+    monkeypatch.delenv("TYPO_DOLMA_CORPUS_PATH", raising=False)
+    provider = HuggingFaceDataSourceProvider(protocol=protocol)
+    url = "https://olmo-data.example/dolma-v1_5-sample/wiki-0000.json.gz"
+    monkeypatch.setattr(
+        provider,
+        "_remote_dolma_urls",
+        lambda source: ((url,), "c" * 64),
+    )
+    compressed = gzip.compress(
+        (
+            json.dumps(
+                {
+                    "id": "dolma-remote-1",
+                    "text": "A remote held-out domain document with enough useful words.",
+                    "source": "wiki",
+                    "metadata": {"fixture": True},
+                }
+            )
+            + "\n"
+        ).encode()
+    )
+
+    class _Response(io.BytesIO):
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            self.close()
+
+    def fake_urlopen(request: object, *, timeout: int) -> _Response:
+        assert getattr(request, "full_url") == url
+        assert "typo-robust-training" in request.get_header("User-agent")
+        assert timeout == 60
+        return _Response(compressed)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    records = tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
+    assert [record.source_id for record in records] == ["dolma:dolma-remote-1"]
+    provenance = provider.provenance()
+    assert provenance["dolma_url_inventory_sha256"] == "c" * 64
+    assert provenance["dolma_selected_urls"] == [url]
