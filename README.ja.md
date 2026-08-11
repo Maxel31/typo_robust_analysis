@@ -60,8 +60,8 @@ ARR rebuttalの追加実験と、今後のtypo頑健化学習については、�
 で解析契約を固定しています。CPU専用の `build-rebuttal-manifest` が論文6設定の
 source cohortを検証・固定し、GPU用の `six-setting-patch-controls`、
 `source-write-coordinate-grid`、`multitoken-kl-readout`、`patch-harm-audit` が
-hashで入力を拘束したcheckpoint再開可能な最初の追加実験と事前規定済み解析を
-実行します。
+hashで入力を拘束したcheckpoint再開可能な最初の追加実験を実行し、CPU専用の
+`tokenization-severity-analysis` が追加推論なしで3つのpatch armを層別化します。
 パッケージREADMEでは残りの実験ごとに操作内容が分かるコマンドを示し、未実装の
 ものを `interface-frozen` と表示します。学習機能は、held-out評価でclean性能を
 維持しながら頑健性が改善したことを確認してから公開します。

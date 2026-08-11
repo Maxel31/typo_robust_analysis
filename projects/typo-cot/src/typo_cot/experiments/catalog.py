@@ -408,6 +408,39 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         status="implemented",
     ),
     ExperimentSpec(
+        slug="tokenization-severity-analysis",
+        title="Stratify patch outcomes by tokenization severity",
+        paper_question="ARR addition",
+        paper_sections=("Rebuttal analysis plan v1: Low-compute analyses",),
+        summary=(
+            "Join the complete three-arm control outcomes to aligned edit token spans and "
+            "report every prespecified tokenization-severity cell without new inference."
+        ),
+        cohort="All 1,241 restoration pairs in the exact six-setting rebuttal manifest.",
+        intervention=(
+            "No new intervention; consume the completed correct, offset-2, and cross-item "
+            "answer-level outcomes after hash and denominator validation."
+        ),
+        readout=(
+            "Arm-valid and common-valid restoration counts/rates for subtoken-count change, "
+            "fragmentation increase, edit-count, and clean-word tokenization strata."
+        ),
+        required_arguments=(
+            "--config",
+            "--manifest",
+            "--controls-run",
+            "--output-dir",
+        ),
+        outputs=(
+            "tokenization_severity_records.jsonl",
+            "tokenization_severity_table.csv",
+            "tokenization_severity_summary.json",
+            "run.json",
+        ),
+        compute="cpu",
+        status="implemented",
+    ),
+    ExperimentSpec(
         slug="patch-coordinate-controls",
         title="Compare edited-word patches with coordinate and donor controls",
         paper_question="RQ1",

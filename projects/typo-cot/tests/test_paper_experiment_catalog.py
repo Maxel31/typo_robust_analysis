@@ -32,6 +32,7 @@ EXPECTED_EXPERIMENTS = (
     "source-write-coordinate-grid",
     "multitoken-kl-readout",
     "patch-harm-audit",
+    "tokenization-severity-analysis",
     "patch-coordinate-controls",
     "patch-position-controls",
     "patch-text-combination",

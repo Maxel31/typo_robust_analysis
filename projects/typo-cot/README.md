@@ -228,9 +228,40 @@ The command writes `patch_harm_records.jsonl`, `setting_harm_table.csv`,
 `repair_harm_composite.csv`, `patch_harm_summary.json`, and a hash-bound
 `run.json`.
 
+`tokenization-severity-analysis` is implemented and CPU-only. It accepts only
+a complete, hash-validated six-setting controls run over the exact manifest;
+non-confirmatory limited runs are rejected. Without additional model
+inference, every restoration pair is assigned to exactly one bin in each of
+four prespecified dimensions:
+
+- all edited words keep their subtoken count / at least one count changes;
+- typo-side fragmentation increases for at least one edited word / does not;
+- one / two / three-to-four aligned edits; and
+- all clean edited words are single-token / at least one is multi-token.
+
+For every bin, including empty and tiny cells, the long-form table reports all
+three arms using both each arm's planned-valid denominator and the common-valid
+denominator shared by correct, offset, and cross-item. Rows are emitted for the
+overall cohort and separately for all six settings, so pooled rates never hide
+setting composition.
+
+```bash
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+uv run --project projects/typo-cot typo-cot tokenization-severity-analysis \
+  --config projects/typo-cot/configs/rebuttal/tokenization-severity-analysis.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --controls-run "${REBUTTAL_ROOT}/six-setting-patch-controls" \
+  --output-dir "${REBUTTAL_ROOT}/tokenization-severity-analysis"
+```
+
+The command writes `tokenization_severity_records.jsonl`,
+`tokenization_severity_table.csv`, `tokenization_severity_summary.json`, and a
+hash-bound `run.json`.
+
 ## Frozen interfaces for remaining ARR additions
 
-The following three commands are `interface-frozen` and **not yet runnable**.
+The following two commands are `interface-frozen` and **not yet runnable**.
 They were written before implementation so every additional experiment has its
 own operation, arguments, inputs, and output directory. The statistical and
 cohort contracts are fixed in
@@ -243,12 +274,6 @@ as an `implemented` operation after its contract tests pass.
 ```bash
 GPU_ID=0
 REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
-
-uv run --project projects/typo-cot typo-cot tokenization-severity-analysis \
-  --config projects/typo-cot/configs/rebuttal/tokenization-severity-analysis.yaml \
-  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
-  --controls-run "${REBUTTAL_ROOT}/six-setting-patch-controls" \
-  --output-dir "${REBUTTAL_ROOT}/tokenization-severity-analysis"
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
   typo-cot subword-position-patching \

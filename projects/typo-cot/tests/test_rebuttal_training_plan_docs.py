@@ -62,6 +62,7 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
     assert "`source-write-coordinate-grid` is implemented and GPU-only" in project_english
     assert "`multitoken-kl-readout` is implemented and GPU-only" in project_english
     assert "`patch-harm-audit` is implemented and GPU-only" in project_english
+    assert "`tokenization-severity-analysis` is implemented and CPU-only" in project_english
     assert "prose-only pre-implementation label" in project_english
     assert "まだ実行できません" in project_japanese
     assert "`build-rebuttal-manifest` は実装済みのCPU専用コマンド" in project_japanese
@@ -69,6 +70,7 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
     assert "`source-write-coordinate-grid` は実装済みのGPU専用コマンド" in project_japanese
     assert "`multitoken-kl-readout` は実装済みのGPU専用コマンド" in project_japanese
     assert "`patch-harm-audit` は実装済みのGPU専用コマンド" in project_japanese
+    assert "`tokenization-severity-analysis` は実装済みのCPU専用コマンド" in project_japanese
     assert "README上の実装前ラベル" in project_japanese
 
     english_examples = _bash_blocks(project_english)
@@ -100,6 +102,7 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
         "source-write-coordinate-grid",
         "multitoken-kl-readout",
         "patch-harm-audit",
+        "tokenization-severity-analysis",
     }
     assert registered.isdisjoint(TRAINING_COMMANDS)
     assert get_experiment("build-rebuttal-manifest").status == "implemented"
@@ -107,6 +110,7 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
     assert get_experiment("source-write-coordinate-grid").status == "implemented"
     assert get_experiment("multitoken-kl-readout").status == "implemented"
     assert get_experiment("patch-harm-audit").status == "implemented"
+    assert get_experiment("tokenization-severity-analysis").status == "implemented"
 
 
 def test_rebuttal_plan_freezes_cohorts_arms_statistics_and_claim_rules() -> None:

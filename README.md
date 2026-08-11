@@ -63,11 +63,12 @@ The CPU-only `build-rebuttal-manifest` command validates and freezes the exact
 six-setting source cohort. The GPU `six-setting-patch-controls`,
 `source-write-coordinate-grid`, `multitoken-kl-readout`, and
 `patch-harm-audit` commands run the first result-producing additions with
-hash-bound inputs, resumable checkpoints, and prespecified analyses. The
-package README shows one descriptive command per remaining experiment and
-labels unimplemented commands `interface-frozen`. Training is
-published only after held-out evaluation demonstrates a robustness improvement
-while preserving clean performance.
+hash-bound inputs and resumable checkpoints. The CPU-only
+`tokenization-severity-analysis` then stratifies all three patch arms without
+additional inference. The package README shows one descriptive command per
+remaining experiment and labels unimplemented commands `interface-frozen`.
+Training is published only after held-out evaluation demonstrates a robustness
+improvement while preserving clean performance.
 
 ## Repository map
 
