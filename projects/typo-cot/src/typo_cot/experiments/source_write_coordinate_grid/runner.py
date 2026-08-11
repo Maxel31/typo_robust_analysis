@@ -290,8 +290,7 @@ def _runtime_provenance(
         or provenance.get("coordinate_source") != "rebuttal-pair-manifest/v1"
         or provenance.get("layer_window") != [0, 6]
         or provenance.get("generated_arms") != list(_GENERATED_ARMS)
-        or provenance.get("answer_extraction")
-        != "primary-then-empty-only-positional-only-after-eos/v1"
+        or provenance.get("answer_extraction") != "primary-then-empty-only-positional/v1"
     ):
         raise ValueError("source/write runtime provenance differs from the frozen protocol")
     eos_ids = provenance.get("effective_eos_token_ids")
@@ -833,7 +832,11 @@ def run_source_write_coordinate_grid(
             raise ValueError("source/write resume contract differs")
         if isinstance(previous.get("started_at"), str):
             started_at = str(previous["started_at"])
-    confirmatory = config.cohorts == tuple(protocol.cohorts) and config.limit_per_cohort is None
+    confirmatory = (
+        set(config.cohorts) == set(protocol.cohorts)
+        and len(config.cohorts) == len(protocol.cohorts)
+        and config.limit_per_cohort is None
+    )
     base_run: dict[str, object] = {
         "schema_version": _RUN_SCHEMA,
         "paper_sha256": PAPER_SHA256,

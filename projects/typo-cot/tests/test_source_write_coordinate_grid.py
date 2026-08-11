@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 from collections.abc import Mapping
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -39,13 +40,21 @@ COHORT_SETTINGS = {
 }
 
 
-def _write_protocol(path: Path, *, replicates: int = 200) -> None:
-    payload = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
-    payload["statistics"]["pair_bootstrap_replicates"] = replicates
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+def _write_protocol(path: Path) -> None:
+    path.write_bytes(DEFAULT_CONFIG.read_bytes())
+
+
+@pytest.fixture(autouse=True)
+def _fast_runner_bootstrap(monkeypatch: pytest.MonkeyPatch) -> None:
+    def bootstrap(
+        left: tuple[bool, ...],
+        right: tuple[bool, ...],
+        **_kwargs: object,
+    ) -> dict[str, float]:
+        estimate = sum(left) / len(left) - sum(right) / len(right)
+        return {"estimate": estimate, "lower": estimate, "upper": estimate}
+
+    monkeypatch.setattr(grid_runner, "paired_bootstrap_risk_difference", bootstrap)
 
 
 def _records() -> tuple[dict[str, object], ...]:
@@ -138,7 +147,7 @@ class _Runtime:
                 "num_return_sequences": 1,
                 "max_new_tokens": 512,
             },
-            "answer_extraction": "primary-then-empty-only-positional-only-after-eos/v1",
+            "answer_extraction": "primary-then-empty-only-positional/v1",
         }
 
     def scan_grid(
@@ -221,6 +230,82 @@ def test_default_protocol_catalog_and_cli_match_the_frozen_readme() -> None:
         action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
     )
     assert "source-write-coordinate-grid" in subparsers.choices
+
+
+def test_protocol_rejects_bootstrap_replicate_drift(tmp_path: Path) -> None:
+    payload = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    payload["statistics"]["pair_bootstrap_replicates"] = 9_999
+    changed = tmp_path / "changed.yaml"
+    changed.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="pair_bootstrap_replicates.*10,000"):
+        load_source_write_coordinate_grid_protocol(changed)
+
+
+def test_grid_runtime_requests_the_fixed_reference_extraction_contract() -> None:
+    from typo_cot.experiments.source_write_coordinate_grid.runtime import (
+        HuggingFaceSourceWriteCoordinateGridRuntime,
+    )
+
+    runtime = object.__new__(HuggingFaceSourceWriteCoordinateGridRuntime)
+    runtime.num_layers = 6
+    runtime._torch = SimpleNamespace(inference_mode=nullcontext)
+    runtime._tokenize_and_validate = lambda _pair, *, side: (  # type: ignore[method-assign]
+        object(),
+        object(),
+        (2,) if side == "clean" else (3,),
+    )
+    runtime._gold_answer = lambda _pair: "2"  # type: ignore[method-assign]
+    runtime._capture = lambda **_kwargs: [object()] * 6  # type: ignore[method-assign]
+    runtime._window_patch = lambda **_kwargs: nullcontext()  # type: ignore[method-assign]
+    requested_contracts: list[bool] = []
+
+    def generate(**kwargs: object) -> ControlGeneration:
+        requested_contracts.append(bool(kwargs.get("allow_positional_after_length_cap")))
+        return ControlGeneration(
+            token_ids=(1,),
+            text="unfinished reasoning\n2",
+            termination="length-cap",
+            value="2",
+            is_extracted=True,
+            is_correct=True,
+            method="fallback:N5_tail_number",
+            primary_method="fixture",
+        )
+
+    runtime._generate_control = generate  # type: ignore[method-assign]
+    record = {
+        "pair_id": "grid-runtime-fixture",
+        "gold_answer": "2",
+        "target_rule": "attribution-4",
+        "clean_text": "clean prompt",
+        "typo_text": "typo prompt",
+        "clean_prompt_token_count": 8,
+        "typo_prompt_token_count": 8,
+        "edits": [
+            {
+                "clean_char_span": [0, 5],
+                "typo_char_span": [0, 4],
+                "clean_word_final_token": 2,
+                "typo_word_final_token": 3,
+            }
+        ],
+        "controls": {
+            "correct": {
+                "valid": True,
+                "source_positions": [2],
+                "destination_positions": [3],
+            },
+            "offset_2": {
+                "valid": True,
+                "source_positions": [4],
+                "destination_positions": [5],
+            },
+        },
+    }
+
+    assert set(runtime.scan_grid(record)) == {"E->O", "O->E", "O->O"}
+    assert requested_contracts == [True, True, True]
 
 
 def test_cochran_q_handles_signal_and_the_all_equal_boundary() -> None:
@@ -353,7 +438,7 @@ def test_invalid_offset_excludes_all_three_offset_dependent_arms(
             protocol_path=protocol_path,
             manifest_path=manifest_path,
             fixed_window_root=fixed_root,
-            cohorts=("primary", "replication"),
+            cohorts=("replication", "primary"),
             gpu_id="3",
             output_dir=tmp_path / "output",
         ),

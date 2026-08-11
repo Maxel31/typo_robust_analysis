@@ -49,6 +49,7 @@ class HuggingFaceSixSettingPatchControlsRuntime(HuggingFaceFixedWindowAnswerPatc
         correct_answer: str,
         patch: Any,
         field: str,
+        allow_positional_after_length_cap: bool = False,
     ) -> Any:
         from typo_cot.evaluation.fallback import extract_with_fallback
         from typo_cot.experiments.six_setting_patch_controls.runner import (
@@ -98,7 +99,7 @@ class HuggingFaceSixSettingPatchControlsRuntime(HuggingFaceFixedWindowAnswerPatc
             text,
             benchmark=self._extraction_benchmark,
             correct_answer=correct_answer,
-            allow_positional=termination == "eos",
+            allow_positional=(termination == "eos" or allow_positional_after_length_cap),
         )
         return ControlGeneration(
             token_ids=continuation,
@@ -202,6 +203,7 @@ class HuggingFaceSixSettingPatchControlsRuntime(HuggingFaceFixedWindowAnswerPatc
                         donor_cache=donor_cache,
                     ),
                     field=f"{pair.get('pair_id')}:{control}",
+                    allow_positional_after_length_cap=True,
                 )
                 results[control] = ControlArmResult(
                     generation=generation,
@@ -223,7 +225,7 @@ class HuggingFaceSixSettingPatchControlsRuntime(HuggingFaceFixedWindowAnswerPatc
                 "coordinate_source": "rebuttal-pair-manifest/v1",
                 "layer_window": [0, 6],
                 "diagnostic_controls": ["offset-2", "cross-item"],
-                "answer_extraction": ("primary-then-empty-only-positional-only-after-eos/v1"),
+                "answer_extraction": "primary-then-empty-only-positional/v1",
             }
         )
         return payload

@@ -120,6 +120,9 @@ replication Mistral/MMLU cohorts. The common-valid denominator requires the
 complete correct and strict offset coordinate plans. It reuses fixed `E->E`
 events and generates `E->O`, `O->E`, and `O->O`, then reports Cochran's Q and
 the two prespecified paired contrasts per cohort with one Holm family.
+All four arms use the fixed-window producer's extraction contract, including
+its empty-primary positional fallback, so capped continuations are scored
+symmetrically; termination remains recorded for every new generation.
 `--limit-per-cohort` is available only for non-confirmatory smoke tests.
 
 ```bash

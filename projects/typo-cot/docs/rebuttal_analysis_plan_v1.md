@@ -157,6 +157,11 @@ primary contrasts are `E->E` versus `E->O` (write location) and `E->E` versus
 tests for prespecified pairwise contrasts, Holm adjustment, risk differences,
 and pair-bootstrap 95% intervals.
 
+Because `E->E` is reused from the fixed-window producer, all four arms use that
+producer's primary-then-empty-only positional fallback, including at the
+generation length cap. New generations additionally retain explicit EOS versus
+length-cap termination provenance.
+
 Interpretation is fixed before results:
 
 - only `E->E` high: the source/write combination is specific;

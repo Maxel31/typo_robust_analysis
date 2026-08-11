@@ -155,7 +155,7 @@ class _Runtime:
                 "num_return_sequences": 1,
                 "max_new_tokens": 512,
             },
-            "answer_extraction": "primary-then-empty-only-positional-only-after-eos/v1",
+            "answer_extraction": "primary-then-empty-only-positional/v1",
         }
 
     def scan_controls(

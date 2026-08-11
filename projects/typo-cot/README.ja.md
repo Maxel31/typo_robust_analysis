@@ -110,8 +110,10 @@ Gemma/GSM8Kと、事前規定したreplicationのMistral/MMLUで、donor内容�
 分離します。4 arm共通分母にはcorrect座標planと厳密なoffset座標planの両方が完全に
 有効なpairだけを使います。固定済み `E->E` eventを再利用し、`E->O`、`O->E`、
 `O->O` を生成した後、各cohortのCochran's Qと2つの事前規定paired contrastを1つの
-Holm familyとして報告します。`--limit-per-cohort` は非confirmatoryなsmoke test
-専用です。
+Holm familyとして報告します。4 armすべてでfixed-window producerと同じ回答抽出
+契約（primaryが空の場合のpositional fallbackを含む）を使うため、length capに達した
+continuationも対称に採点されます。新規生成のtermination自体は記録します。
+`--limit-per-cohort` は非confirmatoryなsmoke test専用です。
 
 ```bash
 GPU_ID=0

@@ -17,6 +17,7 @@ _COHORTS = {
 _VALIDITY = "correct-and-offset-valid/v1"
 _CONTRASTS = (("E->E", "E->O"), ("E->E", "O->E"))
 _MULTIPLICITY = "holm-4-cohort-contrast-tests/v1"
+_PAIR_BOOTSTRAP_REPLICATES = 10_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +131,12 @@ def load_source_write_coordinate_grid_protocol(
         raise ValueError("statistics.confidence_level must be between zero and one")
     if statistics.get("multiplicity") != _MULTIPLICITY:
         raise ValueError("source/write grid multiplicity family differs")
+    pair_bootstrap_replicates = _integer(
+        statistics.get("pair_bootstrap_replicates"),
+        field="statistics.pair_bootstrap_replicates",
+    )
+    if pair_bootstrap_replicates != _PAIR_BOOTSTRAP_REPLICATES:
+        raise ValueError("statistics.pair_bootstrap_replicates must equal the frozen 10,000")
     return SourceWriteCoordinateGridProtocol(
         schema_version=_SCHEMA,
         window=(start, stop),
@@ -137,10 +144,7 @@ def load_source_write_coordinate_grid_protocol(
         cohorts=cohorts,
         common_validity=_VALIDITY,
         contrasts=_CONTRASTS,
-        pair_bootstrap_replicates=_integer(
-            statistics.get("pair_bootstrap_replicates"),
-            field="statistics.pair_bootstrap_replicates",
-        ),
+        pair_bootstrap_replicates=_PAIR_BOOTSTRAP_REPLICATES,
         bootstrap_seed=_integer(
             statistics.get("bootstrap_seed"),
             field="statistics.bootstrap_seed",
