@@ -53,7 +53,10 @@ def _fixture(tmp_path: Path) -> Path:
         "contributing_record_ids_sha256": "c" * 64,
         "held_out_operations": ["adjacent-transposition"],
         "operation_counts": {},
-        "substitutions": {character: {"z" if character != "z" else "x": 1} for character in "abcdefghijklmnopqrstuvwxyz"},
+        "substitutions": {
+            character: {"z" if character != "z" else "x": 1}
+            for character in "abcdefghijklmnopqrstuvwxyz"
+        },
     }
     stats = root / "typo_statistics.json"
     _write_json(stats, statistics)

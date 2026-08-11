@@ -15,7 +15,9 @@ class _WordTokenizer:
 
     def __call__(self, text: str, **kwargs: object) -> dict[str, list[object]]:
         del kwargs
-        pieces = [(match.group(), match.span()) for match in re.finditer(r"[A-Za-z]+|\d+|[^\w\s]", text)]
+        pieces = [
+            (match.group(), match.span()) for match in re.finditer(r"[A-Za-z]+|\d+|[^\w\s]", text)
+        ]
         ids = [1]
         offsets: list[tuple[int, int]] = [(0, 0)]
         for piece, span in pieces:

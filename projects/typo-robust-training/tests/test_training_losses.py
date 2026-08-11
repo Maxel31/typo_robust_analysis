@@ -33,7 +33,7 @@ def test_output_kl_uses_only_aligned_nonedited_targets_and_stops_teacher_gradien
         logit_pairs=pairs,
         temperature=1.0,
     )
-    assert first == pytest.approx(second)
+    assert first.item() == pytest.approx(second.item())
     first.backward()
     assert teacher.grad is None
     assert student.grad is not None
@@ -66,13 +66,11 @@ def test_component_state_loss_is_zero_for_identity_and_uses_only_selected_compon
 
 
 def test_answer_and_noisy_lm_losses_use_only_declared_causal_targets() -> None:
-    logits = torch.tensor(
-        [[[8.0, -8.0], [-8.0, 8.0], [8.0, -8.0]]], requires_grad=True
-    )
+    logits = torch.tensor([[[8.0, -8.0], [-8.0, 8.0], [8.0, -8.0]]], requires_grad=True)
     answer = answer_cross_entropy(logits, targets=((1, 1),))
     assert answer.item() < 1e-5
 
-    input_ids = torch.tensor([[0, 1, 0, 1]])
+    input_ids = torch.tensor([[0, 0, 1, 0]])
     language_model = next_token_cross_entropy(logits, input_ids)
     assert language_model.item() < 1e-5
 

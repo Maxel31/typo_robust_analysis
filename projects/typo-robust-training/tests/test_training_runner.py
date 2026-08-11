@@ -22,8 +22,7 @@ from typo_robust_training.training.runner import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BASE_CONFIG = PROJECT_ROOT / "configs/baselines/noisy-language-model.yaml"
 NATURAL_SUBSTITUTIONS = {
-    character: {"z" if character != "z" else "x": 1.0}
-    for character in "abcdefghijklmnopqrstuvwxyz"
+    character: {"z" if character != "z" else "x": 1.0} for character in "abcdefghijklmnopqrstuvwxyz"
 }
 
 
@@ -78,9 +77,7 @@ class _Runtime:
         self.seen: list[tuple[int, str, str]] = []
         self.optimizer_steps = 0
 
-    def train_micro_step(
-        self, pair: TrainingPair, *, loss_scale: float
-    ) -> TrainingMicroStepResult:
+    def train_micro_step(self, pair: TrainingPair, *, loss_scale: float) -> TrainingMicroStepResult:
         assert loss_scale == pytest.approx(0.5)
         if self.fail_after is not None and len(self.seen) >= self.fail_after:
             raise RuntimeError("injected interruption")

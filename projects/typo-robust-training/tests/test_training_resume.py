@@ -58,7 +58,9 @@ def _consume(
 
 def test_checkpoint_resume_reproduces_the_exact_next_sample_sequence(tmp_path: Path) -> None:
     sources = tuple(_clean_source(f"{index:064x}") for index in range(7))
-    start = TrainingCursor(epoch=0, source_index=0, micro_steps=0, optimizer_steps=0, student_tokens=0)
+    start = TrainingCursor(
+        epoch=0, source_index=0, micro_steps=0, optimizer_steps=0, student_tokens=0
+    )
     uninterrupted, _ = _consume(sources, start, count=31)
     prefix, cursor = _consume(sources, start, count=13)
     assert prefix == uninterrupted[:13]
@@ -116,6 +118,7 @@ def test_checkpoint_rejects_binding_or_runtime_state_tampering(tmp_path: Path) -
     with pytest.raises(ValueError, match="runtime state hash differs"):
         load_training_checkpoint(checkpoint, expected_bindings=bindings)
 
+    state.write_bytes(b"state")
     payload = json.loads(checkpoint.read_text(encoding="utf-8"))
     payload["cursor"]["source_index"] = -1
     checkpoint.write_text(json.dumps(payload), encoding="utf-8")

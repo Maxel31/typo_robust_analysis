@@ -40,13 +40,13 @@ def _model() -> Gemma3ForCausalLM:
     )
 
 
-def _protocol():
+def _protocol(*, gradient_checkpointing: bool = False):
     return replace(
         load_adapter_training_config(CONFIG),
         lora_rank=2,
         lora_alpha=4.0,
         lora_dropout=0.0,
-        gradient_checkpointing=False,
+        gradient_checkpointing=gradient_checkpointing,
     )
 
 
@@ -125,3 +125,33 @@ def test_clean_equals_typo_has_near_zero_component_state_loss_before_training() 
         attention_head_dim=4,
     )
     assert result.losses["state"].item() < 1e-10
+
+
+def test_component_capture_is_compatible_with_nonreentrant_gradient_checkpointing() -> None:
+    torch.manual_seed(11)
+    protocol = _protocol(gradient_checkpointing=True)
+    teacher = _model()
+    student = attach_lora_adapters(
+        copy.deepcopy(teacher),
+        protocol=protocol,
+        decoder_layers=(0,),
+    )
+    result = compute_training_step(
+        teacher=teacher,
+        student=student,
+        encoding=_encoding(typo=(1, 4, 8, 6, 7)),
+        protocol=protocol,
+        component_weights={
+            ComponentRef("mlp-neuron", 0, 3): 0.6,
+            ComponentRef("attention-head", 0, 1): 0.4,
+        },
+        attention_head_dim=4,
+    )
+
+    result.loss.backward()
+
+    assert any(
+        parameter.grad is not None and torch.count_nonzero(parameter.grad)
+        for name, parameter in student.named_parameters()
+        if "lora_" in name
+    )

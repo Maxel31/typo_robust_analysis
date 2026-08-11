@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from typo_robust_training.data.perturb import TypoGenerator
+from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.training.pairs import (
     TrainingSource,
     align_unchanged_token_positions,
@@ -13,12 +16,12 @@ from typo_robust_training.training.pairs import (
 
 
 NATURAL_SUBSTITUTIONS = {
-    character: {"z" if character != "z" else "x": 1.0}
-    for character in "abcdefghijklmnopqrstuvwxyz"
+    character: {"z" if character != "z" else "x": 1.0} for character in "abcdefghijklmnopqrstuvwxyz"
 }
 
 
 def _clean_source(record_id: str = "a" * 64) -> TrainingSource:
+    text = "The airport supports reliable international travel."
     return TrainingSource.from_dict(
         {
             "schema_version": "robustness-clean-record/v1",
@@ -30,11 +33,11 @@ def _clean_source(record_id: str = "a" * 64) -> TrainingSource:
             "source_id": f"source-{record_id[:8]}",
             "group_id": f"group-{record_id[:8]}",
             "split": "train",
-            "text": "The airport supports reliable international travel.",
+            "text": text,
             "task": None,
             "answer": None,
-            "content_sha256": "c" * 64,
-            "normalized_content_sha256": "d" * 64,
+            "content_sha256": hashlib.sha256(text.encode()).hexdigest(),
+            "normalized_content_sha256": normalized_content_sha256(text),
             "metadata": {},
             "token_count": 8,
         }
@@ -56,6 +59,8 @@ def test_epoch_order_and_on_the_fly_pair_are_counter_based_and_resume_safe() -> 
 
 
 def test_natural_pair_orientation_infers_the_edited_word_without_synthetic_generation() -> None:
+    clean = "The airport is busy."
+    typo = "The arport is busy."
     source = TrainingSource.from_dict(
         {
             "schema_version": "robustness-natural-pair/v1",
@@ -67,16 +72,16 @@ def test_natural_pair_orientation_infers_the_edited_word_without_synthetic_gener
             "source_id": "commit:0",
             "group_id": "https://github.com/example/repo",
             "split": "train",
-            "clean_text": "The airport is busy.",
-            "typo_text": "The arport is busy.",
+            "clean_text": clean,
+            "typo_text": typo,
             "task": None,
             "answer": None,
             "operation": "deletion",
             "training_eligible": True,
             "repository": "https://github.com/example/repo",
             "repository_license": "MIT",
-            "clean_sha256": "1" * 64,
-            "typo_sha256": "2" * 64,
+            "clean_sha256": hashlib.sha256(clean.encode()).hexdigest(),
+            "typo_sha256": hashlib.sha256(typo.encode()).hexdigest(),
             "metadata": {},
             "token_count": 6,
         }
