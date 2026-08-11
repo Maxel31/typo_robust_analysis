@@ -6,6 +6,7 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import urllib.request
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
@@ -105,8 +106,13 @@ def _format_huggingface_record(
     elif source_name == "gsm8k":
         source_id = f"{split}-{index}"
         text = _text(row.get("question"), field="question")
-        answer = _text(row.get("answer"), field="answer")
+        reference_solution = _text(row.get("answer"), field="answer")
+        matches = re.findall(r"####\s*(-?\d[\d,]*(?:\.\d+)?)", reference_solution)
+        if len(matches) != 1:
+            raise ValueError("GSM8K answer must contain exactly one canonical #### number")
+        answer = matches[0].replace(",", "")
         group_id = source_id
+        metadata["reference_solution"] = reference_solution
     elif source_name == "mmlu":
         source_id = f"{split}-{index}"
         choices = _choices(row.get("choices"))

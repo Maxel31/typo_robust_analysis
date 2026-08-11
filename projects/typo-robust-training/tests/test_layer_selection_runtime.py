@@ -62,4 +62,3 @@ def test_answer_patches_are_generated_only_for_clean_correct_records() -> None:
     assert should_generate_patched_answers(clean_correct=False) is False
     with pytest.raises(TypeError, match="boolean"):
         should_generate_patched_answers(clean_correct=1)  # type: ignore[arg-type]
-

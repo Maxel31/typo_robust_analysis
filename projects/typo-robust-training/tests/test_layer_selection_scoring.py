@@ -48,15 +48,15 @@ def _scan(
 
 def _protocol(**changes: object):
     base = load_layer_selection_config(DEFAULT_CONFIG)
-    return replace(
-        base,
-        minimum_kl_eligible_per_task=1,
-        minimum_kl_eligible_fraction_per_task=0.0,
-        minimum_answer_cohort_per_task=1,
-        window_width=2,
-        bootstrap_replicates=100,
-        **changes,
-    )
+    defaults = {
+        "minimum_kl_eligible_per_task": 1,
+        "minimum_kl_eligible_fraction_per_task": 0.0,
+        "minimum_answer_cohort_per_task": 1,
+        "window_width": 2,
+        "bootstrap_replicates": 100,
+    }
+    defaults.update(changes)
+    return replace(base, **defaults)
 
 
 def _cohort() -> tuple[LayerScan, ...]:
