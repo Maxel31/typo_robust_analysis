@@ -259,17 +259,30 @@ The command writes `tokenization_severity_records.jsonl`,
 `tokenization_severity_table.csv`, `tokenization_severity_summary.json`, and a
 hash-bound `run.json`.
 
-## Frozen interfaces for remaining ARR additions
+`subword-position-patching` is implemented and GPU-only for the 172-pair
+Gemma-3-4B/GSM8K primary restoration cohort. It freshly generates all three
+paired modes over layers `[0,6)`: the first subtoken of every edited word, the
+final subtoken, and all aligned subtokens. A mode succeeds when its extracted
+patched answer equals the manifest's stored, deterministically re-extracted
+clean answer.
 
-The following two commands are `interface-frozen` and **not yet runnable**.
-They were written before implementation so every additional experiment has its
-own operation, arguments, inputs, and output directory. The statistical and
-cohort contracts are fixed in
-[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md).
-`interface-frozen` is a prose-only pre-implementation label, not a third
-experiment-catalog status. Such commands are deliberately absent from the CLI
-and `experiments list`; each command's implementation PR registers it directly
-as an `implemented` operation after its contract tests pass.
+The confirmatory `equal-count-primary` subset requires every edited word to
+have the same clean and typo subtoken count; `all` then uses exact within-word
+ordinal correspondence. This is one pair-level label shared by all three modes,
+so first/final/all rates remain paired on the same denominator. Count-mismatched
+pairs are never pooled into that primary rate. They are reported separately as
+`mismatch-monotone-secondary`: each typo subtoken receives the clean state at
+the nearest normalized within-word position, preserving both endpoints; when
+either side has one token, the clean word-final state is used. The per-pair
+records retain every source/write mapping, termination reason, extracted
+answer, and the historical final-token event for audit. `--limit` is a
+non-confirmatory smoke option, and `--resume` reuses only hash-bound complete
+pair checkpoints.
+
+The equal-count primary subset reports Cochran's Q plus all three paired mode
+contrasts with exact McNemar tests, 10,000-pair bootstrap confidence intervals,
+and Holm correction. Mismatch-subset inference is explicitly exploratory and
+is not included in the primary Holm family.
 
 ```bash
 GPU_ID=0
@@ -283,6 +296,29 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
   --token-count-policy equal-count-primary \
   --gpu-id "${GPU_ID}" \
   --output-dir "${REBUTTAL_ROOT}/subword-position-patching"
+```
+
+The command writes `subword_patch_records.jsonl`,
+`subword_patch_table.csv`, `subword_patch_contrasts.csv`, `subword_alignment_flow.csv`,
+`subword_patch_summary.json`, and a hash-bound `run.json`.
+An empty table cell uses JSON `null` and a blank CSV value together with
+`restoration_rate_defined=false`; it is never represented as a numeric zero.
+
+## Frozen interfaces for remaining ARR additions
+
+The following command is `interface-frozen` and **not yet runnable**.
+They were written before implementation so every additional experiment has its
+own operation, arguments, inputs, and output directory. The statistical and
+cohort contracts are fixed in
+[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md).
+`interface-frozen` is a prose-only pre-implementation label, not a third
+experiment-catalog status. Such commands are deliberately absent from the CLI
+and `experiments list`; each command's implementation PR registers it directly
+as an `implemented` operation after its contract tests pass.
+
+```bash
+GPU_ID=0
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
   typo-cot held-out-window-evaluation \
@@ -1743,6 +1779,7 @@ uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/te
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_one_token_prefix_replacement.py
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_build_one_token_tables_*.py
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_edit_count_sensitivity.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_subword_position_patching.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_typo_warning_prompt.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_input_corrector_*.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_restoration_order_*.py

@@ -202,6 +202,12 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/experiments/tokenization_severity_analysis/protocol.py"),
     Path("src/typo_cot/experiments/tokenization_severity_analysis/runner.py"),
     Path("src/typo_cot/experiments/tokenization_severity_analysis/source.py"),
+    Path("src/typo_cot/experiments/subword_position_patching/__init__.py"),
+    Path("src/typo_cot/experiments/subword_position_patching/planning.py"),
+    Path("src/typo_cot/experiments/subword_position_patching/protocol.py"),
+    Path("src/typo_cot/experiments/subword_position_patching/runner.py"),
+    Path("src/typo_cot/experiments/subword_position_patching/runtime.py"),
+    Path("src/typo_cot/experiments/subword_position_patching/statistics.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/__init__.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/metrics.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/planning.py"),
@@ -242,6 +248,7 @@ PUBLIC_CONFIG_FILES = {
     Path("configs/rebuttal/multitoken-kl-readout.yaml"),
     Path("configs/rebuttal/patch-harm-audit.yaml"),
     Path("configs/rebuttal/tokenization-severity-analysis.yaml"),
+    Path("configs/rebuttal/subword-position-patching.yaml"),
     Path("configs/rebuttal/six-setting-patch-controls.yaml"),
     Path("configs/rebuttal/source-write-coordinate-grid.yaml"),
 }
@@ -453,6 +460,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         "multitoken-kl-readout",
         "patch-harm-audit",
         "tokenization-severity-analysis",
+        "subword-position-patching",
     }
 
 

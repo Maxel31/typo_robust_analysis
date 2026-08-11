@@ -237,15 +237,23 @@ uv run --project projects/typo-cot typo-cot tokenization-severity-analysis \
 出力は `tokenization_severity_records.jsonl`、`tokenization_severity_table.csv`、
 `tokenization_severity_summary.json`、hashで拘束した `run.json` です。
 
-## 残りのARR追加実験の固定インターフェース
+`subword-position-patching` は実装済みのGPU専用コマンドで、Gemma-3-4B/GSM8Kの
+primary restoration cohort 172件を対象にします。layer `[0,6)` で、各edited wordの
+first subtoken、final subtoken、全aligned subtokenの3 modeを同一pair上で新規生成します。
+抽出したpatch済み回答がmanifestに保存された決定的再抽出済みclean回答と一致すれば成功です。
 
-以下の2コマンドは `interface-frozen` であり、**まだ実行できません**。実装より先に、
-追加実験ごとの操作、引数、入力、出力directoryを固定するために記載しています。
-統計とcohortの契約は
-[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md) にあります。
-`interface-frozen` はREADME上の実装前ラベルであり、3つ目のexperiment catalog
-statusではありません。この段階のコマンドはCLIと `experiments list` には登録せず、
-契約testに通過した各実装PRで `implemented` 操作として直接登録します。
+confirmatoryな `equal-count-primary` subsetでは、全edited wordについてclean/typoのsubtoken数が
+一致することを要求し、`all` modeは語内ordinalをそのまま対応させます。token数不一致pairを
+primary rateへ混ぜません。このpair-level labelは3 modeで共通にし、first/final/allを同一分母で
+paired比較します。不一致pairは `mismatch-monotone-secondary` として別集計し、
+各typo subtokenへ正規化した語内位置が最も近いclean stateを割り当てて両endpointを保持します。
+片側が1 tokenの場合はclean word-final stateを使います。per-pair recordには全source/write対応、
+停止理由、抽出回答、監査用のhistorical final-token eventを残します。`--limit` は
+non-confirmatory smoke専用で、`--resume` はhashで拘束した完全なpair checkpointだけを再利用します。
+
+equal-count primary subsetではCochran's Qに加え、3つのpaired mode contrastすべてについて
+exact McNemar test、10,000回pair bootstrap CI、Holm補正を報告します。mismatch subsetの
+推測統計はexploratoryと明記し、primary Holm familyには含めません。
 
 ```bash
 GPU_ID=0
@@ -259,6 +267,28 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
   --token-count-policy equal-count-primary \
   --gpu-id "${GPU_ID}" \
   --output-dir "${REBUTTAL_ROOT}/subword-position-patching"
+```
+
+出力は `subword_patch_records.jsonl`、`subword_patch_table.csv`、
+`subword_patch_contrasts.csv`、
+`subword_alignment_flow.csv`、`subword_patch_summary.json`、hashで拘束した
+`run.json` です。
+空cellのrateはJSONでは `null`、CSVでは空欄とし、同時に
+`restoration_rate_defined=false` を出力します。数値0として扱いません。
+
+## 残りのARR追加実験の固定インターフェース
+
+以下のコマンドは `interface-frozen` であり、**まだ実行できません**。実装より先に、
+追加実験ごとの操作、引数、入力、出力directoryを固定するために記載しています。
+統計とcohortの契約は
+[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md) にあります。
+`interface-frozen` はREADME上の実装前ラベルであり、3つ目のexperiment catalog
+statusではありません。この段階のコマンドはCLIと `experiments list` には登録せず、
+契約testに通過した各実装PRで `implemented` 操作として直接登録します。
+
+```bash
+GPU_ID=0
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
   typo-cot held-out-window-evaluation \
@@ -1300,6 +1330,7 @@ uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/te
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_one_token_prefix_replacement.py
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_build_one_token_tables_*.py
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_edit_count_sensitivity.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_subword_position_patching.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_typo_warning_prompt.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_input_corrector_*.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_restoration_order_*.py
