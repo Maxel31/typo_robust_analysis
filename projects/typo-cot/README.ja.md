@@ -140,19 +140,20 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
 `source_write_grid_table.csv`、`source_write_contrasts.csv`、hashで拘束した
 `run.json` です。
 
-## 残りのARR追加実験の固定インターフェース
-
-以下の5コマンドは `interface-frozen` であり、**まだ実行できません**。実装より先に、
-追加実験ごとの操作、引数、入力、出力directoryを固定するために記載しています。
-統計とcohortの契約は
-[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md) にあります。
-`interface-frozen` はREADME上の実装前ラベルであり、3つ目のexperiment catalog
-statusではありません。この段階のコマンドはCLIと `experiments list` には登録せず、
-契約testに通過した各実装PRで `implemented` 操作として直接登録します。
+`multitoken-kl-readout` は実装済みのGPU専用コマンドです。6設定manifestの各
+restoration pairについて、保存済みclean continuationを一度だけtokenizeし、先頭16個の
+同一token IDをclean、typo、patch済みtypo promptへteacher-forceします。patchは
+edited-word stateをlayer `[0,6)` でコピーします。primaryのpair単位scoreは、元の
+targeting metricに使った最初のCoT tokenを意図的に除外し、token 2--16における
+`KL(clean || patched)` の平均を `KL(clean || typo)` の平均と比較します。secondary
+出力はtoken 2--4、token 2--8、tokenごとのraw KL reduction、first tokenとtoken
+2--16のpaired差です。未介入側の分母がほぼ0のpairは固定済み解析計画に従って除外し、
+負のrestoration値は保持します。`--limit-per-setting` は非confirmatoryなsmoke test
+専用で、`--resume` は入力内容でaddressしhashで拘束したpair checkpointを検証して
+から再利用します。
 
 ```bash
 GPU_ID=0
-FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching
 REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
@@ -163,6 +164,25 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
   --primary-token-range 2:16 \
   --gpu-id "${GPU_ID}" \
   --output-dir "${REBUTTAL_ROOT}/multitoken-kl-readout"
+```
+
+出力は `multitoken_kl_records.jsonl`、`setting_metrics.csv`、
+`token_position_trajectory.csv`、`token_position_trajectory.svg`、
+`multitoken_summary.json`、hashで拘束した `run.json` です。
+
+## 残りのARR追加実験の固定インターフェース
+
+以下の4コマンドは `interface-frozen` であり、**まだ実行できません**。実装より先に、
+追加実験ごとの操作、引数、入力、出力directoryを固定するために記載しています。
+統計とcohortの契約は
+[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md) にあります。
+`interface-frozen` はREADME上の実装前ラベルであり、3つ目のexperiment catalog
+statusではありません。この段階のコマンドはCLIと `experiments list` には登録せず、
+契約testに通過した各実装PRで `implemented` 操作として直接登録します。
+
+```bash
+GPU_ID=0
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
   typo-cot patch-harm-audit \

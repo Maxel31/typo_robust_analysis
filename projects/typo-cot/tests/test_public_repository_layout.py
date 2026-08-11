@@ -433,6 +433,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         "restoration-order-accuracy",
         "six-setting-patch-controls",
         "source-write-coordinate-grid",
+        "multitoken-kl-readout",
     }
 
 

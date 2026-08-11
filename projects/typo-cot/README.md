@@ -151,9 +151,41 @@ The command writes `source_write_grid_records.jsonl`,
 `pair_status_records.jsonl`, `source_write_grid_table.csv`,
 `source_write_contrasts.csv`, and a hash-bound `run.json`.
 
+`multitoken-kl-readout` is implemented and GPU-only. For every restoration
+pair in the six-setting manifest, it tokenizes the stored clean continuation
+once and teacher-forces the same first 16 token IDs after the clean, typo, and
+patched-typo prompts. The patch copies the edited-word state over layers
+`[0,6)`. The primary per-pair score compares the mean
+`KL(clean || patched)` with `KL(clean || typo)` over tokens 2--16, deliberately
+excluding the first CoT token used by the original targeting metric. Secondary
+outputs cover tokens 2--4, tokens 2--8, token-wise raw KL reduction, and the
+paired first-token versus tokens 2--16 difference. Near-zero untreated
+denominators are excluded according to the frozen analysis plan; negative
+restoration values are retained. `--limit-per-setting` is available only for
+non-confirmatory smoke tests, and `--resume` verifies input-content-addressed,
+hash-bound pair checkpoints before reuse.
+
+```bash
+GPU_ID=0
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot multitoken-kl-readout \
+  --config projects/typo-cot/configs/rebuttal/multitoken-kl-readout.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --teacher-forced-tokens 16 \
+  --primary-token-range 2:16 \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/multitoken-kl-readout"
+```
+
+The command writes `multitoken_kl_records.jsonl`, `setting_metrics.csv`,
+`token_position_trajectory.csv`, `token_position_trajectory.svg`,
+`multitoken_summary.json`, and a hash-bound `run.json`.
+
 ## Frozen interfaces for remaining ARR additions
 
-The following five commands are `interface-frozen` and **not yet runnable**.
+The following four commands are `interface-frozen` and **not yet runnable**.
 They were written before implementation so every additional experiment has its
 own operation, arguments, inputs, and output directory. The statistical and
 cohort contracts are fixed in
@@ -165,17 +197,7 @@ as an `implemented` operation after its contract tests pass.
 
 ```bash
 GPU_ID=0
-FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching
 REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
-
-CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
-  typo-cot multitoken-kl-readout \
-  --config projects/typo-cot/configs/rebuttal/multitoken-kl-readout.yaml \
-  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
-  --teacher-forced-tokens 16 \
-  --primary-token-range 2:16 \
-  --gpu-id "${GPU_ID}" \
-  --output-dir "${REBUTTAL_ROOT}/multitoken-kl-readout"
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
   typo-cot patch-harm-audit \

@@ -333,6 +333,43 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         status="implemented",
     ),
     ExperimentSpec(
+        slug="multitoken-kl-readout",
+        title="Measure patch restoration beyond the first CoT token",
+        paper_question="ARR addition",
+        paper_sections=("Rebuttal analysis plan v1: Multi-token distributional readout",),
+        summary=(
+            "Teacher-force one clean 16-token continuation after clean, typo, and patched "
+            "prompts, then measure token-wise KL restoration beyond the adjacent readout."
+        ),
+        cohort="All 1,241 restoration pairs in the exact six-setting rebuttal manifest.",
+        intervention=(
+            "Copy clean edited-word-final residual states to aligned typo coordinates over "
+            "layers [0,6) in a single teacher-forced forward."
+        ),
+        readout=(
+            "Primary R_2:16, secondary R_2:4/R_2:8, first-versus-later difference, "
+            "and token-wise raw KL-reduction trajectories with pair-bootstrap intervals."
+        ),
+        required_arguments=(
+            "--config",
+            "--manifest",
+            "--teacher-forced-tokens",
+            "--primary-token-range",
+            "--gpu-id",
+            "--output-dir",
+        ),
+        outputs=(
+            "multitoken_kl_records.jsonl",
+            "setting_metrics.csv",
+            "token_position_trajectory.csv",
+            "token_position_trajectory.svg",
+            "multitoken_summary.json",
+            "run.json",
+        ),
+        compute="gpu",
+        status="implemented",
+    ),
+    ExperimentSpec(
         slug="patch-coordinate-controls",
         title="Compare edited-word patches with coordinate and donor controls",
         paper_question="RQ1",

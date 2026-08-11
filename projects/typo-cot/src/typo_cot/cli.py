@@ -81,6 +81,11 @@ from typo_cot.experiments.model_scale_cot_swap import (
     ModelScaleCotSwapInputError,
     run_model_scale_cot_swap,
 )
+from typo_cot.experiments.multitoken_kl_readout import (
+    MultiTokenKLReadoutConfig,
+    MultiTokenKLReadoutRunError,
+    run_multitoken_kl_readout,
+)
 from typo_cot.experiments.one_token_prefix_replacement import (
     POSITION_CONTROLS as ONE_TOKEN_POSITION_CONTROLS,
 )
@@ -178,6 +183,19 @@ def _edit_count(value: str) -> int:
     return parsed
 
 
+def _inclusive_token_range(value: str) -> tuple[int, int]:
+    parts = value.split(":")
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError("must use START:STOP")
+    try:
+        start, stop = (int(part) for part in parts)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must use integer START:STOP") from exc
+    if start <= 0 or stop < start:
+        raise argparse.ArgumentTypeError("must be a positive inclusive START:STOP range")
+    return start, stop
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="typo-cot",
@@ -239,6 +257,23 @@ def _parser() -> argparse.ArgumentParser:
     source_write_grid.add_argument("--output-dir", required=True, type=Path)
     source_write_grid.add_argument("--limit-per-cohort", type=_positive_int)
     source_write_grid.add_argument("--resume", action="store_true")
+
+    multitoken_readout = commands.add_parser(
+        "multitoken-kl-readout",
+        help="Measure teacher-forced KL restoration over clean continuation tokens.",
+    )
+    multitoken_readout.add_argument("--config", required=True, type=Path)
+    multitoken_readout.add_argument("--manifest", required=True, type=Path)
+    multitoken_readout.add_argument(
+        "--teacher-forced-tokens", required=True, type=_positive_int
+    )
+    multitoken_readout.add_argument(
+        "--primary-token-range", required=True, type=_inclusive_token_range
+    )
+    multitoken_readout.add_argument("--gpu-id", required=True)
+    multitoken_readout.add_argument("--output-dir", required=True, type=Path)
+    multitoken_readout.add_argument("--limit-per-setting", type=_positive_int)
+    multitoken_readout.add_argument("--resume", action="store_true")
 
     pairs = commands.add_parser(
         "prepare-edited-pairs",
@@ -757,6 +792,39 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(f"grid table: {result.grid_table_path}")
         print(f"contrasts: {result.contrasts_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "multitoken-kl-readout":
+        try:
+            result = run_multitoken_kl_readout(
+                MultiTokenKLReadoutConfig(
+                    protocol_path=args.config,
+                    manifest_path=args.manifest,
+                    teacher_forced_tokens=args.teacher_forced_tokens,
+                    primary_token_range=args.primary_token_range,
+                    gpu_id=args.gpu_id,
+                    output_dir=args.output_dir,
+                    limit_per_setting=args.limit_per_setting,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            MultiTokenKLReadoutRunError,
+        ) as exc:
+            print(f"multitoken-kl-readout: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.pairs:,} pair record(s), including "
+            f"{result.primary_valid_pairs:,} primary-valid pair(s): {result.records_path}"
+        )
+        print(f"setting metrics: {result.setting_metrics_path}")
+        print(f"token trajectory: {result.trajectory_path}")
+        print(f"trajectory plot: {result.trajectory_plot_path}")
+        print(f"summary: {result.summary_path}")
         print(f"run manifest: {result.run_path}")
         return 0
     if args.command == "prepare-edited-pairs":

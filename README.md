@@ -60,11 +60,12 @@ typo-robustness training are frozen before result generation in
 and
 [`robustness_training_plan_v1.md`](projects/typo-cot/docs/robustness_training_plan_v1.md).
 The CPU-only `build-rebuttal-manifest` command validates and freezes the exact
-six-setting source cohort. The GPU `six-setting-patch-controls` and
-`source-write-coordinate-grid` commands run the first result-producing
-additions with hash-bound inputs, resumable checkpoints, and prespecified
-paired analyses. The package README shows one descriptive command per remaining
-experiment and labels unimplemented commands `interface-frozen`. Training is
+six-setting source cohort. The GPU `six-setting-patch-controls`,
+`source-write-coordinate-grid`, and `multitoken-kl-readout` commands run the
+first result-producing additions with hash-bound inputs, resumable checkpoints,
+and prespecified paired analyses. The package README shows one descriptive
+command per remaining experiment and labels unimplemented commands
+`interface-frozen`. Training is
 published only after held-out evaluation demonstrates a robustness improvement
 while preserving clean performance.
 
