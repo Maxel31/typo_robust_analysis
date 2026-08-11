@@ -1,11 +1,12 @@
 # ARR rebuttal analysis plan v1
 
-Status: **manifest implementation complete; result-producing interfaces remain
-interface-frozen; no new intervention outcome has been inspected**.
+Status: **manifest and six-setting control implementations complete; remaining
+result-producing interfaces are frozen; no full-cohort new intervention
+outcome has been inspected**.
 
-This plan fixes the additional analyses requested for the ARR rebuttal before
-their result-generating commands are implemented. The submitted 19-page PDF is
-the reference for the existing experiment, cohort definitions, and reported
+This plan fixed the additional analyses requested for the ARR rebuttal before
+their result-generating commands were implemented. The submitted 19-page PDF
+is the reference for the existing experiment, cohort definitions, and reported
 numbers. Print its recorded fingerprint with:
 
 ```bash

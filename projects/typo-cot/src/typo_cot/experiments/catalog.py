@@ -253,6 +253,47 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         status="implemented",
     ),
     ExperimentSpec(
+        slug="six-setting-patch-controls",
+        title="Run answer-level specificity controls in all six settings",
+        paper_question="ARR addition",
+        paper_sections=("Rebuttal analysis plan v1: Six-setting patch controls",),
+        summary=(
+            "Compare the fixed [0,6) correct-coordinate patch against strict +2-token "
+            "offset and deterministic cross-item donor controls in every setting."
+        ),
+        cohort=(
+            "The exact 1,241-pair restoration manifest, with paired inference restricted "
+            "to each setting's frozen common-valid subset."
+        ),
+        intervention=(
+            "Reuse the fixed correct-coordinate outcome and generate prospective offset-2 "
+            "and cross-item clean-to-typo residual-state patches."
+        ),
+        readout=(
+            "Restoration rates, paired risk differences, exact McNemar tests, Holm-adjusted "
+            "p-values, and equal-setting nested-bootstrap intervals."
+        ),
+        required_arguments=(
+            "--config",
+            "--manifest",
+            "--fixed-window-root",
+            "--gpu-id",
+            "--output-dir",
+        ),
+        outputs=(
+            "control_records.jsonl",
+            "pair_status_records.jsonl",
+            "six_setting_control_table.csv",
+            "common_denominator_flow.csv",
+            "multiplicity_table.csv",
+            "macro_average.json",
+            "risk_difference_forest.svg",
+            "run.json",
+        ),
+        compute="gpu",
+        status="implemented",
+    ),
+    ExperimentSpec(
         slug="patch-coordinate-controls",
         title="Compare edited-word patches with coordinate and donor controls",
         paper_question="RQ1",

@@ -17,7 +17,7 @@ PROJECT_PREFIX = "projects/typo-cot/"
 OBSOLETE_REPOSITORY_ROOTS = {"_sample_project", "datasets", "scripts", "utils"}
 OBSOLETE_REPOSITORY_PATHS = {Path(".env.example"), Path("projects/.gitkeep")}
 
-LEGACY_PROJECT_DIRECTORIES = {"analysis", "configs", "scripts"}
+LEGACY_PROJECT_DIRECTORIES = {"analysis", "scripts"}
 LEGACY_PACKAGE_DIRECTORIES = {
     "analysis",
     "attribution",
@@ -160,6 +160,12 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/experiments/restoration_order_accuracy/runtime.py"),
     Path("src/typo_cot/experiments/restoration_order_accuracy/source.py"),
     Path("src/typo_cot/experiments/restoration_order_accuracy/statistics.py"),
+    Path("src/typo_cot/experiments/six_setting_patch_controls/__init__.py"),
+    Path("src/typo_cot/experiments/six_setting_patch_controls/protocol.py"),
+    Path("src/typo_cot/experiments/six_setting_patch_controls/runner.py"),
+    Path("src/typo_cot/experiments/six_setting_patch_controls/runtime.py"),
+    Path("src/typo_cot/experiments/six_setting_patch_controls/source.py"),
+    Path("src/typo_cot/experiments/six_setting_patch_controls/statistics.py"),
     Path("src/typo_cot/experiments/layerwise_answer_patching/__init__.py"),
     Path("src/typo_cot/experiments/layerwise_answer_patching/metrics.py"),
     Path("src/typo_cot/experiments/layerwise_answer_patching/patching.py"),
@@ -211,6 +217,9 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/models/__init__.py"),
     Path("src/typo_cot/models/prompts.py"),
     Path("src/typo_cot/models/wrapper.py"),
+}
+PUBLIC_CONFIG_FILES = {
+    Path("configs/rebuttal/six-setting-patch-controls.yaml"),
 }
 
 
@@ -312,6 +321,11 @@ def test_public_source_tree_is_the_reviewed_runtime_closure() -> None:
     assert tracked_sources == PUBLIC_SOURCE_FILES
 
 
+def test_public_configs_are_the_reviewed_protocol_closure() -> None:
+    tracked_configs = {path for path in _tracked_existing_paths() if path.parts[0] == "configs"}
+    assert tracked_configs == PUBLIC_CONFIG_FILES
+
+
 def test_submitted_warning_input_manifest_is_the_only_public_package_data() -> None:
     tracked_package_data = {
         path
@@ -330,7 +344,7 @@ def test_retired_packages_are_not_importable() -> None:
 
 def test_root_guide_matches_the_reduced_project_scope() -> None:
     root_readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
-    assert "│   ├── configs/" not in root_readme
+    assert "    ├── configs/" in root_readme
     assert "`projects/typo-cot` depends on the `typo-utils`" not in root_readme
 
 
@@ -410,6 +424,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         "typo-warning-prompt",
         "input-corrector-audit",
         "restoration-order-accuracy",
+        "six-setting-patch-controls",
     }
 
 

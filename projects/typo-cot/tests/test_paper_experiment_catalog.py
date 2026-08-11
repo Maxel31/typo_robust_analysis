@@ -28,6 +28,7 @@ EXPECTED_EXPERIMENTS = (
     "layerwise-answer-patching",
     "fixed-window-answer-patching",
     "build-rebuttal-manifest",
+    "six-setting-patch-controls",
     "patch-coordinate-controls",
     "patch-position-controls",
     "patch-text-combination",

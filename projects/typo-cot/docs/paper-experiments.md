@@ -75,6 +75,7 @@ refactor, a direct command is executable only when its catalog status is
 | `layerwise-answer-patching` | §3.2–3.3, §4.1 | Separate eight-setting free-generation scans; at most 300 pooled anchors are rechecked into one fixed n=94–226 denominator per setting |
 | `fixed-window-answer-patching` | §3.3, §4.1, Appendix B | Frozen [0,6) answer patch; [6,12) prespecified MMLU-Pro comparison |
 | `build-rebuttal-manifest` | ARR addition plan v1 | Hash-validated six-setting 1,241/800 reference, selected-anchor and alignment exclusions, uncapped patch-eligible harm cohort, control plans, and held-out IDs |
+| `six-setting-patch-controls` | ARR addition plan v1 | Six-setting correct, strict +2 offset, and deterministic cross-item arms on common-valid denominators; paired inference with Holm correction |
 | `patch-coordinate-controls` | §3.3, §4.1, Appendix B | Primary 172 pairs; correct, +2 offset, cross-item, and identity controls |
 | `patch-position-controls` | §3.3, §4.1, Table 5, Appendix B | Gemma-3-4B/GSM8K Attribution-4 layerwise-KL cohort (published n=109), held common across edited-word, prompt-final, and question-final positions |
 | `patch-text-combination` | §3.5, §4.1, Table 2 | Descriptive patch absent/present × zero/full clean text on 172 pairs |
@@ -191,6 +192,14 @@ uv run typo-cot build-rebuttal-manifest \
   --prepared-pairs-root results/prepare-edited-pairs \
   --fixed-window-root results/fixed-window-answer-patching \
   --output-dir results/rebuttal/manifest
+
+CUDA_VISIBLE_DEVICES=0 \
+uv run --project projects/typo-cot --extra lrp typo-cot six-setting-patch-controls \
+  --config projects/typo-cot/configs/rebuttal/six-setting-patch-controls.yaml \
+  --manifest results/rebuttal/manifest/pair_manifest.jsonl \
+  --fixed-window-root results/fixed-window-answer-patching \
+  --gpu-id 0 \
+  --output-dir results/rebuttal/six-setting-patch-controls
 
 CUDA_VISIBLE_DEVICES=0 \
 uv run --project projects/typo-cot --extra lrp typo-cot patch-coordinate-controls \

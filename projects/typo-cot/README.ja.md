@@ -55,7 +55,7 @@ uv run --project projects/typo-cot typo-cot experiments show clean-prefix-scan -
 コホート、介入、readout、出力、CPU/GPU区分、実装状態が含まれます。
 `implemented` の操作だけが実行可能で、`catalogued` は公開runnerが未実装です。
 
-## 実装済みのARR manifest準備
+## 実装済みのARR manifestと6設定control
 
 `build-rebuttal-manifest` は実装済みのCPU専用コマンドです。論文の6設定を再現した、
 完了済み `prepare-edited-pairs` source 12個とfixed-window run 6個を受け取ります。
@@ -78,15 +78,13 @@ uv run --project projects/typo-cot typo-cot build-rebuttal-manifest \
 です。これらはgitに含めないローカル生成物で、以下のARR結果生成コマンドすべての
 入力になります。
 
-## 残りのARR追加実験の固定インターフェース
-
-以下の7コマンドは `interface-frozen` であり、**まだ実行できません**。実装より先に、
-追加実験ごとの操作、引数、入力、出力directoryを固定するために記載しています。
-統計とcohortの契約は
-[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md) にあります。
-`interface-frozen` はREADME上の実装前ラベルであり、3つ目のexperiment catalog
-statusではありません。この段階のコマンドはCLIと `experiments list` には登録せず、
-契約testに通過した各実装PRで `implemented` 操作として直接登録します。
+`six-setting-patch-controls` は実装済みのGPU専用コマンドです。hash検証済みの
+fixed-window runからcorrect-coordinate結果を再利用し、事前規定した厳密な
+offset-2 armと決定的cross-item armを新規生成します。主解析は各設定のcommon-valid
+pairだけを使い、12個のexact McNemar検定を1つのHolm familyとして補正し、paired
+bootstrapと設定等重みnested bootstrapの区間を計算します。物理GPUは必ず1台だけ
+指定してください。`--limit-per-setting` は非confirmatoryなsmoke test用、
+`--resume` は検証済みpair checkpointの再利用用です。
 
 ```bash
 GPU_ID=0
@@ -100,6 +98,27 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
   --fixed-window-root "${FIXED_ROOT}" \
   --gpu-id "${GPU_ID}" \
   --output-dir "${REBUTTAL_ROOT}/six-setting-patch-controls"
+```
+
+出力は `control_records.jsonl`、`pair_status_records.jsonl`、
+`six_setting_control_table.csv`、`common_denominator_flow.csv`、
+`multiplicity_table.csv`、`macro_average.json`、
+`risk_difference_forest.svg`、hashで拘束した `run.json` です。
+
+## 残りのARR追加実験の固定インターフェース
+
+以下の6コマンドは `interface-frozen` であり、**まだ実行できません**。実装より先に、
+追加実験ごとの操作、引数、入力、出力directoryを固定するために記載しています。
+統計とcohortの契約は
+[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md) にあります。
+`interface-frozen` はREADME上の実装前ラベルであり、3つ目のexperiment catalog
+statusではありません。この段階のコマンドはCLIと `experiments list` には登録せず、
+契約testに通過した各実装PRで `implemented` 操作として直接登録します。
+
+```bash
+GPU_ID=0
+FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
   typo-cot source-write-coordinate-grid \
