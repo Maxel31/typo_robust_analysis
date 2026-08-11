@@ -61,20 +61,17 @@ operation-specific arguments, cohort, intervention, readout, outputs, compute
 class, and implementation status. Direct experiment runners are added in
 separate reviewed PRs; only entries marked `implemented` are runnable.
 
-## Frozen interfaces for ARR additions
+## Implemented ARR manifest preparation
 
-The following commands are `interface-frozen` and **not yet runnable**. They are
-written before implementation so every additional experiment has its own
-operation, arguments, inputs, and output directory. The statistical and cohort
-contracts are fixed in
-[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md).
-`interface-frozen` is a prose-only pre-implementation label, not a third
-experiment-catalog status. Such commands are deliberately absent from the CLI
-and `experiments list`; each command's implementation PR registers it directly
-as an `implemented` operation after its contract tests pass.
+`build-rebuttal-manifest` is implemented and CPU-only. It accepts the twelve
+completed `prepare-edited-pairs` sources and six completed fixed-window runs
+that reproduce the paper's six-setting reference. It fails closed unless their
+schemas, hashes, model revisions, selected-anchor audit, uncapped harm cohort,
+explicit alignment-ineligible coverage, and the paper's
+1,241-pair/800-restoration totals agree. It does not run a model or inspect any
+new intervention result.
 
 ```bash
-GPU_ID=0
 PAIR_ROOT=projects/typo-cot/results/prepare-edited-pairs
 FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching
 REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
@@ -83,6 +80,28 @@ uv run --project projects/typo-cot typo-cot build-rebuttal-manifest \
   --prepared-pairs-root "${PAIR_ROOT}" \
   --fixed-window-root "${FIXED_ROOT}" \
   --output-dir "${REBUTTAL_ROOT}/manifest"
+```
+
+The command writes `pair_manifest.jsonl`, `cohort_ids.json`,
+`source_audit.json`, and `run.json`. These generated artifacts remain local and
+are inputs to every result-producing ARR command below.
+
+## Frozen interfaces for remaining ARR additions
+
+The following seven commands are `interface-frozen` and **not yet runnable**.
+They were written before implementation so every additional experiment has its
+own operation, arguments, inputs, and output directory. The statistical and
+cohort contracts are fixed in
+[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md).
+`interface-frozen` is a prose-only pre-implementation label, not a third
+experiment-catalog status. Such commands are deliberately absent from the CLI
+and `experiments list`; each command's implementation PR registers it directly
+as an `implemented` operation after its contract tests pass.
+
+```bash
+GPU_ID=0
+FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
   typo-cot six-setting-patch-controls \

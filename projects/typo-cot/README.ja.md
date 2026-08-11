@@ -55,9 +55,32 @@ uv run --project projects/typo-cot typo-cot experiments show clean-prefix-scan -
 コホート、介入、readout、出力、CPU/GPU区分、実装状態が含まれます。
 `implemented` の操作だけが実行可能で、`catalogued` は公開runnerが未実装です。
 
-## ARR追加実験の固定インターフェース
+## 実装済みのARR manifest準備
 
-以下のコマンドは `interface-frozen` であり、**まだ実行できません**。実装より先に、
+`build-rebuttal-manifest` は実装済みのCPU専用コマンドです。論文の6設定を再現した、
+完了済み `prepare-edited-pairs` source 12個とfixed-window run 6個を受け取ります。
+schema、hash、model revision、selected-anchor audit、上限なしのharm cohort、
+alignment不可例の明示的な記録、および論文の1,241 pair／800回復と一致しなければ
+fail-closedで停止します。modelは実行せず、新しい介入結果も読みません。
+
+```bash
+PAIR_ROOT=projects/typo-cot/results/prepare-edited-pairs
+FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+uv run --project projects/typo-cot typo-cot build-rebuttal-manifest \
+  --prepared-pairs-root "${PAIR_ROOT}" \
+  --fixed-window-root "${FIXED_ROOT}" \
+  --output-dir "${REBUTTAL_ROOT}/manifest"
+```
+
+出力は `pair_manifest.jsonl`、`cohort_ids.json`、`source_audit.json`、`run.json`
+です。これらはgitに含めないローカル生成物で、以下のARR結果生成コマンドすべての
+入力になります。
+
+## 残りのARR追加実験の固定インターフェース
+
+以下の7コマンドは `interface-frozen` であり、**まだ実行できません**。実装より先に、
 追加実験ごとの操作、引数、入力、出力directoryを固定するために記載しています。
 統計とcohortの契約は
 [`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md) にあります。
@@ -67,14 +90,8 @@ statusではありません。この段階のコマンドはCLIと `experiments 
 
 ```bash
 GPU_ID=0
-PAIR_ROOT=projects/typo-cot/results/prepare-edited-pairs
 FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching
 REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
-
-uv run --project projects/typo-cot typo-cot build-rebuttal-manifest \
-  --prepared-pairs-root "${PAIR_ROOT}" \
-  --fixed-window-root "${FIXED_ROOT}" \
-  --output-dir "${REBUTTAL_ROOT}/manifest"
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
   typo-cot six-setting-patch-controls \

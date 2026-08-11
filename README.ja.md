@@ -53,12 +53,13 @@ GPU実験には論文に固定された `lrp` 環境を使用します。CPUだ�
 
 ## ARR追加実験とtypo頑健化学習
 
-ARR rebuttalの追加実験と、今後のtypo頑健化学習については、実装より先に
+ARR rebuttalの追加実験と、今後のtypo頑健化学習については、結果生成より先に
 [`rebuttal_analysis_plan_v1.md`](projects/typo-cot/docs/rebuttal_analysis_plan_v1.md)
 と
 [`robustness_training_plan_v1.md`](projects/typo-cot/docs/robustness_training_plan_v1.md)
-でコマンドと解析契約を固定しています。パッケージREADMEでは実験ごとに操作内容が
-分かるコマンドを示し、レビュー済み実装がmergeされるまでは
+で解析契約を固定しています。CPU専用の `build-rebuttal-manifest` は実装済みで、
+新しい介入を行う前に論文6設定のsource cohortを検証して固定します。パッケージ
+READMEでは残りの実験ごとに操作内容が分かるコマンドを示し、未実装のものを
 `interface-frozen` と表示します。学習機能は、held-out評価でclean性能を維持しながら
 頑健性が改善したことを確認してから公開します。
 

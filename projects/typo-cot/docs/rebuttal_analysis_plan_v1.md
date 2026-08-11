@@ -1,6 +1,7 @@
 # ARR rebuttal analysis plan v1
 
-Status: **interface-frozen; no new outcome has been inspected**.
+Status: **manifest implementation complete; result-producing interfaces remain
+interface-frozen; no new intervention outcome has been inspected**.
 
 This plan fixes the additional analyses requested for the ARR rebuttal before
 their result-generating commands are implemented. The submitted 19-page PDF is
@@ -37,10 +38,11 @@ that motivate this plan: answer-level position/donor controls cover only that
 primary cohort, `[0,6)` was selected data-adaptively, and each clean-to-typo
 intervention requires a paired clean run.
 
-The public implementation may be run on a freshly prepared cohort, while the
-rebuttal analysis uses the exact archived paper cohort when its source records
-pass integrity checks. Fresh and historical cohorts must never be pooled or
-presented as identical.
+The manifest builder accepts a freshly regenerated source only when all frozen
+producer contracts and the exact six-setting 1,241/800 reference totals are
+reproduced. It is not a generic cohort builder. A source with different counts
+must use a separately versioned analysis and must never be pooled with, or
+presented as identical to, the rebuttal cohort.
 
 ## Sample-ID and provenance freeze
 
@@ -49,26 +51,36 @@ any new model forward or generation, it writes:
 
 - `pair_manifest.jsonl`, containing every validated pair and its aligned edited
   spans;
-- `cohort_ids.json`, containing the ordered sample IDs for every setting and
-  analysis cohort;
+- `cohort_ids.json`, containing the ordered stable pair IDs for every setting
+  and analysis cohort (each pair record retains its human-readable sample ID);
 - `source_audit.json`, containing source/output hashes, source schema versions,
   model/tokenizer revisions, and every exclusion;
 - `run.json`, containing arguments, environment, completion state, and output
   hashes.
 
-The exact sample IDs therefore live in the versioned `cohort_ids.json` artifact,
-not in prose or a directory-name convention. Its SHA-256 is copied into every
-downstream run. The manifest implementation PR must be merged before GPU work,
-and that PR must include the frozen selection rules and tests; generated records
-remain local experiment artifacts and are not committed.
+The exact pair identities therefore live in the versioned `cohort_ids.json`
+artifact, not in prose or a directory-name convention. Its SHA-256 is copied
+into every downstream run. The manifest implementation PR must be merged before
+GPU work, and that PR must include the frozen selection rules and tests;
+generated records remain local experiment artifacts and are not committed.
 
-The six-setting restoration cohort is the fixed-window run's ordered
-clean-to-typo denominator. The harm cohort is selected independently from
-validated prepared pairs with `clean_correct == true` and
-`typo_correct == true`. Every eligible record is retained: neither cohort is
-capped or reweighted. This makes the restoration and harm partitions exhaustive
-within the full clean-correct population and gives the combined net-accuracy
-audit one population denominator. No outcome-dependent sampling is allowed.
+The six-setting restoration cohort is the fixed-window run's ordered,
+regenerated clean-to-typo denominator. The manifest separately records every
+anchor selected by that run and every baseline exclusion between the selected
+anchor pool and the paper denominator. The harm cohort is selected
+independently from validated prepared pairs with at least one aligned edited
+word, `clean_correct == true`, and `typo_correct == true`; it is exhaustive and
+uncapped under that stored prepared-run definition.
+
+The full clean-correct population in the prepared sources is retained as
+`full_clean_correct`, then partitioned into `patch_eligible_clean_correct` (at
+least one aligned edited word) and `alignment_ineligible_clean_correct` (no
+aligned edited word). Prepared, patch-eligible clean-correct/typo-wrong records
+outside the paper's regenerated denominator are listed explicitly rather than
+silently assigned to either conditional cohort. Therefore restoration plus harm
+is a disjoint **repair--harm composite**, but is not claimed to exhaust a
+population unless both the outside and alignment-ineligible sets are empty. No
+outcome-dependent sampling is allowed.
 
 Every aligned edit records clean and typo character spans, token spans, and
 word-final token coordinates. A record is invalid for an arm only under that
@@ -105,11 +117,16 @@ all six settings. Each item has three arms over `[0,6)` and greedy generation:
 3. **cross-item**: another item's clean edited-word-final states are written to
    the recipient's original typo coordinates.
 
-An offset coordinate must be within the question portion, outside every edited
-token span, and valid in both donor and recipient prompts. Cross-item donors are
-assigned by a deterministic cyclic derangement after sorting sample IDs within
-`(task, model, target_rule, number_of_aligned_words)`. Singleton strata are
-invalid; a donor may never equal its recipient.
+Every offset coordinate must remain in the stored prompt interior (excluding
+the first and final prompt tokens), outside every edited-token span, and valid
+in both donor and recipient prompts. If any aligned word fails this rule, the
+complete offset arm is invalid; individual coordinates are never dropped. This
+prospective confirmatory rule is intentionally stricter than the submitted
+primary control's historical per-coordinate filtering and preserves equal
+intervention cardinality between correct and offset arms. Cross-item donors are
+assigned by a deterministic cyclic derangement after sorting pair identities
+within `(task, model, target_rule, number_of_aligned_words)`. Singleton strata
+are invalid; a donor may never equal its recipient.
 
 The primary comparison uses only the **common-valid** subset on which all three
 arms are valid. Each setting reports `n_original`, `n_offset_valid`,
@@ -174,14 +191,15 @@ right-to-wrong harm, any extracted-answer change, and unextractable patched
 answers without removing them from the denominator.
 
 The required table contains, per setting, `n_typo_correct`, `preserve`, `harm`,
-and `answer_changed`. A combined accuracy audit joins the complete harm records
-with the complete restoration partition. The two partitions must exhaust the
-same validated full clean-correct population under the same coordinate-validity
-rule; missing or capped records make net accuracy invalid rather than estimable.
-The audit reports wrong-to-right, right-to-wrong, and the accuracy difference
-over that single denominator. Until this audit is complete, all prose must call
-800/1,241 a conditional recovery result on selected clean-correct/typo-wrong
-failures.
+and `answer_changed`. A combined audit joins the complete harm records with the
+complete 1,241-pair restoration partition and reports wrong-to-right,
+right-to-wrong, and their conditional count/rate balance. It must be labelled a
+**repair--harm composite**, not population net accuracy, whenever the manifest
+reports prepared typo-wrong records outside the regenerated paper denominator.
+A population net-accuracy claim requires a separately preregistered patch run
+over those uncovered records under the same regenerated-baseline and coordinate
+rules. Until this audit is complete, all prose must call 800/1,241 a conditional
+recovery result on selected clean-correct/typo-wrong failures.
 
 ## Low-compute and held-out analyses
 
