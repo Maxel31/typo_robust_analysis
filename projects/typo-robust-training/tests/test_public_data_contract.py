@@ -81,6 +81,9 @@ def test_sanity_config_pins_source_revisions_roles_and_unseen_axes() -> None:
         "duplication",
         "natural-statistics-substitution",
     }
+    assert config.operation_probabilities == {
+        operation: 0.20 for operation in config.training_operations
+    }
     assert config.held_out_operations == ("adjacent-transposition",)
     assert config.natural_repository_split == {
         "train": 0.70,
