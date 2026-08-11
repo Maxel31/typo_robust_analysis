@@ -206,6 +206,36 @@ def _run_adapter_training(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_robustness_evaluation(args: argparse.Namespace) -> int:
+    from typo_robust_training.evaluation.runner import (
+        RobustnessEvaluationRunConfig,
+        run_robustness_evaluation,
+    )
+
+    try:
+        result = run_robustness_evaluation(
+            RobustnessEvaluationRunConfig(
+                config_path=args.config,
+                training_data_dir=args.training_data,
+                evaluation_role=args.evaluation_role,
+                layer_selection_path=args.layer_selection,
+                checkpoint_paths=tuple(args.checkpoints),
+                splits=tuple(args.splits),
+                gpu_id=args.gpu_id,
+                output_dir=args.output_dir,
+                confirm_sealed_role=args.confirm_sealed_role,
+                resume=args.resume,
+            )
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"evaluate-typo-robustness: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"evaluated {result.records} record(s): {result.records_path}")
+    print(f"robustness report: {result.report_path}")
+    print(f"run manifest: {result.run_path}")
+    return 0
+
+
 def _add_training_arguments(
     parser: argparse.ArgumentParser,
     *,
@@ -328,6 +358,37 @@ def register_commands(
             condition=condition,
             requires_localization=condition == "localized-state-distillation",
         )
+
+    evaluation = commands.add_parser(
+        "evaluate-typo-robustness",
+        help="Evaluate base and explicit adapters on one fixed held-out role.",
+    )
+    evaluation.add_argument("--config", required=True, type=Path)
+    evaluation.add_argument("--training-data", required=True, type=Path)
+    evaluation.add_argument(
+        "--evaluation-role",
+        required=True,
+        choices=("tune", "pre-pr-gate", "final-test"),
+    )
+    evaluation.add_argument("--layer-selection", required=True, type=Path)
+    evaluation.add_argument(
+        "--checkpoint",
+        dest="checkpoints",
+        required=True,
+        action="append",
+        type=Path,
+    )
+    evaluation.add_argument(
+        "--splits",
+        nargs="+",
+        required=True,
+        choices=("same-task", "unseen-task", "unseen-content", "unseen-typo"),
+    )
+    evaluation.add_argument("--gpu-id", required=True)
+    evaluation.add_argument("--output-dir", required=True, type=Path)
+    evaluation.add_argument("--confirm-sealed-role", action="store_true")
+    evaluation.add_argument("--resume", action="store_true")
+    evaluation.set_defaults(_typo_cot_plugin_handler=_run_robustness_evaluation)
 
 
 __all__ = ["register_commands"]

@@ -28,7 +28,9 @@ def _synthetic(
     split: str,
 ) -> dict[str, object]:
     clean = "The airport is open."
-    typo = "The arport is open." if operation != "adjacent-transposition" else "The ai rport is open."
+    typo = (
+        "The arport is open." if operation != "adjacent-transposition" else "The ai rport is open."
+    )
     if operation == "adjacent-transposition":
         typo = "The ariport is open."
         typo_word = "ariport"
@@ -184,7 +186,7 @@ def test_loader_filters_union_of_requested_strata_and_infers_natural_edit(tmp_pa
     bundle = load_evaluation_bundle(
         data,
         evaluation_role="pre-pr-gate",
-        splits=("same-task", "unseen-task", "unseen-typo"),
+        splits=("same-task", "unseen-task", "unseen-content", "unseen-typo"),
         model=MODEL,
         model_revision=REVISION,
         access_binding_sha256="e" * 64,
@@ -193,15 +195,18 @@ def test_loader_filters_union_of_requested_strata_and_infers_natural_edit(tmp_pa
         resume=False,
     )
 
-    assert [record.record_id for record in bundle.records] == [f"{index:064x}" for index in (2, 3, 4)]
+    assert [record.record_id for record in bundle.records] == [
+        f"{index:064x}" for index in (2, 3, 4)
+    ]
     assert bundle.records[0].strata == ("same-task",)
     assert bundle.records[1].strata == ("unseen-task", "unseen-typo")
     assert bundle.records[2].strata == ("unseen-typo",)
     assert bundle.records[2].edits[0].clean_word == "airport"
     assert bundle.records[2].edits[0].typo_word == "arport"
-    assert bundle.manifest_sha256 == hashlib.sha256(
-        (data / "pre_pr_gate_manifest.jsonl").read_bytes()
-    ).hexdigest()
+    assert (
+        bundle.manifest_sha256
+        == hashlib.sha256((data / "pre_pr_gate_manifest.jsonl").read_bytes()).hexdigest()
+    )
     access = json.loads((data / "evaluation_access.json").read_text(encoding="utf-8"))
     assert access["roles"]["pre_pr_gate"]["status"] == "opened"
     assert access["roles"]["pre_pr_gate"]["output_dir"] == str(output.resolve())

@@ -10,13 +10,16 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from typo_robust_training.data.perturb import TypoGenerator
-from typo_robust_training.data.records import CleanRecord, TypoEdit
+from typo_robust_training.data.records import (
+    CleanRecord,
+    TypoEdit,
+    infer_single_word_typo_edit,
+)
 from typo_robust_training.data.splits import normalized_content_sha256
 
 
 _SHA40 = re.compile(r"[0-9a-f]{40}")
 _SHA64 = re.compile(r"[0-9a-f]{64}")
-_WORD_CHARACTER = re.compile(r"[A-Za-z']")
 _CLEAN_FIELDS = {
     "schema_version",
     "kind",
@@ -211,47 +214,14 @@ def stable_epoch_sources(
     return tuple(sorted(rows, key=key))
 
 
-def _word_span(text: str, start: int, stop: int) -> tuple[int, int]:
-    anchor = start
-    if start == stop and (anchor == len(text) or not _WORD_CHARACTER.fullmatch(text[anchor])):
-        anchor -= 1
-    if not 0 <= anchor < len(text) or not _WORD_CHARACTER.fullmatch(text[anchor]):
-        raise ValueError("natural typo change is not inside an English word")
-    left = anchor
-    right = max(anchor + 1, stop)
-    while left and _WORD_CHARACTER.fullmatch(text[left - 1]):
-        left -= 1
-    while right < len(text) and _WORD_CHARACTER.fullmatch(text[right]):
-        right += 1
-    return left, right
-
-
 def _natural_edit(source: TrainingSource) -> TypoEdit:
     clean, typo = source.clean_text, source.typo_text
     if typo is None or source.operation is None:
         raise ValueError("natural training source is incomplete")
-    prefix = 0
-    while prefix < min(len(clean), len(typo)) and clean[prefix] == typo[prefix]:
-        prefix += 1
-    clean_stop, typo_stop = len(clean), len(typo)
-    while (
-        clean_stop > prefix and typo_stop > prefix and clean[clean_stop - 1] == typo[typo_stop - 1]
-    ):
-        clean_stop -= 1
-        typo_stop -= 1
-    clean_span = _word_span(clean, prefix, clean_stop)
-    typo_span = _word_span(typo, prefix, typo_stop)
-    if (
-        clean[: clean_span[0]] != typo[: typo_span[0]]
-        or clean[clean_span[1] :] != typo[typo_span[1] :]
-    ):
-        raise ValueError("natural typo does not isolate one aligned edited word")
-    return TypoEdit(
+    return infer_single_word_typo_edit(
+        clean,
+        typo,
         operation=source.operation,
-        clean_word=clean[slice(*clean_span)],
-        typo_word=typo[slice(*typo_span)],
-        clean_char_span=clean_span,
-        typo_char_span=typo_span,
     )
 
 

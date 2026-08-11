@@ -1,0 +1,46 @@
+{
+  "schema_version": "robustness-evaluation-config/v1",
+  "model": {
+    "id": "google/gemma-3-4b-it",
+    "revision": "093f9f388b31de276ce2de164bdc2081324b9767",
+    "dtype": "bfloat16"
+  },
+  "sequence": {
+    "max_input_tokens": 4096,
+    "max_new_tokens": 512,
+    "teacher_forced_tokens": 16,
+    "readout_token_range": [2, 16]
+  },
+  "prompting": {
+    "protocol": "paper-cot-templates/v1",
+    "answer_extraction": "paper-task-extractors/v1"
+  },
+  "generation": {
+    "do_sample": false,
+    "num_beams": 1,
+    "num_return_sequences": 1,
+    "temperature": null,
+    "top_p": null,
+    "top_k": null,
+    "use_cache": true,
+    "termination_protocol": "effective-eos-vs-length-cap/v1"
+  },
+  "metrics": {
+    "bootstrap_replicates": 10000,
+    "bootstrap_seed": 42,
+    "confidence_level": 0.95,
+    "seed_inventory": [42, 43, 44]
+  },
+  "paired_patch": {
+    "position": "edited-word-final-token",
+    "window_source": "frozen-layer-selection"
+  },
+  "gate": {
+    "minimum_typo_accuracy_gain_points": 3.0,
+    "maximum_clean_accuracy_drop_points": 1.0,
+    "require_wrong_to_right_above_right_to_wrong": true,
+    "require_positive_unseen_task_gain": true,
+    "minimum_directional_seeds": 2,
+    "minimum_patch_gain_reduction_fraction": 0.30
+  }
+}

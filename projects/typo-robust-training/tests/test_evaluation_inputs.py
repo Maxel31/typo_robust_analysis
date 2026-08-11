@@ -56,7 +56,9 @@ def _adapter(root: Path, *, condition: str, seed: int) -> Path:
                 "seed": seed,
                 "config_sha256": "a" * 64,
                 "training_data_sha256": "b" * 64,
-                "localization_sha256": "c" * 64 if condition == "localized-state-distillation" else None,
+                "localization_sha256": "c" * 64
+                if condition == "localized-state-distillation"
+                else None,
             }
         ),
         encoding="utf-8",

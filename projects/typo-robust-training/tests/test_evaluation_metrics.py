@@ -100,9 +100,7 @@ def test_report_computes_paired_transitions_strata_patch_reliance_and_gate() -> 
     assert comparison["overall"]["wrong_to_right"] == 4
     assert comparison["overall"]["right_to_wrong"] == 0
     assert comparison["overall"]["clean_harm"] == 0
-    assert comparison["strata"]["unseen-task"]["typo_accuracy_gain_points"] == pytest.approx(
-        40.0
-    )
+    assert comparison["strata"]["unseen-task"]["typo_accuracy_gain_points"] == pytest.approx(40.0)
     assert comparison["overall"]["base_mean_patch_gain"] == pytest.approx(0.50)
     assert comparison["overall"]["adapter_mean_patch_gain"] == pytest.approx(0.25)
     assert comparison["overall"]["patch_gain_reduction_fraction"] == pytest.approx(0.50)

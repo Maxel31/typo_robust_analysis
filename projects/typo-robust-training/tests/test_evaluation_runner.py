@@ -86,7 +86,10 @@ class _Runtime:
         self.seed = None if descriptor is None else descriptor.seed
 
     def scan_pair(self, pair: EvaluationPair) -> EvaluationObservation:
-        if self.factory.fail_after is not None and len(self.factory.seen) >= self.factory.fail_after:
+        if (
+            self.factory.fail_after is not None
+            and len(self.factory.seen) >= self.factory.fail_after
+        ):
             raise RuntimeError("injected evaluation interruption")
         self.factory.seen.append((self.condition, self.seed, pair.record_id))
         base = self.condition == "base"
