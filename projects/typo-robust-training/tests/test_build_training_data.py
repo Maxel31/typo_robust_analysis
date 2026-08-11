@@ -153,6 +153,9 @@ def test_builder_writes_hash_bound_disjoint_replayable_artifacts(tmp_path: Path)
     assert training and diagnostic and tune and gate and final
     assert all(row["split"] == "train" for row in training)
     assert {row["task"] for row in diagnostic} == {"gsm8k", "mmlu", "arc"}
+    assert all(row["kind"] == "synthetic" for row in diagnostic)
+    assert all(row["clean_text"] != row["typo_text"] for row in diagnostic)
+    assert all(1 <= len(row["edits"]) <= 4 for row in diagnostic)
     allowed_training_splits = {"gsm8k": "train", "mmlu": "dev", "arc": "train"}
     for row in (*training, *diagnostic):
         if row["source"] in allowed_training_splits:
