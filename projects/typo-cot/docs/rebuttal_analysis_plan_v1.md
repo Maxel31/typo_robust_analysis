@@ -249,13 +249,16 @@ three-test Holm family. Mismatch-subset inference is exploratory and remains
 outside that family.
 
 `held-out-window-evaluation` selects a contiguous six-layer window using only a
-diagnostic split and evaluates it once on a disjoint sample-ID split. A single
-invocation reads both ordered split lists from the manifest's
+diagnostic split and evaluates it once on a disjoint sample-ID split. The split
+unit is `(task, sample_id)`, and all available model and typo-targeting variants
+of a benchmark sample stay in the same phase. A single invocation reads both
+ordered split lists from the manifest's
 `cohort_ids.json`; it does not consume an outcome-bearing `--selection-run`.
-It completes and hashes `window_selection.json` before loading any held-out
-record, then writes held-out per-item records and the final comparison. Split
-IDs, the window scoring rule, tie breaking, and the selected window are thus
-recorded before held-out outcomes are read. `[0,6)` remains the paper's
+It validates the complete manifest first, but completes and hashes
+`window_selection.json` before any held-out model call, then writes held-out
+per-item records and the final comparison. Split IDs, the window scoring rule,
+tie breaking, and the selected window are thus recorded before held-out
+outcomes are generated. `[0,6)` remains the paper's
 historical, data-adaptive reference and is not relabelled prespecified.
 
 ## Exclusions, failures, and multiplicity

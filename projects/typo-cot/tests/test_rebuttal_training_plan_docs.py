@@ -64,6 +64,7 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
     assert "`patch-harm-audit` is implemented and GPU-only" in project_english
     assert "`tokenization-severity-analysis` is implemented and CPU-only" in project_english
     assert "`subword-position-patching` is implemented and GPU-only" in project_english
+    assert "`held-out-window-evaluation` is implemented and GPU-only" in project_english
     assert "prose-only pre-implementation label" in project_english
     assert "まだ実行できません" in project_japanese
     assert "`build-rebuttal-manifest` は実装済みのCPU専用コマンド" in project_japanese
@@ -73,6 +74,7 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
     assert "`patch-harm-audit` は実装済みのGPU専用コマンド" in project_japanese
     assert "`tokenization-severity-analysis` は実装済みのCPU専用コマンド" in project_japanese
     assert "`subword-position-patching` は実装済みのGPU専用コマンド" in project_japanese
+    assert "`held-out-window-evaluation` は実装済みのGPU専用コマンド" in project_japanese
     assert "README上の実装前ラベル" in project_japanese
 
     english_examples = _bash_blocks(project_english)
@@ -106,6 +108,7 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
         "patch-harm-audit",
         "tokenization-severity-analysis",
         "subword-position-patching",
+        "held-out-window-evaluation",
     }
     assert registered.isdisjoint(TRAINING_COMMANDS)
     assert get_experiment("build-rebuttal-manifest").status == "implemented"

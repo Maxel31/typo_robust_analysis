@@ -50,7 +50,7 @@ def _record(
     selection = item_index < selection_count
     return {
         "pair_id": pair_id,
-        "sample_id": f"sample-{setting_index}-{item_index:04d}",
+        "sample_id": f"{setting.task}-{item_index:04d}",
         "model": setting.model,
         "task": setting.task,
         "target_rule": "attribution-4",
@@ -90,11 +90,17 @@ def _record(
 def _records() -> tuple[dict[str, object], ...]:
     records: list[dict[str, object]] = []
     for setting_index, setting in enumerate(REBUTTAL_SETTINGS):
-        selection_count = setting.paper_denominator // 2
         records.extend(
-            _record(setting_index, index, selection_count=selection_count)
+            _record(setting_index, index, selection_count=setting.paper_denominator)
             for index in range(setting.paper_denominator)
         )
+    for record in records:
+        selection = int(str(record["sample_id"]).rsplit("-", 1)[1]) % 2 == 0
+        record["cohorts"] = {
+            "restoration": True,
+            "window_selection": selection,
+            "window_evaluation": not selection,
+        }
     return tuple(records)
 
 
@@ -107,9 +113,7 @@ def _write_inputs(tmp_path: Path, records: tuple[dict[str, object], ...]) -> tup
         str(record["pair_id"]) for record in records if record["cohorts"]["window_selection"]
     )
     evaluation = sorted(
-        str(record["pair_id"])
-        for record in records
-        if record["cohorts"]["window_evaluation"]
+        str(record["pair_id"]) for record in records if record["cohorts"]["window_evaluation"]
     )
     cohort_ids = manifest.with_name("cohort_ids.json")
     cohort_ids.write_text(
@@ -121,9 +125,7 @@ def _write_inputs(tmp_path: Path, records: tuple[dict[str, object], ...]) -> tup
                 "pair_manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
                 "identity": "sha256-canonical-model-task-target-rule-sample-id/v1",
                 "window_split": {
-                    "algorithm": (
-                        "sha256-order-first-floor-half-per-model-task-target-rule/v1"
-                    ),
+                    "algorithm": "sha256-order-sample-group-half-per-task/v2",
                     "seed": 42,
                     "outcome_independent": True,
                 },
@@ -228,7 +230,7 @@ class _Runtime:
         *,
         candidate_windows: tuple[tuple[int, int], ...],
     ) -> WindowSelectionScan:
-        type(self).selection_calls += 1
+        _Runtime.selection_calls += 1
         assert candidate_windows == CANDIDATES
         return WindowSelectionScan(
             available=True,
@@ -245,16 +247,16 @@ class _Runtime:
         *,
         windows: Mapping[str, tuple[int, int]],
     ) -> WindowEvaluationScan:
-        assert type(self).selection_calls == type(self).expected_selection_calls
-        assert type(self).selection_artifact is not None
-        assert type(self).selection_artifact.is_file()
-        type(self).evaluation_calls += 1
+        assert _Runtime.selection_calls == _Runtime.expected_selection_calls
+        assert _Runtime.selection_artifact is not None
+        assert _Runtime.selection_artifact.is_file()
+        _Runtime.evaluation_calls += 1
         index = int(str(pair["sample_id"]).rsplit("-", 1)[1])
         assert windows == {"selected": (0, 6), "runner-up": (6, 12)}
         return WindowEvaluationScan(
             generations={
-                "selected": _generation(success=index % 2 == 0, label="selected"),
-                "runner-up": _generation(success=index % 3 == 0, label="runner-up"),
+                "selected": _generation(success=index % 3 != 0, label="selected"),
+                "runner-up": _generation(success=index % 5 == 0, label="runner-up"),
             }
         )
 
@@ -269,7 +271,8 @@ def test_protocol_catalog_cli_and_readme_freeze_the_public_contract() -> None:
     assert protocol.cross_setting_score == "equal-setting-macro-mean/v1"
     assert protocol.ranking == "score-descending-then-start-ascending/v1"
     assert protocol.untreated_kl_min_exclusive == 1e-9
-    assert protocol.bootstrap_replicates == 10_000
+    assert protocol.pair_bootstrap_replicates == 10_000
+    assert protocol.nested_bootstrap_replicates == 10_000
     assert protocol.bootstrap_seed == 42
     assert protocol.multiplicity == "holm-6-held-out-setting-contrasts/v1"
 
@@ -360,11 +363,8 @@ def test_runner_commits_selection_before_disjoint_evaluation_and_resumes(
 
     monkeypatch.setattr(runner, "load_rebuttal_pair_manifest", load_manifest)
     config = _config(tmp_path, records)
-    expected_selection = sum(setting.paper_denominator // 2 for setting in REBUTTAL_SETTINGS)
-    expected_evaluation = sum(
-        setting.paper_denominator - setting.paper_denominator // 2
-        for setting in REBUTTAL_SETTINGS
-    )
+    expected_selection = sum((setting.paper_denominator + 1) // 2 for setting in REBUTTAL_SETTINGS)
+    expected_evaluation = sum(setting.paper_denominator // 2 for setting in REBUTTAL_SETTINGS)
     _Runtime.selection_calls = 0
     _Runtime.evaluation_calls = 0
     _Runtime.expected_selection_calls = expected_selection
@@ -372,8 +372,8 @@ def test_runner_commits_selection_before_disjoint_evaluation_and_resumes(
 
     result = run_held_out_window_evaluation(config, runtime_factory=_Runtime)
 
-    assert result.selection_pairs == expected_selection == 619
-    assert result.evaluation_pairs == expected_evaluation == 622
+    assert result.selection_pairs == expected_selection == 622
+    assert result.evaluation_pairs == expected_evaluation == 619
     assert result.evaluation_records == expected_evaluation * 2
     assert result.table_rows == 6
     assert result.contrast_rows == 6
@@ -383,9 +383,10 @@ def test_runner_commits_selection_before_disjoint_evaluation_and_resumes(
     assert selection["selected_window"] == {"start": 0, "stop": 6}
     assert selection["runner_up_window"] == {"start": 6, "stop": 12}
     assert selection["selection_pair_ids_sha256"] != selection["evaluation_pair_ids_sha256"]
-    assert selection["selection_records_sha256"] == hashlib.sha256(
-        result.selection_records_path.read_bytes()
-    ).hexdigest()
+    assert (
+        selection["selection_records_sha256"]
+        == hashlib.sha256(result.selection_records_path.read_bytes()).hexdigest()
+    )
     with result.contrasts_path.open(encoding="utf-8", newline="") as handle:
         contrasts = tuple(csv.DictReader(handle))
     assert len(contrasts) == 6
@@ -404,9 +405,10 @@ def test_runner_commits_selection_before_disjoint_evaluation_and_resumes(
     assert all(row["status"] == "completed" for row in statuses)
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["status"] == "completed"
-    assert run["selection_commit"]["sha256"] == hashlib.sha256(
-        result.selection_path.read_bytes()
-    ).hexdigest()
+    assert (
+        run["selection_commit"]["sha256"]
+        == hashlib.sha256(result.selection_path.read_bytes()).hexdigest()
+    )
     assert load_calls == [config.manifest_path]
 
     resumed = run_held_out_window_evaluation(
@@ -439,7 +441,7 @@ def test_eval_failure_keeps_frozen_selection_and_active_pair_for_resume(
 
     class FailingRuntime(_Runtime):
         def scan_evaluation(self, *args: object, **kwargs: object) -> WindowEvaluationScan:
-            if type(self).evaluation_calls == 1:
+            if _Runtime.evaluation_calls == 1:
                 raise RuntimeError("injected held-out interruption")
             return super().scan_evaluation(*args, **kwargs)  # type: ignore[arg-type]
 
@@ -461,9 +463,7 @@ def test_eval_failure_keeps_frozen_selection_and_active_pair_for_resume(
     assert any(row["status"] == "failed" and row["phase"] == "evaluation" for row in statuses)
 
     selection_calls = _Runtime.selection_calls
-    resumed = run_held_out_window_evaluation(
-        replace(config, resume=True), runtime_factory=_Runtime
-    )
+    resumed = run_held_out_window_evaluation(replace(config, resume=True), runtime_factory=_Runtime)
     assert _Runtime.selection_calls == selection_calls
     assert resumed.evaluation_pairs == 12
     assert resumed.selection_path.read_bytes() == selection_bytes

@@ -249,6 +249,7 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/models/wrapper.py"),
 }
 PUBLIC_CONFIG_FILES = {
+    Path("configs/rebuttal/held-out-window-evaluation.yaml"),
     Path("configs/rebuttal/multitoken-kl-readout.yaml"),
     Path("configs/rebuttal/patch-harm-audit.yaml"),
     Path("configs/rebuttal/tokenization-severity-analysis.yaml"),
@@ -465,6 +466,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         "patch-harm-audit",
         "tokenization-severity-analysis",
         "subword-position-patching",
+        "held-out-window-evaluation",
     }
 
 

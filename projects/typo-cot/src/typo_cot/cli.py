@@ -49,6 +49,11 @@ from typo_cot.experiments.fixed_window_answer_patching import (
     parse_layer_window,
     run_fixed_window_answer_patching,
 )
+from typo_cot.experiments.held_out_window_evaluation import (
+    HeldOutWindowConfig,
+    HeldOutWindowRunError,
+    run_held_out_window_evaluation,
+)
 from typo_cot.experiments.input_corrector_audit import (
     CORRECTOR_IDS,
     PAPER_MODELS as INPUT_CORRECTOR_MODELS,
@@ -335,6 +340,18 @@ def _parser() -> argparse.ArgumentParser:
     subword.add_argument("--output-dir", required=True, type=Path)
     subword.add_argument("--limit", type=_positive_int)
     subword.add_argument("--resume", action="store_true")
+
+    held_out_window = commands.add_parser(
+        "held-out-window-evaluation",
+        help="Select a layer window, commit it, and evaluate disjoint sample IDs.",
+    )
+    held_out_window.add_argument("--config", required=True, type=Path)
+    held_out_window.add_argument("--manifest", required=True, type=Path)
+    held_out_window.add_argument("--cohort-ids", required=True, type=Path)
+    held_out_window.add_argument("--gpu-id", required=True)
+    held_out_window.add_argument("--output-dir", required=True, type=Path)
+    held_out_window.add_argument("--limit-per-setting", type=_positive_int)
+    held_out_window.add_argument("--resume", action="store_true")
 
     pairs = commands.add_parser(
         "prepare-edited-pairs",
@@ -982,6 +999,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"subword table: {result.table_path}")
         print(f"paired contrasts: {result.contrasts_path}")
         print(f"alignment flow: {result.flow_path}")
+        print(f"summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "held-out-window-evaluation":
+        try:
+            result = run_held_out_window_evaluation(
+                HeldOutWindowConfig(
+                    protocol_path=args.config,
+                    manifest_path=args.manifest,
+                    cohort_ids_path=args.cohort_ids,
+                    gpu_id=args.gpu_id,
+                    output_dir=args.output_dir,
+                    limit_per_setting=args.limit_per_setting,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            HeldOutWindowRunError,
+        ) as exc:
+            print(f"held-out-window-evaluation: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"selected on {result.selection_pairs:,} pair(s) and evaluated "
+            f"{result.evaluation_pairs:,} held-out pair(s): {result.selection_path}"
+        )
+        print(f"held-out table: {result.table_path}")
+        print(f"paired contrasts: {result.contrasts_path}")
         print(f"summary: {result.summary_path}")
         print(f"run manifest: {result.run_path}")
         return 0

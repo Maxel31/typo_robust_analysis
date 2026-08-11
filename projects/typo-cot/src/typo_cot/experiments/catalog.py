@@ -481,6 +481,47 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         status="implemented",
     ),
     ExperimentSpec(
+        slug="held-out-window-evaluation",
+        title="Select and test a layer window on disjoint sample IDs",
+        paper_question="ARR addition",
+        paper_sections=("Rebuttal analysis plan v1: Held-out window test",),
+        summary=(
+            "Score five frozen six-layer candidates on diagnostic sample groups, commit "
+            "the winner and runner-up, then compare them on untouched sample groups."
+        ),
+        cohort=(
+            "The 1,241 six-setting restoration pairs, split outcome-independently by "
+            "task and shared sample ID across models and typo-targeting conditions."
+        ),
+        intervention=(
+            "Use first-clean-continuation-token KL restoration only for diagnostic "
+            "selection, then freely generate selected and runner-up answer patches."
+        ),
+        readout=(
+            "Frozen selection artifact, six held-out paired risk differences, exact "
+            "McNemar tests with Holm correction, and an equal-setting nested-bootstrap CI."
+        ),
+        required_arguments=(
+            "--config",
+            "--manifest",
+            "--cohort-ids",
+            "--gpu-id",
+            "--output-dir",
+        ),
+        outputs=(
+            "window_selection_records.jsonl",
+            "window_selection.json",
+            "held_out_window_records.jsonl",
+            "held_out_window_table.csv",
+            "held_out_window_contrasts.csv",
+            "held_out_window_summary.json",
+            "pair_status_records.jsonl",
+            "run.json",
+        ),
+        compute="gpu",
+        status="implemented",
+    ),
+    ExperimentSpec(
         slug="patch-coordinate-controls",
         title="Compare edited-word patches with coordinate and donor controls",
         paper_question="RQ1",

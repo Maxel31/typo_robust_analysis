@@ -870,6 +870,7 @@ def _augment_records(
                     str(source_by_pair_id[pair_id]["task"]),
                     str(source_by_pair_id[pair_id]["target_rule"]),
                 ),
+                str(source_by_pair_id[pair_id]["sample_id"]),
             )
             for pair_id in restoration_ids
         ),
@@ -994,7 +995,7 @@ def _augment_records(
         "manifest_protocol_sha256": _PROTOCOL.sha256(),
         "identity": "sha256-canonical-model-task-target-rule-sample-id/v1",
         "window_split": {
-            "algorithm": "sha256-order-first-floor-half-per-model-task-target-rule/v1",
+            "algorithm": "sha256-order-sample-group-half-per-task/v2",
             "seed": _PROTOCOL.window_split_seed,
             "outcome_independent": True,
         },

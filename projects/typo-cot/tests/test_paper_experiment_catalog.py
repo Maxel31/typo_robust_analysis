@@ -34,6 +34,7 @@ EXPECTED_EXPERIMENTS = (
     "patch-harm-audit",
     "tokenization-severity-analysis",
     "subword-position-patching",
+    "held-out-window-evaluation",
     "patch-coordinate-controls",
     "patch-position-controls",
     "patch-text-combination",

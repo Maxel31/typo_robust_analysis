@@ -278,10 +278,12 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
 
 ## held-out layer-window評価
 
-`held-out-window-evaluation` は、論文の `[0,6)` がdata-adaptiveに選ばれたという
+`held-out-window-evaluation` は実装済みのGPU専用コマンドです。論文の `[0,6)` が
+data-adaptiveに選ばれたという
 明記済みの制約を検証します。`build-rebuttal-manifest` がoutcomeを使わず層別化して
 固定した `window_selection` と `window_evaluation` のID listを使い、同じpairが両phaseへ
-入ることを禁止します。
+入ることを禁止します。分割単位は `(task, sample_id)` であるため、同じbenchmark
+sampleはモデルやtypo-targeting条件が異なっても必ず同じphaseに入ります。
 
 診断phaseは、事前固定した5つの6層候補 `[0,6)`、`[6,12)`、`[12,18)`、
 `[18,24)`、`[22,28)` を比較します。settingごと・候補ごとにclean first-CoT-token

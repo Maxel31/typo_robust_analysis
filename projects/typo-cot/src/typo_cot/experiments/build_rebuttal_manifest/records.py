@@ -783,6 +783,7 @@ def _validate_manifest_relations(records: Sequence[dict[str, object]]) -> None:
                     str(record["task"]),
                     str(record["target_rule"]),
                 ),
+                str(record["sample_id"]),
             )
             for record in restoration
         ),
@@ -860,7 +861,7 @@ def _load_and_validate_artifact_set(
     if cohorts.get("identity") != "sha256-canonical-model-task-target-rule-sample-id/v1":
         raise ValueError(f"rebuttal cohort identity rule differs: {cohort_path}")
     if _mapping(cohorts.get("window_split"), field=f"{cohort_path} window_split") != {
-        "algorithm": "sha256-order-first-floor-half-per-model-task-target-rule/v1",
+        "algorithm": "sha256-order-sample-group-half-per-task/v2",
         "seed": REBUTTAL_MANIFEST_PROTOCOL.window_split_seed,
         "outcome_independent": True,
     }:

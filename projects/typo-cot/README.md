@@ -306,10 +306,13 @@ An empty table cell uses JSON `null` and a blank CSV value together with
 
 ## Held-out layer-window evaluation
 
-`held-out-window-evaluation` addresses the paper's explicit limitation that
+`held-out-window-evaluation` is implemented and GPU-only. It addresses the
+paper's explicit limitation that
 `[0,6)` was selected data-adaptively. It uses the outcome-independent,
 stratified `window_selection` and `window_evaluation` ID lists already frozen
-by `build-rebuttal-manifest`; no pair can occur in both phases.
+by `build-rebuttal-manifest`. The split unit is `(task, sample_id)`, so the same
+benchmark sample remains in one phase across every model and typo-targeting
+condition as well as being pair-ID disjoint.
 
 The diagnostic phase compares five prespecified six-layer candidates:
 `[0,6)`, `[6,12)`, `[12,18)`, `[18,24)`, and `[22,28)`. For each setting and
