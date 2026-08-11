@@ -31,9 +31,7 @@ def _record(index: int, text: str, *, group: str | None = None) -> CleanRecord:
 
 
 def test_content_hash_normalizes_only_for_duplicate_detection() -> None:
-    assert normalized_content_sha256("  Alpha\n beta  ") == normalized_content_sha256(
-        "alpha beta"
-    )
+    assert normalized_content_sha256("  Alpha\n beta  ") == normalized_content_sha256("alpha beta")
     assert normalized_content_sha256("alpha beta") != normalized_content_sha256("alpha gamma")
 
 
@@ -66,7 +64,9 @@ def test_near_duplicate_clusters_are_order_independent_and_split_atomically() ->
 
 
 def test_content_assignment_does_not_depend_on_input_order() -> None:
-    records = tuple(_record(index, f"Document number {index} contains enough prose.") for index in range(40))
+    records = tuple(
+        _record(index, f"Document number {index} contains enough prose.") for index in range(40)
+    )
     clusters = cluster_near_duplicates(records, shingle_size=3, threshold=0.95)
     expected = assign_content_splits(
         records,
@@ -86,8 +86,7 @@ def test_content_assignment_does_not_depend_on_input_order() -> None:
 def test_natural_typo_repository_split_is_stable_and_repository_disjoint() -> None:
     repositories = tuple(f"https://github.com/example/repository-{index}" for index in range(500))
     assignments = {
-        repository: assign_repository_split(repository, seed=42)
-        for repository in repositories
+        repository: assign_repository_split(repository, seed=42) for repository in repositories
     }
     assert assignments == {
         repository: assign_repository_split(repository, seed=42)
@@ -101,4 +100,3 @@ def test_natural_typo_repository_split_is_stable_and_repository_disjoint() -> No
     assert 0.60 <= counts["train"] / len(repositories) <= 0.80
     assert 0.04 <= counts["tune"] / len(repositories) <= 0.16
     assert 0.12 <= counts["held_out"] / len(repositories) <= 0.28
-
