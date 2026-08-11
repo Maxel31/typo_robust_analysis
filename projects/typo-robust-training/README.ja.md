@@ -101,7 +101,8 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --diagnostic-manifest "${TRAIN_ROOT}/data/gemma4b-sanity/diagnostic_manifest.jsonl" \
   --tasks gsm8k mmlu arc \
   --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/localization/layers"
+  --output-dir "${TRAIN_ROOT}/localization/layers" \
+  --resume
 ```
 
 編集語末位置で全layerを走査し、診断data上のmulti-token KL restoration、answer restoration、

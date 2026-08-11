@@ -113,7 +113,8 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --diagnostic-manifest "${TRAIN_ROOT}/data/gemma4b-sanity/diagnostic_manifest.jsonl" \
   --tasks gsm8k mmlu arc \
   --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/localization/layers"
+  --output-dir "${TRAIN_ROOT}/localization/layers" \
+  --resume
 ```
 
 This command scans every layer at edited-word-final positions. It freezes one

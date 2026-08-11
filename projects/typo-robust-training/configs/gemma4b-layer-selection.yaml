@@ -1,0 +1,49 @@
+{
+  "schema_version": "robustness-layer-selection-config/v1",
+  "model": {
+    "id": "google/gemma-3-4b-it",
+    "revision": "093f9f388b31de276ce2de164bdc2081324b9767",
+    "dtype": "bfloat16"
+  },
+  "diagnostic": {
+    "tasks": ["gsm8k", "mmlu", "arc"],
+    "prompt_template": "paper-few-shot-cot/v1",
+    "patch_direction": "clean-to-typo",
+    "patch_site": "complete-decoder-block-residual-output",
+    "coordinate": "edited-word-final-token/v1",
+    "clean_continuation_source": "greedy-clean-generation/v1",
+    "teacher_forced_tokens": 16,
+    "readout_token_start": 2,
+    "readout_token_stop": 16,
+    "untreated_mean_kl_min_exclusive": 0.000001,
+    "minimum_kl_eligible_per_task": 50,
+    "minimum_kl_eligible_fraction_per_task": 0.80,
+    "minimum_answer_cohort_per_task": 10,
+    "generation": {
+      "max_new_tokens": 512,
+      "do_sample": false,
+      "num_beams": 1,
+      "num_return_sequences": 1,
+      "temperature": null,
+      "top_p": null,
+      "top_k": null,
+      "use_cache": true,
+      "return_dict_in_generate": false,
+      "output_scores": false,
+      "termination_protocol": "effective-eos-vs-length-cap/v1",
+      "answer_extraction": "primary-then-empty-only-positional/v1"
+    }
+  },
+  "selection": {
+    "score_formula": "R_KL_2:16+beta*R_answer-gamma*H/v1",
+    "beta": 0.5,
+    "gamma": 1.0,
+    "window_width": 6,
+    "layer_to_window_aggregation": "arithmetic-mean/v1",
+    "cross_task_aggregation": "equal-task-macro-mean/v1",
+    "ranking": "score-descending-then-start-ascending/v1",
+    "bootstrap_replicates": 10000,
+    "bootstrap_seed": 42,
+    "confidence_level": 0.95
+  }
+}

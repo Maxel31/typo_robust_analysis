@@ -74,7 +74,7 @@ def test_observed_public_dataset_schemas_format_without_losing_answers() -> None
     }
     expected_answers = {
         "fineweb_edu": None,
-        "gsm8k": "#### 2",
+        "gsm8k": "2",
         "mmlu": "C",
         "arc": "B",
         "mmlu_pro": "B",
@@ -91,6 +91,15 @@ def test_observed_public_dataset_schemas_format_without_losing_answers() -> None
         )
         assert record.answer == expected_answers[source_name]
         assert record.source_revision == protocol.sources[source_name].revision
+    gsm8k = _format_huggingface_record(
+        "gsm8k",
+        protocol.sources["gsm8k"],
+        "train",
+        0,
+        {"question": "What is 1 + 1?", "answer": "Add them.\n#### 2"},
+    )
+    assert gsm8k.answer == "2"
+    assert gsm8k.metadata["reference_solution"] == "Add them.\n#### 2"
 
 
 def test_provider_passes_pinned_revision_and_declared_split_to_datasets(

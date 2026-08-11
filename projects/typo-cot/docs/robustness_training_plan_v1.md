@@ -219,6 +219,18 @@ For layer `l`:
 s_l = R_KL_2:16,l + beta * R_answer,l - gamma * H_l
 ```
 
+`R_answer,l` is the patched-correct rate among records whose unpatched clean
+answer is correct and unpatched typo answer is wrong. `H_l` is the
+patched-wrong rate among records whose clean and unpatched typo answers are
+both correct. Each answer cohort must contain at least ten records per task;
+otherwise selection fails closed. The default pilot freezes `beta=0.5` and
+`gamma=1.0`, so one point of right-to-wrong harm is never worth less than the
+same answer-restoration gain. A width-six candidate receives the arithmetic
+mean of its six layer scores. Tasks are equally weighted, and ties are resolved
+by the smallest window start. Bootstrap resampling is stratified within task by
+KL eligibility and the two unpatched answer-cohort labels, preserving every
+scientific denominator.
+
 `beta`, `gamma`, the contiguous-window width, task macro-averaging, and tie
 breaking are fixed in config before outputs are inspected. The selected window
 must be written to `layer_selection.json` with per-task scores and bootstrap
