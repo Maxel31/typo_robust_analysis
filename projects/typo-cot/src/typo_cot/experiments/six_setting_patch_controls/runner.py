@@ -353,8 +353,7 @@ def _runtime_provenance(
         or provenance.get("coordinate_source") != "rebuttal-pair-manifest/v1"
         or provenance.get("layer_window") != [0, 6]
         or provenance.get("diagnostic_controls") != ["offset-2", "cross-item"]
-        or provenance.get("answer_extraction")
-        != "primary-then-empty-only-positional-only-after-eos/v1"
+        or provenance.get("answer_extraction") != "primary-then-empty-only-positional/v1"
     ):
         raise ValueError("six-setting runtime provenance differs from the frozen protocol")
     eos_ids = provenance.get("effective_eos_token_ids")

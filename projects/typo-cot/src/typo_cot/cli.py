@@ -134,6 +134,11 @@ from typo_cot.experiments.six_setting_patch_controls import (
     SixSettingPatchControlsRunError,
     run_six_setting_patch_controls,
 )
+from typo_cot.experiments.source_write_coordinate_grid import (
+    SourceWriteCoordinateGridConfig,
+    SourceWriteCoordinateGridRunError,
+    run_source_write_coordinate_grid,
+)
 from typo_cot.experiments.targeting_fidelity_audit import (
     TargetingFidelityAuditConfig,
     TargetingFidelityAuditError,
@@ -216,6 +221,24 @@ def _parser() -> argparse.ArgumentParser:
     six_setting_controls.add_argument("--output-dir", required=True, type=Path)
     six_setting_controls.add_argument("--limit-per-setting", type=_positive_int)
     six_setting_controls.add_argument("--resume", action="store_true")
+
+    source_write_grid = commands.add_parser(
+        "source-write-coordinate-grid",
+        help="Separate edited/offset donor sources from edited/offset write positions.",
+    )
+    source_write_grid.add_argument("--config", required=True, type=Path)
+    source_write_grid.add_argument("--manifest", required=True, type=Path)
+    source_write_grid.add_argument("--fixed-window-root", required=True, type=Path)
+    source_write_grid.add_argument(
+        "--cohorts",
+        required=True,
+        nargs="+",
+        choices=("primary", "replication"),
+    )
+    source_write_grid.add_argument("--gpu-id", required=True)
+    source_write_grid.add_argument("--output-dir", required=True, type=Path)
+    source_write_grid.add_argument("--limit-per-cohort", type=_positive_int)
+    source_write_grid.add_argument("--resume", action="store_true")
 
     pairs = commands.add_parser(
         "prepare-edited-pairs",
@@ -703,6 +726,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"control table: {result.control_table_path}")
         print(f"multiplicity table: {result.multiplicity_table_path}")
         print(f"forest plot: {result.forest_plot_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "source-write-coordinate-grid":
+        try:
+            result = run_source_write_coordinate_grid(
+                SourceWriteCoordinateGridConfig(
+                    protocol_path=args.config,
+                    manifest_path=args.manifest,
+                    fixed_window_root=args.fixed_window_root,
+                    cohorts=tuple(args.cohorts),
+                    gpu_id=args.gpu_id,
+                    output_dir=args.output_dir,
+                    limit_per_cohort=args.limit_per_cohort,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            SourceWriteCoordinateGridRunError,
+        ) as exc:
+            print(f"source-write-coordinate-grid: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.grid_records:,} arm record(s) for {result.pairs:,} pair(s) "
+            f"across {result.cohorts} cohort(s): {result.records_path}"
+        )
+        print(f"grid table: {result.grid_table_path}")
+        print(f"contrasts: {result.contrasts_path}")
         print(f"run manifest: {result.run_path}")
         return 0
     if args.command == "prepare-edited-pairs":

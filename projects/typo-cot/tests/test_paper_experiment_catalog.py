@@ -29,6 +29,7 @@ EXPECTED_EXPERIMENTS = (
     "fixed-window-answer-patching",
     "build-rebuttal-manifest",
     "six-setting-patch-controls",
+    "source-write-coordinate-grid",
     "patch-coordinate-controls",
     "patch-position-controls",
     "patch-text-combination",

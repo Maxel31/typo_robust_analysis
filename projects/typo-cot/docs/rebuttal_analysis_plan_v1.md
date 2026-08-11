@@ -1,8 +1,8 @@
 # ARR rebuttal analysis plan v1
 
-Status: **manifest and six-setting control implementations complete; remaining
-result-producing interfaces are frozen; no full-cohort new intervention
-outcome has been inspected**.
+Status: **manifest, six-setting controls, and source/write grid implementations
+complete; remaining result-producing interfaces are frozen; no full-cohort new
+intervention outcome has been inspected**.
 
 This plan fixed the additional analyses requested for the ARR rebuttal before
 their result-generating commands were implemented. The submitted 19-page PDF
@@ -118,6 +118,15 @@ all six settings. Each item has three arms over `[0,6)` and greedy generation:
 3. **cross-item**: another item's clean edited-word-final states are written to
    the recipient's original typo coordinates.
 
+The reused correct arm was produced under a primary-then-empty-only positional
+fallback that remains enabled at the generation length cap. The prospectively
+generated offset and cross-item arms use the same extraction rule so paired
+events are comparable. Before any confirmatory six-setting result generation,
+this corrects the initial internal runtime contract that enabled positional
+fallback only after EOS. The impact is limited to length-capped continuations
+whose primary extractor is empty; EOS versus length-cap termination is still
+stored for every new generation.
+
 Every offset coordinate must remain in the stored prompt interior (excluding
 the first and final prompt tokens), outside every edited-token span, and valid
 in both donor and recipient prompts. If any aligned word fails this rule, the
@@ -156,6 +165,11 @@ primary contrasts are `E->E` versus `E->O` (write location) and `E->E` versus
 `O->E` (donor source). Report a four-arm Cochran's Q, two-sided exact McNemar
 tests for prespecified pairwise contrasts, Holm adjustment, risk differences,
 and pair-bootstrap 95% intervals.
+
+Because `E->E` is reused from the fixed-window producer, all four arms use that
+producer's primary-then-empty-only positional fallback, including at the
+generation length cap. New generations additionally retain explicit EOS versus
+length-cap termination provenance.
 
 Interpretation is fixed before results:
 

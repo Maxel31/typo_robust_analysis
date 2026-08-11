@@ -61,7 +61,7 @@ operation-specific arguments, cohort, intervention, readout, outputs, compute
 class, and implementation status. Direct experiment runners are added in
 separate reviewed PRs; only entries marked `implemented` are runnable.
 
-## Implemented ARR manifest and six-setting controls
+## Implemented ARR manifest and coordinate controls
 
 `build-rebuttal-manifest` is implemented and CPU-only. It accepts the twelve
 completed `prepare-edited-pairs` sources and six completed fixed-window runs
@@ -95,6 +95,13 @@ bootstrap intervals. Use exactly one physical GPU; `--limit-per-setting` is a
 non-confirmatory smoke-test option and `--resume` verifies and reuses completed
 pair checkpoints.
 
+The reused correct arm was produced with positional fallback enabled after an
+empty primary extraction, including at the generation length cap. The new
+offset and cross-item arms deliberately use that same rule for symmetric paired
+scoring. This corrects the initial runner contract before any confirmatory
+six-setting result generation; it affects only length-capped continuations with
+an empty primary extraction, and termination remains recorded.
+
 ```bash
 GPU_ID=0
 FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching
@@ -114,17 +121,16 @@ The command writes `control_records.jsonl`, `pair_status_records.jsonl`,
 `multiplicity_table.csv`, `macro_average.json`,
 `risk_difference_forest.svg`, and a hash-bound `run.json`.
 
-## Frozen interfaces for remaining ARR additions
-
-The following six commands are `interface-frozen` and **not yet runnable**.
-They were written before implementation so every additional experiment has its
-own operation, arguments, inputs, and output directory. The statistical and
-cohort contracts are fixed in
-[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md).
-`interface-frozen` is a prose-only pre-implementation label, not a third
-experiment-catalog status. Such commands are deliberately absent from the CLI
-and `experiments list`; each command's implementation PR registers it directly
-as an `implemented` operation after its contract tests pass.
+`source-write-coordinate-grid` is implemented and GPU-only. It separates donor
+content from write location over the primary Gemma/GSM8K and prespecified
+replication Mistral/MMLU cohorts. The common-valid denominator requires the
+complete correct and strict offset coordinate plans. It reuses fixed `E->E`
+events and generates `E->O`, `O->E`, and `O->O`, then reports Cochran's Q and
+the two prespecified paired contrasts per cohort with one Holm family.
+All four arms use the fixed-window producer's extraction contract, including
+its empty-primary positional fallback, so capped continuations are scored
+symmetrically; termination remains recorded for every new generation.
+`--limit-per-cohort` is available only for non-confirmatory smoke tests.
 
 ```bash
 GPU_ID=0
@@ -139,6 +145,28 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
   --cohorts primary replication \
   --gpu-id "${GPU_ID}" \
   --output-dir "${REBUTTAL_ROOT}/source-write-coordinate-grid"
+```
+
+The command writes `source_write_grid_records.jsonl`,
+`pair_status_records.jsonl`, `source_write_grid_table.csv`,
+`source_write_contrasts.csv`, and a hash-bound `run.json`.
+
+## Frozen interfaces for remaining ARR additions
+
+The following five commands are `interface-frozen` and **not yet runnable**.
+They were written before implementation so every additional experiment has its
+own operation, arguments, inputs, and output directory. The statistical and
+cohort contracts are fixed in
+[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md).
+`interface-frozen` is a prose-only pre-implementation label, not a third
+experiment-catalog status. Such commands are deliberately absent from the CLI
+and `experiments list`; each command's implementation PR registers it directly
+as an `implemented` operation after its contract tests pass.
+
+```bash
+GPU_ID=0
+FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
   typo-cot multitoken-kl-readout \

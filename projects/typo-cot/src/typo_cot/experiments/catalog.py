@@ -294,6 +294,45 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         status="implemented",
     ),
     ExperimentSpec(
+        slug="source-write-coordinate-grid",
+        title="Separate patch donor source from write position",
+        paper_question="ARR addition",
+        paper_sections=("Rebuttal analysis plan v1: Source/write coordinate grid",),
+        summary=(
+            "Run the edited/offset donor-source by edited/offset write-position 2x2 grid "
+            "over the primary and prespecified replication cohorts."
+        ),
+        cohort=(
+            "Primary Gemma-3-4B/GSM8K and replication Mistral-7B/MMLU restoration "
+            "pairs with valid correct and strict +2 offset coordinates."
+        ),
+        intervention=(
+            "Reuse fixed E-to-E outcomes and generate E-to-O, O-to-E, and O-to-O "
+            "residual-state patches over layers [0,6)."
+        ),
+        readout=(
+            "Four-arm restoration rates, Cochran's Q, and prespecified paired "
+            "risk-difference/McNemar contrasts with Holm correction."
+        ),
+        required_arguments=(
+            "--config",
+            "--manifest",
+            "--fixed-window-root",
+            "--cohorts",
+            "--gpu-id",
+            "--output-dir",
+        ),
+        outputs=(
+            "source_write_grid_records.jsonl",
+            "pair_status_records.jsonl",
+            "source_write_grid_table.csv",
+            "source_write_contrasts.csv",
+            "run.json",
+        ),
+        compute="gpu",
+        status="implemented",
+    ),
+    ExperimentSpec(
         slug="patch-coordinate-controls",
         title="Compare edited-word patches with coordinate and donor controls",
         paper_question="RQ1",
