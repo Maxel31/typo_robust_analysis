@@ -52,6 +52,18 @@ each operation.
 GPU experiments use the paper-locked `lrp` environment. CPU-only catalog
 inspection and contract tests require no model download.
 
+## ARR additions and robustness training
+
+The command interfaces for the ARR rebuttal additions and prospective
+typo-robustness training are frozen before implementation in
+[`rebuttal_analysis_plan_v1.md`](projects/typo-cot/docs/rebuttal_analysis_plan_v1.md)
+and
+[`robustness_training_plan_v1.md`](projects/typo-cot/docs/robustness_training_plan_v1.md).
+The package README shows one descriptive command per experiment and labels
+these future commands `interface-frozen` until their reviewed implementation is
+merged. Training is published only after held-out evaluation demonstrates a
+robustness improvement while preserving clean performance.
+
 ## Repository map
 
 ```text
