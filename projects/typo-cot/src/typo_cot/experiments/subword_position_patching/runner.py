@@ -26,11 +26,18 @@ from typo_cot.experiments.build_rebuttal_manifest.records import (
     sha256_file,
 )
 from typo_cot.experiments.catalog import PAPER_SHA256
+from typo_cot.experiments.patch_coordinate_controls.metrics import exact_mcnemar
+from typo_cot.experiments.six_setting_patch_controls.statistics import (
+    derived_seed,
+    holm_adjust,
+    paired_bootstrap_risk_difference,
+)
 from typo_cot.experiments.subword_position_patching.planning import plan_subword_patch
 from typo_cot.experiments.subword_position_patching.protocol import (
     SubwordPositionPatchingProtocol,
     load_subword_position_patching_protocol,
 )
+from typo_cot.experiments.subword_position_patching.statistics import cochran_q_three
 
 _GPU_ID = re.compile(r"0|[1-9][0-9]*")
 _RUN_SCHEMA = "subword-position-patching-run/v1"
@@ -41,6 +48,7 @@ _SUBSETS = ("equal-count-primary", "mismatch-monotone-secondary")
 _PUBLIC_OUTPUTS = (
     "subword_patch_records.jsonl",
     "subword_patch_table.csv",
+    "subword_patch_contrasts.csv",
     "subword_alignment_flow.csv",
     "subword_patch_summary.json",
 )
@@ -193,6 +201,7 @@ RuntimeFactory = Callable[..., SubwordPositionPatchingRuntime]
 class SubwordPositionPatchingResult:
     records_path: Path
     table_path: Path
+    contrasts_path: Path
     flow_path: Path
     summary_path: Path
     run_path: Path
@@ -201,6 +210,7 @@ class SubwordPositionPatchingResult:
     primary_pairs: int
     secondary_pairs: int
     table_rows: int
+    contrast_rows: int
 
 
 def _now() -> str:
@@ -662,6 +672,156 @@ def _analysis_rows(
     return table
 
 
+def _paired_events(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    subset: str,
+    modes: Sequence[str],
+) -> dict[str, tuple[bool, ...]]:
+    by_pair: dict[str, dict[str, bool]] = {}
+    for row in rows:
+        if row.get("analysis_subset") != subset:
+            continue
+        pair_id = row.get("pair_id")
+        mode = row.get("mode")
+        event = row.get("success")
+        if (
+            not isinstance(pair_id, str)
+            or not pair_id
+            or not isinstance(mode, str)
+            or mode not in modes
+            or type(event) is not bool
+        ):
+            raise ValueError(f"{subset} paired inference row is invalid")
+        pair = by_pair.setdefault(pair_id, {})
+        if mode in pair:
+            raise ValueError(f"{subset} contains a duplicate {mode} event for {pair_id}")
+        pair[mode] = event
+    ordered_ids = tuple(sorted(by_pair))
+    expected_modes = set(modes)
+    for pair_id in ordered_ids:
+        if set(by_pair[pair_id]) != expected_modes:
+            raise ValueError(f"{subset} pair {pair_id} lacks a complete mode grid")
+    return {mode: tuple(by_pair[pair_id][mode] for pair_id in ordered_ids) for mode in modes}
+
+
+def _empty_omnibus(*, modes: Sequence[str]) -> dict[str, object]:
+    return {
+        "defined": False,
+        "method": "cochran-q-chi-square-df2/v1",
+        "pairs": 0,
+        "arms": 3,
+        "degrees_of_freedom": 2,
+        "statistic": None,
+        "p_value": None,
+        "arm_order": list(modes),
+        "successes": {mode: 0 for mode in modes},
+    }
+
+
+def _paired_inference_rows(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    protocol: SubwordPositionPatchingProtocol,
+    confirmatory_run: bool,
+) -> tuple[list[dict[str, object]], dict[str, dict[str, object]]]:
+    contrasts: list[dict[str, object]] = []
+    omnibus_by_subset: dict[str, dict[str, object]] = {}
+    primary_indices: list[int] = []
+    for subset in _SUBSETS:
+        arms = _paired_events(rows, subset=subset, modes=protocol.modes)
+        pairs = len(arms[protocol.modes[0]])
+        if pairs:
+            omnibus = {"defined": True, **cochran_q_three(arms)}
+        else:
+            omnibus = _empty_omnibus(modes=protocol.modes)
+        omnibus_by_subset[subset] = omnibus
+        for left, right in protocol.pairwise_contrasts:
+            comparison_id = f"{subset}|{left}-vs-{right}"
+            primary_subset = subset == "equal-count-primary"
+            confirmatory = primary_subset and confirmatory_run
+            if pairs:
+                exact = exact_mcnemar(arms[left], arms[right])
+                bootstrap = paired_bootstrap_risk_difference(
+                    arms[left],
+                    arms[right],
+                    replicates=protocol.pair_bootstrap_replicates,
+                    confidence_level=protocol.confidence_level,
+                    seed=derived_seed(protocol.bootstrap_seed, comparison_id),
+                )
+                if abs(float(exact["rate_difference"]) - float(bootstrap["estimate"])) > 1e-12:
+                    raise ValueError(f"paired effect implementations disagree for {comparison_id}")
+                payload = {
+                    "n_pairs": pairs,
+                    "left_successes": exact["left_successes"],
+                    "right_successes": exact["right_successes"],
+                    "risk_difference": bootstrap["estimate"],
+                    "ci_lower": bootstrap["lower"],
+                    "ci_upper": bootstrap["upper"],
+                    "bootstrap_seed": bootstrap["seed"],
+                    "bootstrap_method": bootstrap["method"],
+                    "left_only": exact["left_only"],
+                    "right_only": exact["right_only"],
+                    "discordant": exact["discordant"],
+                    "mcnemar_method": exact["method"],
+                    "mcnemar_p_raw": exact["p_value"],
+                }
+            else:
+                payload = {
+                    "n_pairs": 0,
+                    "left_successes": 0,
+                    "right_successes": 0,
+                    "risk_difference": None,
+                    "ci_lower": None,
+                    "ci_upper": None,
+                    "bootstrap_seed": None,
+                    "bootstrap_method": None,
+                    "left_only": None,
+                    "right_only": None,
+                    "discordant": None,
+                    "mcnemar_method": protocol.paired_test,
+                    "mcnemar_p_raw": None,
+                }
+            row = {
+                "comparison_id": comparison_id,
+                "analysis_subset": subset,
+                "confirmatory": confirmatory,
+                "inference_defined": bool(pairs),
+                "left_mode": left,
+                "right_mode": right,
+                **payload,
+                "confidence_level": protocol.confidence_level,
+                "bootstrap_replicates": protocol.pair_bootstrap_replicates,
+                "mcnemar_p_holm": None,
+                "mcnemar_p_holm_defined": False,
+                "multiplicity": (
+                    protocol.multiplicity
+                    if confirmatory
+                    else (
+                        protocol.smoke_inference if primary_subset else protocol.secondary_inference
+                    )
+                ),
+                "in_primary_holm_family": confirmatory,
+            }
+            contrasts.append(row)
+            if confirmatory:
+                primary_indices.append(len(contrasts) - 1)
+    primary_p_values = {
+        str(contrasts[index]["comparison_id"]): float(contrasts[index]["mcnemar_p_raw"])
+        for index in primary_indices
+        if contrasts[index]["inference_defined"] is True
+    }
+    if primary_p_values:
+        if len(primary_p_values) != len(protocol.pairwise_contrasts):
+            raise ValueError("primary subword inference is only partially defined")
+        adjusted = holm_adjust(primary_p_values)
+        for index in primary_indices:
+            comparison_id = str(contrasts[index]["comparison_id"])
+            contrasts[index]["mcnemar_p_holm"] = adjusted[comparison_id]
+            contrasts[index]["mcnemar_p_holm_defined"] = True
+    return contrasts, omnibus_by_subset
+
+
 def _result_from_run(output_dir: Path, run: Mapping[str, object]) -> SubwordPositionPatchingResult:
     outputs = _mapping(run.get("outputs"), field="completed run outputs")
     if set(outputs) != set(_PUBLIC_OUTPUTS):
@@ -677,13 +837,16 @@ def _result_from_run(output_dir: Path, run: Mapping[str, object]) -> SubwordPosi
     with (output_dir / _PUBLIC_OUTPUTS[1]).open(encoding="utf-8", newline="") as handle:
         table_rows = tuple(csv.DictReader(handle))
     with (output_dir / _PUBLIC_OUTPUTS[2]).open(encoding="utf-8", newline="") as handle:
+        contrast_rows = tuple(csv.DictReader(handle))
+    with (output_dir / _PUBLIC_OUTPUTS[3]).open(encoding="utf-8", newline="") as handle:
         flow_rows = tuple(csv.DictReader(handle))
-    summary = load_json_object(output_dir / _PUBLIC_OUTPUTS[3])
+    summary = load_json_object(output_dir / _PUBLIC_OUTPUTS[4])
     metadata_counts = {
         _PUBLIC_OUTPUTS[0]: len(records),
         _PUBLIC_OUTPUTS[1]: len(table_rows),
-        _PUBLIC_OUTPUTS[2]: len(flow_rows),
-        _PUBLIC_OUTPUTS[3]: 1,
+        _PUBLIC_OUTPUTS[2]: len(contrast_rows),
+        _PUBLIC_OUTPUTS[3]: len(flow_rows),
+        _PUBLIC_OUTPUTS[4]: 1,
     }
     for name, count in metadata_counts.items():
         if _mapping(outputs[name], field=f"completed output {name}").get("records") != count:
@@ -696,21 +859,29 @@ def _result_from_run(output_dir: Path, run: Mapping[str, object]) -> SubwordPosi
         "secondary_pairs": int(summary["counts"]["secondary_pairs"]),
         "records": len(records),
         "table_rows": len(table_rows),
+        "contrast_rows": len(contrast_rows),
         "flow_rows": len(flow_rows),
     }
-    if dict(counts) != expected or len(table_rows) != 6 or len(flow_rows) != 1:
+    if (
+        dict(counts) != expected
+        or len(table_rows) != 6
+        or len(contrast_rows) != 6
+        or len(flow_rows) != 1
+    ):
         raise ValueError("completed subword counts differ from verified outputs")
     return SubwordPositionPatchingResult(
         records_path=output_dir / _PUBLIC_OUTPUTS[0],
         table_path=output_dir / _PUBLIC_OUTPUTS[1],
-        flow_path=output_dir / _PUBLIC_OUTPUTS[2],
-        summary_path=output_dir / _PUBLIC_OUTPUTS[3],
+        contrasts_path=output_dir / _PUBLIC_OUTPUTS[2],
+        flow_path=output_dir / _PUBLIC_OUTPUTS[3],
+        summary_path=output_dir / _PUBLIC_OUTPUTS[4],
         run_path=output_dir / "run.json",
         pairs=int(counts["cohort_pairs"]),
         evaluated_pairs=int(counts["evaluated_pairs"]),
         primary_pairs=int(counts["primary_pairs"]),
         secondary_pairs=int(counts["secondary_pairs"]),
         table_rows=int(counts["table_rows"]),
+        contrast_rows=int(counts["contrast_rows"]),
     )
 
 
@@ -734,7 +905,14 @@ def _completed_resume(
         or run.get("pair_manifest_sha256") != sha256_file(config.manifest_path)
     ):
         raise ValueError("completed subword resume contract differs")
-    return _result_from_run(config.output_dir, run)
+    # A completed result remains valid only while the manifest builder's full
+    # artifact set (run, cohort IDs, source audit, and manifest) still validates.
+    records = load_rebuttal_pair_manifest(config.manifest_path)
+    selected = _select_records(records, protocol=protocol, limit=config.limit)
+    result = _result_from_run(config.output_dir, run)
+    if result.evaluated_pairs != len(selected):
+        raise ValueError("completed subword source cohort differs after revalidation")
+    return result
 
 
 def run_subword_position_patching(
@@ -810,6 +988,9 @@ def run_subword_position_patching(
     _write_json_atomic(run_path, base_run)
     factory = runtime_factory or _runtime_factory()
     provenance: dict[str, object] | None = None
+    active_pair_id: str | None = None
+    active_sample_id: str | None = None
+    active_stage = "runtime-initialization"
     try:
         revisions = {
             str(_mapping(record.get("source"), field="record source").get("model_revision"))
@@ -832,6 +1013,9 @@ def run_subword_position_patching(
         )
         fingerprint = _canonical_sha256(provenance)
         for record in selected:
+            active_pair_id = str(record["pair_id"])
+            active_sample_id = str(record["sample_id"])
+            active_stage = "scan-or-checkpoint"
             checkpoint = _checkpoint_path(
                 checkpoints_dir,
                 record=record,
@@ -847,6 +1031,8 @@ def run_subword_position_patching(
                     protocol=protocol,
                     manifest_sha256=manifest_sha256,
                 )
+                active_pair_id = None
+                active_sample_id = None
                 continue
             scan = _validate_scan(
                 runtime.scan_pair(record, modes=protocol.modes),
@@ -861,7 +1047,10 @@ def run_subword_position_patching(
                 protocol=protocol,
                 manifest_sha256=manifest_sha256,
             )
+            active_pair_id = None
+            active_sample_id = None
         del runtime
+        active_stage = "compile-outputs"
         rows = _compile_records(
             selected=selected,
             checkpoints_dir=checkpoints_dir,
@@ -870,11 +1059,18 @@ def run_subword_position_patching(
             manifest_sha256=manifest_sha256,
         )
         table_rows = _analysis_rows(rows, modes=protocol.modes)
+        contrast_rows, omnibus_by_subset = _paired_inference_rows(
+            rows,
+            protocol=protocol,
+            confirmatory_run=confirmatory,
+        )
         pair_subsets = {str(row["pair_id"]): str(row["analysis_subset"]) for row in rows}
         primary_pairs = sum(
             int(subset == "equal-count-primary") for subset in pair_subsets.values()
         )
         secondary_pairs = len(pair_subsets) - primary_pairs
+        if confirmatory and primary_pairs == 0:
+            raise ValueError("confirmatory subword inference has an empty primary subset")
         final_rows = [row for row in rows if row["mode"] == "final"]
         compared = len(final_rows)
         agrees = sum(int(row["success"] is row["historical_final_event"]) for row in final_rows)
@@ -901,6 +1097,23 @@ def run_subword_position_patching(
                 "secondary_pairs": secondary_pairs,
             },
             "answer_target": protocol.answer_target,
+            "primary_inference": {
+                "cochran_q": omnibus_by_subset["equal-count-primary"],
+                "contrasts": [
+                    row for row in contrast_rows if row["analysis_subset"] == "equal-count-primary"
+                ],
+                "holm_family": protocol.multiplicity,
+                "holm_family_size": (len(protocol.pairwise_contrasts) if confirmatory else 0),
+            },
+            "secondary_inference": {
+                "cochran_q": omnibus_by_subset["mismatch-monotone-secondary"],
+                "contrasts": [
+                    row
+                    for row in contrast_rows
+                    if row["analysis_subset"] == "mismatch-monotone-secondary"
+                ],
+                "multiplicity": protocol.secondary_inference,
+            },
             "subsets": {
                 subset: [row for row in table_rows if row["analysis_subset"] == subset]
                 for subset in _SUBSETS
@@ -915,8 +1128,9 @@ def run_subword_position_patching(
         paths = {name: output_dir / name for name in _PUBLIC_OUTPUTS}
         _write_jsonl_atomic(paths[_PUBLIC_OUTPUTS[0]], rows)
         _write_csv_atomic(paths[_PUBLIC_OUTPUTS[1]], table_rows)
-        _write_csv_atomic(paths[_PUBLIC_OUTPUTS[2]], flow_rows)
-        _write_json_atomic(paths[_PUBLIC_OUTPUTS[3]], summary)
+        _write_csv_atomic(paths[_PUBLIC_OUTPUTS[2]], contrast_rows)
+        _write_csv_atomic(paths[_PUBLIC_OUTPUTS[3]], flow_rows)
+        _write_json_atomic(paths[_PUBLIC_OUTPUTS[4]], summary)
         counts = {
             "cohort_pairs": protocol.cohort_pairs,
             "evaluated_pairs": len(selected),
@@ -924,13 +1138,15 @@ def run_subword_position_patching(
             "secondary_pairs": secondary_pairs,
             "records": len(rows),
             "table_rows": len(table_rows),
+            "contrast_rows": len(contrast_rows),
             "flow_rows": len(flow_rows),
         }
         row_counts = {
             _PUBLIC_OUTPUTS[0]: len(rows),
             _PUBLIC_OUTPUTS[1]: len(table_rows),
-            _PUBLIC_OUTPUTS[2]: len(flow_rows),
-            _PUBLIC_OUTPUTS[3]: 1,
+            _PUBLIC_OUTPUTS[2]: len(contrast_rows),
+            _PUBLIC_OUTPUTS[3]: len(flow_rows),
+            _PUBLIC_OUTPUTS[4]: 1,
         }
         outputs = {
             name: {"sha256": sha256_file(path), "records": row_counts[name]}
@@ -959,7 +1175,15 @@ def run_subword_position_patching(
             **base_run,
             "status": "failed",
             "runtime": provenance,
-            "failures": [{"type": type(exc).__name__, "message": str(exc)}],
+            "failures": [
+                {
+                    "pair_id": active_pair_id,
+                    "sample_id": active_sample_id,
+                    "stage": active_stage,
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                }
+            ],
             "updated_at": _now(),
         }
         _write_json_atomic(run_path, failed)

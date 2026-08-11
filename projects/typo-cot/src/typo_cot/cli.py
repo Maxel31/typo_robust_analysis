@@ -979,6 +979,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{result.primary_pairs:,}/{result.secondary_pairs:,}"
         )
         print(f"subword table: {result.table_path}")
+        print(f"paired contrasts: {result.contrasts_path}")
         print(f"alignment flow: {result.flow_path}")
         print(f"summary: {result.summary_path}")
         print(f"run manifest: {result.run_path}")

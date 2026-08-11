@@ -279,6 +279,11 @@ answer, and the historical final-token event for audit. `--limit` is a
 non-confirmatory smoke option, and `--resume` reuses only hash-bound complete
 pair checkpoints.
 
+The equal-count primary subset reports Cochran's Q plus all three paired mode
+contrasts with exact McNemar tests, 10,000-pair bootstrap confidence intervals,
+and Holm correction. Mismatch-subset inference is explicitly exploratory and
+is not included in the primary Holm family.
+
 ```bash
 GPU_ID=0
 REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
@@ -294,7 +299,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
 ```
 
 The command writes `subword_patch_records.jsonl`,
-`subword_patch_table.csv`, `subword_alignment_flow.csv`,
+`subword_patch_table.csv`, `subword_patch_contrasts.csv`, `subword_alignment_flow.csv`,
 `subword_patch_summary.json`, and a hash-bound `run.json`.
 An empty table cell uses JSON `null` and a blank CSV value together with
 `restoration_rate_defined=false`; it is never represented as a numeric zero.

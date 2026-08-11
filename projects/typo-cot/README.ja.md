@@ -251,6 +251,10 @@ paired比較します。不一致pairは `mismatch-monotone-secondary` として
 停止理由、抽出回答、監査用のhistorical final-token eventを残します。`--limit` は
 non-confirmatory smoke専用で、`--resume` はhashで拘束した完全なpair checkpointだけを再利用します。
 
+equal-count primary subsetではCochran's Qに加え、3つのpaired mode contrastすべてについて
+exact McNemar test、10,000回pair bootstrap CI、Holm補正を報告します。mismatch subsetの
+推測統計はexploratoryと明記し、primary Holm familyには含めません。
+
 ```bash
 GPU_ID=0
 REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
@@ -266,6 +270,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
 ```
 
 出力は `subword_patch_records.jsonl`、`subword_patch_table.csv`、
+`subword_patch_contrasts.csv`、
 `subword_alignment_flow.csv`、`subword_patch_summary.json`、hashで拘束した
 `run.json` です。
 空cellのrateはJSONでは `null`、CSVでは空欄とし、同時に

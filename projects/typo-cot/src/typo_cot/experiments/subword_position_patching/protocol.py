@@ -14,6 +14,8 @@ _TASK = "gsm8k"
 _MODES = ("first", "final", "all")
 _POLICY = "equal-count-primary"
 _SECONDARY = "nearest-normalized-position-half-up-endpoints/v1"
+_CONTRASTS = (("first", "final"), ("first", "all"), ("final", "all"))
+_MULTIPLICITY = "holm-3-primary-mode-contrasts/v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +42,16 @@ class SubwordPositionPatchingProtocol:
     termination_protocol: str
     answer_target: str
     answer_extraction: str
+    omnibus: str
+    pairwise_contrasts: tuple[tuple[str, str], ...]
+    paired_test: str
+    effect: str
+    pair_bootstrap_replicates: int
+    bootstrap_seed: int
+    confidence_level: float
+    multiplicity: str
+    secondary_inference: str
+    smoke_inference: str
     historical_final_audit: bool
     empty_rate_policy: str
     config_sha256: str
@@ -77,6 +89,18 @@ class SubwordPositionPatchingProtocol:
                 "answer_target": self.answer_target,
                 "answer_extraction": self.answer_extraction,
             },
+            "statistics": {
+                "omnibus": self.omnibus,
+                "pairwise_contrasts": [list(contrast) for contrast in self.pairwise_contrasts],
+                "paired_test": self.paired_test,
+                "effect": self.effect,
+                "pair_bootstrap_replicates": self.pair_bootstrap_replicates,
+                "bootstrap_seed": self.bootstrap_seed,
+                "confidence_level": self.confidence_level,
+                "multiplicity": self.multiplicity,
+                "secondary_inference": self.secondary_inference,
+                "smoke_inference": self.smoke_inference,
+            },
             "reporting": {
                 "subsets": [self.primary_subset, self.secondary_subset],
                 "historical_final_audit": self.historical_final_audit,
@@ -109,6 +133,7 @@ def load_subword_position_patching_protocol(
             "modes",
             "alignment",
             "generation",
+            "statistics",
             "reporting",
         },
     )
@@ -189,6 +214,36 @@ def load_subword_position_patching_protocol(
     }
     if generation != expected_generation:
         raise ValueError("subword-position generation contract differs")
+    statistics = _mapping(
+        payload["statistics"],
+        field="statistics",
+        fields={
+            "omnibus",
+            "pairwise_contrasts",
+            "paired_test",
+            "effect",
+            "pair_bootstrap_replicates",
+            "bootstrap_seed",
+            "confidence_level",
+            "multiplicity",
+            "secondary_inference",
+            "smoke_inference",
+        },
+    )
+    expected_statistics = {
+        "omnibus": "cochran-q-chi-square-df2/v1",
+        "pairwise_contrasts": [list(contrast) for contrast in _CONTRASTS],
+        "paired_test": "exact-mcnemar-two-sided-conditional-binomial/v1",
+        "effect": "paired-risk-difference-left-minus-right/v1",
+        "pair_bootstrap_replicates": 10_000,
+        "bootstrap_seed": 42,
+        "confidence_level": 0.95,
+        "multiplicity": _MULTIPLICITY,
+        "secondary_inference": "exploratory-not-in-primary-holm-family/v1",
+        "smoke_inference": "descriptive-not-in-primary-holm-family/v1",
+    }
+    if statistics != expected_statistics:
+        raise ValueError("subword-position statistics contract differs")
     reporting = _mapping(
         payload["reporting"],
         field="reporting",
@@ -223,6 +278,16 @@ def load_subword_position_patching_protocol(
         termination_protocol="effective-eos-vs-length-cap/v1",
         answer_target="manifest-stored-clean-answer/v1",
         answer_extraction="primary-then-empty-only-positional/v1",
+        omnibus="cochran-q-chi-square-df2/v1",
+        pairwise_contrasts=_CONTRASTS,
+        paired_test="exact-mcnemar-two-sided-conditional-binomial/v1",
+        effect="paired-risk-difference-left-minus-right/v1",
+        pair_bootstrap_replicates=10_000,
+        bootstrap_seed=42,
+        confidence_level=0.95,
+        multiplicity=_MULTIPLICITY,
+        secondary_inference="exploratory-not-in-primary-holm-family/v1",
+        smoke_inference="descriptive-not-in-primary-holm-family/v1",
         historical_final_audit=True,
         empty_rate_policy="json-null-csv-blank-with-defined-flag/v1",
         config_sha256=hashlib.sha256(raw).hexdigest(),

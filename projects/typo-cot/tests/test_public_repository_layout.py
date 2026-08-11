@@ -207,6 +207,7 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/experiments/subword_position_patching/protocol.py"),
     Path("src/typo_cot/experiments/subword_position_patching/runner.py"),
     Path("src/typo_cot/experiments/subword_position_patching/runtime.py"),
+    Path("src/typo_cot/experiments/subword_position_patching/statistics.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/__init__.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/metrics.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/planning.py"),

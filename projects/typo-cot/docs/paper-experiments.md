@@ -80,7 +80,7 @@ refactor, a direct command is executable only when its catalog status is
 | `multitoken-kl-readout` | ARR addition plan v1 | Same clean tokens 1–16 after clean, typo, and [0,6)-patched typo prompts; primary normalized KL restoration over tokens 2–16 |
 | `patch-harm-audit` | ARR addition plan v1 | All prepared clean-correct/typo-correct aligned pairs; preserve, right-to-wrong harm, answer change, and a conditional repair-harm composite |
 | `tokenization-severity-analysis` | ARR addition plan v1 | Complete 1,241-pair three-arm controls; arm-valid and common-valid rates for every prespecified tokenization stratum, including empty cells |
-| `subword-position-patching` | ARR addition plan v1 | Primary 172-pair first/final/all-subword comparison; exact equal-count primary subset and separate frozen monotone mismatch subset |
+| `subword-position-patching` | ARR addition plan v1 | Primary 172-pair first/final/all-subword comparison; exact equal-count paired Cochran/McNemar/bootstrap inference and separate frozen monotone mismatch analysis |
 | `patch-coordinate-controls` | §3.3, §4.1, Appendix B | Primary 172 pairs; correct, +2 offset, cross-item, and identity controls |
 | `patch-position-controls` | §3.3, §4.1, Table 5, Appendix B | Gemma-3-4B/GSM8K Attribution-4 layerwise-KL cohort (published n=109), held common across edited-word, prompt-final, and question-final positions |
 | `patch-text-combination` | §3.5, §4.1, Table 2 | Descriptive patch absent/present × zero/full clean text on 172 pairs |

@@ -30,6 +30,22 @@
     "answer_target": "manifest-stored-clean-answer/v1",
     "answer_extraction": "primary-then-empty-only-positional/v1"
   },
+  "statistics": {
+    "omnibus": "cochran-q-chi-square-df2/v1",
+    "pairwise_contrasts": [
+      ["first", "final"],
+      ["first", "all"],
+      ["final", "all"]
+    ],
+    "paired_test": "exact-mcnemar-two-sided-conditional-binomial/v1",
+    "effect": "paired-risk-difference-left-minus-right/v1",
+    "pair_bootstrap_replicates": 10000,
+    "bootstrap_seed": 42,
+    "confidence_level": 0.95,
+    "multiplicity": "holm-3-primary-mode-contrasts/v1",
+    "secondary_inference": "exploratory-not-in-primary-holm-family/v1",
+    "smoke_inference": "descriptive-not-in-primary-holm-family/v1"
+  },
   "reporting": {
     "subsets": ["equal-count-primary", "mismatch-monotone-secondary"],
     "historical_final_audit": true,

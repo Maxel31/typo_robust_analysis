@@ -458,8 +458,8 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
             "[0,6); all-subword mismatch mapping uses frozen normalized positions."
         ),
         readout=(
-            "Clean-answer restoration by mode and subset, complete source/write mappings, "
-            "and an audit against the historical final-token event."
+            "Clean-answer restoration by mode and subset, paired Cochran/McNemar/bootstrap "
+            "inference, source/write mappings, and a historical final-token audit."
         ),
         required_arguments=(
             "--config",
@@ -472,6 +472,7 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         outputs=(
             "subword_patch_records.jsonl",
             "subword_patch_table.csv",
+            "subword_patch_contrasts.csv",
             "subword_alignment_flow.csv",
             "subword_patch_summary.json",
             "run.json",

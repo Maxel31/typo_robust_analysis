@@ -243,6 +243,10 @@ alignment heuristic when counts differ; it cannot be pooled with the primary.
 Subset membership is defined once per pair and shared across all three modes,
 so their confirmatory rates use the same paired denominator even though first
 and final coordinates do not themselves require equal token counts.
+The primary subset uses Cochran's Q across all three modes, then the three exact
+McNemar pairwise tests with paired bootstrap risk-difference intervals and one
+three-test Holm family. Mismatch-subset inference is exploratory and remains
+outside that family.
 
 `held-out-window-evaluation` selects a contiguous six-layer window using only a
 diagnostic split and evaluates it once on a disjoint sample-ID split. A single

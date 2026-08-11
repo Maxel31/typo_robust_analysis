@@ -207,6 +207,10 @@ def test_default_protocol_catalog_and_cli_match_the_frozen_readme() -> None:
     assert protocol.secondary_alignment == ("nearest-normalized-position-half-up-endpoints/v1")
     assert protocol.answer_target == "manifest-stored-clean-answer/v1"
     assert protocol.empty_rate_policy == "json-null-csv-blank-with-defined-flag/v1"
+    assert protocol.pair_bootstrap_replicates == 10_000
+    assert protocol.bootstrap_seed == 42
+    assert protocol.confidence_level == 0.95
+    assert protocol.multiplicity == "holm-3-primary-mode-contrasts/v1"
 
     spec = get_experiment("subword-position-patching")
     assert spec.status == "implemented"
@@ -222,6 +226,7 @@ def test_default_protocol_catalog_and_cli_match_the_frozen_readme() -> None:
     assert spec.outputs == (
         "subword_patch_records.jsonl",
         "subword_patch_table.csv",
+        "subword_patch_contrasts.csv",
         "subword_alignment_flow.csv",
         "subword_patch_summary.json",
         "run.json",
@@ -388,7 +393,13 @@ def test_runner_compiles_primary_and_secondary_tables_then_resumes(
     from typo_cot.experiments.subword_position_patching import runner
 
     records = _records()
-    monkeypatch.setattr(runner, "load_rebuttal_pair_manifest", lambda _path: records)
+    load_calls: list[Path] = []
+
+    def load_manifest(path: Path) -> tuple[dict[str, object], ...]:
+        load_calls.append(path)
+        return records
+
+    monkeypatch.setattr(runner, "load_rebuttal_pair_manifest", load_manifest)
     _Runtime.calls = 0
     config = _config(tmp_path)
 
@@ -399,7 +410,9 @@ def test_runner_compiles_primary_and_secondary_tables_then_resumes(
     assert result.primary_pairs == 100
     assert result.secondary_pairs == 72
     assert result.table_rows == 6
+    assert result.contrast_rows == 6
     assert _Runtime.calls == 172
+    assert load_calls == [config.manifest_path]
     with result.table_path.open(encoding="utf-8", newline="") as handle:
         rows = tuple(csv.DictReader(handle))
     assert {(row["analysis_subset"], row["mode"]) for row in rows} == {
@@ -416,12 +429,49 @@ def test_runner_compiles_primary_and_secondary_tables_then_resumes(
     assert int(primary_first["successes"]) == 50
     assert float(primary_first["restoration_rate"]) == pytest.approx(0.5)
     assert primary_first["restoration_rate_defined"] == "True"
+    with result.contrasts_path.open(encoding="utf-8", newline="") as handle:
+        contrasts = tuple(csv.DictReader(handle))
+    assert len(contrasts) == 6
+    assert {
+        (row["left_mode"], row["right_mode"])
+        for row in contrasts
+        if row["analysis_subset"] == "equal-count-primary"
+    } == {("first", "final"), ("first", "all"), ("final", "all")}
+    assert all(
+        row["mcnemar_p_holm_defined"] == "True"
+        for row in contrasts
+        if row["analysis_subset"] == "equal-count-primary"
+    )
+    assert all(
+        row["mcnemar_p_holm_defined"] == "False"
+        for row in contrasts
+        if row["analysis_subset"] == "mismatch-monotone-secondary"
+    )
     summary = json.loads(result.summary_path.read_text(encoding="utf-8"))
     assert summary["confirmatory"] is True
+    assert summary["primary_inference"]["cochran_q"]["pairs"] == 100
+    assert summary["primary_inference"]["holm_family_size"] == 3
     assert summary["historical_final_audit"]["compared"] == 172
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["status"] == "completed"
 
+    rejected_revalidation: list[Path] = []
+
+    def reject_manifest(path: Path) -> tuple[dict[str, object], ...]:
+        rejected_revalidation.append(path)
+        raise ValueError("manifest artifact set is incomplete")
+
+    monkeypatch.setattr(runner, "load_rebuttal_pair_manifest", reject_manifest)
+    with pytest.raises(ValueError, match="artifact set is incomplete"):
+        run_subword_position_patching(
+            replace(config, resume=True),
+            runtime_factory=lambda **_kwargs: (_ for _ in ()).throw(
+                AssertionError("source revalidation must precede runtime loading")
+            ),
+        )
+    assert rejected_revalidation == [config.manifest_path]
+
+    monkeypatch.setattr(runner, "load_rebuttal_pair_manifest", load_manifest)
     resumed = run_subword_position_patching(
         replace(config, resume=True),
         runtime_factory=lambda **_kwargs: (_ for _ in ()).throw(
@@ -429,6 +479,7 @@ def test_runner_compiles_primary_and_secondary_tables_then_resumes(
         ),
     )
     assert resumed == result
+    assert load_calls == [config.manifest_path, config.manifest_path]
 
 
 def test_empty_analysis_cells_use_explicit_undefined_rate_metadata() -> None:
@@ -463,11 +514,19 @@ def test_limit_is_nonconfirmatory_and_checkpoint_resume_is_content_bound(
     with pytest.raises(SubwordPositionPatchingRunError):
         run_subword_position_patching(config, runtime_factory=FailingRuntime)
     assert len(tuple((config.output_dir / "checkpoints").glob("*.json"))) == 1
+    failed = json.loads((config.output_dir / "run.json").read_text(encoding="utf-8"))
+    assert failed["failures"][0]["pair_id"] == _record(1)["pair_id"]
+    assert failed["failures"][0]["sample_id"] == "sample-0001"
+    assert failed["failures"][0]["stage"] == "scan-or-checkpoint"
 
     result = run_subword_position_patching(replace(config, resume=True), runtime_factory=_Runtime)
     assert result.evaluated_pairs == 3
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["confirmatory"] is False
+    with result.contrasts_path.open(encoding="utf-8", newline="") as handle:
+        smoke_contrasts = tuple(csv.DictReader(handle))
+    assert all(row["confirmatory"] == "False" for row in smoke_contrasts)
+    assert all(row["mcnemar_p_holm_defined"] == "False" for row in smoke_contrasts)
 
     result.summary_path.write_text("{}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="output SHA-256 differs"):
