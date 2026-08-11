@@ -31,6 +31,7 @@ EXPECTED_EXPERIMENTS = (
     "six-setting-patch-controls",
     "source-write-coordinate-grid",
     "multitoken-kl-readout",
+    "patch-harm-audit",
     "patch-coordinate-controls",
     "patch-position-controls",
     "patch-text-combination",

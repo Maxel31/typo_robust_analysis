@@ -370,6 +370,44 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         status="implemented",
     ),
     ExperimentSpec(
+        slug="patch-harm-audit",
+        title="Audit whether clean-state patches break typo-correct answers",
+        paper_question="ARR addition",
+        paper_sections=("Rebuttal analysis plan v1: Correct-answer harm audit",),
+        summary=(
+            "Apply the frozen [0,6) correct-coordinate clean-to-typo patch to every "
+            "prepared clean-correct/typo-correct aligned pair and measure side effects."
+        ),
+        cohort=(
+            "All uncapped alignment-eligible clean-correct/typo-correct pairs in the "
+            "six-setting rebuttal manifest; smoke limits are explicitly non-confirmatory."
+        ),
+        intervention=(
+            "Copy clean edited-word-final residual states to the aligned typo coordinates "
+            "over layers [0,6), then regenerate with the paper's deterministic decoder."
+        ),
+        readout=(
+            "Preserve, right-to-wrong harm, answer change, unextractable outputs, and a "
+            "clearly labelled conditional repair-harm composite."
+        ),
+        required_arguments=(
+            "--config",
+            "--manifest",
+            "--cohort",
+            "--gpu-id",
+            "--output-dir",
+        ),
+        outputs=(
+            "patch_harm_records.jsonl",
+            "setting_harm_table.csv",
+            "repair_harm_composite.csv",
+            "patch_harm_summary.json",
+            "run.json",
+        ),
+        compute="gpu",
+        status="implemented",
+    ),
+    ExperimentSpec(
         slug="patch-coordinate-controls",
         title="Compare edited-word patches with coordinate and donor controls",
         paper_question="RQ1",

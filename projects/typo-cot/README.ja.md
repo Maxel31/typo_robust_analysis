@@ -178,15 +178,20 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
 `token_position_trajectory.csv`、`token_position_trajectory.svg`、
 `multitoken_summary.json`、hashで拘束した `run.json` です。
 
-## 残りのARR追加実験の固定インターフェース
+`patch-harm-audit` は実装済みのGPU専用コマンドです。manifestに含まれるalignment可能な
+clean-correct/typo-correct pairをsettingごとの上限なしで全件選び、clean側のedited-word-final
+stateを対応するtypo位置へlayer `[0,6)` でコピーして、patch済み回答をgreedy生成します。
+介入前baselineには、決定的に再抽出済みの保存typo回答を使います。`preserve` はpatch後も
+正答、`harm` はpatch後の誤答であり、抽出不能generationも含めて分母に残し、別途件数を
+報告します。`answer_changed` は正規化した抽出値を比較するため、介入前回答が抽出済みで
+patch後が抽出不能ならtrueです。
 
-以下の4コマンドは `interface-frozen` であり、**まだ実行できません**。実装より先に、
-追加実験ごとの操作、引数、入力、出力directoryを固定するために記載しています。
-統計とcohortの契約は
-[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md) にあります。
-`interface-frozen` はREADME上の実装前ラベルであり、3つ目のexperiment catalog
-statusではありません。この段階のコマンドはCLIと `experiments list` には登録せず、
-契約testに通過した各実装PRで `implemented` 操作として直接登録します。
+さらに、完全なharm監査とmanifestで拘束したfixed-windowの800/1,241 repair partitionを
+結合します。この値は、paper denominator外のprepared typo-wrong recordがmanifestに残るため、
+population net accuracyではなく `repair-harm-conditional-composite` と明記します。
+`--limit-per-setting` は非confirmatory smoke test専用で、この引数を使ったrunではcompositeの
+transition推定値を出しません。`--resume` は入力内容でaddressし、hashとruntimeを検証した
+checkpointだけを再利用します。
 
 ```bash
 GPU_ID=0
@@ -199,6 +204,25 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
   --cohort clean-correct-typo-correct \
   --gpu-id "${GPU_ID}" \
   --output-dir "${REBUTTAL_ROOT}/patch-harm-audit"
+```
+
+出力は `patch_harm_records.jsonl`、`setting_harm_table.csv`、
+`repair_harm_composite.csv`、`patch_harm_summary.json`、hashで拘束した
+`run.json` です。
+
+## 残りのARR追加実験の固定インターフェース
+
+以下の3コマンドは `interface-frozen` であり、**まだ実行できません**。実装より先に、
+追加実験ごとの操作、引数、入力、出力directoryを固定するために記載しています。
+統計とcohortの契約は
+[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md) にあります。
+`interface-frozen` はREADME上の実装前ラベルであり、3つ目のexperiment catalog
+statusではありません。この段階のコマンドはCLIと `experiments list` には登録せず、
+契約testに通過した各実装PRで `implemented` 操作として直接登録します。
+
+```bash
+GPU_ID=0
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
 
 uv run --project projects/typo-cot typo-cot tokenization-severity-analysis \
   --config projects/typo-cot/configs/rebuttal/tokenization-severity-analysis.yaml \

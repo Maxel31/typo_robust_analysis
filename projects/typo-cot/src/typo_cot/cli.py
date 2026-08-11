@@ -86,6 +86,11 @@ from typo_cot.experiments.multitoken_kl_readout import (
     MultiTokenKLReadoutRunError,
     run_multitoken_kl_readout,
 )
+from typo_cot.experiments.patch_harm_audit import (
+    PatchHarmAuditConfig,
+    PatchHarmAuditRunError,
+    run_patch_harm_audit,
+)
 from typo_cot.experiments.one_token_prefix_replacement import (
     POSITION_CONTROLS as ONE_TOKEN_POSITION_CONTROLS,
 )
@@ -264,9 +269,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     multitoken_readout.add_argument("--config", required=True, type=Path)
     multitoken_readout.add_argument("--manifest", required=True, type=Path)
-    multitoken_readout.add_argument(
-        "--teacher-forced-tokens", required=True, type=_positive_int
-    )
+    multitoken_readout.add_argument("--teacher-forced-tokens", required=True, type=_positive_int)
     multitoken_readout.add_argument(
         "--primary-token-range", required=True, type=_inclusive_token_range
     )
@@ -274,6 +277,22 @@ def _parser() -> argparse.ArgumentParser:
     multitoken_readout.add_argument("--output-dir", required=True, type=Path)
     multitoken_readout.add_argument("--limit-per-setting", type=_positive_int)
     multitoken_readout.add_argument("--resume", action="store_true")
+
+    harm_audit = commands.add_parser(
+        "patch-harm-audit",
+        help="Audit whether the fixed clean-to-typo patch breaks typo-correct answers.",
+    )
+    harm_audit.add_argument("--config", required=True, type=Path)
+    harm_audit.add_argument("--manifest", required=True, type=Path)
+    harm_audit.add_argument(
+        "--cohort",
+        required=True,
+        choices=("clean-correct-typo-correct",),
+    )
+    harm_audit.add_argument("--gpu-id", required=True)
+    harm_audit.add_argument("--output-dir", required=True, type=Path)
+    harm_audit.add_argument("--limit-per-setting", type=_positive_int)
+    harm_audit.add_argument("--resume", action="store_true")
 
     pairs = commands.add_parser(
         "prepare-edited-pairs",
@@ -825,6 +844,42 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"setting metrics: {result.setting_metrics_path}")
         print(f"token trajectory: {result.trajectory_path}")
         print(f"trajectory plot: {result.trajectory_plot_path}")
+        print(f"summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "patch-harm-audit":
+        try:
+            result = run_patch_harm_audit(
+                PatchHarmAuditConfig(
+                    protocol_path=args.config,
+                    manifest_path=args.manifest,
+                    cohort=args.cohort,
+                    gpu_id=args.gpu_id,
+                    output_dir=args.output_dir,
+                    limit_per_setting=args.limit_per_setting,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            PatchHarmAuditRunError,
+        ) as exc:
+            print(f"patch-harm-audit: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"audited {result.evaluated_pairs:,}/{result.harm_pairs:,} "
+            f"typo-correct pair(s): {result.records_path}"
+        )
+        print(
+            f"preserved/harmed/changed/unextractable: "
+            f"{result.preserve:,}/{result.harm:,}/{result.answer_changed:,}/"
+            f"{result.unextractable:,}"
+        )
+        print(f"setting harm table: {result.setting_table_path}")
+        print(f"conditional repair-harm composite: {result.composite_path}")
         print(f"summary: {result.summary_path}")
         print(f"run manifest: {result.run_path}")
         return 0

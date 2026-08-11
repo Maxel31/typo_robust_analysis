@@ -1,0 +1,36 @@
+{
+  "schema_version": "patch-harm-audit-config/v1",
+  "cohort": {
+    "name": "clean-correct-typo-correct",
+    "selection": "all-prepared-clean-correct-typo-correct-aligned-uncapped/v1",
+    "baseline_source": "manifest-stored-deterministically-reextracted-typo-answer/v1"
+  },
+  "intervention": {
+    "direction": "clean-to-typo",
+    "window": {
+      "start": 0,
+      "stop": 6
+    },
+    "site": "complete-decoder-block-residual-output",
+    "coordinates": "rebuttal-pair-manifest-correct/v1"
+  },
+  "generation": {
+    "dtype": "bfloat16",
+    "decoding": "greedy",
+    "max_new_tokens": 512,
+    "termination_protocol": "effective-eos-vs-length-cap/v1"
+  },
+  "outcomes": {
+    "preserve": "patched-correct/v1",
+    "harm": "patched-incorrect-including-unextractable/v1",
+    "answer_changed": "canonical-patched-value-differs-from-stored-typo/v1",
+    "unextractable": "retained-in-harm-and-denominator/v1"
+  },
+  "composite": {
+    "label": "repair-harm-conditional-composite",
+    "repair_source": "manifest-fixed-window-0:6-event/v1",
+    "restoration_pairs": 1241,
+    "restoration_successes": 800,
+    "uncovered_policy": "report-and-withhold-population-net-accuracy/v1"
+  }
+}
