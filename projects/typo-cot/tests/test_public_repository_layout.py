@@ -90,6 +90,7 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/evaluation/generation.py"),
     Path("src/typo_cot/experiments/__init__.py"),
     Path("src/typo_cot/experiments/catalog.py"),
+    Path("src/typo_cot/experiments/rebuttal_runtime.py"),
     Path("src/typo_cot/experiments/answer_line_deletion/__init__.py"),
     Path("src/typo_cot/experiments/answer_line_deletion/planning.py"),
     Path("src/typo_cot/experiments/answer_line_deletion/protocol.py"),
@@ -166,6 +167,11 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/experiments/six_setting_patch_controls/runtime.py"),
     Path("src/typo_cot/experiments/six_setting_patch_controls/source.py"),
     Path("src/typo_cot/experiments/six_setting_patch_controls/statistics.py"),
+    Path("src/typo_cot/experiments/source_write_coordinate_grid/__init__.py"),
+    Path("src/typo_cot/experiments/source_write_coordinate_grid/protocol.py"),
+    Path("src/typo_cot/experiments/source_write_coordinate_grid/runner.py"),
+    Path("src/typo_cot/experiments/source_write_coordinate_grid/runtime.py"),
+    Path("src/typo_cot/experiments/source_write_coordinate_grid/statistics.py"),
     Path("src/typo_cot/experiments/layerwise_answer_patching/__init__.py"),
     Path("src/typo_cot/experiments/layerwise_answer_patching/metrics.py"),
     Path("src/typo_cot/experiments/layerwise_answer_patching/patching.py"),
@@ -220,6 +226,7 @@ PUBLIC_SOURCE_FILES = {
 }
 PUBLIC_CONFIG_FILES = {
     Path("configs/rebuttal/six-setting-patch-controls.yaml"),
+    Path("configs/rebuttal/source-write-coordinate-grid.yaml"),
 }
 
 
@@ -425,6 +432,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         "input-corrector-audit",
         "restoration-order-accuracy",
         "six-setting-patch-controls",
+        "source-write-coordinate-grid",
     }
 
 

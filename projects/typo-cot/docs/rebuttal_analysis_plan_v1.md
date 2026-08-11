@@ -1,8 +1,8 @@
 # ARR rebuttal analysis plan v1
 
-Status: **manifest and six-setting control implementations complete; remaining
-result-producing interfaces are frozen; no full-cohort new intervention
-outcome has been inspected**.
+Status: **manifest, six-setting controls, and source/write grid implementations
+complete; remaining result-producing interfaces are frozen; no full-cohort new
+intervention outcome has been inspected**.
 
 This plan fixed the additional analyses requested for the ARR rebuttal before
 their result-generating commands were implemented. The submitted 19-page PDF
