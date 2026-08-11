@@ -19,6 +19,25 @@ class _RuntimeConfig:
     gpu_id: str
 
 
+class CleanContinuationTooShort(ValueError):
+    """Carry an available prefix when a continuation is shorter than requested."""
+
+    def __init__(
+        self,
+        *,
+        required: int,
+        available_token_ids: tuple[int, ...],
+        available_token_text: tuple[str, ...],
+    ) -> None:
+        super().__init__(
+            f"clean continuation contains {len(available_token_ids)} token IDs; "
+            f"requires {required}"
+        )
+        self.required = required
+        self.available_token_ids = available_token_ids
+        self.available_token_text = available_token_text
+
+
 def _flat_token_ids(value: object, *, field: str) -> tuple[int, ...]:
     if hasattr(value, "detach"):
         value = value.detach().cpu().tolist()
@@ -56,8 +75,6 @@ def clean_continuation_target_ids(
     if full_ids[: len(prompt_ids)] != prompt_ids:
         raise ValueError("clean prompt is not an exact token-ID prefix of prompt plus continuation")
     suffix = full_ids[len(prompt_ids) :]
-    if len(suffix) < count:
-        raise ValueError(f"clean continuation contains fewer than {count} token IDs")
     targets = suffix[:count]
     raw_token_text = tokenizer.convert_ids_to_tokens(list(targets))
     if not isinstance(raw_token_text, list) or len(raw_token_text) != len(targets):
@@ -65,6 +82,12 @@ def clean_continuation_target_ids(
     token_text = tuple(raw_token_text)
     if any(not isinstance(text, str) for text in token_text):
         raise ValueError("tokenizer vocabulary pieces must be strings")
+    if len(suffix) < count:
+        raise CleanContinuationTooShort(
+            required=count,
+            available_token_ids=targets,
+            available_token_text=token_text,
+        )
     return targets, token_text
 
 
@@ -122,6 +145,27 @@ class HuggingFaceMultiTokenKLReadoutRuntime(HuggingFaceFixedWindowAnswerPatching
             raise ValueError("runtime arguments differ from the frozen multi-token protocol")
         if self.num_layers < layer_window[1]:
             raise ValueError("multi-token KL readout requires at least six decoder layers")
+        clean_prompt = pair.get("clean_text")
+        continuation = pair.get("clean_continuation")
+        if not isinstance(clean_prompt, str) or not isinstance(continuation, str):
+            raise ValueError("manifest clean prompt/continuation fields differ")
+        try:
+            target_ids, target_text = clean_continuation_target_ids(
+                self.tokenizer,
+                clean_prompt=clean_prompt,
+                clean_continuation=continuation,
+                count=teacher_forced_tokens,
+            )
+        except CleanContinuationTooShort as exc:
+            return MultiTokenKLScan(
+                target_token_ids=exc.available_token_ids,
+                target_token_text=exc.available_token_text,
+                untreated_kl=(),
+                patched_kl=(),
+                available=False,
+                invalid_reason="clean_continuation_lt_16",
+            )
+
         runtime_pair = manifest_runtime_pair(pair)
         clean_ids, clean_mask, clean_positions = self._tokenize_and_validate(
             runtime_pair, side="clean"
@@ -131,16 +175,6 @@ class HuggingFaceMultiTokenKLReadoutRuntime(HuggingFaceFixedWindowAnswerPatching
         )
         if len(clean_positions) != len(typo_positions):
             raise ValueError("clean and typo alignment cardinalities differ")
-        clean_prompt = pair.get("clean_text")
-        continuation = pair.get("clean_continuation")
-        if not isinstance(clean_prompt, str) or not isinstance(continuation, str):
-            raise ValueError("manifest clean prompt/continuation fields differ")
-        target_ids, target_text = clean_continuation_target_ids(
-            self.tokenizer,
-            clean_prompt=clean_prompt,
-            clean_continuation=continuation,
-            count=teacher_forced_tokens,
-        )
         clean_full_ids, clean_full_mask = self._append_targets(clean_ids, clean_mask, target_ids)
         typo_full_ids, typo_full_mask = self._append_targets(typo_ids, typo_mask, target_ids)
         clean_holder: dict[str, Any] = {}
@@ -161,11 +195,13 @@ class HuggingFaceMultiTokenKLReadoutRuntime(HuggingFaceFixedWindowAnswerPatching
                 positions=clean_positions,
                 forward=clean_forward,
             )
+            clean_output = clean_holder.pop("output")
             clean_logits = self._target_logits(
-                clean_holder["output"],
+                clean_output,
                 prompt_tokens=int(clean_ids.shape[1]),
                 count=teacher_forced_tokens,
             )
+            del clean_output
             typo_output = self.model(
                 input_ids=typo_full_ids,
                 attention_mask=typo_full_mask,
@@ -176,6 +212,7 @@ class HuggingFaceMultiTokenKLReadoutRuntime(HuggingFaceFixedWindowAnswerPatching
                 prompt_tokens=int(typo_ids.shape[1]),
                 count=teacher_forced_tokens,
             )
+            del typo_output
             with PrefillBlockOutputWindowPatch(
                 self.layers,
                 layer_indices=tuple(range(start, stop)),
@@ -192,6 +229,7 @@ class HuggingFaceMultiTokenKLReadoutRuntime(HuggingFaceFixedWindowAnswerPatching
                 prompt_tokens=int(typo_ids.shape[1]),
                 count=teacher_forced_tokens,
             )
+            del patched_output
 
         return MultiTokenKLScan(
             target_token_ids=target_ids,
@@ -223,6 +261,7 @@ class HuggingFaceMultiTokenKLReadoutRuntime(HuggingFaceFixedWindowAnswerPatching
                 "target_source": "clean-continuation-token-ids/v1",
                 "prompt_prefix_validation": "exact-token-id-prefix/v1",
                 "model_inputs": "prompt-plus-first-15-target-token-ids/v1",
+                "short_continuation_policy": "record-unavailable-before-forward/v1",
                 "divergence": "kl-clean-to-condition/v1",
                 "negative_kl_roundoff_tolerance": 1e-12,
                 "forward": {
@@ -235,4 +274,8 @@ class HuggingFaceMultiTokenKLReadoutRuntime(HuggingFaceFixedWindowAnswerPatching
         return payload
 
 
-__all__ = ["HuggingFaceMultiTokenKLReadoutRuntime", "clean_continuation_target_ids"]
+__all__ = [
+    "CleanContinuationTooShort",
+    "HuggingFaceMultiTokenKLReadoutRuntime",
+    "clean_continuation_target_ids",
+]

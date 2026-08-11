@@ -14,6 +14,7 @@ _TEACHER_FORCED_TOKENS = 16
 _TARGET_SOURCE = "clean-continuation-token-ids/v1"
 _PREFIX_VALIDATION = "exact-token-id-prefix/v1"
 _MODEL_INPUTS = "prompt-plus-first-15-target-token-ids/v1"
+_SHORT_CONTINUATION_POLICY = "record-unavailable-before-forward/v1"
 _DIVERGENCE = "kl-clean-to-condition/v1"
 _PRIMARY_RANGE = (2, 16)
 _SECONDARY_RANGES = ((2, 4), (2, 8))
@@ -36,6 +37,7 @@ class MultiTokenKLReadoutProtocol:
     target_source: str
     prompt_prefix_validation: str
     model_inputs: str
+    short_continuation_policy: str
     divergence: str
     primary_token_range: tuple[int, int]
     secondary_token_ranges: tuple[tuple[int, int], ...]
@@ -59,6 +61,7 @@ class MultiTokenKLReadoutProtocol:
                 "target_source": self.target_source,
                 "prompt_prefix_validation": self.prompt_prefix_validation,
                 "model_inputs": self.model_inputs,
+                "short_continuation_policy": self.short_continuation_policy,
             },
             "readout": {
                 "divergence": self.divergence,
@@ -143,13 +146,20 @@ def load_multitoken_kl_readout_protocol(path: Path) -> MultiTokenKLReadoutProtoc
     forcing = _mapping(
         root.get("teacher_forcing"),
         field="teacher_forcing",
-        keys={"tokens", "target_source", "prompt_prefix_validation", "model_inputs"},
+        keys={
+            "tokens",
+            "target_source",
+            "prompt_prefix_validation",
+            "model_inputs",
+            "short_continuation_policy",
+        },
     )
     if forcing != {
         "tokens": _TEACHER_FORCED_TOKENS,
         "target_source": _TARGET_SOURCE,
         "prompt_prefix_validation": _PREFIX_VALIDATION,
         "model_inputs": _MODEL_INPUTS,
+        "short_continuation_policy": _SHORT_CONTINUATION_POLICY,
     }:
         raise ValueError("multi-token KL teacher-forcing contract differs")
 
@@ -221,6 +231,7 @@ def load_multitoken_kl_readout_protocol(path: Path) -> MultiTokenKLReadoutProtoc
         target_source=_TARGET_SOURCE,
         prompt_prefix_validation=_PREFIX_VALIDATION,
         model_inputs=_MODEL_INPUTS,
+        short_continuation_policy=_SHORT_CONTINUATION_POLICY,
         divergence=_DIVERGENCE,
         primary_token_range=_PRIMARY_RANGE,
         secondary_token_ranges=_SECONDARY_RANGES,

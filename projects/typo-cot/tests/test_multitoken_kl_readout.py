@@ -31,6 +31,7 @@ from typo_cot.experiments.multitoken_kl_readout.runner import (
     run_multitoken_kl_readout,
 )
 from typo_cot.experiments.multitoken_kl_readout.runtime import (
+    CleanContinuationTooShort,
     HuggingFaceMultiTokenKLReadoutRuntime,
     clean_continuation_target_ids,
 )
@@ -109,6 +110,7 @@ class _Runtime:
             "target_source": "clean-continuation-token-ids/v1",
             "prompt_prefix_validation": "exact-token-id-prefix/v1",
             "model_inputs": "prompt-plus-first-15-target-token-ids/v1",
+            "short_continuation_policy": "record-unavailable-before-forward/v1",
             "divergence": "kl-clean-to-condition/v1",
             "negative_kl_roundoff_tolerance": 1e-12,
             "forward": {
@@ -129,8 +131,17 @@ class _Runtime:
         assert teacher_forced_tokens == 16
         assert layer_window == (0, 6)
         pair_index = int(str(pair["sample_id"]).rsplit("-", 1)[1])
-        untreated = (0.0,) * 16 if pair_index == 0 else tuple(float(i + 1) for i in range(16))
-        patched = (0.0,) * 16 if pair_index == 0 else tuple(value * 0.25 for value in untreated)
+        if pair_index == 0:
+            return MultiTokenKLScan(
+                target_token_ids=(100, 101, 102),
+                target_token_text=("token-1", "token-2", "token-3"),
+                untreated_kl=(),
+                patched_kl=(),
+                available=False,
+                invalid_reason="clean_continuation_lt_16",
+            )
+        untreated = tuple(float(i + 1) for i in range(16))
+        patched = tuple(value * 0.25 for value in untreated)
         return MultiTokenKLScan(
             target_token_ids=tuple(range(100, 116)),
             target_token_text=tuple(f"token-{index}" for index in range(1, 17)),
@@ -145,6 +156,7 @@ def test_default_protocol_catalog_and_cli_match_the_frozen_readme() -> None:
     assert protocol.schema_version == "multitoken-kl-readout-config/v1"
     assert protocol.window == (0, 6)
     assert protocol.teacher_forced_tokens == 16
+    assert protocol.short_continuation_policy == "record-unavailable-before-forward/v1"
     assert protocol.primary_token_range == (2, 16)
     assert protocol.secondary_token_ranges == ((2, 4), (2, 8))
     assert protocol.denominator_epsilon == 1e-9
@@ -271,6 +283,41 @@ def test_clean_continuation_targets_require_an_exact_prompt_prefix() -> None:
             count=16,
         )
 
+    short = _Tokenizer({prompt: [1, 2, 3], prompt + continuation: [1, 2, 3, 10, 11, 12]})
+    with pytest.raises(CleanContinuationTooShort) as exc_info:
+        clean_continuation_target_ids(
+            short,
+            clean_prompt=prompt,
+            clean_continuation=continuation,
+            count=16,
+        )
+    assert exc_info.value.available_token_ids == (10, 11, 12)
+    assert exc_info.value.available_token_text == ("<10>", "<11>", "<12>")
+
+
+def test_short_clean_continuation_is_recorded_before_alignment_or_forward() -> None:
+    prompt = "prompt"
+    continuation = " short"
+    runtime = object.__new__(HuggingFaceMultiTokenKLReadoutRuntime)
+    runtime.num_layers = 6
+    runtime.tokenizer = _Tokenizer(
+        {prompt: [1, 2, 3], prompt + continuation: [1, 2, 3, 10, 11, 12]}
+    )
+    runtime._tokenize_and_validate = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("short continuations must be rejected before alignment or model use")
+    )
+
+    scan = runtime.scan_pair(
+        {"clean_text": prompt, "clean_continuation": continuation},
+        teacher_forced_tokens=16,
+        layer_window=(0, 6),
+    )
+
+    assert scan.available is False
+    assert scan.invalid_reason == "clean_continuation_lt_16"
+    assert scan.target_token_ids == (10, 11, 12)
+    assert scan.untreated_kl == scan.patched_kl == ()
+
 
 def test_checkpoint_name_is_content_addressed() -> None:
     record = _records()[0]
@@ -379,6 +426,7 @@ def test_runner_compiles_six_settings_excludes_near_zero_and_resumes(
     assert result.pairs == 12
     assert result.settings == 6
     assert result.primary_valid_pairs == 6
+    assert result.target_available_pairs == 6
     assert result.trajectory_rows == 96
     assert _Runtime.calls == 12
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
@@ -390,6 +438,7 @@ def test_runner_compiles_six_settings_excludes_near_zero_and_resumes(
         "records": 12,
         "setting_metrics": 6,
         "settings": 6,
+        "target_available_pairs": 6,
         "trajectory_rows": 96,
     }
     records_out = [
@@ -400,6 +449,10 @@ def test_runner_compiles_six_settings_excludes_near_zero_and_resumes(
     assert all(row["pair_manifest_sha256"] == run["pair_manifest_sha256"] for row in records_out)
     assert all(len(row["source_record_sha256"]) == 64 for row in records_out)
     assert sum(row["metrics"]["R_2:16"]["valid"] for row in records_out) == 6
+    unavailable = [row for row in records_out if not row["readout_available"]]
+    assert len(unavailable) == 6
+    assert all(row["invalid_reason"] == "clean_continuation_lt_16" for row in unavailable)
+    assert all(row["untreated_kl"] == [] and row["patched_kl"] == [] for row in unavailable)
     assert all(
         row["metrics"]["R_2:16"]["value"] == pytest.approx(0.75)
         for row in records_out
@@ -465,7 +518,7 @@ def test_resume_rejects_a_tampered_pair_checkpoint(
         run_multitoken_kl_readout(config, runtime_factory=FailAfterOne)
     (checkpoint,) = tuple((config.output_dir / "checkpoints").glob("*.json"))
     payload = json.loads(checkpoint.read_text(encoding="utf-8"))
-    payload["scan"]["untreated_kl"][0] = 123.0
+    payload["scan"]["target_token_ids"][0] = 999
     checkpoint.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(MultiTokenKLReadoutRunError) as exc_info:

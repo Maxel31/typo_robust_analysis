@@ -152,14 +152,18 @@ The command writes `source_write_grid_records.jsonl`,
 `source_write_contrasts.csv`, and a hash-bound `run.json`.
 
 `multitoken-kl-readout` is implemented and GPU-only. For every restoration
-pair in the six-setting manifest, it tokenizes the stored clean continuation
-once and teacher-forces the same first 16 token IDs after the clean, typo, and
-patched-typo prompts. The patch copies the edited-word state over layers
-`[0,6)`. The primary per-pair score compares the mean
-`KL(clean || patched)` with `KL(clean || typo)` over tokens 2--16, deliberately
-excluding the first CoT token used by the original targeting metric. Secondary
-outputs cover tokens 2--4, tokens 2--8, token-wise raw KL reduction, and the
-paired first-token versus tokens 2--16 difference. Near-zero untreated
+pair in the six-setting manifest, it first tokenizes the stored clean
+continuation. A pair with fewer than 16 continuation tokens is recorded as
+`clean_continuation_lt_16` before any model forward and is excluded from the
+readout denominator, while remaining in the 1,241-pair audit trail. The output
+reports `n_target_available` per setting and `target_available_pairs` overall.
+For every available pair, the command teacher-forces the same first 16 token
+IDs after the clean, typo, and patched-typo prompts. The patch copies the
+edited-word state over layers `[0,6)`. The primary per-pair score compares the
+mean `KL(clean || patched)` with `KL(clean || typo)` over tokens 2--16,
+deliberately excluding the first CoT token used by the original targeting
+metric. Secondary outputs cover tokens 2--4, tokens 2--8, token-wise raw KL
+reduction, and the paired first-token versus tokens 2--16 difference. Near-zero untreated
 denominators are excluded according to the frozen analysis plan; negative
 restoration values are retained. `--limit-per-setting` is available only for
 non-confirmatory smoke tests, and `--resume` verifies input-content-addressed,

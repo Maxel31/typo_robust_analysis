@@ -67,12 +67,19 @@ class MultiTokenKLReadoutRunError(RuntimeError):
     """Raised after retaining verified checkpoints for a failed GPU run."""
 
 
-def _finite_nonnegative(values: Sequence[float], *, field: str) -> tuple[float, ...]:
+def _finite_nonnegative(
+    values: Sequence[float],
+    *,
+    field: str,
+    allow_empty: bool = False,
+) -> tuple[float, ...]:
     try:
         normalized = tuple(float(value) for value in values)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{field} must be numeric") from exc
-    if not normalized or any(not math.isfinite(value) or value < 0.0 for value in normalized):
+    if (not normalized and not allow_empty) or any(
+        not math.isfinite(value) or value < 0.0 for value in normalized
+    ):
         raise ValueError(f"{field} must contain finite non-negative values")
     return normalized
 
@@ -85,24 +92,42 @@ class MultiTokenKLScan:
     target_token_text: tuple[str, ...]
     untreated_kl: tuple[float, ...]
     patched_kl: tuple[float, ...]
+    available: bool = True
+    invalid_reason: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "target_token_ids", tuple(self.target_token_ids))
         object.__setattr__(self, "target_token_text", tuple(self.target_token_text))
         object.__setattr__(
-            self, "untreated_kl", _finite_nonnegative(self.untreated_kl, field="untreated_kl")
+            self,
+            "untreated_kl",
+            _finite_nonnegative(self.untreated_kl, field="untreated_kl", allow_empty=True),
         )
         object.__setattr__(
-            self, "patched_kl", _finite_nonnegative(self.patched_kl, field="patched_kl")
+            self,
+            "patched_kl",
+            _finite_nonnegative(self.patched_kl, field="patched_kl", allow_empty=True),
         )
-        lengths = {
-            len(self.target_token_ids),
-            len(self.target_token_text),
-            len(self.untreated_kl),
-            len(self.patched_kl),
-        }
-        if len(lengths) != 1:
-            raise ValueError("multi-token scan fields must have equal length")
+        if not isinstance(self.available, bool):
+            raise TypeError("available must be boolean")
+        if self.available:
+            lengths = {
+                len(self.target_token_ids),
+                len(self.target_token_text),
+                len(self.untreated_kl),
+                len(self.patched_kl),
+            }
+            if len(lengths) != 1 or not self.target_token_ids:
+                raise ValueError("available multi-token scan fields must have equal length")
+            if self.invalid_reason is not None:
+                raise ValueError("available multi-token scan must not have an invalid reason")
+        elif (
+            len(self.target_token_ids) != len(self.target_token_text)
+            or self.untreated_kl
+            or self.patched_kl
+            or self.invalid_reason != "clean_continuation_lt_16"
+        ):
+            raise ValueError("unavailable multi-token scan fields differ from the contract")
         if any(
             isinstance(token, bool) or not isinstance(token, int) or token < 0
             for token in self.target_token_ids
@@ -201,6 +226,7 @@ class MultiTokenKLReadoutResult:
     summary_path: Path
     run_path: Path
     pairs: int
+    target_available_pairs: int
     primary_valid_pairs: int
     settings: int
     trajectory_rows: int
@@ -311,6 +337,8 @@ def _runtime_provenance(
         or provenance.get("target_source") != protocol.target_source
         or provenance.get("prompt_prefix_validation") != protocol.prompt_prefix_validation
         or provenance.get("model_inputs") != protocol.model_inputs
+        or provenance.get("short_continuation_policy")
+        != protocol.short_continuation_policy
         or provenance.get("divergence") != protocol.divergence
         or provenance.get("negative_kl_roundoff_tolerance")
         != protocol.negative_kl_roundoff_tolerance
@@ -369,6 +397,8 @@ def _select_records(
 
 def _scan_payload(scan: MultiTokenKLScan) -> dict[str, object]:
     return {
+        "available": scan.available,
+        "invalid_reason": scan.invalid_reason,
         "target_token_ids": list(scan.target_token_ids),
         "target_token_text": list(scan.target_token_text),
         "untreated_kl": list(scan.untreated_kl),
@@ -378,9 +408,16 @@ def _scan_payload(scan: MultiTokenKLScan) -> dict[str, object]:
 
 def _scan_from_payload(value: object, *, field: str) -> MultiTokenKLScan:
     payload = _mapping(value, field=field)
-    if set(payload) != {"target_token_ids", "target_token_text", "untreated_kl", "patched_kl"}:
+    if set(payload) != {
+        "available",
+        "invalid_reason",
+        "target_token_ids",
+        "target_token_text",
+        "untreated_kl",
+        "patched_kl",
+    }:
         raise ValueError(f"{field} fields differ from the checkpoint contract")
-    for name in payload:
+    for name in ("target_token_ids", "target_token_text", "untreated_kl", "patched_kl"):
         if not isinstance(payload[name], list):
             raise ValueError(f"{field}.{name} must be a list")
     return MultiTokenKLScan(
@@ -388,14 +425,18 @@ def _scan_from_payload(value: object, *, field: str) -> MultiTokenKLScan:
         target_token_text=tuple(payload["target_token_text"]),  # type: ignore[arg-type]
         untreated_kl=tuple(payload["untreated_kl"]),  # type: ignore[arg-type]
         patched_kl=tuple(payload["patched_kl"]),  # type: ignore[arg-type]
+        available=payload["available"],  # type: ignore[arg-type]
+        invalid_reason=payload["invalid_reason"],  # type: ignore[arg-type]
     )
 
 
 def _validate_scan(scan: object, *, protocol: MultiTokenKLReadoutProtocol) -> MultiTokenKLScan:
     if not isinstance(scan, MultiTokenKLScan):
         raise ValueError("runtime result must be MultiTokenKLScan")
-    if len(scan.target_token_ids) != protocol.teacher_forced_tokens:
+    if scan.available and len(scan.target_token_ids) != protocol.teacher_forced_tokens:
         raise ValueError("runtime result does not contain exactly 16 target tokens")
+    if not scan.available and len(scan.target_token_ids) >= protocol.teacher_forced_tokens:
+        raise ValueError("unavailable runtime result contains a complete target prefix")
     return scan
 
 
@@ -524,6 +565,25 @@ def _metric_payload(
     }
 
 
+def _unavailable_metrics(reason: str) -> dict[str, dict[str, object]]:
+    metrics = {
+        name: {
+            "valid": False,
+            "value": None,
+            "untreated_mean_kl": None,
+            "patched_mean_kl": None,
+            "invalid_reason": reason,
+        }
+        for name in _METRIC_RANGES
+    }
+    metrics["R_1_minus_R_2:16"] = {
+        "valid": False,
+        "value": None,
+        "invalid_reason": reason,
+    }
+    return metrics
+
+
 def _compile_records(
     *,
     selected: Sequence[Mapping[str, object]],
@@ -549,29 +609,34 @@ def _compile_records(
             protocol=protocol,
             manifest_sha256=manifest_sha256,
         )
-        metrics = {
-            name: _metric_payload(
-                scan.untreated_kl,
-                scan.patched_kl,
-                token_range=token_range,
-                epsilon=protocol.denominator_epsilon,
-            )
-            for name, token_range in _METRIC_RANGES.items()
-        }
-        first, primary = metrics["R_1"], metrics["R_2:16"]
-        if first["valid"] is True and primary["valid"] is True:
-            first_minus_primary: dict[str, object] = {
-                "valid": True,
-                "value": float(first["value"]) - float(primary["value"]),
-                "invalid_reason": None,
+        if scan.available:
+            metrics = {
+                name: _metric_payload(
+                    scan.untreated_kl,
+                    scan.patched_kl,
+                    token_range=token_range,
+                    epsilon=protocol.denominator_epsilon,
+                )
+                for name, token_range in _METRIC_RANGES.items()
             }
+            first, primary = metrics["R_1"], metrics["R_2:16"]
+            if first["valid"] is True and primary["valid"] is True:
+                first_minus_primary: dict[str, object] = {
+                    "valid": True,
+                    "value": float(first["value"]) - float(primary["value"]),
+                    "invalid_reason": None,
+                }
+            else:
+                first_minus_primary = {
+                    "valid": False,
+                    "value": None,
+                    "invalid_reason": "first-or-primary-invalid",
+                }
+            metrics["R_1_minus_R_2:16"] = first_minus_primary
         else:
-            first_minus_primary = {
-                "valid": False,
-                "value": None,
-                "invalid_reason": "first-or-primary-invalid",
-            }
-        metrics["R_1_minus_R_2:16"] = first_minus_primary
+            if scan.invalid_reason is None:  # pragma: no cover - dataclass invariant
+                raise RuntimeError("unavailable scan has no invalid reason")
+            metrics = _unavailable_metrics(scan.invalid_reason)
         rows.append(
             {
                 "schema_version": _RECORD_SCHEMA,
@@ -585,6 +650,8 @@ def _compile_records(
                 "model": record["model"],
                 "task": record["task"],
                 "target_rule": record["target_rule"],
+                "readout_available": scan.available,
+                "invalid_reason": scan.invalid_reason,
                 "target_token_ids": list(scan.target_token_ids),
                 "target_token_text": list(scan.target_token_text),
                 "untreated_kl": list(scan.untreated_kl),
@@ -617,6 +684,10 @@ def _summary_or_null(
     )
 
 
+def _median_or_none(values: Sequence[float]) -> float | None:
+    return statistics.median(values) if values else None
+
+
 def _analysis_rows(
     rows: Sequence[Mapping[str, object]],
     *,
@@ -628,11 +699,13 @@ def _analysis_rows(
         selected = [row for row in rows if (row["model"], row["task"]) == setting.key]
         if not selected:
             raise ValueError(f"multi-token output has no rows for {setting.slug}")
+        available = [row for row in selected if row["readout_available"] is True]
         setting_row: dict[str, object] = {
             "model": setting.model,
             "task": setting.task,
             "n_original": setting.paper_denominator,
             "n_selected": len(selected),
+            "n_target_available": len(available),
         }
         for metric, column in _METRIC_COLUMNS.items():
             values = tuple(
@@ -652,8 +725,8 @@ def _analysis_rows(
         setting_rows.append(setting_row)
 
         for token_index in range(protocol.teacher_forced_tokens):
-            untreated = tuple(float(row["untreated_kl"][token_index]) for row in selected)
-            patched = tuple(float(row["patched_kl"][token_index]) for row in selected)
+            untreated = tuple(float(row["untreated_kl"][token_index]) for row in available)
+            patched = tuple(float(row["patched_kl"][token_index]) for row in available)
             reduction = tuple(
                 left - right for left, right in zip(untreated, patched, strict=True)
             )
@@ -677,9 +750,9 @@ def _analysis_rows(
                     "model": setting.model,
                     "task": setting.task,
                     "token_index": token_index + 1,
-                    "n": len(selected),
-                    "median_untreated_kl": statistics.median(untreated),
-                    "median_patched_kl": statistics.median(patched),
+                    "n": len(available),
+                    "median_untreated_kl": _median_or_none(untreated),
+                    "median_patched_kl": _median_or_none(patched),
                     "median_raw_kl_reduction": reduction_summary["estimate"],
                     "raw_reduction_ci_lower": reduction_summary["lower"],
                     "raw_reduction_ci_upper": reduction_summary["upper"],
@@ -696,7 +769,23 @@ def _trajectory_svg(rows: Sequence[Mapping[str, object]]) -> str:
     width, height = 960, 520
     left, right, top, bottom = 80.0, 710.0, 55.0, 455.0
     colors = ("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b")
-    values = [float(row["median_raw_kl_reduction"]) for row in rows]
+    plot_rows = [
+        row
+        for row in rows
+        if isinstance(row.get("median_raw_kl_reduction"), (int, float))
+        and not isinstance(row.get("median_raw_kl_reduction"), bool)
+        and math.isfinite(float(row["median_raw_kl_reduction"]))
+    ]
+    if not plot_rows:
+        return (
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+            f'viewBox="0 0 {width} {height}">\n'
+            '<rect width="100%" height="100%" fill="white"/>\n'
+            '<text x="480" y="260" text-anchor="middle" font-family="sans-serif" '
+            'font-size="16">No target-available pairs</text>\n'
+            "</svg>\n"
+        )
+    values = [float(row["median_raw_kl_reduction"]) for row in plot_rows]
     y_min, y_max = min(values), max(values)
     if y_min == y_max:
         padding = max(abs(y_min) * 0.1, 1e-9)
@@ -752,12 +841,14 @@ def _trajectory_svg(rows: Sequence[Mapping[str, object]]) -> str:
         'font-family="sans-serif" font-size="13">Teacher-forced clean token position</text>'
     )
     settings: list[tuple[str, str]] = []
-    for row in rows:
+    for row in plot_rows:
         setting = str(row["model"]), str(row["task"])
         if setting not in settings:
             settings.append(setting)
     for index, setting in enumerate(settings):
-        setting_rows = [row for row in rows if (row["model"], row["task"]) == setting]
+        setting_rows = [
+            row for row in plot_rows if (row["model"], row["task"]) == setting
+        ]
         points = " ".join(
             f'{x(int(row["token_index"])):.2f},{y(float(row["median_raw_kl_reduction"])):.2f}'
             for row in setting_rows
@@ -810,6 +901,8 @@ def _validate_public_record(
         "model",
         "task",
         "target_rule",
+        "readout_available",
+        "invalid_reason",
         "target_token_ids",
         "target_token_text",
         "untreated_kl",
@@ -839,6 +932,8 @@ def _validate_public_record(
     scan = _validate_scan(
         _scan_from_payload(
             {
+                "available": row.get("readout_available"),
+                "invalid_reason": row.get("invalid_reason"),
                 "target_token_ids": row.get("target_token_ids"),
                 "target_token_text": row.get("target_token_text"),
                 "untreated_kl": row.get("untreated_kl"),
@@ -857,29 +952,34 @@ def _validate_public_record(
     metrics = _mapping(row.get("metrics"), field="completed record metrics")
     if set(metrics) != set(_METRIC_COLUMNS):
         raise ValueError("completed multi-token metric inventory differs")
-    expected_metrics = {
-        name: _metric_payload(
-            scan.untreated_kl,
-            scan.patched_kl,
-            token_range=token_range,
-            epsilon=protocol.denominator_epsilon,
+    if scan.available:
+        expected_metrics = {
+            name: _metric_payload(
+                scan.untreated_kl,
+                scan.patched_kl,
+                token_range=token_range,
+                epsilon=protocol.denominator_epsilon,
+            )
+            for name, token_range in _METRIC_RANGES.items()
+        }
+        first, primary = expected_metrics["R_1"], expected_metrics["R_2:16"]
+        expected_metrics["R_1_minus_R_2:16"] = (
+            {
+                "valid": True,
+                "value": float(first["value"]) - float(primary["value"]),
+                "invalid_reason": None,
+            }
+            if first["valid"] is True and primary["valid"] is True
+            else {
+                "valid": False,
+                "value": None,
+                "invalid_reason": "first-or-primary-invalid",
+            }
         )
-        for name, token_range in _METRIC_RANGES.items()
-    }
-    first, primary = expected_metrics["R_1"], expected_metrics["R_2:16"]
-    expected_metrics["R_1_minus_R_2:16"] = (
-        {
-            "valid": True,
-            "value": float(first["value"]) - float(primary["value"]),
-            "invalid_reason": None,
-        }
-        if first["valid"] is True and primary["valid"] is True
-        else {
-            "valid": False,
-            "value": None,
-            "invalid_reason": "first-or-primary-invalid",
-        }
-    )
+    else:
+        if scan.invalid_reason is None:  # pragma: no cover - dataclass invariant
+            raise RuntimeError("unavailable scan has no invalid reason")
+        expected_metrics = _unavailable_metrics(scan.invalid_reason)
     if dict(metrics) != expected_metrics:
         raise ValueError("completed multi-token metrics differ from raw trajectories")
 
@@ -950,12 +1050,14 @@ def _result_from_run(
     primary_valid = sum(
         int(row["metrics"]["R_2:16"]["valid"] is True) for row in record_rows
     )
+    target_available = sum(int(row["readout_available"] is True) for row in record_rows)
     expected_counts = {
         "pairs": len(record_rows),
         "primary_valid_pairs": primary_valid,
         "records": len(record_rows),
         "setting_metrics": len(settings),
         "settings": len(settings),
+        "target_available_pairs": target_available,
         "trajectory_rows": 16 * len(settings),
     }
     counts = _mapping(run.get("counts"), field="completed run counts")
@@ -973,6 +1075,7 @@ def _result_from_run(
         summary_path=output_dir / _PUBLIC_OUTPUTS[4],
         run_path=output_dir / "run.json",
         pairs=int(counts["pairs"]),
+        target_available_pairs=int(counts["target_available_pairs"]),
         primary_valid_pairs=int(counts["primary_valid_pairs"]),
         settings=int(counts["settings"]),
         trajectory_rows=int(counts["trajectory_rows"]),
@@ -1152,6 +1255,9 @@ def run_multitoken_kl_readout(
             manifest_sha256=manifest_sha256,
         )
         setting_rows, trajectory_rows = _analysis_rows(output_rows, protocol=protocol)
+        target_available_pairs = sum(
+            int(row["readout_available"] is True) for row in output_rows
+        )
         summary = {
             "schema_version": _SUMMARY_SCHEMA,
             "paper_sha256": PAPER_SHA256,
@@ -1165,6 +1271,7 @@ def run_multitoken_kl_readout(
             },
             "counts": {
                 "pairs": len(output_rows),
+                "target_available_pairs": target_available_pairs,
                 "primary_valid_pairs": sum(
                     int(row["metrics"]["R_2:16"]["valid"] is True) for row in output_rows
                 ),
@@ -1187,6 +1294,7 @@ def run_multitoken_kl_readout(
         _write_json_atomic(paths[_PUBLIC_OUTPUTS[4]], summary)
         counts = {
             "pairs": len(output_rows),
+            "target_available_pairs": target_available_pairs,
             "primary_valid_pairs": int(summary["counts"]["primary_valid_pairs"]),
             "records": len(output_rows),
             "setting_metrics": len(setting_rows),

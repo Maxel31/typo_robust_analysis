@@ -819,6 +819,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         print(
             f"wrote {result.pairs:,} pair record(s), including "
+            f"{result.target_available_pairs:,} with 16-token targets and "
             f"{result.primary_valid_pairs:,} primary-valid pair(s): {result.records_path}"
         )
         print(f"setting metrics: {result.setting_metrics_path}")

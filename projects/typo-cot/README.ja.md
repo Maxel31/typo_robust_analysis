@@ -141,8 +141,12 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
 `run.json` です。
 
 `multitoken-kl-readout` は実装済みのGPU専用コマンドです。6設定manifestの各
-restoration pairについて、保存済みclean continuationを一度だけtokenizeし、先頭16個の
-同一token IDをclean、typo、patch済みtypo promptへteacher-forceします。patchは
+restoration pairについて、まず保存済みclean continuationをtokenizeします。
+continuationが16 token未満のpairは、model forwardの前に
+`clean_continuation_lt_16` として記録し、
+1,241 pairの監査記録には残したままreadoutの統計分母から除外します。settingごとの
+`n_target_available` と全体の `target_available_pairs` を出力します。評価可能なpairでは、
+先頭16個の同一token IDをclean、typo、patch済みtypo promptへteacher-forceします。patchは
 edited-word stateをlayer `[0,6)` でコピーします。primaryのpair単位scoreは、元の
 targeting metricに使った最初のCoT tokenを意図的に除外し、token 2--16における
 `KL(clean || patched)` の平均を `KL(clean || typo)` の平均と比較します。secondary
