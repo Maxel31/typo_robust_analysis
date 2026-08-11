@@ -79,6 +79,7 @@ refactor, a direct command is executable only when its catalog status is
 | `source-write-coordinate-grid` | ARR addition plan v1 | Primary and replication E/O donor-source by E/O write-position grids; common-valid Cochran's Q and prespecified paired contrasts |
 | `multitoken-kl-readout` | ARR addition plan v1 | Same clean tokens 1–16 after clean, typo, and [0,6)-patched typo prompts; primary normalized KL restoration over tokens 2–16 |
 | `patch-harm-audit` | ARR addition plan v1 | All prepared clean-correct/typo-correct aligned pairs; preserve, right-to-wrong harm, answer change, and a conditional repair-harm composite |
+| `tokenization-severity-analysis` | ARR addition plan v1 | Complete 1,241-pair three-arm controls; arm-valid and common-valid rates for every prespecified tokenization stratum, including empty cells |
 | `patch-coordinate-controls` | §3.3, §4.1, Appendix B | Primary 172 pairs; correct, +2 offset, cross-item, and identity controls |
 | `patch-position-controls` | §3.3, §4.1, Table 5, Appendix B | Gemma-3-4B/GSM8K Attribution-4 layerwise-KL cohort (published n=109), held common across edited-word, prompt-final, and question-final positions |
 | `patch-text-combination` | §3.5, §4.1, Table 2 | Descriptive patch absent/present × zero/full clean text on 172 pairs |
@@ -229,6 +230,12 @@ uv run --project projects/typo-cot --extra lrp typo-cot patch-harm-audit \
   --cohort clean-correct-typo-correct \
   --gpu-id 0 \
   --output-dir results/rebuttal/patch-harm-audit
+
+uv run --project projects/typo-cot typo-cot tokenization-severity-analysis \
+  --config projects/typo-cot/configs/rebuttal/tokenization-severity-analysis.yaml \
+  --manifest results/rebuttal/manifest/pair_manifest.jsonl \
+  --controls-run results/rebuttal/six-setting-patch-controls \
+  --output-dir results/rebuttal/tokenization-severity-analysis
 
 CUDA_VISIBLE_DEVICES=0 \
 uv run --project projects/typo-cot --extra lrp typo-cot patch-coordinate-controls \

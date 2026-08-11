@@ -210,9 +210,36 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp 
 `repair_harm_composite.csv`、`patch_harm_summary.json`、hashで拘束した
 `run.json` です。
 
+`tokenization-severity-analysis` は実装済みのCPU専用コマンドです。完全な6設定manifestと、
+そのmanifest全件を処理したhash検証済みcontrols runだけを受理し、非confirmatoryなlimit付き
+runは拒否します。追加のmodel推論は行わず、各restoration pairを次の4 dimensionで必ず1つの
+binへ割り当てます。
+
+- 全edited wordでsubtoken数が不変／少なくとも1 editで変化
+- 少なくとも1 editでtypo側fragmentationが増加／増加なし
+- aligned edit数が1／2／3–4
+- clean edited wordが全てsingle-token／少なくとも1語がmulti-token
+
+0件や少数件のcellも省略しません。各binについてcorrect・offset・cross-itemの3 armを、
+それぞれのplanned-valid分母と、3 arm全てが有効なcommon-valid分母の両方で報告します。
+overallに加えて6設定別の行も出すため、pooled rateがsetting構成を隠しません。
+
+```bash
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+uv run --project projects/typo-cot typo-cot tokenization-severity-analysis \
+  --config projects/typo-cot/configs/rebuttal/tokenization-severity-analysis.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --controls-run "${REBUTTAL_ROOT}/six-setting-patch-controls" \
+  --output-dir "${REBUTTAL_ROOT}/tokenization-severity-analysis"
+```
+
+出力は `tokenization_severity_records.jsonl`、`tokenization_severity_table.csv`、
+`tokenization_severity_summary.json`、hashで拘束した `run.json` です。
+
 ## 残りのARR追加実験の固定インターフェース
 
-以下の3コマンドは `interface-frozen` であり、**まだ実行できません**。実装より先に、
+以下の2コマンドは `interface-frozen` であり、**まだ実行できません**。実装より先に、
 追加実験ごとの操作、引数、入力、出力directoryを固定するために記載しています。
 統計とcohortの契約は
 [`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md) にあります。
@@ -223,12 +250,6 @@ statusではありません。この段階のコマンドはCLIと `experiments 
 ```bash
 GPU_ID=0
 REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
-
-uv run --project projects/typo-cot typo-cot tokenization-severity-analysis \
-  --config projects/typo-cot/configs/rebuttal/tokenization-severity-analysis.yaml \
-  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
-  --controls-run "${REBUTTAL_ROOT}/six-setting-patch-controls" \
-  --output-dir "${REBUTTAL_ROOT}/tokenization-severity-analysis"
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
   typo-cot subword-position-patching \

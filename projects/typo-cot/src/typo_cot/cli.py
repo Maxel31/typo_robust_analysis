@@ -154,6 +154,10 @@ from typo_cot.experiments.targeting_fidelity_audit import (
     TargetingFidelityAuditError,
     run_targeting_fidelity_audit,
 )
+from typo_cot.experiments.tokenization_severity_analysis import (
+    TokenizationSeverityConfig,
+    run_tokenization_severity_analysis,
+)
 from typo_cot.experiments.typo_warning_prompt import (
     BuildTypoWarningSummaryConfig,
     WarningPromptConfig,
@@ -293,6 +297,16 @@ def _parser() -> argparse.ArgumentParser:
     harm_audit.add_argument("--output-dir", required=True, type=Path)
     harm_audit.add_argument("--limit-per-setting", type=_positive_int)
     harm_audit.add_argument("--resume", action="store_true")
+
+    severity = commands.add_parser(
+        "tokenization-severity-analysis",
+        help="Stratify three-arm patch outcomes by prespecified tokenization severity.",
+    )
+    severity.add_argument("--config", required=True, type=Path)
+    severity.add_argument("--manifest", required=True, type=Path)
+    severity.add_argument("--controls-run", required=True, type=Path)
+    severity.add_argument("--output-dir", required=True, type=Path)
+    severity.add_argument("--resume", action="store_true")
 
     pairs = commands.add_parser(
         "prepare-edited-pairs",
@@ -880,6 +894,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(f"setting harm table: {result.setting_table_path}")
         print(f"conditional repair-harm composite: {result.composite_path}")
+        print(f"summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "tokenization-severity-analysis":
+        try:
+            result = run_tokenization_severity_analysis(
+                TokenizationSeverityConfig(
+                    protocol_path=args.config,
+                    manifest_path=args.manifest,
+                    controls_run=args.controls_run,
+                    output_dir=args.output_dir,
+                    resume=args.resume,
+                )
+            )
+        except (FileExistsError, OSError, RuntimeError, ValueError) as exc:
+            print(f"tokenization-severity-analysis: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"stratified {result.pairs:,} pair(s) into {result.table_rows:,} "
+            f"arm/cell row(s): {result.table_path}"
+        )
+        print(f"empty severity cells retained: {result.empty_cells:,}")
+        print(f"per-pair records: {result.records_path}")
         print(f"summary: {result.summary_path}")
         print(f"run manifest: {result.run_path}")
         return 0

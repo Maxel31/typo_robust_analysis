@@ -1,0 +1,38 @@
+{
+  "schema_version": "tokenization-severity-analysis-config/v1",
+  "source": {
+    "controls_run_schema": "six-setting-patch-controls-run/v1",
+    "require_confirmatory": true,
+    "required_pairs": 1241,
+    "required_arms": [
+      "correct",
+      "offset-2",
+      "cross-item"
+    ]
+  },
+  "dimensions": [
+    {
+      "name": "subtoken-count-change",
+      "bins": ["unchanged-all-edits", "changed-any-edit"],
+      "rule": "per-edit-token-index-cardinality-all-equal-vs-any-different/v1"
+    },
+    {
+      "name": "typo-fragmentation",
+      "bins": ["increased-any-edit", "not-increased"],
+      "rule": "any-typo-cardinality-greater-than-clean/v1"
+    },
+    {
+      "name": "edit-count",
+      "bins": ["1", "2", "3-4"],
+      "rule": "aligned-edit-cardinality/v1"
+    },
+    {
+      "name": "clean-edited-word-tokenization",
+      "bins": ["all-single-token", "any-multi-token"],
+      "rule": "all-clean-cardinality-one-vs-any-greater-than-one/v1"
+    }
+  ],
+  "denominators": ["arm-valid", "common-valid"],
+  "scopes": ["overall", "setting"],
+  "empty_cells": "emit-zero-denominator/v1"
+}
