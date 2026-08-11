@@ -55,6 +55,164 @@ uv run --project projects/typo-cot typo-cot experiments show clean-prefix-scan -
 コホート、介入、readout、出力、CPU/GPU区分、実装状態が含まれます。
 `implemented` の操作だけが実行可能で、`catalogued` は公開runnerが未実装です。
 
+## ARR追加実験の固定インターフェース
+
+以下のコマンドは `interface-frozen` であり、**まだ実行できません**。実装より先に、
+追加実験ごとの操作、引数、入力、出力directoryを固定するために記載しています。
+統計とcohortの契約は
+[`docs/rebuttal_analysis_plan_v1.md`](docs/rebuttal_analysis_plan_v1.md) にあります。
+`interface-frozen` はREADME上の実装前ラベルであり、3つ目のexperiment catalog
+statusではありません。この段階のコマンドはCLIと `experiments list` には登録せず、
+契約testに通過した各実装PRで `implemented` 操作として直接登録します。
+
+```bash
+GPU_ID=0
+PAIR_ROOT=projects/typo-cot/results/prepare-edited-pairs
+FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+uv run --project projects/typo-cot typo-cot build-rebuttal-manifest \
+  --prepared-pairs-root "${PAIR_ROOT}" \
+  --fixed-window-root "${FIXED_ROOT}" \
+  --output-dir "${REBUTTAL_ROOT}/manifest"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot six-setting-patch-controls \
+  --config projects/typo-cot/configs/rebuttal/six-setting-patch-controls.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --fixed-window-root "${FIXED_ROOT}" \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/six-setting-patch-controls"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot source-write-coordinate-grid \
+  --config projects/typo-cot/configs/rebuttal/source-write-coordinate-grid.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --fixed-window-root "${FIXED_ROOT}" \
+  --cohorts primary replication \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/source-write-coordinate-grid"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot multitoken-kl-readout \
+  --config projects/typo-cot/configs/rebuttal/multitoken-kl-readout.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --teacher-forced-tokens 16 \
+  --primary-token-range 2:16 \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/multitoken-kl-readout"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot patch-harm-audit \
+  --config projects/typo-cot/configs/rebuttal/patch-harm-audit.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --cohort clean-correct-typo-correct \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/patch-harm-audit"
+
+uv run --project projects/typo-cot typo-cot tokenization-severity-analysis \
+  --config projects/typo-cot/configs/rebuttal/tokenization-severity-analysis.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --controls-run "${REBUTTAL_ROOT}/six-setting-patch-controls" \
+  --output-dir "${REBUTTAL_ROOT}/tokenization-severity-analysis"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot subword-position-patching \
+  --config projects/typo-cot/configs/rebuttal/subword-position-patching.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --modes first final all \
+  --token-count-policy equal-count-primary \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/subword-position-patching"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot held-out-window-evaluation \
+  --config projects/typo-cot/configs/rebuttal/held-out-window-evaluation.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --cohort-ids "${REBUTTAL_ROOT}/manifest/cohort_ids.json" \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/held-out-window-evaluation"
+```
+
+## typo頑健化学習の固定インターフェース
+
+PEFTを追加しても論文再現環境を変更しないよう、学習には別のlockfileを持つprojectを
+使用します。datasetの役割、leakage防止、layerからcomponentへ進む局所化、loss、
+baseline、PR前の実測gateは
+[`docs/robustness_training_plan_v1.md`](docs/robustness_training_plan_v1.md) で固定しています。
+以下も `interface-frozen` であり、**まだ実行できません**。特に学習実装は、held-out
+評価でclean性能を維持しながらtypo頑健性が向上するまでPRを作成しません。
+
+```bash
+GPU_ID=0
+TRAIN_PROJECT=projects/typo-robust-training
+TRAIN_ROOT=projects/typo-robust-training/results
+
+uv sync --project "${TRAIN_PROJECT}" --locked
+
+uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-robustness-training-data \
+  --config "${TRAIN_PROJECT}/configs/gemma4b-sanity.yaml" \
+  --output-dir "${TRAIN_ROOT}/data/gemma4b-sanity"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot select-distillation-layers \
+  --config "${TRAIN_PROJECT}/configs/gemma4b-layer-selection.yaml" \
+  --diagnostic-manifest "${TRAIN_ROOT}/data/gemma4b-sanity/diagnostic_manifest.jsonl" \
+  --tasks gsm8k mmlu arc \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/localization/layers"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot localize-robustness-components \
+  --config "${TRAIN_PROJECT}/configs/gemma4b-component-localization.yaml" \
+  --diagnostic-manifest "${TRAIN_ROOT}/data/gemma4b-sanity/diagnostic_manifest.jsonl" \
+  --layer-selection "${TRAIN_ROOT}/localization/layers/layer_selection.json" \
+  --components mlp-neuron attention-head \
+  --causal-readouts answer multitoken-kl \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/localization/components"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-noisy-language-model \
+  --config "${TRAIN_PROJECT}/configs/baselines/noisy-language-model.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/training/noisy-language-model/seed-42"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-output-matching \
+  --config "${TRAIN_PROJECT}/configs/baselines/output-matching.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/training/output-matching/seed-42"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-global-state-alignment \
+  --config "${TRAIN_PROJECT}/configs/baselines/global-state-alignment.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/training/global-state-alignment/seed-42"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-localized-state-distillation \
+  --config "${TRAIN_PROJECT}/configs/gemma4b-targeted-lora.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --layer-selection "${TRAIN_ROOT}/localization/layers/layer_selection.json" \
+  --component-selection "${TRAIN_ROOT}/localization/components/component_selection.json" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/training/localized-state-distillation/seed-42"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot evaluate-typo-robustness \
+  --config "${TRAIN_PROJECT}/configs/gemma4b-evaluation.yaml" \
+  --data-manifest "${TRAIN_ROOT}/data/gemma4b-sanity/evaluation_manifest.json" \
+  --base-model google/gemma-3-4b-it \
+  --checkpoints "${TRAIN_ROOT}/training" \
+  --splits same-task unseen-task unseen-typo \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/evaluation/gemma4b"
+```
+
 ## clean/editedペアを生成する
 
 `prepare-edited-pairs` は論文の入力準備を行います。clean入力でのgreedy生成、
