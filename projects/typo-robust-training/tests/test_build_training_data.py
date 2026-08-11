@@ -22,16 +22,23 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "gemma4b-sanity.yaml"
 
 
-def _clean(source: str, revision: str, index: int, *, task: str | None) -> CleanRecord:
+def _clean(
+    source: str,
+    revision: str,
+    index: int,
+    *,
+    task: str | None,
+    source_split: str,
+) -> CleanRecord:
     task_label = task or "general educational prose"
     return CleanRecord(
         source=source,
         source_revision=revision,
-        source_split="train",
+        source_split=source_split,
         source_id=f"{source}-{index:04d}",
         group_id=f"{source}-group-{index:04d}",
         text=(
-            f"This {task_label} example number {index} explains a reliable concept "
+            f"This {source} {task_label} example number {index} explains a reliable concept "
             "with enough alphabetic words for deterministic perturbations."
         ),
         task=task,
@@ -75,7 +82,13 @@ class _Provider(DataSourceProvider):
             return
         task = source.task
         for index in range(120):
-            yield _clean(source_name, source.revision, index, task=task)
+            yield _clean(
+                source_name,
+                source.revision,
+                index,
+                task=task,
+                source_split=source.splits[index % len(source.splits)],
+            )
 
     def provenance(self) -> Mapping[str, object]:
         return {"provider": "offline-fixture/v1"}
@@ -131,7 +144,18 @@ def test_builder_writes_hash_bound_disjoint_replayable_artifacts(tmp_path: Path)
     assert training and diagnostic and tune and gate and final
     assert all(row["split"] == "train" for row in training)
     assert {row["task"] for row in diagnostic} == {"gsm8k", "mmlu", "arc"}
-    assert all(row["operation"] != "adjacent-transposition" for row in training if row["kind"] == "natural")
+    allowed_training_splits = {"gsm8k": "train", "mmlu": "dev", "arc": "train"}
+    for row in (*training, *diagnostic):
+        if row["source"] in allowed_training_splits:
+            assert row["source_split"] == allowed_training_splits[row["source"]]
+    assert any(
+        row["source"] in allowed_training_splits
+        and row["source_split"] != allowed_training_splits[row["source"]]
+        for row in (*gate, *final)
+    )
+    assert all(
+        row["operation"] != "adjacent-transposition" for row in training if row["kind"] == "natural"
+    )
     assert any(row["operation"] == "adjacent-transposition" for row in (*gate, *final))
 
     group_sets = [
@@ -206,4 +230,3 @@ def test_builder_failure_is_visible_and_does_not_publish_final_artifacts(tmp_pat
     assert run["status"] == "failed"
     assert run["failures"][0]["type"] == "RuntimeError"
     assert not (output / "evaluation_manifest.json").exists()
-
