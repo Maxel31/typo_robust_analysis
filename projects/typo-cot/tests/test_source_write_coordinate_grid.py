@@ -308,6 +308,24 @@ def test_grid_runtime_requests_the_fixed_reference_extraction_contract() -> None
     assert requested_contracts == [True, True, True]
 
 
+def test_runner_rejects_duplicate_manifest_coordinates() -> None:
+    record = {
+        "controls": {
+            "correct": {
+                "source_positions": [2, 2],
+                "destination_positions": [3, 4],
+            },
+            "offset_2": {
+                "source_positions": [4, 5],
+                "destination_positions": [5, 6],
+            },
+        }
+    }
+
+    with pytest.raises(ValueError, match="duplicate token positions"):
+        grid_runner._coordinates(record, "E->E")
+
+
 def test_cochran_q_handles_signal_and_the_all_equal_boundary() -> None:
     signal = cochran_q(
         {

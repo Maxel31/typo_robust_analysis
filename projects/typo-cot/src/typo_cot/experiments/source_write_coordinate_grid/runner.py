@@ -28,6 +28,7 @@ from typo_cot.experiments.build_rebuttal_manifest.records import (
 )
 from typo_cot.experiments.catalog import PAPER_SHA256
 from typo_cot.experiments.patch_coordinate_controls.metrics import exact_mcnemar
+from typo_cot.experiments.rebuttal_runtime import manifest_token_positions
 from typo_cot.experiments.six_setting_patch_controls import (
     ControlArmResult,
     ControlGeneration,
@@ -146,18 +147,6 @@ def _mapping(value: object, *, field: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{field} must be an object")
     return value
-
-
-def _positions(value: object, *, field: str) -> tuple[int, ...]:
-    if not isinstance(value, list) or not value:
-        raise ValueError(f"{field} must be a non-empty integer list")
-    positions = tuple(value)
-    if any(
-        not isinstance(position, int) or isinstance(position, bool) or position < 0
-        for position in positions
-    ):
-        raise ValueError(f"{field} contains an invalid token position")
-    return positions
 
 
 def _canonical_sha256(value: object) -> str:
@@ -327,14 +316,18 @@ def _coordinates(record: Mapping[str, object], arm: str) -> tuple[tuple[int, ...
     controls = _mapping(record.get("controls"), field="record controls")
     correct = _mapping(controls.get("correct"), field="record controls.correct")
     offset = _mapping(controls.get("offset_2"), field="record controls.offset_2")
-    edited_source = _positions(correct.get("source_positions"), field="correct source_positions")
-    edited_write = _positions(
+    edited_source = manifest_token_positions(
+        correct.get("source_positions"), field="correct source_positions"
+    )
+    edited_write = manifest_token_positions(
         correct.get("destination_positions"), field="correct destination_positions"
     )
     if arm == "E->E":
         return edited_source, edited_write
-    offset_source = _positions(offset.get("source_positions"), field="offset source_positions")
-    offset_write = _positions(
+    offset_source = manifest_token_positions(
+        offset.get("source_positions"), field="offset source_positions"
+    )
+    offset_write = manifest_token_positions(
         offset.get("destination_positions"), field="offset destination_positions"
     )
     if arm == "E->O":
@@ -445,10 +438,10 @@ def _load_checkpoint(
             generation=_generation_from_payload(
                 raw.get("generation"), field=f"checkpoint {arm}.generation"
             ),
-            source_positions=_positions(
+            source_positions=manifest_token_positions(
                 raw.get("source_positions"), field=f"checkpoint {arm}.source_positions"
             ),
-            destination_positions=_positions(
+            destination_positions=manifest_token_positions(
                 raw.get("destination_positions"),
                 field=f"checkpoint {arm}.destination_positions",
             ),
