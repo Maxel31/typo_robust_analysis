@@ -64,7 +64,14 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
     assert "--max-per-setting" not in english_examples
     assert '--cohort-ids "${REBUTTAL_ROOT}/manifest/cohort_ids.json"' in english_examples
 
-    for command in (*REBUTTAL_COMMANDS, *TRAINING_COMMANDS):
+    documented_commands = set(
+        re.findall(
+            r"(?=\btypo-cot\s+([a-z0-9][a-z0-9-]*)\b)",
+            english_examples,
+        )
+    )
+    assert set((*REBUTTAL_COMMANDS, *TRAINING_COMMANDS)) <= documented_commands
+    for command in documented_commands:
         assert re.search(r"(?:^|-)rq\d+(?:-|$)", command, flags=re.IGNORECASE) is None
         assert re.search(r"(?:^|-)p[01](?:-[a-d])?(?:-|$)", command, flags=re.IGNORECASE) is None
 
@@ -131,6 +138,7 @@ def test_training_plan_freezes_data_separation_localization_and_pr_gate() -> Non
         "no training pull request",
         "Adjacent transpositions are excluded from every training and tuning source",
         "1e-6 nats",
+        "intentionally stricter",
         "same evaluated checkpoint",
     ):
         assert fragment in normalized

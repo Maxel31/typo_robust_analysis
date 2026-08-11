@@ -206,6 +206,13 @@ not a mean of per-record ratios. Ineligible records remain in answer/harm terms
 and in the audit output but never receive a normalized KL value. A task with
 fewer than 50 KL-eligible records or less than 80% eligibility makes selection
 fail closed; no epsilon substitution or fallback layer metric is allowed.
+This `1e-6` selection threshold is intentionally stricter than the rebuttal
+readout's `1e-9` finite-denominator guard. The rebuttal estimates a fixed
+prespecified intervention and keeps small finite effects visible; layer
+selection is adaptive and determines every downstream training target, so it
+screens near-degenerate records whose normalized score could steer selection.
+Implementations must preserve these role-specific thresholds rather than
+silently harmonizing them.
 For layer `l`:
 
 ```text
