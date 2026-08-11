@@ -67,6 +67,7 @@ def test_sanity_config_pins_source_revisions_roles_and_unseen_axes() -> None:
     assert config.model == "google/gemma-3-4b-it"
     assert config.training_token_budget == 1_000_000
     assert config.max_sequence_length == 512
+    assert config.document_character_window == 8_192
     assert config.training_mixture == {
         "fineweb_edu": 0.85,
         "reasoning": 0.10,

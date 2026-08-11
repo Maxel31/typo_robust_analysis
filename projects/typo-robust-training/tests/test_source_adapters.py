@@ -10,9 +10,12 @@ from pathlib import Path
 
 import pytest
 
+from typo_robust_training.data import sources as sources_module
 from typo_robust_training.data.config import load_training_data_config
+from typo_robust_training.data.records import CleanRecord
 from typo_robust_training.data.sources import (
     HuggingFaceDataSourceProvider,
+    HuggingFaceTokenCounter,
     _format_huggingface_record,
 )
 
@@ -184,3 +187,74 @@ def test_dolma_default_streams_selected_shards_from_pinned_inventory(
     provenance = provider.provenance()
     assert provenance["dolma_url_inventory_sha256"] == "c" * 64
     assert provenance["dolma_selected_urls"] == [url]
+
+
+def test_long_document_window_is_content_stable_and_records_boundaries() -> None:
+    segment_document = getattr(sources_module, "_segment_document", None)
+    assert callable(segment_document)
+    text = " ".join(f"educational-{index}" for index in range(2_000))
+
+    def record(source_id: str) -> CleanRecord:
+        return CleanRecord(
+            source="fineweb_edu",
+            source_revision="a" * 40,
+            source_split="train",
+            source_id=source_id,
+            group_id=source_id,
+            text=text,
+            task=None,
+            answer=None,
+            metadata={},
+        )
+
+    first = segment_document(record("first"), character_limit=8_192)
+    second = segment_document(record("second"), character_limit=8_192)
+    assert first.text == second.text
+    assert len(first.text) <= 8_192
+    assert first.metadata["document_window"] == second.metadata["document_window"]
+    assert first.metadata["original_character_count"] == len(text)
+
+
+def test_token_preparation_keeps_only_complete_words_within_model_limit() -> None:
+    class _Tokenizer:
+        def __call__(
+            self,
+            text: str,
+            *,
+            add_special_tokens: bool,
+            truncation: bool,
+            max_length: int,
+            return_offsets_mapping: bool = False,
+        ) -> dict[str, object]:
+            import re
+
+            spans = [(match.start(), match.end()) for match in re.finditer(r"\S+", text)]
+            offsets = ([(0, 0)] if add_special_tokens else []) + spans
+            if truncation:
+                offsets = offsets[:max_length]
+            result: dict[str, object] = {"input_ids": list(range(len(offsets)))}
+            if return_offsets_mapping:
+                result["offset_mapping"] = offsets
+            return result
+
+    original = CleanRecord(
+        source="fineweb_edu",
+        source_revision="a" * 40,
+        source_split="train",
+        source_id="long",
+        group_id="long",
+        text="alpha beta gamma delta epsilon zeta eta",
+        task=None,
+        answer=None,
+        metadata={},
+    )
+    counter = HuggingFaceTokenCounter(
+        model="fixture/model",
+        revision="b" * 40,
+        max_sequence_length=5,
+        tokenizer=_Tokenizer(),
+    )
+    prepared = counter.prepare_record(original)
+    assert prepared.text == "alpha beta gamma delta"
+    assert prepared.metadata["prepared_token_count"] == 5
+    assert counter(prepared.text) == 5
