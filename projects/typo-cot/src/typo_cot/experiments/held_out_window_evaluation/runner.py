@@ -81,9 +81,12 @@ class HeldOutWindowConfig:
         if self.limit_per_setting is not None and (
             isinstance(self.limit_per_setting, bool)
             or not isinstance(self.limit_per_setting, int)
-            or self.limit_per_setting <= 0
+            or self.limit_per_setting < len(REBUTTAL_MANIFEST_PROTOCOL.target_rules)
         ):
-            raise ValueError("limit_per_setting must be a positive integer")
+            raise ValueError(
+                "limit_per_setting must be at least 2 so both diagnostic target rules "
+                "remain represented"
+            )
         if not isinstance(self.resume, bool):
             raise TypeError("resume must be boolean")
 
@@ -319,6 +322,12 @@ def _setting_id(key: tuple[str, str]) -> str:
     return f"{key[1]}|{key[0]}"
 
 
+def _diagnostic_cell_id(record: Mapping[str, object]) -> str:
+    return (
+        f"{record.get('task')}|{record.get('model')}|{record.get('target_rule')}"
+    )
+
+
 def _window_id(window: tuple[int, int]) -> str:
     return f"layers-{window[0]}-{window[1]}"
 
@@ -472,7 +481,36 @@ def _validate_and_partition(
             if not setting_records:
                 raise ValueError(f"held-out {phase} cohort is empty for {setting.slug}")
             if config.limit_per_setting is not None:
-                setting_records = setting_records[: config.limit_per_setting]
+                if phase == "selection":
+                    first_per_rule: list[Mapping[str, object]] = []
+                    for target_rule in REBUTTAL_MANIFEST_PROTOCOL.target_rules:
+                        matching = tuple(
+                            record
+                            for record in setting_records
+                            if record.get("target_rule") == target_rule
+                        )
+                        if not matching:
+                            raise ValueError(
+                                f"held-out selection target-rule cell is empty for "
+                                f"{setting.slug}/{target_rule}"
+                            )
+                        first_per_rule.append(matching[0])
+                    first_ids = {str(record["pair_id"]) for record in first_per_rule}
+                    remaining = [
+                        record
+                        for record in setting_records
+                        if str(record["pair_id"]) not in first_ids
+                    ]
+                    setting_records = sorted(
+                        first_per_rule
+                        + remaining[
+                            : config.limit_per_setting
+                            - len(REBUTTAL_MANIFEST_PROTOCOL.target_rules)
+                        ],
+                        key=lambda record: str(record["pair_id"]),
+                    )
+                else:
+                    setting_records = setting_records[: config.limit_per_setting]
             selected.extend(setting_records)
         return tuple(selected)
 
@@ -877,7 +915,7 @@ def _rank_windows(
     for row in rows:
         if row.get("scoring_available") is not True:
             continue
-        setting = _setting_id(_setting_key(row))
+        cell = _diagnostic_cell_id(row)
         candidates = row.get("candidates")
         if not isinstance(candidates, list) or len(candidates) != len(protocol.candidate_windows):
             raise ValueError("selection record candidate inventory differs")
@@ -887,27 +925,31 @@ def _rank_windows(
             value = payload.get("normalized_restoration")
             if window_id not in scores or not isinstance(value, (int, float)):
                 raise ValueError("selection record score differs")
-            scores[window_id][setting].append(float(value))
+            scores[window_id][cell].append(float(value))
     summaries: list[dict[str, object]] = []
-    expected_settings = {_setting_id(setting.key) for setting in REBUTTAL_SETTINGS}
+    expected_cells = {
+        f"{setting.task}|{setting.model}|{target_rule}"
+        for setting in REBUTTAL_SETTINGS
+        for target_rule in REBUTTAL_MANIFEST_PROTOCOL.target_rules
+    }
     by_window = {_window_id(window): window for window in protocol.candidate_windows}
-    for window_id, setting_values in scores.items():
-        if set(setting_values) != expected_settings or any(
-            not values for values in setting_values.values()
+    for window_id, cell_values in scores.items():
+        if set(cell_values) != expected_cells or any(
+            not values for values in cell_values.values()
         ):
-            raise ValueError(f"diagnostic scoring is unavailable for a setting: {window_id}")
-        setting_medians = {
-            setting: float(median(values)) for setting, values in sorted(setting_values.items())
+            raise ValueError(f"diagnostic scoring is unavailable for a cell: {window_id}")
+        cell_medians = {
+            cell: float(median(values)) for cell, values in sorted(cell_values.items())
         }
         window = by_window[window_id]
         summaries.append(
             {
                 "window_id": window_id,
                 **_window_payload(window),
-                "macro_score": sum(setting_medians.values()) / len(setting_medians),
-                "setting_medians": setting_medians,
-                "setting_available_pairs": {
-                    setting: len(values) for setting, values in sorted(setting_values.items())
+                "macro_score": sum(cell_medians.values()) / len(cell_medians),
+                "cell_medians": cell_medians,
+                "cell_available_pairs": {
+                    cell: len(values) for cell, values in sorted(cell_values.items())
                 },
             }
         )

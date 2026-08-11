@@ -46,14 +46,17 @@ def _record(
     selection_count: int,
 ) -> dict[str, object]:
     setting = REBUTTAL_SETTINGS[setting_index]
-    pair_id = _digest(f"held-out\0{setting.model}\0{setting.task}\0{item_index}")
+    target_rule = "attribution-4" if (item_index // 2) % 2 == 0 else "random-4"
+    pair_id = _digest(
+        f"held-out\0{setting.model}\0{setting.task}\0{target_rule}\0{item_index}"
+    )
     selection = item_index < selection_count
     return {
         "pair_id": pair_id,
         "sample_id": f"{setting.task}-{item_index:04d}",
         "model": setting.model,
         "task": setting.task,
-        "target_rule": "attribution-4",
+        "target_rule": target_rule,
         "gold_answer": "42",
         "clean_answer": "42",
         "typo_answer": "99",
@@ -268,7 +271,10 @@ def test_protocol_catalog_cli_and_readme_freeze_the_public_contract() -> None:
     assert protocol.candidate_windows == CANDIDATES
     assert protocol.window_width == 6
     assert protocol.selection_metric == "median-normalized-first-token-kl-restoration/v1"
-    assert protocol.cross_setting_score == "equal-setting-macro-mean/v1"
+    assert (
+        protocol.cross_setting_score
+        == "equal-model-task-target-rule-cell-macro-mean/v1"
+    )
     assert protocol.ranking == "score-descending-then-start-ascending/v1"
     assert protocol.untreated_kl_min_exclusive == 1e-9
     assert protocol.pair_bootstrap_replicates == 10_000
@@ -364,6 +370,18 @@ def test_scan_payloads_reject_partial_or_inconsistent_results() -> None:
         WindowEvaluationScan(generations={"selected": _generation(success=True, label="x")})
 
 
+def test_smoke_limit_must_cover_both_diagnostic_target_rules(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="at least 2"):
+        HeldOutWindowConfig(
+            protocol_path=DEFAULT_CONFIG,
+            manifest_path=tmp_path / "pair_manifest.jsonl",
+            cohort_ids_path=tmp_path / "cohort_ids.json",
+            gpu_id="3",
+            output_dir=tmp_path / "output",
+            limit_per_setting=1,
+        )
+
+
 def test_runner_commits_selection_before_disjoint_evaluation_and_resumes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -398,6 +416,13 @@ def test_runner_commits_selection_before_disjoint_evaluation_and_resumes(
     selection = json.loads(result.selection_path.read_text(encoding="utf-8"))
     assert selection["selected_window"] == {"start": 0, "stop": 6}
     assert selection["runner_up_window"] == {"start": 6, "stop": 12}
+    for candidate in selection["candidate_summaries"]:
+        assert len(candidate["cell_medians"]) == 12
+        assert len(candidate["cell_available_pairs"]) == 12
+        assert all(
+            cell.endswith("|attribution-4") or cell.endswith("|random-4")
+            for cell in candidate["cell_medians"]
+        )
     assert selection["selection_pair_ids_sha256"] != selection["evaluation_pair_ids_sha256"]
     assert (
         selection["selection_records_sha256"]
@@ -493,7 +518,7 @@ def test_split_overlap_and_cohort_sidecar_mismatch_fail_before_runtime(
 
     records = _records()
     monkeypatch.setattr(runner, "load_rebuttal_pair_manifest", lambda _path: records)
-    config = _config(tmp_path, records, limit_per_setting=1)
+    config = _config(tmp_path, records, limit_per_setting=2)
     payload = json.loads(config.cohort_ids_path.read_text(encoding="utf-8"))
     payload["cohorts"]["window_evaluation"][0] = payload["cohorts"]["window_selection"][0]
     config.cohort_ids_path.write_text(json.dumps(payload), encoding="utf-8")

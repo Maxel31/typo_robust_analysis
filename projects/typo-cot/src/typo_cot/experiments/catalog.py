@@ -486,8 +486,9 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         paper_question="ARR addition",
         paper_sections=("Rebuttal analysis plan v1: Held-out window test",),
         summary=(
-            "Score five frozen six-layer candidates on diagnostic sample groups, commit "
-            "the winner and runner-up, then compare them on untouched sample groups."
+            "Score five frozen six-layer candidates over twelve model--task--target-rule "
+            "diagnostic cells, commit the winner and runner-up, then compare them on "
+            "untouched sample groups."
         ),
         cohort=(
             "The 1,241 six-setting restoration pairs, split outcome-independently by "

@@ -315,13 +315,18 @@ benchmark sample remains in one phase across every model and typo-targeting
 condition as well as being pair-ID disjoint.
 
 The diagnostic phase compares five prespecified six-layer candidates:
-`[0,6)`, `[6,12)`, `[12,18)`, `[18,24)`, and `[22,28)`. For each setting and
-candidate it takes the median normalized restoration of the clean first-CoT-
-token distribution, then selects the largest equal-setting macro mean. The
-runner-up is fixed by the same score; exact score ties prefer the lower layer
-start. Unavailable targets and untreated KL values at or below `1e-9` remain
-visible but do not enter selection. The command commits and hashes
-`window_selection.json` before any held-out model call.
+`[0,6)`, `[6,12)`, `[12,18)`, `[18,24)`, and `[22,28)`. Matching the paper's
+12-cell depth evidence, it keeps Attribution-4 and Random-4 separate within
+each of the six model--task settings. For each model--task--target-rule cell
+and candidate it takes the median normalized restoration of the clean first-
+CoT-token distribution, then selects the largest equal-12-cell macro mean.
+The runner-up is fixed by the same score; exact score ties prefer the lower
+layer start. Unavailable targets and untreated KL values at or below `1e-9`
+remain visible but do not enter selection. Every one of the 12 cells must have
+at least one score for every candidate. A smoke run therefore requires
+`--limit-per-setting` of at least `2` and deterministically retains one record
+from each targeting condition before filling any remaining budget. The command
+commits and hashes `window_selection.json` before any held-out model call.
 
 The evaluation phase generates answers once under the selected and runner-up
 windows on the disjoint IDs. It reports per-setting paired risk differences,

@@ -286,12 +286,16 @@ data-adaptiveに選ばれたという
 sampleはモデルやtypo-targeting条件が異なっても必ず同じphaseに入ります。
 
 診断phaseは、事前固定した5つの6層候補 `[0,6)`、`[6,12)`、`[12,18)`、
-`[18,24)`、`[22,28)` を比較します。settingごと・候補ごとにclean first-CoT-token
-分布のnormalized restorationのmedianを求め、そのsetting等重みmacro meanが最大の
-候補を選びます。同じscoreでrunner-upも固定し、scoreが完全に同じ場合は開始層が
-小さい候補を優先します。targetを利用できないpairとuntreated KLが `1e-9` 以下のpairは
-記録に残しますが選択には使いません。held-out model callを始める前に
-`window_selection.json` をcommitしてhashを記録します。
+`[18,24)`、`[22,28)` を比較します。論文の12 cellのdepth evidenceに合わせ、6つの
+model--task setting内でもAttribution-4とRandom-4を分けます。model--task--target-rule
+cellごと・候補ごとにclean first-CoT-token分布のnormalized restorationのmedianを求め、
+12 cellを等重みとしたmacro meanが最大の候補を選びます。同じscoreでrunner-upも固定し、
+scoreが完全に同じ場合は開始層が小さい候補を優先します。targetを利用できないpairと
+untreated KLが `1e-9` 以下のpairは記録に残しますが選択には使いません。全候補について
+12 cellの各cellに少なくとも1件のscoreを要求します。そのためsmoke runの
+`--limit-per-setting` は2以上とし、まず各targeting条件から1件ずつ決定的に残してから
+残りのbudgetを埋めます。held-out model callを始める前に `window_selection.json` を
+commitしてhashを記録します。
 
 評価phaseは、分離されたID上でselected windowとrunner-up windowによる回答を一度だけ
 生成します。setting別のpaired risk difference、6検定を1 familyとしたHolm補正付き

@@ -198,7 +198,7 @@ def load_held_out_window_protocol(path: Path) -> HeldOutWindowProtocol:
         "target_availability": "exact-clean-prompt-token-prefix-and-one-suffix-token/v1",
         "untreated_kl_min_exclusive": 1e-9,
         "selection_metric": "median-normalized-first-token-kl-restoration/v1",
-        "cross_setting_score": "equal-setting-macro-mean/v1",
+        "cross_setting_score": "equal-model-task-target-rule-cell-macro-mean/v1",
         "ranking": "score-descending-then-start-ascending/v1",
         "select_top_k": 2,
     }

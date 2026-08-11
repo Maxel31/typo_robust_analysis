@@ -260,6 +260,10 @@ per-item records and the final comparison. Split IDs, the window scoring rule,
 tie breaking, and the selected window are thus recorded before held-out
 outcomes are generated. `[0,6)` remains the paper's
 historical, data-adaptive reference and is not relabelled prespecified.
+Diagnostic ranking preserves the paper's 12 model--task--target-rule cells:
+each candidate's within-cell median normalized KL restoration is combined with
+equal cell weight, without pooling Attribution-4 and Random-4 first. Held-out
+answer inference remains a six-model--task-setting paired comparison.
 
 ## Exclusions, failures, and multiplicity
 
