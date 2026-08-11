@@ -70,7 +70,9 @@ repositories, and adjacent transpositions never tune the v1 method.
 
 Training records retain clean text and generate substitution, deletion,
 insertion, duplication, and keyboard-neighbor typos deterministically on the
-fly. Fixed tune, pre-PR-gate, and final-test typo pairs are materialized and
+fly. The five training operations are sampled uniformly in v1; the general
+substitution character is sampled from training-repository-only natural typo
+statistics. Fixed tune, pre-PR-gate, and final-test typo pairs are materialized and
 content-hashed. The final-test identities remain sealed until all methods,
 hyperparameters, stopping rules, and the passing pre-PR checkpoint are frozen.
 

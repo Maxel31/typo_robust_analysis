@@ -64,7 +64,9 @@ MATH-500、CommonsenseQA、held-out natural repository、adjacent transposition�
 tuningに一切使いません。
 
 training recordはclean textを保持し、substitution、deletion、insertion、duplication、
-keyboard-neighbor typoを学習時に決定的に生成します。tune、PR前gate、最終testのtypo pairは
+keyboard-neighbor typoを学習時に決定的に生成します。v1では5種類のtraining operationを
+一様にsampleし、一般置換の文字はtraining repositoryだけから得たnatural typo統計に
+従います。tune、PR前gate、最終testのtypo pairは
 固定してcontent hashを記録します。最終testのidentityは、全手法・hyperparameter・停止規則と
 PR前gateを通過したcheckpointが固定されるまで封印します。
 
