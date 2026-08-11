@@ -1,0 +1,145 @@
+"""Pinned public-source adapter and local-corpus provenance contracts."""
+
+from __future__ import annotations
+
+import gzip
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from typo_robust_training.data.config import load_training_data_config
+from typo_robust_training.data.sources import (
+    HuggingFaceDataSourceProvider,
+    _format_huggingface_record,
+)
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "gemma4b-sanity.yaml"
+
+
+def test_observed_public_dataset_schemas_format_without_losing_answers() -> None:
+    protocol = load_training_data_config(DEFAULT_CONFIG)
+    rows = {
+        "fineweb_edu": {
+            "id": "doc-1",
+            "text": "An educational document with enough useful words.",
+            "url": "https://example.test/doc",
+            "dump": "CC-MAIN",
+            "language": "en",
+            "score": 4.0,
+            "token_count": 9,
+        },
+        "gsm8k": {"question": "What is 1 + 1?", "answer": "#### 2"},
+        "mmlu": {
+            "question": "Choose one.",
+            "choices": ["zero", "one", "two", "three"],
+            "answer": 2,
+            "subject": "fixture",
+        },
+        "arc": {
+            "id": "arc-1",
+            "question": "Which answer?",
+            "choices": {"label": ["A", "B"], "text": ["first", "second"]},
+            "answerKey": "B",
+        },
+        "mmlu_pro": {
+            "question_id": 7,
+            "question": "Choose one.",
+            "options": ["zero", "one"],
+            "answer": "B",
+            "answer_index": 1,
+            "category": "fixture",
+        },
+        "math_500": {
+            "unique_id": "math-1",
+            "problem": "Compute 1+1.",
+            "answer": "2",
+            "solution": "It is 2.",
+            "subject": "algebra",
+            "level": 1,
+        },
+        "commonsense_qa": {
+            "id": "csqa-1",
+            "question": "Where?",
+            "choices": {"label": ["A", "B"], "text": ["here", "there"]},
+            "answerKey": "A",
+        },
+    }
+    expected_answers = {
+        "fineweb_edu": None,
+        "gsm8k": "#### 2",
+        "mmlu": "C",
+        "arc": "B",
+        "mmlu_pro": "B",
+        "math_500": "2",
+        "commonsense_qa": "A",
+    }
+    for source_name, row in rows.items():
+        record = _format_huggingface_record(
+            source_name,
+            protocol.sources[source_name],
+            protocol.sources[source_name].splits[0],
+            0,
+            row,
+        )
+        assert record.answer == expected_answers[source_name]
+        assert record.source_revision == protocol.sources[source_name].revision
+
+
+def test_provider_passes_pinned_revision_and_declared_split_to_datasets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    protocol = load_training_data_config(DEFAULT_CONFIG)
+    calls: list[dict[str, object]] = []
+
+    def fake_load_dataset(dataset: str, **kwargs: object) -> list[dict[str, object]]:
+        calls.append({"dataset": dataset, **kwargs})
+        return [{"question": "What is 1 + 1?", "answer": "#### 2"}]
+
+    monkeypatch.setattr("datasets.load_dataset", fake_load_dataset)
+    provider = HuggingFaceDataSourceProvider(protocol=protocol)
+    records = tuple(provider.iter_records("gsm8k", protocol.sources["gsm8k"]))
+
+    assert len(records) == len(protocol.sources["gsm8k"].splits)
+    assert [call["split"] for call in calls] == list(protocol.sources["gsm8k"].splits)
+    assert all(call["revision"] == protocol.sources["gsm8k"].revision for call in calls)
+    assert all(call["name"] == "main" for call in calls)
+
+
+def test_dolma_requires_a_locally_accepted_archive_and_hashes_it(tmp_path: Path) -> None:
+    protocol = load_training_data_config(DEFAULT_CONFIG)
+    missing = tmp_path / "missing.jsonl.gz"
+    provider = HuggingFaceDataSourceProvider(
+        protocol=protocol,
+        dolma_corpus_path=missing,
+    )
+    with pytest.raises(ValueError, match="TYPO_DOLMA_CORPUS_PATH"):
+        tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
+
+    archive = tmp_path / "dolma.jsonl.gz"
+    with gzip.open(archive, "wt", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "id": "dolma-1",
+                    "text": "A held-out domain document with sufficient words.",
+                    "source": "pes2o",
+                    "metadata": {"fixture": True},
+                }
+            )
+            + "\n"
+        )
+    provider = HuggingFaceDataSourceProvider(
+        protocol=protocol,
+        dolma_corpus_path=archive,
+    )
+    records = tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
+    assert len(records) == 1
+    assert records[0].source == "dolma"
+    assert records[0].text.startswith("A held-out domain")
+    assert provider.provenance()["dolma_corpus_sha256"] == hashlib.sha256(
+        archive.read_bytes()
+    ).hexdigest()
