@@ -20,6 +20,10 @@ from typo_cot.experiments.answer_line_deletion import (
     AnswerLineDeletionRunError,
     run_answer_line_deletion,
 )
+from typo_cot.experiments.build_rebuttal_manifest import (
+    BuildRebuttalManifestConfig,
+    run_build_rebuttal_manifest,
+)
 from typo_cot.experiments.clean_prefix_scan import (
     CleanPrefixScanConfig,
     CleanPrefixScanRunError,
@@ -187,6 +191,14 @@ def _parser() -> argparse.ArgumentParser:
     show_parser = actions.add_parser("show", help="Show one operation's public contract.")
     show_parser.add_argument("experiment", type=_experiment)
     _add_format_argument(show_parser)
+
+    rebuttal_manifest = commands.add_parser(
+        "build-rebuttal-manifest",
+        help="Validate and freeze the six-setting rebuttal pair/cohort manifest.",
+    )
+    rebuttal_manifest.add_argument("--prepared-pairs-root", required=True, type=Path)
+    rebuttal_manifest.add_argument("--fixed-window-root", required=True, type=Path)
+    rebuttal_manifest.add_argument("--output-dir", required=True, type=Path)
 
     pairs = commands.add_parser(
         "prepare-edited-pairs",
@@ -383,9 +395,7 @@ def _parser() -> argparse.ArgumentParser:
         "restoration-order-accuracy",
         help="Regenerate answers while restoring edit groups in three Table 13 orders.",
     )
-    restoration_order.add_argument(
-        "--model", required=True, choices=RESTORATION_ORDER_MODELS
-    )
+    restoration_order.add_argument("--model", required=True, choices=RESTORATION_ORDER_MODELS)
     restoration_order.add_argument(
         "--benchmark", required=True, choices=RESTORATION_ORDER_BENCHMARKS
     )
@@ -617,6 +627,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command == "experiments" and args.catalog_action == "show":
         _print_spec(args.experiment, args.format)
+        return 0
+    if args.command == "build-rebuttal-manifest":
+        try:
+            result = run_build_rebuttal_manifest(
+                BuildRebuttalManifestConfig(
+                    prepared_pairs_root=args.prepared_pairs_root,
+                    fixed_window_root=args.fixed_window_root,
+                    output_dir=args.output_dir,
+                )
+            )
+        except (FileExistsError, OSError, RuntimeError, ValueError) as exc:
+            print(f"build-rebuttal-manifest: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.pair_records:,} validated pair record(s), "
+            f"{result.restoration_pairs:,} restoration pair(s), and "
+            f"{result.fixed_window_successes:,} fixed-window restoration(s): "
+            f"{result.pair_manifest_path}"
+        )
+        print(
+            f"fixed-window selected/excluded anchors: "
+            f"{result.fixed_selected_anchors:,}/{result.fixed_excluded_anchors:,}; "
+            f"prepared typo-wrong outside paper denominator: "
+            f"{result.prepared_wrong_outside_restoration:,}"
+        )
+        print(f"cohort IDs: {result.cohort_ids_path}")
+        print(f"source audit: {result.source_audit_path}")
+        print(f"run manifest: {result.run_path}")
         return 0
     if args.command == "prepare-edited-pairs":
         try:

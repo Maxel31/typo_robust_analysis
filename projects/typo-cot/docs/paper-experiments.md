@@ -74,6 +74,7 @@ refactor, a direct command is executable only when its catalog status is
 | `layerwise-kl-patching` | §3.3, §4.1, Appendix B | Selected clean-correct/edited-wrong pairs; complete finite grids with untreated KL > 1e-9; normalized first-CoT-token KL |
 | `layerwise-answer-patching` | §3.2–3.3, §4.1 | Separate eight-setting free-generation scans; at most 300 pooled anchors are rechecked into one fixed n=94–226 denominator per setting |
 | `fixed-window-answer-patching` | §3.3, §4.1, Appendix B | Frozen [0,6) answer patch; [6,12) prespecified MMLU-Pro comparison |
+| `build-rebuttal-manifest` | ARR addition plan v1 | Hash-validated six-setting 1,241/800 reference, selected-anchor and alignment exclusions, uncapped patch-eligible harm cohort, control plans, and held-out IDs |
 | `patch-coordinate-controls` | §3.3, §4.1, Appendix B | Primary 172 pairs; correct, +2 offset, cross-item, and identity controls |
 | `patch-position-controls` | §3.3, §4.1, Table 5, Appendix B | Gemma-3-4B/GSM8K Attribution-4 layerwise-KL cohort (published n=109), held common across edited-word, prompt-final, and question-final positions |
 | `patch-text-combination` | §3.5, §4.1, Table 2 | Descriptive patch absent/present × zero/full clean text on 172 pairs |
@@ -185,6 +186,11 @@ uv run --extra lrp typo-cot fixed-window-answer-patching \
   --layers 0:6 --directions clean-to-edited edited-to-clean \
   --gpu-id 0 \
   --output-dir results/fixed-window-answer-patching/gemma-3-4b-it/gsm8k
+
+uv run typo-cot build-rebuttal-manifest \
+  --prepared-pairs-root results/prepare-edited-pairs \
+  --fixed-window-root results/fixed-window-answer-patching \
+  --output-dir results/rebuttal/manifest
 
 CUDA_VISIBLE_DEVICES=0 \
 uv run --project projects/typo-cot --extra lrp typo-cot patch-coordinate-controls \

@@ -219,6 +219,40 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         status="implemented",
     ),
     ExperimentSpec(
+        slug="build-rebuttal-manifest",
+        title="Freeze the six-setting rebuttal cohorts and controls",
+        paper_question="ARR addition",
+        paper_sections=("Rebuttal analysis plan v1",),
+        summary=(
+            "Validate the prepared-pair and fixed-window producer artifacts, normalize "
+            "all six settings, and freeze cohort, offset, donor, and held-out identities."
+        ),
+        cohort=(
+            "The exact six GSM8K/MMLU Table 6 settings: 1,241 clean-correct, "
+            "typo-wrong restoration pairs plus the uncapped alignment-eligible "
+            "clean-correct, typo-correct harm cohort; alignment-ineligible records and "
+            "selected-anchor exclusions remain explicit."
+        ),
+        intervention="No model intervention; hash-bound CPU validation and planning only.",
+        readout=(
+            "Normalized per-pair manifest, cohort IDs, deterministic control plans, and "
+            "source-integrity audit."
+        ),
+        required_arguments=(
+            "--prepared-pairs-root",
+            "--fixed-window-root",
+            "--output-dir",
+        ),
+        outputs=(
+            "pair_manifest.jsonl",
+            "cohort_ids.json",
+            "source_audit.json",
+            "run.json",
+        ),
+        compute="cpu",
+        status="implemented",
+    ),
+    ExperimentSpec(
         slug="patch-coordinate-controls",
         title="Compare edited-word patches with coordinate and donor controls",
         paper_question="RQ1",

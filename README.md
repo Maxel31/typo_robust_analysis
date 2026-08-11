@@ -54,15 +54,17 @@ inspection and contract tests require no model download.
 
 ## ARR additions and robustness training
 
-The command interfaces for the ARR rebuttal additions and prospective
-typo-robustness training are frozen before implementation in
+The analysis contracts for the ARR rebuttal additions and prospective
+typo-robustness training are frozen before result generation in
 [`rebuttal_analysis_plan_v1.md`](projects/typo-cot/docs/rebuttal_analysis_plan_v1.md)
 and
 [`robustness_training_plan_v1.md`](projects/typo-cot/docs/robustness_training_plan_v1.md).
-The package README shows one descriptive command per experiment and labels
-these future commands `interface-frozen` until their reviewed implementation is
-merged. Training is published only after held-out evaluation demonstrates a
-robustness improvement while preserving clean performance.
+The CPU-only `build-rebuttal-manifest` command is implemented; it validates and
+freezes the exact six-setting source cohort before any new intervention is
+run. The package README shows one descriptive command per remaining experiment
+and labels unimplemented commands `interface-frozen`. Training is published
+only after held-out evaluation demonstrates a robustness improvement while
+preserving clean performance.
 
 ## Repository map
 
