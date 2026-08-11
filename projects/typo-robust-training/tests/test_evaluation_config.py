@@ -93,6 +93,7 @@ def test_evaluation_command_requires_explicit_role_checkpoints_and_resume() -> N
             "--splits",
             "same-task",
             "unseen-task",
+            "unseen-content",
             "unseen-typo",
             "--gpu-id",
             "3",
@@ -109,7 +110,7 @@ def test_evaluation_command_requires_explicit_role_checkpoints_and_resume() -> N
     assert args.evaluation_role == "pre-pr-gate"
     assert args.layer_selection == Path("layers.json")
     assert args.checkpoints == [Path("seed-42/adapter"), Path("seed-43/adapter")]
-    assert args.splits == ["same-task", "unseen-task", "unseen-typo"]
+    assert args.splits == ["same-task", "unseen-task", "unseen-content", "unseen-typo"]
     assert args.gpu_id == "3"
     assert args.output_dir == Path("evaluation")
     assert args.confirm_sealed_role is True

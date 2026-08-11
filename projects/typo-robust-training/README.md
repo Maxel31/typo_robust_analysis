@@ -289,7 +289,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --evaluation-role tune \
   --layer-selection "${TRAIN_ROOT}/localization/layers/layer_selection.json" \
   --checkpoint "${TRAIN_ROOT}/training/localized-state-distillation/seed-42/adapter" \
-  --splits same-task unseen-task unseen-typo \
+  --splits same-task unseen-task unseen-content unseen-typo \
   --gpu-id "${GPU_ID}" \
   --output-dir "${TRAIN_ROOT}/evaluation/tune/targeted-seed-42" \
   --resume
