@@ -183,10 +183,13 @@ Interpretation is fixed before results:
 `multitoken-kl-readout` audits all 1,241 restoration pairs without free
 generation. Before any model forward, it derives the clean-continuation target
 IDs. A continuation with fewer than 16 tokens is retained as an unavailable
-per-item record with reason `clean_continuation_lt_16`, but is excluded from
-all readout and bootstrap denominators. The setting table reports
+per-item record with reason `clean_continuation_lt_16`. If appending the
+continuation changes the prompt-side tokenization, exact target isolation is
+not possible; that pair is retained with reason
+`clean_prompt_not_exact_token_prefix`. Both checks happen before model forward,
+and both reasons are excluded from all readout and bootstrap denominators. The setting table reports
 `n_target_available`, and the run summary reports `target_available_pairs`.
-This result-independent rule is frozen as
+Both result-independent rules are frozen as
 `record-unavailable-before-forward/v1`.
 
 For every target-available pair, the command teacher-forces the same clean

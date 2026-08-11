@@ -38,6 +38,10 @@ class CleanContinuationTooShort(ValueError):
         self.available_token_text = available_token_text
 
 
+class CleanPromptPrefixMismatch(ValueError):
+    """Signal that boundary re-tokenization prevents exact target isolation."""
+
+
 def _flat_token_ids(value: object, *, field: str) -> tuple[int, ...]:
     if hasattr(value, "detach"):
         value = value.detach().cpu().tolist()
@@ -73,7 +77,9 @@ def clean_continuation_target_ids(
     prompt_ids = _flat_token_ids(prompt_encoding.get("input_ids"), field="prompt input_ids")
     full_ids = _flat_token_ids(full_encoding.get("input_ids"), field="full input_ids")
     if full_ids[: len(prompt_ids)] != prompt_ids:
-        raise ValueError("clean prompt is not an exact token-ID prefix of prompt plus continuation")
+        raise CleanPromptPrefixMismatch(
+            "clean prompt is not an exact token-ID prefix of prompt plus continuation"
+        )
     suffix = full_ids[len(prompt_ids) :]
     targets = suffix[:count]
     raw_token_text = tokenizer.convert_ids_to_tokens(list(targets))
@@ -164,6 +170,15 @@ class HuggingFaceMultiTokenKLReadoutRuntime(HuggingFaceFixedWindowAnswerPatching
                 patched_kl=(),
                 available=False,
                 invalid_reason="clean_continuation_lt_16",
+            )
+        except CleanPromptPrefixMismatch:
+            return MultiTokenKLScan(
+                target_token_ids=(),
+                target_token_text=(),
+                untreated_kl=(),
+                patched_kl=(),
+                available=False,
+                invalid_reason="clean_prompt_not_exact_token_prefix",
             )
 
         runtime_pair = manifest_runtime_pair(pair)
@@ -262,6 +277,7 @@ class HuggingFaceMultiTokenKLReadoutRuntime(HuggingFaceFixedWindowAnswerPatching
                 "prompt_prefix_validation": "exact-token-id-prefix/v1",
                 "model_inputs": "prompt-plus-first-15-target-token-ids/v1",
                 "short_continuation_policy": "record-unavailable-before-forward/v1",
+                "prompt_prefix_mismatch_policy": "record-unavailable-before-forward/v1",
                 "divergence": "kl-clean-to-condition/v1",
                 "negative_kl_roundoff_tolerance": 1e-12,
                 "forward": {
@@ -276,6 +292,7 @@ class HuggingFaceMultiTokenKLReadoutRuntime(HuggingFaceFixedWindowAnswerPatching
 
 __all__ = [
     "CleanContinuationTooShort",
+    "CleanPromptPrefixMismatch",
     "HuggingFaceMultiTokenKLReadoutRuntime",
     "clean_continuation_target_ids",
 ]

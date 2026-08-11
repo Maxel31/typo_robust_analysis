@@ -15,6 +15,7 @@ _TARGET_SOURCE = "clean-continuation-token-ids/v1"
 _PREFIX_VALIDATION = "exact-token-id-prefix/v1"
 _MODEL_INPUTS = "prompt-plus-first-15-target-token-ids/v1"
 _SHORT_CONTINUATION_POLICY = "record-unavailable-before-forward/v1"
+_PREFIX_MISMATCH_POLICY = "record-unavailable-before-forward/v1"
 _DIVERGENCE = "kl-clean-to-condition/v1"
 _PRIMARY_RANGE = (2, 16)
 _SECONDARY_RANGES = ((2, 4), (2, 8))
@@ -38,6 +39,7 @@ class MultiTokenKLReadoutProtocol:
     prompt_prefix_validation: str
     model_inputs: str
     short_continuation_policy: str
+    prompt_prefix_mismatch_policy: str
     divergence: str
     primary_token_range: tuple[int, int]
     secondary_token_ranges: tuple[tuple[int, int], ...]
@@ -62,6 +64,7 @@ class MultiTokenKLReadoutProtocol:
                 "prompt_prefix_validation": self.prompt_prefix_validation,
                 "model_inputs": self.model_inputs,
                 "short_continuation_policy": self.short_continuation_policy,
+                "prompt_prefix_mismatch_policy": self.prompt_prefix_mismatch_policy,
             },
             "readout": {
                 "divergence": self.divergence,
@@ -152,6 +155,7 @@ def load_multitoken_kl_readout_protocol(path: Path) -> MultiTokenKLReadoutProtoc
             "prompt_prefix_validation",
             "model_inputs",
             "short_continuation_policy",
+            "prompt_prefix_mismatch_policy",
         },
     )
     if forcing != {
@@ -160,6 +164,7 @@ def load_multitoken_kl_readout_protocol(path: Path) -> MultiTokenKLReadoutProtoc
         "prompt_prefix_validation": _PREFIX_VALIDATION,
         "model_inputs": _MODEL_INPUTS,
         "short_continuation_policy": _SHORT_CONTINUATION_POLICY,
+        "prompt_prefix_mismatch_policy": _PREFIX_MISMATCH_POLICY,
     }:
         raise ValueError("multi-token KL teacher-forcing contract differs")
 
@@ -232,6 +237,7 @@ def load_multitoken_kl_readout_protocol(path: Path) -> MultiTokenKLReadoutProtoc
         prompt_prefix_validation=_PREFIX_VALIDATION,
         model_inputs=_MODEL_INPUTS,
         short_continuation_policy=_SHORT_CONTINUATION_POLICY,
+        prompt_prefix_mismatch_policy=_PREFIX_MISMATCH_POLICY,
         divergence=_DIVERGENCE,
         primary_token_range=_PRIMARY_RANGE,
         secondary_token_ranges=_SECONDARY_RANGES,

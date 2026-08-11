@@ -61,6 +61,9 @@ _METRIC_COLUMNS = {
     "R_2:16": "r_2_16",
     "R_1_minus_R_2:16": "r_1_minus_r_2_16",
 }
+_UNAVAILABLE_REASONS = frozenset(
+    {"clean_continuation_lt_16", "clean_prompt_not_exact_token_prefix"}
+)
 
 
 class MultiTokenKLReadoutRunError(RuntimeError):
@@ -125,7 +128,7 @@ class MultiTokenKLScan:
             len(self.target_token_ids) != len(self.target_token_text)
             or self.untreated_kl
             or self.patched_kl
-            or self.invalid_reason != "clean_continuation_lt_16"
+            or self.invalid_reason not in _UNAVAILABLE_REASONS
         ):
             raise ValueError("unavailable multi-token scan fields differ from the contract")
         if any(
@@ -339,6 +342,8 @@ def _runtime_provenance(
         or provenance.get("model_inputs") != protocol.model_inputs
         or provenance.get("short_continuation_policy")
         != protocol.short_continuation_policy
+        or provenance.get("prompt_prefix_mismatch_policy")
+        != protocol.prompt_prefix_mismatch_policy
         or provenance.get("divergence") != protocol.divergence
         or provenance.get("negative_kl_roundoff_tolerance")
         != protocol.negative_kl_roundoff_tolerance

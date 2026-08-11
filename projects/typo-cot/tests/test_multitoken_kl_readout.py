@@ -32,6 +32,7 @@ from typo_cot.experiments.multitoken_kl_readout.runner import (
 )
 from typo_cot.experiments.multitoken_kl_readout.runtime import (
     CleanContinuationTooShort,
+    CleanPromptPrefixMismatch,
     HuggingFaceMultiTokenKLReadoutRuntime,
     clean_continuation_target_ids,
 )
@@ -111,6 +112,7 @@ class _Runtime:
             "prompt_prefix_validation": "exact-token-id-prefix/v1",
             "model_inputs": "prompt-plus-first-15-target-token-ids/v1",
             "short_continuation_policy": "record-unavailable-before-forward/v1",
+            "prompt_prefix_mismatch_policy": "record-unavailable-before-forward/v1",
             "divergence": "kl-clean-to-condition/v1",
             "negative_kl_roundoff_tolerance": 1e-12,
             "forward": {
@@ -157,6 +159,7 @@ def test_default_protocol_catalog_and_cli_match_the_frozen_readme() -> None:
     assert protocol.window == (0, 6)
     assert protocol.teacher_forced_tokens == 16
     assert protocol.short_continuation_policy == "record-unavailable-before-forward/v1"
+    assert protocol.prompt_prefix_mismatch_policy == "record-unavailable-before-forward/v1"
     assert protocol.primary_token_range == (2, 16)
     assert protocol.secondary_token_ranges == ((2, 4), (2, 8))
     assert protocol.denominator_epsilon == 1e-9
@@ -275,7 +278,7 @@ def test_clean_continuation_targets_require_an_exact_prompt_prefix() -> None:
     assert target_text == tuple(f"<{token}>" for token in range(10, 26))
 
     bad = _Tokenizer({prompt: [1, 2, 3], prompt + continuation: [1, 9, 3, *range(20)]})
-    with pytest.raises(ValueError, match="exact token-ID prefix"):
+    with pytest.raises(CleanPromptPrefixMismatch, match="exact token-ID prefix"):
         clean_continuation_target_ids(
             bad,
             clean_prompt=prompt,
@@ -316,6 +319,30 @@ def test_short_clean_continuation_is_recorded_before_alignment_or_forward() -> N
     assert scan.available is False
     assert scan.invalid_reason == "clean_continuation_lt_16"
     assert scan.target_token_ids == (10, 11, 12)
+    assert scan.untreated_kl == scan.patched_kl == ()
+
+
+def test_prompt_prefix_mismatch_is_recorded_before_alignment_or_forward() -> None:
+    prompt = "prompt"
+    continuation = " boundary"
+    runtime = object.__new__(HuggingFaceMultiTokenKLReadoutRuntime)
+    runtime.num_layers = 6
+    runtime.tokenizer = _Tokenizer(
+        {prompt: [1, 2, 3], prompt + continuation: [1, 2, 9, *range(10, 30)]}
+    )
+    runtime._tokenize_and_validate = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("prefix mismatches must be recorded before alignment or model use")
+    )
+
+    scan = runtime.scan_pair(
+        {"clean_text": prompt, "clean_continuation": continuation},
+        teacher_forced_tokens=16,
+        layer_window=(0, 6),
+    )
+
+    assert scan.available is False
+    assert scan.invalid_reason == "clean_prompt_not_exact_token_prefix"
+    assert scan.target_token_ids == scan.target_token_text == ()
     assert scan.untreated_kl == scan.patched_kl == ()
 
 

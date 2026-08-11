@@ -154,9 +154,12 @@ The command writes `source_write_grid_records.jsonl`,
 `multitoken-kl-readout` is implemented and GPU-only. For every restoration
 pair in the six-setting manifest, it first tokenizes the stored clean
 continuation. A pair with fewer than 16 continuation tokens is recorded as
-`clean_continuation_lt_16` before any model forward and is excluded from the
-readout denominator, while remaining in the 1,241-pair audit trail. The output
-reports `n_target_available` per setting and `target_available_pairs` overall.
+`clean_continuation_lt_16`; a pair whose prompt token IDs are not an exact
+prefix after appending the continuation is recorded as
+`clean_prompt_not_exact_token_prefix`. Both checks happen before any model
+forward. These pairs are excluded from the readout denominator while remaining
+in the 1,241-pair audit trail. The output reports `n_target_available` per
+setting and `target_available_pairs` overall.
 For every available pair, the command teacher-forces the same first 16 token
 IDs after the clean, typo, and patched-typo prompts. The patch copies the
 edited-word state over layers `[0,6)`. The primary per-pair score compares the
