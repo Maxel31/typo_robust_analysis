@@ -95,6 +95,13 @@ bootstrap intervals. Use exactly one physical GPU; `--limit-per-setting` is a
 non-confirmatory smoke-test option and `--resume` verifies and reuses completed
 pair checkpoints.
 
+The reused correct arm was produced with positional fallback enabled after an
+empty primary extraction, including at the generation length cap. The new
+offset and cross-item arms deliberately use that same rule for symmetric paired
+scoring. This corrects the initial runner contract before any confirmatory
+six-setting result generation; it affects only length-capped continuations with
+an empty primary extraction, and termination remains recorded.
+
 ```bash
 GPU_ID=0
 FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching

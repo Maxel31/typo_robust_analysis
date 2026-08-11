@@ -86,6 +86,12 @@ bootstrapと設定等重みnested bootstrapの区間を計算します。物理G
 指定してください。`--limit-per-setting` は非confirmatoryなsmoke test用、
 `--resume` は検証済みpair checkpointの再利用用です。
 
+再利用するcorrect armは、primary抽出が空の場合、generation length capでも
+positional fallbackを許可する契約で生成されています。paired比較を対称にするため、
+新規offset/cross-item armにも同じ規則を意図的に適用します。これはsix-settingの
+confirmatory結果を生成する前に初期runner契約を修正するもので、影響はlength capかつ
+primary抽出が空のcontinuationだけです。termination自体は引き続き記録します。
+
 ```bash
 GPU_ID=0
 FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching

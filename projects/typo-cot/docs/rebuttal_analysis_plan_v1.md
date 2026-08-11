@@ -118,6 +118,15 @@ all six settings. Each item has three arms over `[0,6)` and greedy generation:
 3. **cross-item**: another item's clean edited-word-final states are written to
    the recipient's original typo coordinates.
 
+The reused correct arm was produced under a primary-then-empty-only positional
+fallback that remains enabled at the generation length cap. The prospectively
+generated offset and cross-item arms use the same extraction rule so paired
+events are comparable. Before any confirmatory six-setting result generation,
+this corrects the initial internal runtime contract that enabled positional
+fallback only after EOS. The impact is limited to length-capped continuations
+whose primary extractor is empty; EOS versus length-cap termination is still
+stored for every new generation.
+
 Every offset coordinate must remain in the stored prompt interior (excluding
 the first and final prompt tokens), outside every edited-token span, and valid
 in both donor and recipient prompts. If any aligned word fails this rule, the
