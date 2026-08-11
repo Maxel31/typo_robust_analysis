@@ -63,6 +63,12 @@ natural typoはrepositoryを単位としてsampling前に分割します。Dolma
 MATH-500、CommonsenseQA、held-out natural repository、adjacent transpositionはv1手法の
 tuningに一切使いません。
 
+長いFineWeb-Edu/Dolma documentでは、まずcontent hashで固定される8,192文字のwindowを
+1つ選び、次に固定tokenizerの512-token上限へ収まる単語境界までのprefixを保持します。
+元の長さ、window境界、保持文字数、正確なtoken数を記録します。これによりtypo対象を
+modelが実際に見るsequence内へ限定し、評価結果でwindowを選ばずdeduplication memoryを
+制限します。
+
 training recordはclean textを保持し、substitution、deletion、insertion、duplication、
 keyboard-neighbor typoを学習時に決定的に生成します。v1では5種類のtraining operationを
 一様にsampleし、一般置換の文字はtraining repositoryだけから得たnatural typo統計に

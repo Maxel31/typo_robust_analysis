@@ -71,6 +71,13 @@ FineWeb-Edu document groups and natural-typo repositories are split before
 sampling. Dolma, MMLU-Pro, MATH-500, CommonsenseQA, held-out natural
 repositories, and adjacent transpositions never tune the v1 method.
 
+For long FineWeb-Edu and Dolma documents, the builder first chooses one
+content-hash-stable 8,192-character window, then keeps a whole-word prefix that
+fits the pinned tokenizer's 512-token limit. It records the original length,
+window boundaries, retained character count, and exact token count. This keeps
+typo targets inside the sequence seen by the model and bounds deduplication
+memory without choosing windows from evaluation outcomes.
+
 Training records retain clean text and generate substitution, deletion,
 insertion, duplication, and keyboard-neighbor typos deterministically on the
 fly. The five training operations are sampled uniformly in v1; the general
