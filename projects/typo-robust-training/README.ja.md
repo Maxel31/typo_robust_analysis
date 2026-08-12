@@ -27,6 +27,9 @@ TRAIN_ROOT=projects/typo-robust-training/results
 GPU_SELECT=5
 GPU_VALIDATE=6
 GPU_ID=5  # exploratory commands below
+WANDB_PROJECT=typo-robustness-training
+# Before training, provide WANDB_API_KEY through a secret manager or the environment.
+# Optional: export WANDB_ENTITY=<team-or-user-entity>
 
 uv sync --project "${TRAIN_PROJECT}" --locked
 ```
@@ -184,6 +187,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --config "${TRAIN_PROJECT}/configs/baselines/noisy-language-model.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
   --output-dir "${TRAIN_ROOT}/training/noisy-language-model/seed-42" \
   --resume
 
@@ -192,6 +196,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --config "${TRAIN_PROJECT}/configs/baselines/output-matching.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
   --output-dir "${TRAIN_ROOT}/training/output-matching/seed-42" \
   --resume
 
@@ -200,6 +205,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --config "${TRAIN_PROJECT}/configs/baselines/global-state-alignment.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
   --output-dir "${TRAIN_ROOT}/training/global-state-alignment/seed-42" \
   --resume
 
@@ -210,6 +216,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --layer-selection "${TRAIN_ROOT}/localization/layers/layer_selection.json" \
   --component-selection "${TRAIN_ROOT}/localization/components/component_selection.json" \
   --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
   --output-dir "${TRAIN_ROOT}/training/localized-state-distillation/seed-42" \
   --resume
 ```
@@ -222,6 +229,13 @@ Section 2のartifactを使う有界なresidual-window objectiveは別の機能�
 確証用の各条件はseed 42、43、44で繰り返します。Teacherはclean入力を受け取り、freezeした
 ままでactivation patchは行いません。Studentはtypo入力を受け取り、宣言したLoRA parameter
 だけを変更できます。全条件でtoken accountingと厳密なcheckpoint/resume挙動を共通化します。
+
+公開する全学習commandではonline W&B trackingを必須にします。API keyは
+`WANDB_API_KEY`からだけ渡し、`WANDB_ENTITY`は任意です。完了したoptimizer stepごとに、
+集約total/component loss、learning rate、gradient norm、token throughput、GPU memoryを
+uploadします。corpus text、prompt、record ID、API key、checkpoint内容は送信しません。
+`wandb_run.json`にはrun ID、project/entity、URL、resume境界だけを保存し、`--resume`時は
+同一W&B runへ継続してloss curveを重複させません。
 
 ## 5. held-out頑健性を評価する
 

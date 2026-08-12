@@ -31,6 +31,9 @@ TRAIN_ROOT=projects/typo-robust-training/results
 GPU_SELECT=5
 GPU_VALIDATE=6
 GPU_ID=5  # exploratory commands below
+WANDB_PROJECT=typo-robustness-training
+# Before training, provide WANDB_API_KEY through a secret manager or the environment.
+# Optional: export WANDB_ENTITY=<team-or-user-entity>
 
 uv sync --project "${TRAIN_PROJECT}" --locked
 ```
@@ -203,6 +206,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --config "${TRAIN_PROJECT}/configs/baselines/noisy-language-model.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
   --output-dir "${TRAIN_ROOT}/training/noisy-language-model/seed-42" \
   --resume
 
@@ -211,6 +215,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --config "${TRAIN_PROJECT}/configs/baselines/output-matching.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
   --output-dir "${TRAIN_ROOT}/training/output-matching/seed-42" \
   --resume
 
@@ -219,6 +224,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --config "${TRAIN_PROJECT}/configs/baselines/global-state-alignment.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
   --output-dir "${TRAIN_ROOT}/training/global-state-alignment/seed-42" \
   --resume
 
@@ -229,6 +235,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --layer-selection "${TRAIN_ROOT}/localization/layers/layer_selection.json" \
   --component-selection "${TRAIN_ROOT}/localization/components/component_selection.json" \
   --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
   --output-dir "${TRAIN_ROOT}/training/localized-state-distillation/seed-42" \
   --resume
 ```
@@ -243,6 +250,15 @@ Repeat confirmatory conditions with seeds 42, 43, and 44. The teacher receives
 clean input, stays frozen, and is never activation-patched. The student
 receives typo input; only declared LoRA parameters may change. All conditions
 share token accounting and exact checkpoint/resume behavior.
+
+Every public training command requires online W&B tracking. Supply the API key
+only through `WANDB_API_KEY`; `WANDB_ENTITY` is optional. At each completed
+optimizer step the run uploads aggregate total/component losses, learning
+rate, gradient norm, token throughput, and GPU-memory telemetry. Raw corpus
+text, prompts, record IDs, the API key, and checkpoint contents are never sent.
+`wandb_run.json` stores only the run ID, project/entity, URL, and resume
+boundary so `--resume` continues the same W&B run without duplicating the
+loss curve.
 
 ## 5. Evaluate held-out robustness
 
