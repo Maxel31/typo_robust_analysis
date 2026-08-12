@@ -144,6 +144,12 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _evaluation_benchmark(benchmark: str) -> str:
+    """Map the public benchmark spelling to the evaluator's internal key."""
+
+    return "mmlu_pro" if benchmark == "mmlu-pro" else benchmark
+
+
 def _mapping(value: object, *, field: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{field} must be a JSON object")
@@ -281,7 +287,7 @@ def _validate_fixed_generation(
         raise ValueError(f"{field}.text must be a string")
     extraction = extract_with_fallback(
         text,
-        benchmark="mmlu_pro" if benchmark == "mmlu-pro" else benchmark,
+        benchmark=_evaluation_benchmark(benchmark),
         correct_answer=gold_answer,
         allow_positional=termination == "eos",
     )
@@ -768,7 +774,7 @@ def _validate_fixed_reference(
             and answers_equal(
                 str(patched.get("value")),
                 str(clean.get("value")),
-                benchmark=setting.task,
+                benchmark=_evaluation_benchmark(setting.task),
             )
         )
         if event is not expected_event:

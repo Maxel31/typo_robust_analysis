@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from typo_cot.cli import main
+from typo_cot.experiments.build_rebuttal_manifest import runner as manifest_runner
 from typo_cot.experiments.build_rebuttal_manifest import (
     REBUTTAL_MANIFEST_PROTOCOL,
     REBUTTAL_SETTINGS,
@@ -24,6 +25,11 @@ from typo_cot.experiments.fixed_window_answer_patching import (
 
 
 _FIXTURE_DATASET_RECORDS = 150
+
+
+def test_evaluation_benchmark_normalizes_mmlu_pro() -> None:
+    assert manifest_runner._evaluation_benchmark("mmlu-pro") == "mmlu_pro"
+    assert manifest_runner._evaluation_benchmark("mmlu") == "mmlu"
 
 
 def _sha256(path: Path) -> str:
