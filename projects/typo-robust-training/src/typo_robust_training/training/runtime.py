@@ -214,6 +214,15 @@ class HuggingFaceAdapterTrainingRuntime:
     def zero_grad(self) -> None:
         self.optimizer.zero_grad(set_to_none=True)
 
+    def telemetry(self) -> dict[str, int]:
+        torch = self._torch
+        return {
+            "gpu_memory_allocated_bytes": int(torch.cuda.memory_allocated()),
+            "gpu_peak_memory_allocated_bytes": int(torch.cuda.max_memory_allocated()),
+            "gpu_memory_reserved_bytes": int(torch.cuda.memory_reserved()),
+            "gpu_peak_memory_reserved_bytes": int(torch.cuda.max_memory_reserved()),
+        }
+
     def save_state(self, path: Path) -> None:
         from peft import get_peft_model_state_dict
 
