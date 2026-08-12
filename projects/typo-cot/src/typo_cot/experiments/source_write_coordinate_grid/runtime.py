@@ -97,7 +97,6 @@ class HuggingFaceSourceWriteCoordinateGridRuntime(HuggingFaceSixSettingPatchCont
                         donor_cache=donor_cache[arm[0]],
                     ),
                     field=f"{pair.get('pair_id')}:{arm}",
-                    allow_positional_after_length_cap=True,
                 )
                 results[arm] = ControlArmResult(
                     generation=generation,
@@ -114,7 +113,9 @@ class HuggingFaceSourceWriteCoordinateGridRuntime(HuggingFaceSixSettingPatchCont
                 "operation": "source-write-coordinate-grid",
                 "runtime": "HuggingFaceSourceWriteCoordinateGridRuntime",
                 "generated_arms": list(_GENERATED_ARMS),
-                "answer_extraction": "primary-then-empty-only-positional/v1",
+                "answer_extraction": (
+                    "primary-then-empty-only-positional-by-termination/v1"
+                ),
             }
         )
         return payload

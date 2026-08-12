@@ -11,6 +11,10 @@ from typo_cot.experiments.build_rebuttal_manifest.records import strict_loads
 _SCHEMA = "six-setting-patch-controls-config/v1"
 _CONTROLS = ("correct", "offset-2", "cross-item")
 _MULTIPLICITY = "holm-12-setting-level-tests/v1"
+_PAIR_BOOTSTRAP_REPLICATES = 10_000
+_NESTED_BOOTSTRAP_REPLICATES = 10_000
+_BOOTSTRAP_SEED = 42
+_CONFIDENCE_LEVEL = 0.95
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,30 +101,43 @@ def load_six_setting_patch_controls_protocol(
     if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
         raise ValueError("statistics.confidence_level must be numeric")
     confidence = float(confidence)
-    if not 0.0 < confidence < 1.0:
-        raise ValueError("statistics.confidence_level must be between zero and one")
+    if confidence != _CONFIDENCE_LEVEL:
+        raise ValueError("statistics.confidence_level must equal the frozen 0.95")
     multiplicity = statistics.get("multiplicity")
     if multiplicity != _MULTIPLICITY:
         raise ValueError("six-setting controls require the frozen Holm family")
+    pair_replicates = _integer(
+        statistics.get("pair_bootstrap_replicates"),
+        field="statistics.pair_bootstrap_replicates",
+    )
+    if pair_replicates != _PAIR_BOOTSTRAP_REPLICATES:
+        raise ValueError(
+            "statistics.pair_bootstrap_replicates must equal the frozen 10,000"
+        )
+    nested_replicates = _integer(
+        statistics.get("nested_bootstrap_replicates"),
+        field="statistics.nested_bootstrap_replicates",
+    )
+    if nested_replicates != _NESTED_BOOTSTRAP_REPLICATES:
+        raise ValueError(
+            "statistics.nested_bootstrap_replicates must equal the frozen 10,000"
+        )
+    bootstrap_seed = _integer(
+        statistics.get("bootstrap_seed"),
+        field="statistics.bootstrap_seed",
+        minimum=0,
+    )
+    if bootstrap_seed != _BOOTSTRAP_SEED:
+        raise ValueError("statistics.bootstrap_seed must equal the frozen 42")
     return SixSettingPatchControlsProtocol(
         schema_version=_SCHEMA,
         window=(start, stop),
         controls=_CONTROLS,
         primary_denominator="common-valid",
-        pair_bootstrap_replicates=_integer(
-            statistics.get("pair_bootstrap_replicates"),
-            field="statistics.pair_bootstrap_replicates",
-        ),
-        nested_bootstrap_replicates=_integer(
-            statistics.get("nested_bootstrap_replicates"),
-            field="statistics.nested_bootstrap_replicates",
-        ),
-        bootstrap_seed=_integer(
-            statistics.get("bootstrap_seed"),
-            field="statistics.bootstrap_seed",
-            minimum=0,
-        ),
-        confidence_level=confidence,
+        pair_bootstrap_replicates=_PAIR_BOOTSTRAP_REPLICATES,
+        nested_bootstrap_replicates=_NESTED_BOOTSTRAP_REPLICATES,
+        bootstrap_seed=_BOOTSTRAP_SEED,
+        confidence_level=_CONFIDENCE_LEVEL,
         multiplicity=_MULTIPLICITY,
         config_sha256=hashlib.sha256(raw).hexdigest(),
     )

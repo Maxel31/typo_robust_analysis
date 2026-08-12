@@ -582,10 +582,13 @@ def _compile_records(
         preserve = generation.is_correct
         harm = not preserve
         unextractable = not generation.is_extracted
-        answer_changed = not answers_equal(
-            generation.value,
-            baseline_value,
-            benchmark=str(record["task"]),
+        answer_changed = bool(
+            generation.is_extracted
+            and not answers_equal(
+                generation.value,
+                baseline_value,
+                benchmark=str(record["task"]),
+            )
         )
         source = _mapping(record.get("source"), field="record source")
         rows.append(
@@ -824,12 +827,19 @@ def _result_from_run(output_dir: Path, run: Mapping[str, object]) -> PatchHarmAu
         patched = _generation_from_payload(row.get("patched"), field="completed patched answer")
         baseline = _mapping(row.get("baseline"), field="completed baseline")
         benchmark = str(row.get("task"))
+        answer_changed = bool(
+            patched.is_extracted
+            and not answers_equal(
+                patched.value,
+                str(baseline.get("value")),
+                benchmark=benchmark,
+            )
+        )
         if (
             row.get("preserve") is not patched.is_correct
             or row.get("harm") is patched.is_correct
             or row.get("unextractable") is patched.is_extracted
-            or row.get("answer_changed")
-            is answers_equal(patched.value, str(baseline.get("value")), benchmark=benchmark)
+            or row.get("answer_changed") is not answer_changed
         ):
             raise ValueError("completed patch harm outcomes differ from raw answers")
 

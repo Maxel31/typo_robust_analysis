@@ -118,14 +118,12 @@ all six settings. Each item has three arms over `[0,6)` and greedy generation:
 3. **cross-item**: another item's clean edited-word-final states are written to
    the recipient's original typo coordinates.
 
-The reused correct arm was produced under a primary-then-empty-only positional
-fallback that remains enabled at the generation length cap. The prospectively
-generated offset and cross-item arms use the same extraction rule so paired
-events are comparable. Before any confirmatory six-setting result generation,
-this corrects the initial internal runtime contract that enabled positional
-fallback only after EOS. The impact is limited to length-capped continuations
-whose primary extractor is empty; EOS versus length-cap termination is still
-stored for every new generation.
+The reused correct arm and every prospectively generated offset and cross-item
+arm use the same primary-then-empty-only, termination-aware extraction rule so
+paired events are comparable. Positional fallback is disabled for a continuation
+that reaches the generation length cap. Effective EOS IDs and EOS-versus-length-
+cap termination are stored for every generation, and the reused correct event is
+recomputed from those fields before it enters a paired comparison.
 
 Every offset coordinate must remain in the stored prompt interior (excluding
 the first and final prompt tokens), outside every edited-token span, and valid
@@ -167,9 +165,9 @@ tests for prespecified pairwise contrasts, Holm adjustment, risk differences,
 and pair-bootstrap 95% intervals.
 
 Because `E->E` is reused from the fixed-window producer, all four arms use that
-producer's primary-then-empty-only positional fallback, including at the
-generation length cap. New generations additionally retain explicit EOS versus
-length-cap termination provenance.
+producer's primary-then-empty-only, termination-aware fallback. Positional rules
+are disabled at the generation length cap, and every generation retains explicit
+EOS versus length-cap termination provenance.
 
 Interpretation is fixed before results:
 
@@ -309,6 +307,6 @@ changed after inspecting its outcome under this plan.
 Each operation is implemented test-first on its own descriptive branch and PR
 against `develop`. The next operation starts only after actionable review on
 the current PR is resolved and the PR is merged. CPU contract tests precede
-each GPU smoke. Project validation runs use only physical GPU 3, expressed as
-matching `CUDA_VISIBLE_DEVICES=3` and `--gpu-id 3`; public examples retain a
+each GPU smoke. Project validation runs use only physical GPU 1, expressed as
+matching `CUDA_VISIBLE_DEVICES=1` and `--gpu-id 1`; public examples retain a
 user-selectable GPU variable.

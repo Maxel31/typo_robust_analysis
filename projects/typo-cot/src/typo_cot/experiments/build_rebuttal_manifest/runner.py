@@ -16,6 +16,7 @@ from typo_cot.data.matched_donors import (
     MatchedDonorCandidate,
     plan_cyclic_derangement,
 )
+from typo_cot.evaluation.fallback import answers_equal, extract_with_fallback
 from typo_cot.experiments.build_rebuttal_manifest.planning import (
     WindowSplitCandidate,
     plan_strict_offset_control,
@@ -36,6 +37,9 @@ from typo_cot.experiments.build_rebuttal_manifest.records import (
     sha256_file,
 )
 from typo_cot.experiments.catalog import PAPER_SHA256
+from typo_cot.experiments.fixed_window_answer_patching import (
+    FIXED_WINDOW_ANSWER_PATCHING_PROTOCOL,
+)
 
 _PROTOCOL = REBUTTAL_MANIFEST_PROTOCOL
 _TARGET_RULES = _PROTOCOL.target_rules
@@ -46,6 +50,10 @@ _FIXED_RUN_SCHEMA = "fixed-window-answer-patching-run/v1"
 _FIXED_RECORD_SCHEMA = "fixed-window-answer-patching-window/v1"
 _FIXED_STATUS_SCHEMA = "fixed-window-answer-patching-pair-status/v1"
 _SPLIT_SEED = _PROTOCOL.window_split_seed
+_FIXED_WINDOW_REFERENCE_CONTRACT = {
+    "producer_protocol": FIXED_WINDOW_ANSWER_PATCHING_PROTOCOL,
+    "event_validation": "explicit-termination-cap-aware-reextraction/v1",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +137,7 @@ class _FixedReference:
     selected_pair_ids: frozenset[str]
     exclusion_reason_by_pair_id: Mapping[str, str]
     event_by_pair_id: Mapping[str, bool]
+    length_cap_generations: int
 
 
 def _now() -> str:
@@ -215,6 +224,79 @@ def _validate_output_metadata(
     return records
 
 
+def _effective_eos_token_ids(runtime: Mapping[str, object], *, field: str) -> tuple[int, ...]:
+    raw = runtime.get("effective_eos_token_ids")
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(f"{field}.effective_eos_token_ids must be a non-empty integer array")
+    token_ids = tuple(raw)
+    if (
+        any(
+            not isinstance(token, int) or isinstance(token, bool) or token < 0
+            for token in token_ids
+        )
+        or tuple(sorted(set(token_ids))) != token_ids
+    ):
+        raise ValueError(f"{field}.effective_eos_token_ids must be sorted and unique")
+    _nonempty_string(
+        runtime.get("effective_eos_token_ids_source"),
+        field=f"{field}.effective_eos_token_ids_source",
+    )
+    return token_ids
+
+
+def _validate_fixed_generation(
+    value: object,
+    *,
+    field: str,
+    benchmark: str,
+    gold_answer: str,
+    effective_eos_token_ids: tuple[int, ...],
+) -> Mapping[str, object]:
+    generation = _mapping(value, field=field)
+    token_ids = generation.get("token_ids")
+    if (
+        not isinstance(token_ids, list)
+        or not token_ids
+        or any(
+            not isinstance(token, int) or isinstance(token, bool) or token < 0
+            for token in token_ids
+        )
+    ):
+        raise ValueError(f"{field}.token_ids must contain non-negative integers")
+    if len(token_ids) > 512:
+        raise ValueError(f"{field}.token_ids exceed the 512-token generation cap")
+    termination = generation.get("termination")
+    if termination not in {"eos", "length-cap"}:
+        raise ValueError(f"{field}.termination must be eos or length-cap")
+    eos_ids = frozenset(effective_eos_token_ids)
+    if termination == "length-cap":
+        if len(token_ids) != 512:
+            raise ValueError(f"{field} length-cap must contain exactly 512 tokens")
+        if any(token in eos_ids for token in token_ids):
+            raise ValueError(f"{field} length-cap contains an EOS token")
+    elif token_ids[-1] not in eos_ids or any(token in eos_ids for token in token_ids[:-1]):
+        raise ValueError(f"{field} EOS termination does not end at the first EOS token")
+    text = generation.get("text")
+    if not isinstance(text, str):
+        raise ValueError(f"{field}.text must be a string")
+    extraction = extract_with_fallback(
+        text,
+        benchmark="mmlu_pro" if benchmark == "mmlu-pro" else benchmark,
+        correct_answer=gold_answer,
+        allow_positional=termination == "eos",
+    )
+    expected = {
+        "value": extraction.value,
+        "is_extracted": extraction.is_extracted,
+        "is_correct": extraction.is_correct,
+        "method": extraction.method,
+        "primary_method": extraction.primary_method,
+    }
+    if any(generation.get(name) != expected_value for name, expected_value in expected.items()):
+        raise ValueError(f"{field} extraction differs under cap-aware validation")
+    return generation
+
+
 def _validate_prepared_run(
     *,
     pairs_path: Path,
@@ -243,6 +325,8 @@ def _validate_prepared_run(
     for field, expected in expected_arguments.items():
         if field not in arguments or arguments.get(field) != expected:
             raise ValueError(f"prepared run {field} must be {expected!r}: {run_path}")
+    if "sample_ids" in arguments:
+        raise ValueError(f"prepared run must not use an explicit sample-ID cohort: {run_path}")
     decoding = _mapping(run.get("decoding"), field=f"{run_path} decoding")
     for field, expected in (
         ("strategy", "greedy"),
@@ -296,6 +380,10 @@ def _validate_prepared_run(
     )
     if dataset_sample_count != written:
         raise ValueError(f"prepared dataset and output record counts differ: {run_path}")
+    if provenance.get("dataset_cohort_rule") != "paper-model-benchmark-cohort/v1":
+        raise ValueError(f"prepared run must use the paper dataset cohort: {run_path}")
+    if "sample_id_cohort" in provenance:
+        raise ValueError(f"prepared run must not use an explicit sample-ID cohort: {run_path}")
     if provenance.get("generation_protocol") != "explicit-greedy-generation/v1":
         raise ValueError(f"prepared generation protocol differs: {run_path}")
     if provenance.get("generation_termination_protocol") != "effective-eos-vs-length-cap/v1":
@@ -402,6 +490,16 @@ def _discover_prepared_sources(
             raise ValueError(f"prepared target-rule dataset SHA-256 differs: {setting.slug}")
         if len({source.dataset_sample_count for source in paired}) != 1:
             raise ValueError(f"prepared target-rule dataset counts differ: {setting.slug}")
+    for model in sorted({setting.model for setting in REBUTTAL_SETTINGS}):
+        model_sources = [source for source in sources.values() if source.setting.model == model]
+        if len({source.model_revision for source in model_sources}) != 1:
+            raise ValueError(f"prepared model revisions differ across tasks: {model}")
+    for task in sorted({setting.task for setting in REBUTTAL_SETTINGS}):
+        task_sources = [source for source in sources.values() if source.setting.task == task]
+        if len({source.dataset_records_sha256 for source in task_sources}) != 1:
+            raise ValueError(f"prepared dataset SHA-256 differs across models: {task}")
+        if len({source.dataset_sample_count for source in task_sources}) != 1:
+            raise ValueError(f"prepared dataset counts differ across models: {task}")
     return sources, ignored
 
 
@@ -432,7 +530,7 @@ def _validate_fixed_reference(
         run.get("protocol"),
         field=f"{run_path} protocol",
     )
-    if producer_protocol.get("schema_version") != "fixed-window-answer-patching-protocol/v1":
+    if producer_protocol != FIXED_WINDOW_ANSWER_PATCHING_PROTOCOL:
         raise ValueError(f"fixed-window producer protocol differs: {run_path}")
     arguments = _mapping(run.get("arguments"), field=f"{run_path} arguments")
     for field, expected in (("model", setting.model), ("benchmark", setting.task)):
@@ -588,6 +686,10 @@ def _validate_fixed_reference(
     for field in ("requested_revision", "model_revision", "tokenizer_revision"):
         if runtime.get(field) != revision:
             raise ValueError(f"fixed-window runtime {field} differs: {run_path}")
+    effective_eos_token_ids = _effective_eos_token_ids(
+        runtime,
+        field=f"{run_path} runtime",
+    )
 
     source_by_key: dict[tuple[str, str], dict[str, object]] = {}
     fingerprint_by_key: dict[tuple[str, str], str] = {}
@@ -599,6 +701,7 @@ def _validate_fixed_reference(
             fingerprint_by_key[key] = str(record["source"]["source_record_sha256"])
 
     event_by_pair_id: dict[str, bool] = {}
+    length_cap_generations = 0
     for line_number, _line, record in iter_jsonl_objects(records_path):
         context = f"{records_path}:{line_number}"
         if record.get("schema_version") != _FIXED_RECORD_SCHEMA:
@@ -632,6 +735,54 @@ def _validate_fixed_reference(
             or int(source_record["number_of_aligned_words"]) <= 0
         ):
             raise ValueError(f"{context}: fixed-window pair is outside restoration cohort")
+        gold_answer = _nonempty_string(
+            source_record.get("gold_answer"),
+            field=f"{context}.gold_answer",
+        )
+        baseline = _mapping(record.get("baseline"), field=f"{context}.baseline")
+        clean = _validate_fixed_generation(
+            baseline.get("clean"),
+            field=f"{context}.baseline.clean",
+            benchmark=setting.task,
+            gold_answer=gold_answer,
+            effective_eos_token_ids=effective_eos_token_ids,
+        )
+        edited = _validate_fixed_generation(
+            baseline.get("edited"),
+            field=f"{context}.baseline.edited",
+            benchmark=setting.task,
+            gold_answer=gold_answer,
+            effective_eos_token_ids=effective_eos_token_ids,
+        )
+        patched = _validate_fixed_generation(
+            record.get("patched_answer"),
+            field=f"{context}.patched_answer",
+            benchmark=setting.task,
+            gold_answer=gold_answer,
+            effective_eos_token_ids=effective_eos_token_ids,
+        )
+        if clean.get("is_correct") is not True or edited.get("is_correct") is not False:
+            raise ValueError(f"{context}: regenerated baseline is outside restoration cohort")
+        expected_event = bool(
+            patched.get("is_extracted")
+            and answers_equal(
+                str(patched.get("value")),
+                str(clean.get("value")),
+                benchmark=setting.task,
+            )
+        )
+        if event is not expected_event:
+            raise ValueError(f"{context}: event differs from re-extracted generations")
+        identical = record.get("recipient_generation_identical")
+        if (
+            not isinstance(identical, bool)
+            or identical is not (patched.get("token_ids") == edited.get("token_ids"))
+        ):
+            raise ValueError(f"{context}: recipient generation identity flag differs")
+        length_cap_generations += sum(
+            generation.get("termination") == "length-cap"
+            for generation in (clean, edited, patched)
+        )
         event_by_pair_id[pair_id] = event
     if len(event_by_pair_id) != setting.paper_denominator:
         raise ValueError(
@@ -711,6 +862,7 @@ def _validate_fixed_reference(
         selected_pair_ids=frozenset(selected_pair_ids),
         exclusion_reason_by_pair_id=exclusion_reason_by_pair_id,
         event_by_pair_id=event_by_pair_id,
+        length_cap_generations=length_cap_generations,
     )
 
 
@@ -1127,6 +1279,7 @@ def run_build_rebuttal_manifest(
             "fixed_window_schema": _FIXED_RUN_SCHEMA,
             "fixed_window_direction": _PROTOCOL.fixed_direction,
             "fixed_window": _PROTOCOL.fixed_window,
+            "fixed_window_reference": _FIXED_WINDOW_REFERENCE_CONTRACT,
             "target_rules": list(_TARGET_RULES),
             "offset_validity": "all-prompt-interior-non-edited-coordinates/v1",
             "cross_item_donor": ("task-model-target-rule-aligned-word-count-cyclic-derangement/v1"),
@@ -1166,6 +1319,7 @@ def run_build_rebuttal_manifest(
                     "setting_summary_sha256": reference.summary_sha256,
                     "model_revision": reference.model_revision,
                     "tokenizer_revision": reference.tokenizer_revision,
+                    "length_cap_generations": reference.length_cap_generations,
                 }
                 for reference in (references[setting.key] for setting in REBUTTAL_SETTINGS)
             ],

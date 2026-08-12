@@ -59,8 +59,8 @@ training setup.
 
 The initial model is `google/gemma-3-4b-it`. Llama-3.2-3B and Mistral-7B are
 extensions only after the Gemma pilot passes the pre-PR evidence gate. All GPU
-validation for this implementation uses physical GPU 3 and records logical
-`cuda:0`, `CUDA_VISIBLE_DEVICES=3`, package versions, peak VRAM, throughput,
+validation for this implementation uses physical GPU 1 and records logical
+`cuda:0`, `CUDA_VISIBLE_DEVICES=1`, package versions, peak VRAM, throughput,
 tokens, wall time, and GPU-hours.
 
 ## Dataset roles and licensing checks
@@ -366,7 +366,7 @@ tests cover clean-equals-typo near-zero state loss, edited-position masks,
 component masks, noised-word output masking, and zero teacher gradients.
 Parameter tests cover exact LoRA layer/module placement and frozen base weights.
 
-GPU smoke tests use physical GPU 3 only. A 100-pair hidden-state extraction and
+GPU smoke tests use physical GPU 1 only. A 100-pair hidden-state extraction and
 100-step sanity train must demonstrate finite losses, non-zero adapter
 gradients, unchanged teacher/base parameters, a byte-valid resumable
 checkpoint, and reproducible post-resume sample order before the MVP run.

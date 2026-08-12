@@ -279,7 +279,8 @@ def _runtime_provenance(
         or provenance.get("coordinate_source") != "rebuttal-pair-manifest/v1"
         or provenance.get("layer_window") != [0, 6]
         or provenance.get("generated_arms") != list(_GENERATED_ARMS)
-        or provenance.get("answer_extraction") != "primary-then-empty-only-positional/v1"
+        or provenance.get("answer_extraction")
+        != "primary-then-empty-only-positional-by-termination/v1"
     ):
         raise ValueError("source/write runtime provenance differs from the frozen protocol")
     eos_ids = provenance.get("effective_eos_token_ids")
@@ -610,6 +611,7 @@ def _analysis_rows(
     *,
     protocol: SourceWriteCoordinateGridProtocol,
     cohorts: Sequence[str],
+    confirmatory: bool,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     table_rows: list[dict[str, object]] = []
     contrasts: list[dict[str, object]] = []
@@ -671,7 +673,13 @@ def _analysis_rows(
     for row in contrasts:
         row["mcnemar_p_holm"] = adjusted[str(row["comparison_id"])]
         row["holm_family_size"] = len(contrasts)
-        row["holm_family"] = protocol.multiplicity
+        row["holm_family"] = (
+            protocol.multiplicity
+            if confirmatory
+            else f"holm-{len(contrasts)}-executed-tests/nonconfirmatory/v1"
+        )
+        row["planned_holm_family"] = protocol.multiplicity
+        row["confirmatory"] = confirmatory
     return table_rows, contrasts
 
 
@@ -914,6 +922,7 @@ def run_source_write_coordinate_grid(
             status_rows,
             protocol=protocol,
             cohorts=config.cohorts,
+            confirmatory=confirmatory,
         )
         paths = {name: output_dir / name for name in _PUBLIC_OUTPUTS}
         _write_jsonl_atomic(paths[_PUBLIC_OUTPUTS[0]], grid_rows)

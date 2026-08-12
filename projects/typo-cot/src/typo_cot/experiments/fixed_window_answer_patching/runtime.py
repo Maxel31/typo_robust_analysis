@@ -9,8 +9,9 @@ from collections.abc import Mapping
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
-from typo_cot.experiments.layerwise_answer_patching.runtime import (
-    continuation_token_ids,
+from typo_cot.evaluation.generation import (
+    classify_generated_token_ids,
+    resolve_effective_eos_token_ids,
 )
 
 if TYPE_CHECKING:
@@ -82,6 +83,14 @@ class HuggingFaceFixedWindowAnswerPatchingRuntime:
         self.layers = find_decoder_layers(self.model)
         self.num_layers = len(self.layers)
         self.device = next(self.model.parameters()).device
+        (
+            self.effective_eos_token_ids,
+            self.effective_eos_token_ids_source,
+        ) = resolve_effective_eos_token_ids(
+            generation_config=self.model.generation_config,
+            tokenizer=self.tokenizer,
+            operation="fixed-window-answer-patching",
+        )
 
     @staticmethod
     def _span(value: object, *, field: str, prompt_length: int) -> tuple[int, int]:
@@ -223,10 +232,26 @@ class HuggingFaceFixedWindowAnswerPatchingRuntime:
                 return_dict_in_generate=False,
                 output_scores=False,
                 pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=list(self.effective_eos_token_ids),
             )
-        token_ids = continuation_token_ids(
-            output_ids,
-            prompt_length=int(input_ids.shape[1]),
+        prompt_length = int(input_ids.shape[1])
+        if (
+            not hasattr(output_ids, "ndim")
+            or output_ids.ndim != 2
+            or int(output_ids.shape[0]) != 1
+            or int(output_ids.shape[1]) <= prompt_length
+            or int(output_ids.shape[1]) > prompt_length + 512
+            or not bool(output_ids[:, :prompt_length].equal(input_ids))
+        ):
+            raise ValueError("fixed-window generation returned an invalid capped sequence")
+        raw_token_ids = tuple(
+            int(token) for token in output_ids[0, prompt_length:].detach().cpu().tolist()
+        )
+        token_ids, termination = classify_generated_token_ids(
+            raw_token_ids,
+            effective_eos_token_ids=self.effective_eos_token_ids,
+            max_new_tokens=512,
+            field="fixed-window answer",
         )
         text = self.tokenizer.decode(
             list(token_ids),
@@ -237,6 +262,7 @@ class HuggingFaceFixedWindowAnswerPatchingRuntime:
             text,
             benchmark=self._extraction_benchmark,
             correct_answer=correct_answer,
+            allow_positional=termination == "eos",
         )
         return AnswerGeneration(
             token_ids=token_ids,
@@ -246,6 +272,7 @@ class HuggingFaceFixedWindowAnswerPatchingRuntime:
             is_correct=extraction.is_correct,
             method=extraction.method,
             primary_method=extraction.primary_method,
+            termination=termination,
         )
 
     def _capture(
@@ -403,6 +430,8 @@ class HuggingFaceFixedWindowAnswerPatchingRuntime:
             "tokenizer_revision_source": tokenizer_revision_source,
             "decoder_adapter": adapter,
             "num_decoder_layers": self.num_layers,
+            "effective_eos_token_ids": list(self.effective_eos_token_ids),
+            "effective_eos_token_ids_source": self.effective_eos_token_ids_source,
             "dtype": "bfloat16",
             "device": str(self.device),
             "cuda": torch.version.cuda,
@@ -423,5 +452,5 @@ class HuggingFaceFixedWindowAnswerPatchingRuntime:
                 "padding_side": getattr(self.tokenizer, "padding_side", "left"),
                 "patch_application": "all-window-layers-on-prompt-prefill-exactly-once",
             },
-            "answer_extraction": "primary-then-empty-only-fallback/v1",
+            "answer_extraction": "primary-then-empty-only-fallback-cap-aware/v2",
         }

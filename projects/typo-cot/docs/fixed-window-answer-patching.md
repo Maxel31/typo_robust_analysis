@@ -45,8 +45,10 @@ recipient block output. All other token positions remain unchanged. Hooks apply
 once during prompt prefill; cached one-token decoding steps are not patched.
 
 Each window starts an independent greedy, bfloat16, left-padded continuation of
-at most 512 tokens. The primary task extractor runs first. The deterministic
-fallback runs only when the primary result is empty.
+at most 512 tokens. The effective EOS token IDs and EOS-versus-length-cap
+termination are recorded for every generation. The primary task extractor runs
+first. The deterministic fallback runs only when the primary result is empty;
+its positional rules are disabled when generation stops at the length cap.
 
 Restoration is true only when an extracted patched edited answer canonically
 equals the fresh clean answer. Induction is true only when an extracted patched
@@ -79,7 +81,7 @@ pair-direction-window:
 - model, benchmark, targeting arm, sample ID, source-record SHA-256;
 - direction, half-open window bounds, model layer count, aligned position count;
 - fresh clean/edited baseline generations;
-- patched generation, extraction provenance, binary event, and whether its
+- patched generation, explicit termination, extraction provenance, binary event, and whether its
   token IDs are identical to the untreated recipient.
 
 `pair_status_records.jsonl` contains every selected anchor, including those

@@ -147,7 +147,7 @@ class _Runtime:
                 "num_return_sequences": 1,
                 "max_new_tokens": 512,
             },
-            "answer_extraction": "primary-then-empty-only-positional/v1",
+            "answer_extraction": "primary-then-empty-only-positional-by-termination/v1",
         }
 
     def scan_grid(
@@ -242,6 +242,28 @@ def test_protocol_rejects_bootstrap_replicate_drift(tmp_path: Path) -> None:
         load_source_write_coordinate_grid_protocol(changed)
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("bootstrap_seed", 43, "bootstrap_seed.*42"),
+        ("confidence_level", 0.9, "confidence_level.*0.95"),
+    ),
+)
+def test_protocol_rejects_other_statistical_drift(
+    tmp_path: Path,
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    payload = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    payload["statistics"][field] = value
+    changed = tmp_path / f"changed-{field}.yaml"
+    changed.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        load_source_write_coordinate_grid_protocol(changed)
+
+
 def test_grid_runtime_requests_the_fixed_reference_extraction_contract() -> None:
     from typo_cot.experiments.source_write_coordinate_grid.runtime import (
         HuggingFaceSourceWriteCoordinateGridRuntime,
@@ -261,7 +283,7 @@ def test_grid_runtime_requests_the_fixed_reference_extraction_contract() -> None
     requested_contracts: list[bool] = []
 
     def generate(**kwargs: object) -> ControlGeneration:
-        requested_contracts.append(bool(kwargs.get("allow_positional_after_length_cap")))
+        requested_contracts.append("allow_positional_after_length_cap" in kwargs)
         return ControlGeneration(
             token_ids=(1,),
             text="unfinished reasoning\n2",
@@ -305,7 +327,7 @@ def test_grid_runtime_requests_the_fixed_reference_extraction_contract() -> None
     }
 
     assert set(runtime.scan_grid(record)) == {"E->O", "O->E", "O->O"}
-    assert requested_contracts == [True, True, True]
+    assert requested_contracts == [False, False, False]
 
 
 def test_runner_rejects_duplicate_manifest_coordinates() -> None:
@@ -351,6 +373,45 @@ def test_cochran_q_handles_signal_and_the_all_equal_boundary() -> None:
     )
     assert boundary["statistic"] == 0.0
     assert boundary["p_value"] == 1.0
+
+
+def test_partial_cohort_labels_the_executed_holm_family_nonconfirmatory() -> None:
+    protocol = load_source_write_coordinate_grid_protocol(DEFAULT_CONFIG)
+    model, task = protocol.cohorts["primary"]
+    statuses = [
+        {
+            "model": model,
+            "task": task,
+            "validity": {
+                "O->O": {"valid": True},
+                "common-valid": True,
+            },
+            "events": {
+                "E->E": True,
+                "E->O": index == 0,
+                "O->E": False,
+                "O->O": False,
+            },
+        }
+        for index in range(2)
+    ]
+
+    _tables, contrasts = grid_runner._analysis_rows(
+        statuses,
+        protocol=protocol,
+        cohorts=("primary",),
+        confirmatory=False,
+    )
+
+    assert len(contrasts) == 2
+    assert {row["holm_family_size"] for row in contrasts} == {2}
+    assert {row["holm_family"] for row in contrasts} == {
+        "holm-2-executed-tests/nonconfirmatory/v1"
+    }
+    assert {row["planned_holm_family"] for row in contrasts} == {
+        "holm-4-cohort-contrast-tests/v1"
+    }
+    assert {row["confirmatory"] for row in contrasts} == {False}
 
 
 def test_runner_compiles_both_cohorts_and_resumes(

@@ -18,6 +18,8 @@ _VALIDITY = "correct-and-offset-valid/v1"
 _CONTRASTS = (("E->E", "E->O"), ("E->E", "O->E"))
 _MULTIPLICITY = "holm-4-cohort-contrast-tests/v1"
 _PAIR_BOOTSTRAP_REPLICATES = 10_000
+_BOOTSTRAP_SEED = 42
+_CONFIDENCE_LEVEL = 0.95
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +139,15 @@ def load_source_write_coordinate_grid_protocol(
     )
     if pair_bootstrap_replicates != _PAIR_BOOTSTRAP_REPLICATES:
         raise ValueError("statistics.pair_bootstrap_replicates must equal the frozen 10,000")
+    bootstrap_seed = _integer(
+        statistics.get("bootstrap_seed"),
+        field="statistics.bootstrap_seed",
+        minimum=0,
+    )
+    if bootstrap_seed != _BOOTSTRAP_SEED:
+        raise ValueError("statistics.bootstrap_seed must equal the frozen 42")
+    if float(confidence) != _CONFIDENCE_LEVEL:
+        raise ValueError("statistics.confidence_level must equal the frozen 0.95")
     return SourceWriteCoordinateGridProtocol(
         schema_version=_SCHEMA,
         window=(start, stop),
@@ -145,12 +156,8 @@ def load_source_write_coordinate_grid_protocol(
         common_validity=_VALIDITY,
         contrasts=_CONTRASTS,
         pair_bootstrap_replicates=_PAIR_BOOTSTRAP_REPLICATES,
-        bootstrap_seed=_integer(
-            statistics.get("bootstrap_seed"),
-            field="statistics.bootstrap_seed",
-            minimum=0,
-        ),
-        confidence_level=float(confidence),
+        bootstrap_seed=_BOOTSTRAP_SEED,
+        confidence_level=_CONFIDENCE_LEVEL,
         multiplicity=_MULTIPLICITY,
         config_sha256=hashlib.sha256(raw).hexdigest(),
     )

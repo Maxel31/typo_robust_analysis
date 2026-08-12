@@ -88,7 +88,7 @@ _TABLE7_REFERENCES: dict[str, dict[str, object]] = {
     },
 }
 
-_PROTOCOL = {
+FIXED_WINDOW_ANSWER_PATCHING_PROTOCOL = {
     "schema_version": "fixed-window-answer-patching-protocol/v1",
     "source_anchor": (
         "stored-continuations-reextracted-clean-correct-edited-wrong-with-aligned-word"
@@ -117,9 +117,11 @@ _PROTOCOL = {
         "padding_side": "left",
         "use_cache": True,
         "patch_application": "prompt-prefill-exactly-once-per-window-generation",
+        "termination": "effective-eos-vs-length-cap/v1",
     },
     "answer_extraction": (
-        "task-primary-then-empty-only-deterministic-fallback-exact-canonical-comparison/v1"
+        "task-primary-then-empty-only-deterministic-fallback-cap-aware-"
+        "exact-canonical-comparison/v2"
     ),
     "direction_denominators": {
         "clean-to-edited": "regenerated-clean-correct-and-regenerated-edited-wrong",
@@ -136,6 +138,7 @@ _PROTOCOL = {
         "seed": 42,
     },
 }
+_PROTOCOL = FIXED_WINDOW_ANSWER_PATCHING_PROTOCOL
 
 
 class FixedWindowAnswerPatchingRunError(RuntimeError):
@@ -257,6 +260,7 @@ class AnswerGeneration:
     is_correct: bool
     method: str
     primary_method: str
+    termination: str = "eos"
 
 
 @dataclass(frozen=True, slots=True)
@@ -802,6 +806,7 @@ def _generation_record(generation: AnswerGeneration) -> dict[str, object]:
     return {
         "token_ids": list(generation.token_ids),
         "text": generation.text,
+        "termination": generation.termination,
         "value": generation.value,
         "is_extracted": generation.is_extracted,
         "is_correct": generation.is_correct,
@@ -826,6 +831,12 @@ def _validate_generation(
         raise ValueError(f"{field}.token_ids must contain non-negative integers")
     if not isinstance(generation.text, str):
         raise ValueError(f"{field}.text must be a string")
+    if generation.termination not in {"eos", "length-cap"}:
+        raise ValueError(f"{field}.termination must be eos or length-cap")
+    if len(generation.token_ids) > 512:
+        raise ValueError(f"{field}.token_ids exceed the generation cap")
+    if generation.termination == "length-cap" and len(generation.token_ids) != 512:
+        raise ValueError(f"{field} length-cap must contain exactly 512 tokens")
     if not isinstance(generation.value, str):
         raise ValueError(f"{field}.value must be a string")
     if generation.is_extracted is not bool(generation.value):
@@ -995,6 +1006,13 @@ def _validate_checkpoint_generation(
     answer = generation.get("value")
     if not isinstance(text, str) or not isinstance(answer, str):
         raise ValueError(f"{field}.text and value must be strings")
+    termination = generation.get("termination")
+    if termination not in {"eos", "length-cap"}:
+        raise ValueError(f"{field}.termination must be eos or length-cap")
+    if len(token_ids) > 512:
+        raise ValueError(f"{field}.token_ids exceed the generation cap")
+    if termination == "length-cap" and len(token_ids) != 512:
+        raise ValueError(f"{field} length-cap must contain exactly 512 tokens")
     extracted = generation.get("is_extracted")
     if not isinstance(extracted, bool) or extracted is not bool(answer):
         raise ValueError(f"{field}.is_extracted must agree with the answer value")

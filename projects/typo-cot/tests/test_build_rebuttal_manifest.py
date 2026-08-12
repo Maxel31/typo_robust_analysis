@@ -16,8 +16,14 @@ from typo_cot.experiments.build_rebuttal_manifest import (
     load_rebuttal_pair_manifest,
     run_build_rebuttal_manifest,
 )
-from typo_cot.experiments.catalog import PAPER_SHA256, get_experiment
 from typo_cot.experiments.build_rebuttal_manifest.records import normalize_prepared_pair
+from typo_cot.experiments.catalog import PAPER_SHA256, get_experiment
+from typo_cot.experiments.fixed_window_answer_patching import (
+    FIXED_WINDOW_ANSWER_PATCHING_PROTOCOL,
+)
+
+
+_FIXTURE_DATASET_RECORDS = 150
 
 
 def _sha256(path: Path) -> str:
@@ -175,7 +181,7 @@ def _write_prepared_source(
     ]
     fingerprints = _write_jsonl(pairs_path, records)
     revision = hashlib.sha256(model.encode("utf-8")).hexdigest()
-    dataset_sha = hashlib.sha256(f"{model}\0{task}\0fixture".encode()).hexdigest()
+    dataset_sha = hashlib.sha256(f"{task}\0fixture".encode()).hexdigest()
     run = {
         "schema_version": "prepare-edited-pairs-run/v1",
         "paper_sha256": PAPER_SHA256,
@@ -265,6 +271,20 @@ def _write_fixed_run(
     included_identities = set(identities[:denominator])
     successful = set(identities[:successes])
 
+    def generation(value: str, *, correct: bool, token: int) -> dict[str, object]:
+        return {
+            "token_ids": [token, 2],
+            "text": f"The answer is {value}.",
+            "termination": "eos",
+            "value": value,
+            "is_extracted": True,
+            "is_correct": correct,
+            "method": "primary:pattern_1",
+            "primary_method": "pattern_1",
+        }
+
+    gold, wrong = _answer_values(task)
+
     window_rows: list[dict[str, object]] = []
     status_rows: list[dict[str, object]] = []
     for target_rule, sample_id in identities:
@@ -273,6 +293,13 @@ def _write_fixed_run(
         included = (target_rule, sample_id) in included_identities
         event = (target_rule, sample_id) in successful
         if included:
+            clean = generation(gold, correct=True, token=10)
+            edited = generation(wrong, correct=False, token=11)
+            patched = generation(
+                gold if event else wrong,
+                correct=event,
+                token=12 if event else 13,
+            )
             window_rows.append(
                 {
                     "schema_version": "fixed-window-answer-patching-window/v1",
@@ -289,6 +316,9 @@ def _write_fixed_run(
                     "num_layers": 12,
                     "aligned_positions": 1,
                     "event": event,
+                    "recipient_generation_identical": False,
+                    "baseline": {"clean": clean, "edited": edited},
+                    "patched_answer": patched,
                 }
             )
         status_rows.append(
@@ -350,7 +380,7 @@ def _write_fixed_run(
         "paper_sha256": PAPER_SHA256,
         "operation": "fixed-window-answer-patching",
         "status": "completed",
-        "protocol": {"schema_version": "fixed-window-answer-patching-protocol/v1"},
+        "protocol": json.loads(_canonical_json(FIXED_WINDOW_ANSWER_PATCHING_PROTOCOL)),
         "arguments": {
             "model": model,
             "benchmark": task,
@@ -383,6 +413,8 @@ def _write_fixed_run(
             "model_revision": revision,
             "tokenizer_revision": revision,
             "num_decoder_layers": 12,
+            "effective_eos_token_ids": [2],
+            "effective_eos_token_ids_source": "fixture",
         },
         "counts": {
             "selected_anchors": selected_anchors,
@@ -416,7 +448,7 @@ def _six_setting_fixture(tmp_path: Path) -> tuple[Path, Path]:
             "attribution-4": selected_anchors // 2,
             "random-4": selected_anchors - selected_anchors // 2,
         }
-        total_per_target = max(wrong_by_target.values()) + 2
+        total_per_target = _FIXTURE_DATASET_RECORDS
         sources = {
             target_rule: _write_prepared_source(
                 root=prepared_root,
@@ -614,11 +646,19 @@ def test_build_rebuttal_manifest_is_deterministic_complete_and_hash_bound(
         source["model_revision"] == source["tokenizer_revision"]
         for source in audit["sources"]["fixed_window"]
     )
+    assert all(
+        source["length_cap_generations"] == 0
+        for source in audit["sources"]["fixed_window"]
+    )
 
     run = _load_json(first.run_path)
     assert run["status"] == "completed"
     assert run["operation"] == "build-rebuttal-manifest"
     assert run["protocol"]["manifest_contract"] == REBUTTAL_MANIFEST_PROTOCOL.as_dict()
+    assert run["protocol"]["fixed_window_reference"] == {
+        "event_validation": "explicit-termination-cap-aware-reextraction/v1",
+        "producer_protocol": FIXED_WINDOW_ANSWER_PATCHING_PROTOCOL,
+    }
     assert run["runtime"]["gpu_required"] is False
     for name, metadata in run["outputs"].items():
         assert metadata["sha256"] == _sha256(first_output / name)
@@ -716,6 +756,240 @@ def test_build_rebuttal_manifest_is_deterministic_complete_and_hash_bound(
                 prepared_root,
                 fixed_root,
                 tmp_path / "manifest-tampered",
+            )
+        )
+
+
+def _prepared_run_path(
+    root: Path,
+    *,
+    model: str,
+    task: str,
+    target_rule: str,
+) -> Path:
+    return root / model.rsplit("/", 1)[-1] / task / target_rule / "run.json"
+
+
+def test_rejects_model_revision_drift_between_tasks(tmp_path: Path) -> None:
+    prepared_root, fixed_root = _six_setting_fixture(tmp_path)
+    model = "google/gemma-3-4b-it"
+    for target_rule in ("attribution-4", "random-4"):
+        run_path = _prepared_run_path(
+            prepared_root,
+            model=model,
+            task="mmlu",
+            target_rule=target_rule,
+        )
+        run = _load_json(run_path)
+        run["provenance"]["model_revision"] = "f" * 64
+        _write_json(run_path, run)
+
+    with pytest.raises(ValueError, match="model revisions differ across tasks"):
+        run_build_rebuttal_manifest(
+            BuildRebuttalManifestConfig(
+                prepared_root,
+                fixed_root,
+                tmp_path / "manifest-model-revision-drift",
+            )
+        )
+
+
+def test_rejects_dataset_cohort_drift_between_models(tmp_path: Path) -> None:
+    prepared_root, fixed_root = _six_setting_fixture(tmp_path)
+    model = "google/gemma-3-4b-it"
+    for target_rule in ("attribution-4", "random-4"):
+        run_path = _prepared_run_path(
+            prepared_root,
+            model=model,
+            task="gsm8k",
+            target_rule=target_rule,
+        )
+        run = _load_json(run_path)
+        run["provenance"]["dataset_records_sha256"] = "e" * 64
+        _write_json(run_path, run)
+
+    with pytest.raises(ValueError, match="dataset SHA-256 differs across models"):
+        run_build_rebuttal_manifest(
+            BuildRebuttalManifestConfig(
+                prepared_root,
+                fixed_root,
+                tmp_path / "manifest-dataset-digest-drift",
+            )
+        )
+
+
+def test_rejects_dataset_count_drift_between_models(tmp_path: Path) -> None:
+    prepared_root, fixed_root = _six_setting_fixture(tmp_path)
+    model = "google/gemma-3-4b-it"
+    for target_rule in ("attribution-4", "random-4"):
+        run_path = _prepared_run_path(
+            prepared_root,
+            model=model,
+            task="gsm8k",
+            target_rule=target_rule,
+        )
+        pairs_path = run_path.parent / "pairs.jsonl"
+        rows = [
+            json.loads(line)
+            for line in pairs_path.read_text(encoding="utf-8").splitlines()
+        ]
+        rows.append(
+            _pair_record(
+                model=model,
+                task="gsm8k",
+                target_rule=target_rule,
+                sample_id=f"sample-{_FIXTURE_DATASET_RECORDS:04d}",
+                typo_correct=True,
+            )
+        )
+        _write_jsonl(pairs_path, rows)
+        run = _load_json(run_path)
+        run["counts"] = {
+            "discovered": _FIXTURE_DATASET_RECORDS + 1,
+            "written": _FIXTURE_DATASET_RECORDS + 1,
+            "failed": 0,
+        }
+        run["provenance"]["dataset_sample_count"] = _FIXTURE_DATASET_RECORDS + 1
+        run["outputs"]["pairs"] = {
+            "path": "pairs.jsonl",
+            "sha256": _sha256(pairs_path),
+            "records": _FIXTURE_DATASET_RECORDS + 1,
+        }
+        _write_json(run_path, run)
+
+    with pytest.raises(ValueError, match="dataset counts differ across models"):
+        run_build_rebuttal_manifest(
+            BuildRebuttalManifestConfig(
+                prepared_root,
+                fixed_root,
+                tmp_path / "manifest-dataset-count-drift",
+            )
+        )
+
+
+def test_rejects_explicit_sample_id_prepared_cohort(tmp_path: Path) -> None:
+    prepared_root, fixed_root = _six_setting_fixture(tmp_path)
+    run_path = next(prepared_root.rglob("run.json"))
+    run = _load_json(run_path)
+    run["arguments"]["sample_ids"] = "/tmp/rebuttal-cohort.json"
+    run["provenance"]["dataset_cohort_rule"] = "explicit-sample-id-cohort/v1"
+    _write_json(run_path, run)
+
+    with pytest.raises(ValueError, match="sample-ID cohort"):
+        run_build_rebuttal_manifest(
+            BuildRebuttalManifestConfig(
+                prepared_root,
+                fixed_root,
+                tmp_path / "manifest-explicit-cohort",
+            )
+        )
+
+
+def test_rejects_nested_fixed_window_producer_protocol_drift(tmp_path: Path) -> None:
+    prepared_root, fixed_root = _six_setting_fixture(tmp_path)
+    run_path = next(fixed_root.rglob("run.json"))
+    run = _load_json(run_path)
+    run["protocol"]["generation"]["max_new_tokens"] = 256
+    _write_json(run_path, run)
+
+    with pytest.raises(ValueError, match="fixed-window producer protocol differs"):
+        run_build_rebuttal_manifest(
+            BuildRebuttalManifestConfig(
+                prepared_root,
+                fixed_root,
+                tmp_path / "manifest-fixed-protocol-drift",
+            )
+        )
+
+
+def _rewrite_fixed_records_metadata(run_path: Path, rows: Sequence[Mapping[str, object]]) -> None:
+    records_path = run_path.parent / "fixed_window_records.jsonl"
+    _write_jsonl(records_path, rows)
+    run = _load_json(run_path)
+    run["outputs"][records_path.name]["sha256"] = _sha256(records_path)
+    _write_json(run_path, run)
+
+
+def test_rejects_fixed_event_that_disagrees_with_recorded_generations(
+    tmp_path: Path,
+) -> None:
+    prepared_root, fixed_root = _six_setting_fixture(tmp_path)
+    run_path = next(fixed_root.rglob("run.json"))
+    records_path = run_path.parent / "fixed_window_records.jsonl"
+    rows = [
+        json.loads(line)
+        for line in records_path.read_text(encoding="utf-8").splitlines()
+    ]
+    rows[0]["event"] = not rows[0]["event"]
+    _rewrite_fixed_records_metadata(run_path, rows)
+
+    with pytest.raises(ValueError, match="event differs from re-extracted generations"):
+        run_build_rebuttal_manifest(
+            BuildRebuttalManifestConfig(
+                prepared_root,
+                fixed_root,
+                tmp_path / "manifest-inconsistent-event",
+            )
+        )
+
+
+def test_rejects_positional_only_answer_from_capped_fixed_generation(
+    tmp_path: Path,
+) -> None:
+    prepared_root, fixed_root = _six_setting_fixture(tmp_path)
+    run_path = next(
+        path
+        for path in fixed_root.rglob("run.json")
+        if _load_json(path)["arguments"]["benchmark"] == "gsm8k"
+    )
+    records_path = run_path.parent / "fixed_window_records.jsonl"
+    rows = [
+        json.loads(line)
+        for line in records_path.read_text(encoding="utf-8").splitlines()
+    ]
+    patched = rows[0]["patched_answer"]
+    patched.update(
+        {
+            "token_ids": [7] * 512,
+            "text": "The unfinished calculation currently reaches 2 dollars.",
+            "termination": "length-cap",
+            "value": "2",
+            "is_extracted": True,
+            "is_correct": True,
+            "method": "fallback:N5_tail_number",
+            "primary_method": "no_match",
+        }
+    )
+    rows[0]["event"] = True
+    _rewrite_fixed_records_metadata(run_path, rows)
+
+    with pytest.raises(ValueError, match="extraction differs under cap-aware validation"):
+        run_build_rebuttal_manifest(
+            BuildRebuttalManifestConfig(
+                prepared_root,
+                fixed_root,
+                tmp_path / "manifest-capped-positional-answer",
+            )
+        )
+
+
+def test_rejects_fixed_termination_inconsistent_with_token_count(tmp_path: Path) -> None:
+    prepared_root, fixed_root = _six_setting_fixture(tmp_path)
+    run_path = next(fixed_root.rglob("run.json"))
+    records_path = run_path.parent / "fixed_window_records.jsonl"
+    rows = [
+        json.loads(line)
+        for line in records_path.read_text(encoding="utf-8").splitlines()
+    ]
+    rows[0]["patched_answer"]["termination"] = "length-cap"
+    _rewrite_fixed_records_metadata(run_path, rows)
+
+    with pytest.raises(ValueError, match="length-cap must contain exactly 512 tokens"):
+        run_build_rebuttal_manifest(
+            BuildRebuttalManifestConfig(
+                prepared_root,
+                fixed_root,
+                tmp_path / "manifest-invalid-termination",
             )
         )
 
