@@ -43,14 +43,25 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "rebuttal" / "six-setting-patch-controls.yaml"
 
 
-def _write_protocol(path: Path, *, replicates: int = 200) -> None:
-    payload = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
-    payload["statistics"]["pair_bootstrap_replicates"] = replicates
-    payload["statistics"]["nested_bootstrap_replicates"] = replicates
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+def _write_protocol(path: Path) -> None:
+    path.write_bytes(DEFAULT_CONFIG.read_bytes())
+
+
+@pytest.fixture(autouse=True)
+def _fast_runner_bootstrap(monkeypatch: pytest.MonkeyPatch) -> None:
+    def paired(left: tuple[bool, ...], right: tuple[bool, ...], **_kwargs: object):
+        estimate = sum(left) / len(left) - sum(right) / len(right)
+        return {"estimate": estimate, "lower": estimate, "upper": estimate}
+
+    def nested(setting_pairs: Mapping[str, object], **_kwargs: object):
+        estimates = []
+        for left, right in setting_pairs.values():
+            estimates.append(sum(left) / len(left) - sum(right) / len(right))
+        estimate = sum(estimates) / len(estimates)
+        return {"estimate": estimate, "lower": estimate, "upper": estimate}
+
+    monkeypatch.setattr(control_runner, "paired_bootstrap_risk_difference", paired)
+    monkeypatch.setattr(control_runner, "nested_macro_bootstrap_risk_difference", nested)
 
 
 def _pair_id(setting_index: int, pair_index: int) -> str:
@@ -155,7 +166,7 @@ class _Runtime:
                 "num_return_sequences": 1,
                 "max_new_tokens": 512,
             },
-            "answer_extraction": "primary-then-empty-only-positional/v1",
+            "answer_extraction": "primary-then-empty-only-positional-by-termination/v1",
         }
 
     def scan_controls(
@@ -246,6 +257,30 @@ def test_default_protocol_and_catalog_match_the_frozen_readme() -> None:
         action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
     )
     assert "six-setting-patch-controls" in subparsers.choices
+
+
+@pytest.mark.parametrize(
+    ("field", "changed", "message"),
+    (
+        ("pair_bootstrap_replicates", 9_999, "pair_bootstrap_replicates.*10,000"),
+        ("nested_bootstrap_replicates", 9_999, "nested_bootstrap_replicates.*10,000"),
+        ("bootstrap_seed", 43, "bootstrap_seed.*42"),
+        ("confidence_level", 0.9, "confidence_level.*0.95"),
+    ),
+)
+def test_protocol_rejects_statistical_drift(
+    tmp_path: Path,
+    field: str,
+    changed: object,
+    message: str,
+) -> None:
+    payload = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    payload["statistics"][field] = changed
+    path = tmp_path / f"changed-{field}.yaml"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        load_six_setting_patch_controls_protocol(path)
 
 
 def test_paired_bootstrap_holm_and_nested_macro_are_deterministic() -> None:
@@ -371,6 +406,61 @@ def test_runner_compiles_six_settings_common_denominators_and_resumes(
     result.run_path.write_text(json.dumps(run) + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="count"):
         run_six_setting_patch_controls(replace(config, resume=True), runtime_factory=_Runtime)
+
+
+def test_limited_smoke_selects_common_valid_pairs_in_every_setting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = list(deepcopy(_records()))
+    for record in records:
+        if record["sample_id"] not in {"sample-0000", "sample-0001"}:
+            continue
+        record["controls"]["offset_2"] = {
+            "valid": False,
+            "source_positions": [],
+            "destination_positions": [],
+            "invalid_reason": "fixture-invalid-offset",
+        }
+        record["controls"]["common_valid"] = False
+    protocol_path = tmp_path / "protocol.yaml"
+    _write_protocol(protocol_path)
+    manifest_path = tmp_path / "manifest.jsonl"
+    manifest_path.write_text("fixture\n", encoding="utf-8")
+    fixed_root = tmp_path / "fixed"
+    fixed_root.mkdir()
+    monkeypatch.setattr(control_runner, "load_rebuttal_pair_manifest", lambda _path: records)
+    monkeypatch.setattr(
+        control_runner,
+        "_load_fixed_references",
+        lambda **_kwargs: {
+            str(record["pair_id"]): SimpleNamespace(
+                clean_answer=str(record["clean_answer"]),
+                correct_event=bool(record["fixed_window"]["event"]),
+            )
+            for record in records
+        },
+    )
+
+    result = run_six_setting_patch_controls(
+        SixSettingPatchControlsConfig(
+            protocol_path=protocol_path,
+            manifest_path=manifest_path,
+            fixed_window_root=fixed_root,
+            output_dir=tmp_path / "output",
+            gpu_id="1",
+            limit_per_setting=2,
+        ),
+        runtime_factory=_Runtime,
+    )
+
+    statuses = [
+        json.loads(line)
+        for line in result.pair_status_records_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(statuses) == 12
+    assert all(row["validity"]["common-valid"] is True for row in statuses)
+    assert {row["sample_id"] for row in statuses} == {"sample-0002", "sample-0003"}
 
 
 def test_resume_rejects_an_unbound_nonempty_output_directory(
@@ -518,12 +608,12 @@ def test_invalid_arm_is_reported_and_excluded_without_partial_patching(
             manifest_path=manifest_path,
             fixed_window_root=fixed_root,
             output_dir=tmp_path / "output",
-            gpu_id="3",
-            limit_per_setting=2,
+            gpu_id="1",
+            limit_per_setting=None,
         ),
         runtime_factory=_Runtime,
     )
-    assert result.control_records == 35
+    assert result.control_records == 3 * REBUTTAL_MANIFEST_PROTOCOL.restoration_pairs - 1
     status = [
         json.loads(line)
         for line in result.pair_status_records_path.read_text(encoding="utf-8").splitlines()

@@ -66,10 +66,18 @@ separate reviewed PRs; only entries marked `implemented` are runnable.
 `build-rebuttal-manifest` is implemented and CPU-only. It accepts the twelve
 completed `prepare-edited-pairs` sources and six completed fixed-window runs
 that reproduce the paper's six-setting reference. It fails closed unless their
-schemas, hashes, model revisions, selected-anchor audit, uncapped harm cohort,
-explicit alignment-ineligible coverage, and the paper's
+schemas, hashes, one revision per model, one benchmark cohort across models,
+paper-wide (not explicit sample-ID) cohort selection, selected-anchor audit,
+uncapped harm cohort, explicit alignment-ineligible coverage, and the paper's
 1,241-pair/800-restoration totals agree. It does not run a model or inspect any
 new intervention result.
+
+The manifest also requires the complete fixed-window producer protocol, not
+only its schema version. Every baseline and patched generation must record its
+effective EOS IDs and explicit `eos` or `length-cap` termination. The builder
+then re-extracts every answer, disables positional fallback for capped text,
+and recomputes each restoration event. Hash-valid but semantically inconsistent
+records are rejected.
 
 ```bash
 PAIR_ROOT=projects/typo-cot/results/prepare-edited-pairs
@@ -95,12 +103,10 @@ bootstrap intervals. Use exactly one physical GPU; `--limit-per-setting` is a
 non-confirmatory smoke-test option and `--resume` verifies and reuses completed
 pair checkpoints.
 
-The reused correct arm was produced with positional fallback enabled after an
-empty primary extraction, including at the generation length cap. The new
-offset and cross-item arms deliberately use that same rule for symmetric paired
-scoring. This corrects the initial runner contract before any confirmatory
-six-setting result generation; it affects only length-capped continuations with
-an empty primary extraction, and termination remains recorded.
+The reused correct arm and both new arms use the same termination-aware
+primary-then-empty-only fallback. Positional rules are disabled at the length
+cap. Effective EOS IDs and termination are validated for the reused arm and
+recorded for every new generation before paired scoring.
 
 ```bash
 GPU_ID=0
@@ -127,9 +133,9 @@ replication Mistral/MMLU cohorts. The common-valid denominator requires the
 complete correct and strict offset coordinate plans. It reuses fixed `E->E`
 events and generates `E->O`, `O->E`, and `O->O`, then reports Cochran's Q and
 the two prespecified paired contrasts per cohort with one Holm family.
-All four arms use the fixed-window producer's extraction contract, including
-its empty-primary positional fallback, so capped continuations are scored
-symmetrically; termination remains recorded for every new generation.
+All four arms use the fixed-window producer's termination-aware extraction
+contract. Positional fallback is disabled at the length cap, and termination
+remains recorded for every new generation.
 `--limit-per-cohort` is available only for non-confirmatory smoke tests.
 
 ```bash

@@ -212,7 +212,7 @@ def _runner_config(
         protocol_path=protocol_path,
         manifest_path=manifest_path,
         cohort="clean-correct-typo-correct",
-        gpu_id="3",
+        gpu_id="1",
         output_dir=tmp_path / "output",
         limit_per_setting=limit_per_setting,
     )
@@ -397,7 +397,7 @@ def test_runner_compiles_harm_and_conditional_composite_then_resumes(
     assert result.evaluated_pairs == 18
     assert result.preserve == 6
     assert result.harm == 12
-    assert result.answer_changed == 12
+    assert result.answer_changed == 6
     assert result.unextractable == 6
     assert result.settings == 6
     assert _Runtime.calls == 18
@@ -408,7 +408,7 @@ def test_runner_compiles_harm_and_conditional_composite_then_resumes(
     assert len(records_out) == 18
     assert sum(row["preserve"] for row in records_out) == 6
     assert sum(row["harm"] for row in records_out) == 12
-    assert sum(row["answer_changed"] for row in records_out) == 12
+    assert sum(row["answer_changed"] for row in records_out) == 6
     assert sum(row["unextractable"] for row in records_out) == 6
     assert all(row["baseline"]["is_correct"] is True for row in records_out)
     assert all(row["source_positions"] == [5] for row in records_out)

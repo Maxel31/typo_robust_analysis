@@ -59,9 +59,16 @@ uv run --project projects/typo-cot typo-cot experiments show clean-prefix-scan -
 
 `build-rebuttal-manifest` は実装済みのCPU専用コマンドです。論文の6設定を再現した、
 完了済み `prepare-edited-pairs` source 12個とfixed-window run 6個を受け取ります。
-schema、hash、model revision、selected-anchor audit、上限なしのharm cohort、
-alignment不可例の明示的な記録、および論文の1,241 pair／800回復と一致しなければ
-fail-closedで停止します。modelは実行せず、新しい介入結果も読みません。
+schema、hash、モデルごとに一つのrevision、全モデルで共通のbenchmark cohort、
+明示sample-IDではない論文全体のcohort選択、selected-anchor audit、上限なしの
+harm cohort、alignment不可例の明示的な記録、および論文の1,241 pair／800回復と
+一致しなければfail-closedで停止します。modelは実行せず、新しい介入結果も読みません。
+
+manifestはschema versionだけでなく、fixed-window producerの完全なprotocolも
+検証します。すべてのbaseline／patched生成にはeffective EOS IDと`eos`または
+`length-cap`の停止理由が必要です。builderは各回答を再抽出し、上限到達テキストでは
+positional fallbackを無効化して、回復eventを再計算します。hashが正しくても意味的に
+矛盾するrecordは拒否します。
 
 ```bash
 PAIR_ROOT=projects/typo-cot/results/prepare-edited-pairs
@@ -86,11 +93,10 @@ bootstrapと設定等重みnested bootstrapの区間を計算します。物理G
 指定してください。`--limit-per-setting` は非confirmatoryなsmoke test用、
 `--resume` は検証済みpair checkpointの再利用用です。
 
-再利用するcorrect armは、primary抽出が空の場合、generation length capでも
-positional fallbackを許可する契約で生成されています。paired比較を対称にするため、
-新規offset/cross-item armにも同じ規則を意図的に適用します。これはsix-settingの
-confirmatory結果を生成する前に初期runner契約を修正するもので、影響はlength capかつ
-primary抽出が空のcontinuationだけです。termination自体は引き続き記録します。
+再利用するcorrect armと2つの新規armは、同じtermination-awareな
+primary-then-empty-only fallbackを使います。length capではpositional規則を無効化し、
+再利用armのeffective EOS IDとterminationを検証するとともに、すべての新規生成でも
+terminationを記録してからpaired比較を行います。
 
 ```bash
 GPU_ID=0
@@ -116,9 +122,9 @@ Gemma/GSM8Kと、事前規定したreplicationのMistral/MMLUで、donor内容�
 分離します。4 arm共通分母にはcorrect座標planと厳密なoffset座標planの両方が完全に
 有効なpairだけを使います。固定済み `E->E` eventを再利用し、`E->O`、`O->E`、
 `O->O` を生成した後、各cohortのCochran's Qと2つの事前規定paired contrastを1つの
-Holm familyとして報告します。4 armすべてでfixed-window producerと同じ回答抽出
-契約（primaryが空の場合のpositional fallbackを含む）を使うため、length capに達した
-continuationも対称に採点されます。新規生成のtermination自体は記録します。
+Holm familyとして報告します。4 armすべてでfixed-window producerと同じ
+termination-awareな回答抽出契約を使い、length capではpositional fallbackを
+無効化します。新規生成のterminationも記録します。
 `--limit-per-cohort` は非confirmatoryなsmoke test専用です。
 
 ```bash

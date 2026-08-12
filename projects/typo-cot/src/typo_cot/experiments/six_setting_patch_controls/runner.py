@@ -353,7 +353,8 @@ def _runtime_provenance(
         or provenance.get("coordinate_source") != "rebuttal-pair-manifest/v1"
         or provenance.get("layer_window") != [0, 6]
         or provenance.get("diagnostic_controls") != ["offset-2", "cross-item"]
-        or provenance.get("answer_extraction") != "primary-then-empty-only-positional/v1"
+        or provenance.get("answer_extraction")
+        != "primary-then-empty-only-positional-by-termination/v1"
     ):
         raise ValueError("six-setting runtime provenance differs from the frozen protocol")
     eos_ids = provenance.get("effective_eos_token_ids")
@@ -584,9 +585,18 @@ def _selected_records(
                 str(record["pair_id"]),
             )
         )
-        selected.extend(
-            setting_records if limit_per_setting is None else setting_records[:limit_per_setting]
-        )
+        if limit_per_setting is None:
+            selected.extend(setting_records)
+            continue
+        common_valid = [
+            record
+            for record in setting_records
+            if _mapping(record.get("controls"), field="record controls").get("common_valid")
+            is True
+        ]
+        if not common_valid:
+            raise ValueError(f"no common-valid smoke pair exists for {setting.slug}")
+        selected.extend(common_valid[:limit_per_setting])
     return tuple(selected)
 
 
