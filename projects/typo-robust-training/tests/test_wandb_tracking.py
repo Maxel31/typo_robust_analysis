@@ -128,7 +128,9 @@ def test_wandb_logs_scalars_and_resumes_same_hash_bound_run(tmp_path: Path) -> N
     assert module.runs[1].finished == [1]
 
 
-def test_wandb_resume_rejects_binding_or_boundary_drift(tmp_path: Path) -> None:
+def test_wandb_resume_rejects_binding_drift_or_remote_history_behind_checkpoint(
+    tmp_path: Path,
+) -> None:
     module = _Wandb()
     tracker = start_wandb_training_tracker(
         output_dir=tmp_path,
@@ -159,14 +161,27 @@ def test_wandb_resume_rejects_binding_or_boundary_drift(tmp_path: Path) -> None:
             environment={"WANDB_API_KEY": "secret"},
             wandb_module=module,
         )
-    with pytest.raises(ValueError, match="resume boundary differs"):
+    rewound = start_wandb_training_tracker(
+        output_dir=tmp_path,
+        project="typo-robustness-training",
+        entity=None,
+        bindings=_bindings(),
+        resume=True,
+        resume_optimizer_step=0,
+        environment={"WANDB_API_KEY": "secret"},
+        wandb_module=module,
+    )
+    assert module.calls[-1]["resume_from"] == "fixed-run-id?_step=0"
+    rewound.finish(status="failed", summary={"optimizer_steps": 0})
+
+    with pytest.raises(ValueError, match="behind the local checkpoint"):
         start_wandb_training_tracker(
             output_dir=tmp_path,
             project="typo-robustness-training",
             entity=None,
             bindings=_bindings(),
             resume=True,
-            resume_optimizer_step=0,
+            resume_optimizer_step=2,
             environment={"WANDB_API_KEY": "secret"},
             wandb_module=module,
         )

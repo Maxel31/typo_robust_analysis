@@ -110,7 +110,14 @@ class _Runtime:
         return {"runtime": "offline-training-fixture/v1", "gpu_id": "3"}
 
 
-def _run_config(tmp_path: Path, config: Path, output: Path, *, resume: bool):
+def _run_config(
+    tmp_path: Path,
+    config: Path,
+    output: Path,
+    *,
+    resume: bool,
+    tracking: bool = False,
+):
     return AdapterTrainingRunConfig(
         condition="noisy-language-model",
         config_path=config,
@@ -119,8 +126,8 @@ def _run_config(tmp_path: Path, config: Path, output: Path, *, resume: bool):
         component_selection_path=None,
         seed=42,
         gpu_id="3",
-        wandb_project="typo-robustness-training",
-        wandb_entity="fixture-entity",
+        wandb_project="typo-robustness-training" if tracking else None,
+        wandb_entity="fixture-entity" if tracking else None,
         output_dir=output,
         resume=resume,
     )
@@ -194,7 +201,7 @@ def test_runner_uploads_only_aggregate_optimizer_step_telemetry(tmp_path: Path) 
     tracker = _Tracker()
     runtime = _Runtime()
     result = run_adapter_training(
-        _run_config(tmp_path, config, tmp_path / "tracked", resume=False),
+        _run_config(tmp_path, config, tmp_path / "tracked", resume=False, tracking=True),
         runtime=runtime,
         data_bundle=_bundle(tmp_path),
         tracker=tracker,
