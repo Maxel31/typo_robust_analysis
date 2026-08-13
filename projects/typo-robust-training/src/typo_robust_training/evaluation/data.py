@@ -20,6 +20,7 @@ from typo_robust_training.integrity import sha256_file as _sha256_file
 
 _SHA40 = re.compile(r"[0-9a-f]{40}")
 _SHA64 = re.compile(r"[0-9a-f]{64}")
+_SOURCE_REVISION = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 _ROLES = {
     "tune": ("tune_manifest.jsonl", "tune"),
     "pre-pr-gate": ("pre_pr_gate_manifest.jsonl", "pre_pr_gate"),
@@ -174,7 +175,7 @@ class EvaluationPair:
             raise ValueError("evaluation pair schema or role differs")
         record_id = _text(value.get("record_id"), field="record_id")
         revision = _text(value.get("source_revision"), field="source_revision")
-        if _SHA64.fullmatch(record_id) is None or _SHA40.fullmatch(revision) is None:
+        if _SHA64.fullmatch(record_id) is None or _SOURCE_REVISION.fullmatch(revision) is None:
             raise ValueError("evaluation pair identity hashes differ")
         source = _text(value.get("source"), field="source")
         clean = _text(value.get("clean_text"), field="clean_text")

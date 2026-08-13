@@ -80,7 +80,7 @@ def _natural(index: int, *, split: str) -> dict[str, object]:
         "kind": "natural",
         "record_id": f"{index:064x}",
         "source": "github_typo_corpus",
-        "source_revision": "b" * 40,
+        "source_revision": "b" * 64,
         "source_split": "corpus",
         "source_id": f"commit-{index}",
         "group_id": "https://example.test/held-out.git",
