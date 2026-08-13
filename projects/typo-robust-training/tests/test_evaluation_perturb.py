@@ -41,14 +41,32 @@ def test_multiple_choice_targets_only_question_and_forbids_gold_or_option_text()
     assert words == (
         "Which",
         "reliable",
-        "airport",
         "serves",
         "the",
-        "northern",
         "research",
         "district",
     )
     assert all(stop <= record.text.index("\n") for _, stop in spans)
+
+
+def test_multiple_choice_label_excludes_gold_option_words_from_question() -> None:
+    record = CleanRecord(
+        source="mmlu",
+        source_revision="a" * 40,
+        source_split="test",
+        source_id="mmlu:gold-option-fixture",
+        group_id="mmlu:gold-option-fixture",
+        text="Which planet is nearest the sun in mercury terms?\nA. mercury\nB. venus",
+        task="mmlu",
+        answer="A",
+        metadata={"fixture": True},
+    )
+
+    spans = evaluation_eligible_word_spans(record, minimum_word_letters=3)
+    words = {record.text[start:stop].casefold() for start, stop in spans}
+
+    assert "mercury" not in words
+    assert "planet" in words
 
 
 def test_math_and_identifier_spans_are_never_typo_targets() -> None:
@@ -307,7 +325,7 @@ def test_natural_injection_uses_eval_dictionary_and_keeps_options_unchanged() ->
 
     assert len(injected.edits) == 1
     assert injected.edits[0].operation == "natural-dictionary-substitution"
-    assert injected.edits[0].clean_word.casefold() in {"airport", "reliable"}
+    assert injected.edits[0].clean_word.casefold() == "reliable"
     assert (
         injected.typo_text[injected.typo_text.index("\n") :]
         == record.text[record.text.index("\n") :]
@@ -317,7 +335,7 @@ def test_natural_injection_uses_eval_dictionary_and_keeps_options_unchanged() ->
 
 def test_natural_injection_dictionary_is_validated_once_and_no_target_is_distinct() -> None:
     dictionary = freeze_natural_injection_dictionary(
-        {"airport": ("arport", "arport")},
+        {"reliable": ("relyable", "relyable")},
         minimum_word_letters=3,
     )
     injected = generate_natural_injection(
@@ -327,7 +345,7 @@ def test_natural_injection_dictionary_is_validated_once_and_no_target_is_distinc
         role="final_test",
         variant=0,
     )
-    assert injected.edits[0].clean_word.casefold() == "airport"
+    assert injected.edits[0].clean_word.casefold() == "reliable"
 
     with pytest.raises(ValueError, match="invalid entry"):
         freeze_natural_injection_dictionary({"airport": ("airport",)})
