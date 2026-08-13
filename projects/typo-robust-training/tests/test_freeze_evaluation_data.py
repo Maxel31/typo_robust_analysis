@@ -17,6 +17,7 @@ from typo_robust_training.data.splits import NearDuplicateTextIndex
 from typo_robust_training.evaluation.freeze import (
     FreezeEvaluationRunConfig,
     _Exclusions,
+    _exclusions,
     _could_retain_smallest,
     _natural_edit,
     _retain_smallest,
@@ -198,6 +199,7 @@ def _write_exclusions(root: Path) -> None:
             "group_id": f"https://example.test/train-{index // 10}.git",
             "kind": "natural",
             "repository": f"https://example.test/train-{index // 10}.git",
+            "clean_text": f"The reliable airport example {index} remains readable.",
         }
         for index in range(200)
     ]
@@ -207,6 +209,7 @@ def _write_exclusions(root: Path) -> None:
             "source": "gsm8k",
             "source_id": f"gsm8k:train-{index}",
             "group_id": f"gsm8k:train-{index}",
+            "clean_text": f"The reliable GSM8K diagnostic example {index} remains readable.",
         }
         for index in range(10)
     ]
@@ -217,6 +220,7 @@ def _write_exclusions(root: Path) -> None:
                 "source": "gsm8k",
                 "source_id": f"gsm8k:train-{100 + index}",
                 "group_id": f"gsm8k:train-{100 + index}",
+                "clean_text": f"The reliable GSM8K tune example {index} remains readable.",
             }
             for index in range(100)
         ],
@@ -226,6 +230,7 @@ def _write_exclusions(root: Path) -> None:
                 "source": "fineweb_edu",
                 "source_id": f"fineweb_edu:train-{index}",
                 "group_id": f"fineweb_edu:train-{index}",
+                "clean_text": f"Educational document {_letters(index)} explains a reliable concept.",
             }
             for index in range(200)
         ],
@@ -237,6 +242,7 @@ def _write_exclusions(root: Path) -> None:
                 "group_id": f"https://example.test/tune-{(200 + index) // 10}.git",
                 "kind": "natural",
                 "repository": f"https://example.test/tune-{(200 + index) // 10}.git",
+                "clean_text": f"The reliable airport tune example {index} remains readable.",
             }
             for index in range(100)
         ],
@@ -281,6 +287,33 @@ def test_natural_dictionary_excludes_case_only_corrections() -> None:
     )
 
     assert _natural_edit(record, minimum_word_letters=3) is None
+
+
+def test_exclusions_index_clean_text_and_reject_rows_without_text(tmp_path: Path) -> None:
+    exclusion_root = tmp_path / "exclusions"
+    _write_exclusions(exclusion_root)
+    exclusions = _exclusions(exclusion_root)
+    tune_rows = [
+        json.loads(line)
+        for line in (exclusion_root / "tune_manifest.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line
+    ]
+
+    assert exclusions.prior_tune_near_duplicates.contains_near_duplicate(
+        str(tune_rows[0]["clean_text"])
+    )
+
+    broken = dict(tune_rows[0])
+    broken.pop("clean_text")
+    tune_rows[0] = broken
+    (exclusion_root / "tune_manifest.jsonl").write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in tune_rows),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="row has no clean text"):
+        _exclusions(exclusion_root)
 
 
 def test_bottom_k_prefilter_skips_noncompetitive_near_duplicate_queries() -> None:

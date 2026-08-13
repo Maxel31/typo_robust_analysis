@@ -280,10 +280,30 @@ def assign_balanced_group_roles(
         group_inventory,
         key=lambda item: (item[1], digest(item[0], purpose="coverage-group"), item[0]),
     )[: len(roles)]
-    coverage_roles = sorted(
-        roles,
-        key=lambda role: (digest(role, purpose="coverage-role"), role),
-    )
+    # Find the globally best one-to-one role assignment for the mandatory
+    # coverage groups.  Hash-zipping the groups to roles ignores the requested
+    # weights entirely and can place the only large group in a tiny role when
+    # the number of groups is close to the number of roles.  This dynamic
+    # program is O(r * 2**r) in the (normally very small) number of roles.
+    coverage_states: dict[int, tuple[float, tuple[str, ...], tuple[str, ...]]] = {0: (0.0, (), ())}
+    for group, size in coverage_groups:
+        next_states: dict[int, tuple[float, tuple[str, ...], tuple[str, ...]]] = {}
+        for mask, (cost, tie_keys, assigned_roles) in coverage_states.items():
+            for role_index, role in enumerate(roles):
+                bit = 1 << role_index
+                if mask & bit:
+                    continue
+                candidate = (
+                    cost + (size - targets[role]) ** 2,
+                    (*tie_keys, digest(f"{group}\0{role}", purpose="coverage-role")),
+                    (*assigned_roles, role),
+                )
+                previous = next_states.get(mask | bit)
+                if previous is None or candidate < previous:
+                    next_states[mask | bit] = candidate
+        coverage_states = next_states
+    full_mask = (1 << len(roles)) - 1
+    coverage_roles = coverage_states[full_mask][2]
     covered = {group for group, _size in coverage_groups}
     for (group, size), role in zip(coverage_groups, coverage_roles, strict=True):
         assignments[group] = role
