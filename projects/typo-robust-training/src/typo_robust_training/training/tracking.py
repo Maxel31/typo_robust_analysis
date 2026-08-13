@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from typo_robust_training.training.json_io import write_json_atomic
+
 
 _SCHEMA = "robustness-wandb-training-run/v1"
 _METADATA_FIELDS = {
@@ -27,6 +29,9 @@ _METADATA_FIELDS = {
     "last_logged_optimizer_step",
     "status",
 }
+# Deliberately conservative substring denylist: scalar telemetry uses a fixed
+# schema, so rejecting a future name that merely contains ``text`` is safer
+# than accidentally admitting a raw-text field.
 _FORBIDDEN_METRIC_FRAGMENTS = ("record_id", "text", "prompt", "api_key", "secret")
 
 
@@ -233,19 +238,6 @@ class TrainingTracker(Protocol):
     def provenance(self) -> Mapping[str, object]: ...
 
 
-def _write_json(path: Path, payload: Mapping[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    try:
-        temporary.write_text(
-            json.dumps(payload, sort_keys=True, indent=2, allow_nan=False) + "\n",
-            encoding="utf-8",
-        )
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
 def _canonical_bindings(bindings: Mapping[str, object]) -> dict[str, object]:
     if not isinstance(bindings, Mapping) or not bindings:
         raise ValueError("W&B bindings must be a non-empty object")
@@ -337,7 +329,7 @@ class WandbTrainingTracker:
             raise ValueError("W&B metrics must contain the matching optimizer step")
         self._run.log(payload, step=optimizer_step)
         self._metadata.update({"last_logged_optimizer_step": optimizer_step, "status": "running"})
-        _write_json(self._metadata_path, self._metadata)
+        write_json_atomic(self._metadata_path, self._metadata)
 
     def finish(self, *, status: str, summary: Mapping[str, int | float]) -> None:
         if self._finished:
@@ -349,7 +341,7 @@ class WandbTrainingTracker:
         self._run.summary["run/status"] = status
         self._run.finish(exit_code=0 if status == "completed" else 1)
         self._metadata["status"] = status
-        _write_json(self._metadata_path, self._metadata)
+        write_json_atomic(self._metadata_path, self._metadata)
         self._finished = True
 
     def provenance(self) -> Mapping[str, object]:
@@ -481,7 +473,7 @@ def start_wandb_training_tracker(
             "status": "running",
         }
     )
-    _write_json(metadata_path, metadata)
+    write_json_atomic(metadata_path, metadata)
     sdk_version = getattr(module, "__version__", None)
     return WandbTrainingTracker(
         run=run,

@@ -32,6 +32,7 @@ from typo_robust_training.training.evidence import (
     LocalizationEvidence,
     load_localization_evidence,
 )
+from typo_robust_training.training.json_io import write_json_atomic
 from typo_robust_training.training.pairs import TrainingPair, materialize_training_pair
 from typo_robust_training.training.tracking import (
     TrainingTracker,
@@ -50,19 +51,6 @@ def _sha256_file(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
-
-
-def _write_json(path: Path, payload: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    try:
-        temporary.write_text(
-            json.dumps(payload, sort_keys=True, indent=2, allow_nan=False) + "\n",
-            encoding="utf-8",
-        )
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,7 +313,7 @@ def run_adapter_training(
             }
         ),
     }
-    _write_json(run_path, {**run_base, "status": "running", "started_at": started_at})
+    write_json_atomic(run_path, {**run_base, "status": "running", "started_at": started_at})
     tracking_finished = False
     try:
         if tracker is None and config.wandb_project is not None:
@@ -366,7 +354,7 @@ def run_adapter_training(
             )
         if tracker is not None:
             run_base["tracking"] = dict(tracker.provenance())
-            _write_json(
+            write_json_atomic(
                 run_path,
                 {**run_base, "status": "running", "started_at": started_at},
             )
@@ -429,7 +417,7 @@ def run_adapter_training(
                 runtime=runtime,
             )
             step_payload["aggregates"] = telemetry
-            _write_json(_metrics_step_path(work_dir, cursor.optimizer_steps), step_payload)
+            write_json_atomic(_metrics_step_path(work_dir, cursor.optimizer_steps), step_payload)
             if tracker is not None:
                 tracker.log_optimizer_step(
                     telemetry,
@@ -463,7 +451,7 @@ def run_adapter_training(
                 },
             )
             tracking_finished = True
-        _write_json(
+        write_json_atomic(
             run_path,
             {
                 **run_base,
@@ -495,7 +483,7 @@ def run_adapter_training(
                     "type": type(finish_exc).__name__,
                     "message": str(finish_exc),
                 }
-        _write_json(
+        write_json_atomic(
             run_path,
             {
                 **run_base,
