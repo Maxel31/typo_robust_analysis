@@ -219,6 +219,7 @@ def _run_robustness_evaluation(args: argparse.Namespace) -> int:
                 training_data_dir=args.training_data,
                 evaluation_role=args.evaluation_role,
                 layer_selection_path=args.layer_selection,
+                window_validation_path=args.window_validation,
                 checkpoint_paths=tuple(args.checkpoints),
                 splits=tuple(args.splits),
                 gpu_id=args.gpu_id,
@@ -371,6 +372,7 @@ def register_commands(
         choices=("tune", "pre-pr-gate", "final-test"),
     )
     evaluation.add_argument("--layer-selection", required=True, type=Path)
+    evaluation.add_argument("--window-validation", type=Path)
     evaluation.add_argument(
         "--checkpoint",
         dest="checkpoints",

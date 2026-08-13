@@ -50,6 +50,7 @@ class RobustnessEvaluationRunConfig:
     training_data_dir: Path
     evaluation_role: str
     layer_selection_path: Path
+    window_validation_path: Path | None
     checkpoint_paths: tuple[Path, ...]
     splits: tuple[str, ...]
     gpu_id: str
@@ -65,6 +66,12 @@ class RobustnessEvaluationRunConfig:
             "output_dir",
         ):
             object.__setattr__(self, field_name, Path(getattr(self, field_name)))
+        if self.window_validation_path is not None:
+            object.__setattr__(
+                self,
+                "window_validation_path",
+                Path(self.window_validation_path),
+            )
         object.__setattr__(
             self,
             "checkpoint_paths",
@@ -251,7 +258,11 @@ def _validate_injected_inputs(
     if len(training_hashes) != 1:
         raise ValueError("evaluation adapters were trained from different data identities")
     if patch_window is None:
-        resolved_window = load_patch_window(config.layer_selection_path, protocol=protocol)
+        resolved_window = load_patch_window(
+            config.layer_selection_path,
+            validation_path=config.window_validation_path,
+            protocol=protocol,
+        )
     elif not isinstance(patch_window, PatchWindow):
         raise TypeError("injected evaluation patch window is invalid")
     else:

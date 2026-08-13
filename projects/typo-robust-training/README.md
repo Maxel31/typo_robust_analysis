@@ -287,7 +287,8 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --config "${TRAIN_PROJECT}/configs/gemma4b-evaluation.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --evaluation-role tune \
-  --layer-selection "${TRAIN_ROOT}/localization/layers/layer_selection.json" \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
   --checkpoint "${TRAIN_ROOT}/training/localized-state-distillation/seed-42/adapter" \
   --splits same-task unseen-task unseen-content unseen-typo \
   --gpu-id "${GPU_ID}" \
@@ -302,6 +303,10 @@ run the same command once with `--evaluation-role pre-pr-gate` and
 `--confirm-sealed-role`; use `final-test` only after the passing pre-PR
 checkpoint is frozen. Sealed-role access is recorded next to the immutable data
 artifacts and cannot be silently repeated.
+
+The generic-text window must include its independent passing validation
+artifact. The evaluator binds both files into the run identity; it will not
+silently fall back to the historical reasoning-task selector.
 
 The command above starts a fresh evaluation. Add `--resume` only after that
 evaluation output directory contains its existing `run.json` and pair

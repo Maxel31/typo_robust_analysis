@@ -262,7 +262,8 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --config "${TRAIN_PROJECT}/configs/gemma4b-evaluation.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --evaluation-role tune \
-  --layer-selection "${TRAIN_ROOT}/localization/layers/layer_selection.json" \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
   --checkpoint "${TRAIN_ROOT}/training/localized-state-distillation/seed-42/adapter" \
   --splits same-task unseen-task unseen-content unseen-typo \
   --gpu-id "${GPU_ID}" \
@@ -276,6 +277,9 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 `--evaluation-role pre-pr-gate --confirm-sealed-role`として一度だけ実行します。
 `final-test`は、合格したPR前checkpointを固定した後にだけ開封します。封印roleへのaccessは
 immutableなdata artifactの隣へ記録され、暗黙に繰り返せません。
+
+generic-text windowには、合格した独立validation artifactも必須です。評価器は両fileを
+run identityへ結合し、過去のreasoning-task selectorへ暗黙にfallbackしません。
 
 上のcommandは新規評価を開始します。その評価output directoryに既存の`run.json`と
 pair checkpointが作成された後に再開する場合だけ、`--resume`を追加します。
