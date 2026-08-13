@@ -194,6 +194,28 @@ def teacher_forced_kl_readout(
     return tuple(trajectory[1:16])
 
 
+def evaluation_teacher_targets(
+    generated_token_ids: Sequence[int],
+    *,
+    termination: str,
+    effective_eos_token_ids: Sequence[int],
+    count: int,
+) -> tuple[tuple[int, ...], str | None]:
+    """Return a complete readout target or an empty, reason-bound invalid target."""
+
+    from typo_robust_training.localization.runtime import clean_teacher_targets
+
+    targets, invalid_reason = clean_teacher_targets(
+        generated_token_ids,
+        termination=termination,
+        effective_eos_token_ids=effective_eos_token_ids,
+        count=count,
+    )
+    if invalid_reason is not None:
+        return (), invalid_reason
+    return targets, None
+
+
 def window_patched_forward(
     layers: Sequence[Any],
     *,
@@ -431,8 +453,6 @@ class HuggingFaceRobustnessEvaluationRuntime:
     def scan_pair(self, pair: EvaluationPair) -> EvaluationObservation:
         """Generate paired answers and one clean-target KL/patch audit."""
 
-        from typo_robust_training.localization.runtime import clean_teacher_targets
-
         prompts = build_evaluation_prompts(pair)
         profile = prompt_tokenization_profile(
             self.tokenizer,
@@ -469,7 +489,7 @@ class HuggingFaceRobustnessEvaluationRuntime:
                     task=prompts.task_for_extractor,
                     gold=prompts.answer,
                 )
-            targets, invalid_reason = clean_teacher_targets(
+            targets, invalid_reason = evaluation_teacher_targets(
                 clean_generation["token_ids"],  # type: ignore[arg-type]
                 termination=str(clean_generation["termination"]),
                 effective_eos_token_ids=self.effective_eos_token_ids,
@@ -628,6 +648,7 @@ class HuggingFaceRobustnessEvaluationRuntime:
 __all__ = [
     "HuggingFaceRobustnessEvaluationRuntime",
     "PromptTokenizationProfile",
+    "evaluation_teacher_targets",
     "prompt_tokenization_profile",
     "teacher_forced_kl_readout",
     "window_patched_forward",
