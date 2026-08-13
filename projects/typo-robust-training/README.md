@@ -195,7 +195,7 @@ clean-harm rule. This historical selection artifact is retained for analysis;
 the proposed adapter uses the independently validated generic-text residual
 window from Section 2.
 
-## 4. Train separate baselines and the proposed adapter
+## 4. Train baseline adapters and reproduce the historical Cycle 1 ablation
 
 ```bash
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
@@ -224,7 +224,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-localized-state-distillation \
-  --config "${TRAIN_PROJECT}/configs/gemma4b-targeted-lora.yaml" \
+  --config "${TRAIN_PROJECT}/configs/ablations/gemma4b-component-state-cycle1.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --layer-selection "${TRAIN_ROOT}/localization/layers/layer_selection.json" \
   --component-selection "${TRAIN_ROOT}/localization/components/component_selection.json" \
@@ -233,10 +233,16 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --resume
 ```
 
-Repeat every condition with seeds 42, 43, and 44. The teacher receives clean
-input, stays frozen, and is never activation-patched. The student receives typo
-input; only declared LoRA parameters may change. All conditions share token
-accounting, checkpoint/resume, and clean-preservation evaluation.
+The last command is retained solely to reproduce the failed component-level
+Cycle 1 ablation. Its relative-MSE objective and component-selected LoRA are
+not the confirmatory method. The bounded residual-window objective that
+consumes the Section 2 artifacts is published as a separate feature-scoped
+change, so the historical failure cannot silently select the active target.
+
+Repeat confirmatory conditions with seeds 42, 43, and 44. The teacher receives
+clean input, stays frozen, and is never activation-patched. The student
+receives typo input; only declared LoRA parameters may change. All conditions
+share token accounting and exact checkpoint/resume behavior.
 
 ## 5. Evaluate held-out robustness
 

@@ -176,7 +176,7 @@ activation差とgradient attributionは候補のshortlistにだけ使います�
 有益な方向を示し、固定したclean-harm規則を通過した候補だけです。この過去のselection artifactは
 分析用に保持し、提案adapterはSection 2で独立検証したgeneric-text residual windowを使用します。
 
-## 4. baselineと提案adapterを別々に学習する
+## 4. baselineを学習し、過去のCycle 1 ablationを再現する
 
 ```bash
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
@@ -205,7 +205,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-localized-state-distillation \
-  --config "${TRAIN_PROJECT}/configs/gemma4b-targeted-lora.yaml" \
+  --config "${TRAIN_PROJECT}/configs/ablations/gemma4b-component-state-cycle1.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --layer-selection "${TRAIN_ROOT}/localization/layers/layer_selection.json" \
   --component-selection "${TRAIN_ROOT}/localization/components/component_selection.json" \
@@ -214,10 +214,14 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --resume
 ```
 
-全条件をseed 42、43、44で繰り返します。Teacherはclean入力を受け取り、freezeしたままで、
-activation patchは行いません。Studentはtypo入力を受け取り、宣言したLoRA parameterだけを
-変更できます。全条件でtoken accounting、checkpoint/resume、clean-preservation評価を
-共通化します。
+最後のcommandは、失敗したcomponent-level Cycle 1 ablationを再現する目的だけで保持します。
+そのrelative-MSE objectiveとcomponent-selected LoRAは確証用の提案手法ではありません。
+Section 2のartifactを使う有界なresidual-window objectiveは別の機能単位変更として公開し、
+過去の失敗したtargetが現在のtargetへ暗黙に混入しないようにします。
+
+確証用の各条件はseed 42、43、44で繰り返します。Teacherはclean入力を受け取り、freezeした
+ままでactivation patchは行いません。Studentはtypo入力を受け取り、宣言したLoRA parameter
+だけを変更できます。全条件でtoken accountingと厳密なcheckpoint/resume挙動を共通化します。
 
 ## 5. held-out頑健性を評価する
 

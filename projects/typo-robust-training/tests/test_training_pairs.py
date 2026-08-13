@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 
+import pytest
+
 from typo_robust_training.data.perturb import TypoGenerator
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.training.pairs import (
@@ -136,6 +138,22 @@ def test_alignment_handles_token_count_decrease_and_left_padding() -> None:
     assert aligned == ((2, 1), (5, 3))
 
 
-def test_word_final_positions_choose_the_last_subword_and_reject_partial_boundaries() -> None:
+def test_word_final_positions_choose_the_last_subword() -> None:
     offsets = ((0, 0), (0, 3), (4, 7), (7, 11), (11, 12))
     assert edited_word_final_token_positions(offsets, ((4, 11),)) == (3,)
+
+
+def test_word_final_positions_allow_punctuation_in_the_same_token() -> None:
+    text = "See </div> now"
+    offsets = ((0, 0), (0, 3), (4, 10), (11, 14))
+
+    assert edited_word_final_token_positions(offsets, ((6, 9),), text=text) == (2,)
+
+
+def test_word_final_positions_reject_ambiguous_partial_word_boundaries() -> None:
+    offsets = ((0, 0), (0, 3), (4, 10), (11, 14))
+    with pytest.raises(ValueError, match="not exactly covered"):
+        edited_word_final_token_positions(offsets, ((6, 9),))
+
+    with pytest.raises(ValueError, match="inside an alphanumeric word"):
+        edited_word_final_token_positions(offsets, ((5, 9),), text="See alphabet now")

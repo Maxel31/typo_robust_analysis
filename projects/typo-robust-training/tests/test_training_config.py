@@ -17,7 +17,9 @@ CONFIGS = {
     "noisy-language-model": PROJECT_ROOT / "configs/baselines/noisy-language-model.yaml",
     "output-matching": PROJECT_ROOT / "configs/baselines/output-matching.yaml",
     "global-state-alignment": PROJECT_ROOT / "configs/baselines/global-state-alignment.yaml",
-    "localized-state-distillation": PROJECT_ROOT / "configs/gemma4b-targeted-lora.yaml",
+    "localized-state-distillation": (
+        PROJECT_ROOT / "configs/ablations/gemma4b-component-state-cycle1.yaml"
+    ),
 }
 
 
@@ -71,12 +73,12 @@ def test_training_configs_freeze_model_optimizer_adapter_and_objective_scopes() 
     assert global_state.layer_scope == "all-decoder-layers"
     assert global_state.state_scope == "all-layers-all-aligned-tokens"
 
-    proposed = protocols["localized-state-distillation"]
-    assert proposed.layer_scope == "selected-component-containing-layers"
-    assert proposed.state_scope == "selected-components-edited-word-final-tokens"
-    assert proposed.lora_rank == 16
-    assert proposed.lora_alpha == pytest.approx(32.0)
-    assert proposed.loss_weights == {
+    component_ablation = protocols["localized-state-distillation"]
+    assert component_ablation.layer_scope == "selected-component-containing-layers"
+    assert component_ablation.state_scope == "selected-components-edited-word-final-tokens"
+    assert component_ablation.lora_rank == 16
+    assert component_ablation.lora_alpha == pytest.approx(32.0)
+    assert component_ablation.loss_weights == {
         "noisy_language_model": 0.0,
         "answer": 1.0,
         "output": 1.0,
@@ -131,11 +133,11 @@ def test_training_commands_expose_condition_specific_evidence_and_shared_resume(
         assert not hasattr(args, "layer_selection")
         assert not hasattr(args, "component_selection")
 
-    proposed = parser.parse_args(
+    component_ablation = parser.parse_args(
         [
             "train-localized-state-distillation",
             "--config",
-            "proposed.yaml",
+            "component-ablation.yaml",
             "--training-data",
             "data",
             "--layer-selection",
@@ -151,6 +153,6 @@ def test_training_commands_expose_condition_specific_evidence_and_shared_resume(
             "--resume",
         ]
     )
-    assert proposed.resume is True
-    assert proposed.layer_selection == Path("layers.json")
-    assert proposed.component_selection == Path("components.json")
+    assert component_ablation.resume is True
+    assert component_ablation.layer_selection == Path("layers.json")
+    assert component_ablation.component_selection == Path("components.json")

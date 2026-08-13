@@ -401,8 +401,9 @@ def edited_word_final_token_positions(
     *,
     text: str | None = None,
 ) -> tuple[int, ...]:
-    """Return the last token exactly covering each edited word."""
+    """Return the last token covering each edited word's final character."""
 
+    text_was_provided = text is not None
     if text is None:
         maximum = max((int(value[1]) for value in offsets), default=0)
         text = "x" * maximum
@@ -410,17 +411,31 @@ def edited_word_final_token_positions(
     normalized_spans = _spans(spans, text=text, field="spans")
     positions: list[int] = []
     for index, (start, stop) in enumerate(normalized_spans):
+        if text_was_provided and (
+            (start > 0 and text[start - 1].isalnum()) or (stop < len(text) and text[stop].isalnum())
+        ):
+            raise ValueError(f"spans[{index}] starts or ends inside an alphanumeric word")
         overlapping = [
             token_index
             for token_index, (token_start, token_stop) in enumerate(tokens)
             if token_stop > token_start and token_start < stop and start < token_stop
         ]
-        if (
-            not overlapping
-            or tokens[overlapping[0]][0] != start
-            or tokens[overlapping[-1]][1] != stop
+        if not overlapping:
+            raise ValueError(f"spans[{index}] is not exactly covered by tokenizer offsets")
+        if not text_was_provided and (
+            tokens[overlapping[0]][0] != start or tokens[overlapping[-1]][1] != stop
         ):
             raise ValueError(f"spans[{index}] is not exactly covered by tokenizer offsets")
+        cursor = start
+        for token_index in overlapping:
+            token_start, token_stop = tokens[token_index]
+            covered_start = max(start, token_start)
+            covered_stop = min(stop, token_stop)
+            if covered_start > cursor:
+                break
+            cursor = max(cursor, covered_stop)
+        if cursor < stop:
+            raise ValueError(f"spans[{index}] is not fully covered by tokenizer offsets")
         positions.append(overlapping[-1])
     if len(set(positions)) != len(positions):
         raise ValueError("edited words resolve to duplicate token positions")

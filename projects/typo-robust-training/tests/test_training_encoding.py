@@ -30,6 +30,21 @@ class _WordTokenizer:
         }
 
 
+class _MarkupTokenizer(_WordTokenizer):
+    def __call__(self, text: str, **kwargs: object) -> dict[str, list[object]]:
+        pieces = [(match.group(), match.span()) for match in re.finditer(r"\S+", text)]
+        ids = [1]
+        offsets: list[tuple[int, int]] = [(0, 0)]
+        for piece, span in pieces:
+            ids.append(self.vocabulary.setdefault(piece, len(self.vocabulary) + 1))
+            offsets.append(span)
+        return {
+            "input_ids": ids,
+            "attention_mask": [1] * len(ids),
+            "offset_mapping": offsets,
+        }
+
+
 def _pair(*, task: str | None = None, answer: str | None = None) -> TrainingPair:
     return TrainingPair(
         record_id="a" * 64,
@@ -102,3 +117,31 @@ def test_noop_pair_has_zero_edit_positions_but_keeps_all_exact_alignment() -> No
         (index, index) for index in range(len(encoding.clean_input_ids) - 1)
     )
     assert encoding.answer_targets == ()
+
+
+def test_encoding_maps_an_edited_word_inside_a_punctuation_token() -> None:
+    pair = TrainingPair(
+        record_id="d" * 64,
+        clean_text="Before </div> after",
+        typo_text="Before </piv> after",
+        task=None,
+        answer=None,
+        metadata={},
+        edits=(
+            TypoEdit(
+                "natural-statistics-substitution",
+                "div",
+                "piv",
+                (9, 12),
+                (9, 12),
+            ),
+        ),
+        is_noop=False,
+        epoch=0,
+    )
+
+    encoding = encode_training_pair(pair, tokenizer=_MarkupTokenizer(), max_length=512)
+
+    assert encoding.clean_edit_positions == (2,)
+    assert encoding.typo_edit_positions == (2,)
+    assert encoding.output_logit_pairs

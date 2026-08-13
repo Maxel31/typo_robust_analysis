@@ -120,8 +120,8 @@ def _load_evidence(
     *,
     protocol: AdapterTrainingProtocol,
 ) -> LocalizationEvidence | None:
-    proposed = protocol.condition == "localized-state-distillation"
-    if proposed:
+    localized = protocol.condition == "localized-state-distillation"
+    if localized:
         if config.layer_selection_path is None or config.component_selection_path is None:
             raise ValueError("localized training requires layer and component selections")
         return load_localization_evidence(
