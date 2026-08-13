@@ -5,6 +5,7 @@ readonly REVIEW_IMAGE="ghcr.io/astral-sh/uv:python3.12-bookworm"
 readonly REVIEW_STATE_DIR="/var/lib/claude-pr-review"
 readonly REVIEW_WORKSPACE_FILE="${REVIEW_STATE_DIR}/workspace"
 readonly REVIEW_ENV_ROOT="${REVIEW_STATE_DIR}/envs"
+readonly REVIEW_BUILD_ROOT="${REVIEW_STATE_DIR}/build"
 readonly REVIEW_TEST_ROOT="/tmp/claude-review-tests"
 
 die() {
@@ -32,10 +33,16 @@ prepare_sandbox() {
   changed_paths="$(git -C "${workspace}" diff --name-only "${base_sha}...HEAD")"
 
   sudo install -d -m 0755 -o root -g root "${REVIEW_STATE_DIR}"
+  # A previous run makes the environment root-owned and immutable to the
+  # runner. Rebuild it from scratch so retries cannot mix dependency states.
+  sudo rm -rf -- "${REVIEW_ENV_ROOT}" "${REVIEW_BUILD_ROOT}"
   sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" "${REVIEW_ENV_ROOT}"
+  sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" "${REVIEW_BUILD_ROOT}"
+  install -d -m 0755 "${REVIEW_BUILD_ROOT}/tmp" "${REVIEW_BUILD_ROOT}/cache"
   printf '%s\n' "${workspace}" | sudo tee "${REVIEW_WORKSPACE_FILE}" >/dev/null
   sudo chmod 0444 "${REVIEW_WORKSPACE_FILE}"
-  install -d -m 1777 "${REVIEW_TEST_ROOT}"
+  # The reviewer owns this directory; the sandbox only needs read/execute.
+  install -d -m 0755 "${REVIEW_TEST_ROOT}"
 
   docker pull --quiet "${REVIEW_IMAGE}" >/dev/null
   local -a selected_projects=(root)
@@ -49,6 +56,7 @@ prepare_sandbox() {
   fi
   printf '%s\n' "${selected_projects[@]}" >"${REVIEW_ENV_ROOT}/selected-projects"
 
+  local prepare_status=0
   docker run --rm \
     --network bridge \
     --cap-drop ALL \
@@ -57,12 +65,14 @@ prepare_sandbox() {
     --memory 10g \
     --cpus 4 \
     --user "$(id -u):$(id -g)" \
-    --tmpfs /tmp:rw,nosuid,nodev,size=2g \
+    --tmpfs /tmp:rw,nosuid,nodev,size=1g \
     --mount "type=bind,src=${workspace},dst=/workspace,readonly" \
     --mount "type=bind,src=${REVIEW_ENV_ROOT},dst=/review-envs" \
+    --mount "type=bind,src=${REVIEW_BUILD_ROOT},dst=/review-build" \
     --workdir /workspace \
     --env HOME=/tmp \
-    --env UV_CACHE_DIR=/tmp/uv-cache \
+    --env TMPDIR=/review-build/tmp \
+    --env UV_CACHE_DIR=/review-build/cache \
     --entrypoint /bin/bash \
     "${REVIEW_IMAGE}" \
     -euo pipefail -c '
@@ -75,7 +85,9 @@ prepare_sandbox() {
               --no-install-project --inexact --no-cache
         fi
       done </review-envs/selected-projects
-    '
+    ' || prepare_status=$?
+  sudo rm -rf -- "${REVIEW_BUILD_ROOT}"
+  ((prepare_status == 0)) || return "${prepare_status}"
   sudo chown -R root:root "${REVIEW_ENV_ROOT}"
   sudo chmod -R go-w "${REVIEW_ENV_ROOT}"
 }
@@ -108,8 +120,13 @@ run_test() {
       ;;
   esac
 
-  [[ -x "${REVIEW_ENV_ROOT}${python_path#/review-envs}" ]] \
-    || die "the ${project} review environment is not installed"
+  local host_python="${REVIEW_ENV_ROOT}${python_path#/review-envs}"
+  if [[ ! -f "${REVIEW_ENV_ROOT}/shared/pyvenv.cfg" ]] \
+    || { [[ ! -L "${host_python}" ]] && [[ ! -f "${host_python}" ]]; }; then
+    die "the ${project} review environment is not installed"
+  fi
+  # Tests are authored by the runner but executed by the unprivileged sandbox.
+  chmod 0644 -- "${test_file}"
 
   docker run --rm --pull never \
     --network none \
@@ -135,6 +152,7 @@ run_test() {
 
 self_test() {
   [[ $# -eq 0 ]] || die "usage: review-falsify --self-test"
+  require_prepared_workspace >/dev/null
   local test_file="${REVIEW_TEST_ROOT}/test_review_sandbox.py"
   printf '%s\n' \
     'import os' \
@@ -161,8 +179,13 @@ self_test() {
     '    finally:' \
     '        probe.close()' \
     >"${test_file}"
-  run_test root "${test_file}"
+  local test_status=0
+  (
+    export REVIEW_SANDBOX_SENTINEL=armed
+    run_test root "${test_file}"
+  ) || test_status=$?
   rm -f -- "${test_file}"
+  return "${test_status}"
 }
 
 case "${1:-}" in
