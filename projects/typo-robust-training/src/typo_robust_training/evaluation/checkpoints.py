@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -124,7 +125,6 @@ def load_adapter_descriptors(
             raise ValueError("evaluation adapter seed is outside the frozen inventory")
         runtime = _object(path / "training_runtime.json", artifact="adapter runtime provenance")
         expected_runtime = {
-            "runtime": "HuggingFaceAdapterTrainingRuntime/v1",
             "model": protocol.model,
             "requested_revision": protocol.model_revision,
             "condition": condition,
@@ -132,7 +132,10 @@ def load_adapter_descriptors(
             "teacher_frozen": True,
             "student_base_frozen": True,
         }
-        if any(runtime.get(field) != value for field, value in expected_runtime.items()):
+        if runtime.get("runtime") not in {
+            "HuggingFaceAdapterTrainingRuntime/v1",
+            "HuggingFaceAdapterTrainingRuntime/v2",
+        } or any(runtime.get(field) != value for field, value in expected_runtime.items()):
             raise ValueError("evaluation adapter runtime identity differs")
         adapter_config = _object(path / "adapter_config.json", artifact="PEFT adapter config")
         if (
@@ -175,21 +178,43 @@ def load_adapter_descriptors(
     return tuple(sorted(descriptors, key=lambda item: (condition_order[item.condition], item.seed)))
 
 
-def load_patch_window(path: Path, *, protocol: RobustnessEvaluationProtocol) -> PatchWindow:
-    """Load only a layer-selection artifact from the same pinned model."""
+def load_patch_window(
+    path: Path,
+    *,
+    protocol: RobustnessEvaluationProtocol,
+    validation_path: Path | None = None,
+) -> PatchWindow:
+    """Load one legacy window or independently validated generic-text window."""
 
     resolved = Path(path).resolve()
     payload = _object(resolved, artifact="layer selection")
-    expected = {
-        "schema_version": "robustness-layer-selection/v1",
-        "operation": "select-distillation-layers",
-        "model": protocol.model,
-        "model_revision": protocol.model_revision,
-    }
+    schema = payload.get("schema_version")
+    expected = (
+        {
+            "operation": "select-distillation-layers",
+            "model": protocol.model,
+            "model_revision": protocol.model_revision,
+        }
+        if schema == "robustness-layer-selection/v1"
+        else {
+            "operation": "select-generic-joint-patch-window",
+            "model": protocol.model,
+            "model_revision": protocol.model_revision,
+        }
+        if schema == "robustness-joint-window-selection/v1"
+        else {}
+    )
+    if not expected:
+        raise ValueError("evaluation patch-window identity differs")
     if any(payload.get(field) != value for field, value in expected.items()):
         raise ValueError("evaluation patch-window identity differs")
     selected = payload.get("selected_window")
-    if not isinstance(selected, Mapping) or set(selected) != {"start", "stop"}:
+    expected_selected_fields = (
+        {"start", "stop"}
+        if schema == "robustness-layer-selection/v1"
+        else {"start", "stop", "median_pairwise_restoration", "confidence_interval"}
+    )
+    if not isinstance(selected, Mapping) or set(selected) != expected_selected_fields:
         raise ValueError("evaluation patch-window coordinates differ")
     start, stop = selected.get("start"), selected.get("stop")
     if (
@@ -200,7 +225,69 @@ def load_patch_window(path: Path, *, protocol: RobustnessEvaluationProtocol) -> 
         or not 0 <= start < stop
     ):
         raise ValueError("evaluation patch-window coordinates are invalid")
-    return PatchWindow(start=start, stop=stop, artifact_sha256=_sha256_file(resolved))
+    selection_sha256 = _sha256_file(resolved)
+    if schema == "robustness-layer-selection/v1":
+        if validation_path is not None:
+            raise ValueError("legacy evaluation patch-window cannot bind generic validation")
+        artifact_sha256 = selection_sha256
+    else:
+        if validation_path is None:
+            raise ValueError("generic evaluation patch-window requires independent validation")
+        width = payload.get("window_width")
+        decoder_layers = payload.get("decoder_layers")
+        if (
+            isinstance(width, bool)
+            or not isinstance(width, int)
+            or width != stop - start
+            or isinstance(decoder_layers, bool)
+            or not isinstance(decoder_layers, int)
+            or stop > decoder_layers
+        ):
+            raise ValueError("generic evaluation patch-window dimensions differ")
+        validation_resolved = Path(validation_path).resolve()
+        validation = _object(validation_resolved, artifact="window validation")
+        validation_expected = {
+            "schema_version": "robustness-joint-window-validation/v1",
+            "operation": "validate-generic-joint-patch-window",
+            "model": protocol.model,
+            "model_revision": protocol.model_revision,
+            "config_sha256": payload.get("config_sha256"),
+            "window_selection_sha256": selection_sha256,
+            "validation_rule": "bootstrap-95ci-lower-strictly-positive/v1",
+        }
+        if any(validation.get(field) != value for field, value in validation_expected.items()):
+            raise ValueError("generic evaluation window validation identity differs")
+        validation_window = validation.get("selected_window")
+        if (
+            not isinstance(validation_window, Mapping)
+            or set(validation_window) != {"start", "stop"}
+            or validation_window.get("start") != start
+            or validation_window.get("stop") != stop
+        ):
+            raise ValueError("generic evaluation window validation coordinates differ")
+        interval = validation.get("confidence_interval")
+        if (
+            validation.get("passed") is not True
+            or not isinstance(interval, list)
+            or len(interval) != 2
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                for value in interval
+            )
+            or float(interval[0]) <= 0.0
+            or float(interval[0]) > float(interval[1])
+        ):
+            raise ValueError("generic evaluation window did not pass independent validation")
+        validation_sha256 = _sha256_file(validation_resolved)
+        artifact_sha256 = hashlib.sha256(
+            (
+                "validated-evaluation-patch-window/v1\0"
+                f"{selection_sha256}\0{validation_sha256}\0{start}:{stop}"
+            ).encode()
+        ).hexdigest()
+    return PatchWindow(start=start, stop=stop, artifact_sha256=artifact_sha256)
 
 
 __all__ = [
