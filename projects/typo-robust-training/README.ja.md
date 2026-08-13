@@ -226,9 +226,10 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 Section 2のartifactを使う有界なresidual-window objectiveは別の機能単位変更として公開し、
 過去の失敗したtargetが現在のtargetへ暗黙に混入しないようにします。
 
-確証用の各条件はseed 42、43、44で繰り返します。Teacherはclean入力を受け取り、freezeした
-ままでactivation patchは行いません。Studentはtypo入力を受け取り、宣言したLoRA parameter
-だけを変更できます。全条件でtoken accountingと厳密なcheckpoint/resume挙動を共通化します。
+上のcommandはversion 1 pilotの再現用であり、確証用比較として報告しません。seed 42、43、44の
+matched output-only baselineとcontrolは、後続の有界residual-window学習機能で導入します。
+すべてのteacher/student条件で、Teacherはclean入力を受け取りfreezeしたままとし、
+宣言したStudentのLoRA parameterだけを変更できます。
 
 公開する全学習commandではonline W&B trackingを必須にします。API keyは
 `WANDB_API_KEY`からだけ渡し、`WANDB_ENTITY`は任意です。完了したoptimizer stepごとに、
@@ -238,18 +239,19 @@ uploadします。corpus text、prompt、record ID、API key、checkpoint内容�
 status、resume境界だけを保存し、`--resume`時は同一W&B runへ継続してloss curveを
 重複させません。
 
-W&B名には、略称ではなく科学的な役割を直接表示します。
+W&B名には、略称ではなく科学的な役割を直接表示します。この機能で公開するadapter
+configはversion 1のCycle 1再現一式なので、過去のrunであることも名前に明示します。
 
 | W&Bに表示する役割 | 操作 | 意味 |
 |---|---|---|
-| `Kojima baseline` | `Output-distribution matching` | state lossを使わないclean-teacher/noisy-student出力整合 |
-| `Proposed method` | `Causal-window localized state distillation` | Activation Patchingで選んだresidual windowへのstate信号 |
-| `Scope control` | `All-layer state distillation` | 全decoder layerへのstate信号 |
-| `Auxiliary baseline` | `Noisy-language-model training` | noisy textに対する通常のcausal language-model学習 |
+| `Historical baseline` | `Noisy-language-model training` | Cycle 1の通常のnoisy-text causal language-model baseline |
+| `Historical pilot` | `Output/answer/clean-loss training` | Cycle 1の複数lossによるoutput-matching pilot |
+| `Historical control` | `Global relative-MSE state alignment` | Cycle 1の全layer・全token state control |
+| `Historical ablation` | `Component-level relative-MSE state distillation` | 失敗したCycle 1 neuron/head実験。確証手法ではない |
 
-後半にはstate対象層、model、optimizer-step予算、seedを記録します。失敗したCycle 1設計は
-`Historical Cycle 1`という別groupに分け、`Historical pilot`、`Historical control`、
-`Historical ablation`と表示するため、確証用比較と取り違えません。
+後半にはstate対象層、model、optimizer-step予算、seedを記録します。version 1のrunはすべて
+`Historical Cycle 1`という別groupに分けます。有界residual-window比較のconfigとW&B mappingは
+その学習機能と同じ変更で導入するため、未実装の確証用runと取り違えません。
 
 ## 5. held-out頑健性を評価する
 

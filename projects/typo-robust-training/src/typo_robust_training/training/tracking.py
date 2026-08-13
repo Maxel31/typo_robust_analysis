@@ -46,38 +46,6 @@ class WandbRunPresentation:
     notes: str
 
 
-_CONFIRMATORY_PRESENTATION = {
-    "output-matching": (
-        "Kojima baseline",
-        "Output-distribution matching",
-        "kojima-output-distribution-matching",
-        "baseline",
-        "Kojima-style clean-teacher/noisy-student output distribution matching; "
-        "no state-alignment loss.",
-    ),
-    "localized-state-distillation": (
-        "Proposed method",
-        "Causal-window localized state distillation",
-        "proposed-causal-window-state-distillation",
-        "proposed-method",
-        "Output matching plus residual-state cosine alignment at the edited-word-final "
-        "coordinates selected by Activation Patching.",
-    ),
-    "global-state-alignment": (
-        "Scope control",
-        "All-layer state distillation",
-        "all-layer-state-control",
-        "scope-control",
-        "Residual-state alignment at every decoder layer.",
-    ),
-    "noisy-language-model": (
-        "Auxiliary baseline",
-        "Noisy-language-model training",
-        "noisy-language-model-baseline",
-        "auxiliary-baseline",
-        "Ordinary causal-language-model training on noisy text.",
-    ),
-}
 _HISTORICAL_PRESENTATION = {
     "noisy-language-model": (
         "Historical baseline",
@@ -162,14 +130,11 @@ def build_wandb_run_presentation(
         or max_optimizer_steps <= 0
     ):
         raise ValueError("W&B presentation optimizer steps must be positive")
-    cycle_match = re.fullmatch(r"robustness-adapter-training-config/v(\d+)", schema_version)
-    if cycle_match is None:
-        raise ValueError("W&B presentation training schema is invalid")
-    cycle = int(cycle_match.group(1))
-    presentation_map = _HISTORICAL_PRESENTATION if cycle == 1 else _CONFIRMATORY_PRESENTATION
-    if condition not in presentation_map:
+    if schema_version != "robustness-adapter-training-config/v1":
+        raise ValueError("W&B presentation has an unsupported schema")
+    if condition not in _HISTORICAL_PRESENTATION:
         raise ValueError(f"W&B presentation has no mapping for {condition!r}")
-    role_label, operation, job_type, role_tag, notes = presentation_map[condition]
+    role_label, operation, job_type, role_tag, notes = _HISTORICAL_PRESENTATION[condition]
     model_name = _display_model_name(model)
     layer_label = _layer_label(state_layers)
     parts = [role_label, operation]
@@ -177,14 +142,13 @@ def build_wandb_run_presentation(
         parts.append(layer_label)
         notes = f"{notes} State layers: {layer_label}."
     parts.extend((model_name, f"{max_optimizer_steps} steps", f"seed {seed}"))
-    group_prefix = "Historical Cycle 1" if cycle == 1 else "Confirmatory comparison"
     return WandbRunPresentation(
         name=" · ".join(parts),
-        group=f"{group_prefix} · {model_name} · {max_optimizer_steps} steps",
+        group=f"Historical Cycle 1 · {model_name} · {max_optimizer_steps} steps",
         job_type=job_type,
         tags=(
             "typo-robustness",
-            f"protocol-version:{cycle}",
+            "protocol-version:1",
             f"role:{role_tag}",
             f"condition:{condition}",
             f"model:{model.rsplit('/', 1)[-1].lower()}",

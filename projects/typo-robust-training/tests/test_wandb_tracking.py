@@ -72,36 +72,6 @@ def _bindings() -> dict[str, object]:
 
 
 def test_wandb_presentation_uses_self_explanatory_scientific_names() -> None:
-    proposed = build_wandb_run_presentation(
-        condition="localized-state-distillation",
-        schema_version="robustness-adapter-training-config/v2",
-        model="google/gemma-3-4b-it",
-        seed=42,
-        max_optimizer_steps=100,
-        state_layers=tuple(range(6)),
-    )
-    assert proposed.name == (
-        "Proposed method · Causal-window localized state distillation · "
-        "L0–5 · Gemma-3-4B-IT · 100 steps · seed 42"
-    )
-    assert proposed.group == "Confirmatory comparison · Gemma-3-4B-IT · 100 steps"
-    assert proposed.job_type == "proposed-causal-window-state-distillation"
-    assert "role:proposed-method" in proposed.tags
-    assert all(tag not in {"arm:B1", "arm:T1", "arm:C1", "arm:C2"} for tag in proposed.tags)
-
-    baseline = build_wandb_run_presentation(
-        condition="output-matching",
-        schema_version="robustness-adapter-training-config/v2",
-        model="google/gemma-3-4b-it",
-        seed=44,
-        max_optimizer_steps=300,
-        state_layers=(),
-    )
-    assert baseline.name == (
-        "Kojima baseline · Output-distribution matching · Gemma-3-4B-IT · 300 steps · seed 44"
-    )
-    assert baseline.job_type == "kojima-output-distribution-matching"
-
     historical = build_wandb_run_presentation(
         condition="localized-state-distillation",
         schema_version="robustness-adapter-training-config/v1",
@@ -115,15 +85,16 @@ def test_wandb_presentation_uses_self_explanatory_scientific_names() -> None:
     )
     assert historical.group.startswith("Historical Cycle 1 ·")
     assert "not the confirmatory method" in historical.notes
+    assert all(tag not in {"arm:B1", "arm:T1", "arm:C1", "arm:C2"} for tag in historical.tags)
 
-    with pytest.raises(ValueError, match="no mapping"):
+    with pytest.raises(ValueError, match="unsupported schema"):
         build_wandb_run_presentation(
-            condition="random-window-state-distillation",
+            condition="output-matching",
             schema_version="robustness-adapter-training-config/v2",
             model="google/gemma-3-4b-it",
             seed=42,
             max_optimizer_steps=100,
-            state_layers=tuple(range(20, 26)),
+            state_layers=(),
         )
 
 

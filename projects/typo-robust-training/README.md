@@ -246,10 +246,12 @@ not the confirmatory method. The bounded residual-window objective that
 consumes the Section 2 artifacts is published as a separate feature-scoped
 change, so the historical failure cannot silently select the active target.
 
-Repeat confirmatory conditions with seeds 42, 43, and 44. The teacher receives
-clean input, stays frozen, and is never activation-patched. The student
-receives typo input; only declared LoRA parameters may change. All conditions
-share token accounting and exact checkpoint/resume behavior.
+The commands above reproduce the version-1 pilot and must not be reported as
+the confirmatory comparison. The later bounded residual-window training
+feature supplies its matched output-only baseline and controls for seeds 42,
+43, and 44. In every teacher/student condition, the teacher receives clean
+input, stays frozen, and is never activation-patched; only declared student
+LoRA parameters may change.
 
 Every public training command requires online W&B tracking. Supply the API key
 only through `WANDB_API_KEY`; `WANDB_ENTITY` is optional. At each completed
@@ -261,19 +263,20 @@ bindings/presentation, URL, status, and the resume boundary so `--resume`
 continues the same W&B run without duplicating the loss curve.
 
 W&B names expose the scientific role directly; opaque arm abbreviations are
-not used:
+not used. The adapter configs published in this feature are the version-1
+Cycle 1 reproduction suite, so their historical status is explicit:
 
 | Role shown in W&B | Operation | Meaning |
 |---|---|---|
-| `Kojima baseline` | `Output-distribution matching` | Clean-teacher/noisy-student output matching without state loss |
-| `Proposed method` | `Causal-window localized state distillation` | State signal at the Activation-Patching-selected residual window |
-| `Scope control` | `All-layer state distillation` | State signal at every decoder layer |
-| `Auxiliary baseline` | `Noisy-language-model training` | Ordinary causal-language-model training on noisy text |
+| `Historical baseline` | `Noisy-language-model training` | Cycle 1 ordinary causal-language-model baseline on noisy text |
+| `Historical pilot` | `Output/answer/clean-loss training` | Cycle 1 multi-loss output-matching pilot |
+| `Historical control` | `Global relative-MSE state alignment` | Cycle 1 all-layer/all-token state control |
+| `Historical ablation` | `Component-level relative-MSE state distillation` | Failed Cycle 1 neuron/head experiment; not the confirmatory method |
 
-The suffix records state layers, model, optimizer-step budget, and seed. Runs
-from the failed Cycle 1 design are placed in a separate `Historical Cycle 1`
-group and labelled `Historical pilot`, `Historical control`, or `Historical
-ablation`, so they cannot be mistaken for confirmatory comparisons.
+The suffix records state layers, model, optimizer-step budget, and seed. All
+of these version-1 runs are placed in the separate `Historical Cycle 1` group,
+so they cannot be mistaken for the bounded residual-window comparison, whose
+config and W&B mapping are introduced with that later training feature.
 
 ## 5. Evaluate held-out robustness
 
