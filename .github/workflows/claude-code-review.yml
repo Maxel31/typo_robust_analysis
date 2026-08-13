@@ -29,6 +29,13 @@ jobs:
             - Security implications
             - Performance considerations
 
+            Use a falsification-first review process for every suspected defect:
+            - Create a minimal test that proves the feature is wrong, and run that test against the PR code.
+            - Only report an issue as an actionable defect when the test fails for the claimed reason and the expected behavior is well-defined.
+            - Include the reproducing test (or its exact patch), command, and observed failure in the review comment.
+            - If you cannot produce such a counterexample after a reasonable attempt, do not claim that the feature is incorrect; at most record it as an explicitly unproven suggestion.
+            - Test files created for review are local evidence only. Do not commit or push them.
+
             Note: The PR branch is already checked out in the current working directory.
 
             Use `gh pr comment` for top-level feedback.
@@ -39,4 +46,4 @@ jobs:
 
           claude_args: |
             --model opus
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "Read,Grep,Glob,Write,Edit,Bash(uv run pytest:*),Bash(pytest:*),Bash(git diff:*),Bash(git status:*),mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
