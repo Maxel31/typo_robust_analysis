@@ -120,6 +120,35 @@ def test_monitor_reductions_use_causal_and_aligned_forward_kl() -> None:
     assert aligned_sum > 0.0
 
 
+def test_monitor_forward_kl_clamps_floating_point_roundoff_per_position() -> None:
+    """A mathematically non-negative KL must not invalidate a corpus record."""
+
+    torch.manual_seed(2)
+    base = torch.randn(1, 2, 3)
+    candidate = base + torch.randn(1, 2, 3) * 1e-6
+    ids = torch.tensor([[0, 1]])
+
+    base_log_probs = base[:, :1].float().log_softmax(dim=-1)
+    candidate_log_probs = candidate[:, :1].float().log_softmax(dim=-1)
+    raw_kl = (base_log_probs.exp() * (base_log_probs - candidate_log_probs)).sum()
+    assert float(raw_kl) < 0.0  # Counterexample without the numerical guard.
+
+    _nll, _tokens, causal_kl, causal_tokens = causal_nll_and_forward_kl(
+        candidate,
+        ids,
+        base_logits=base,
+    )
+    aligned_kl, aligned_tokens = aligned_forward_kl_sum(
+        base,
+        candidate,
+        token_pairs=((1, 1),),
+    )
+
+    assert causal_tokens == aligned_tokens == 1
+    assert causal_kl == 0.0
+    assert aligned_kl == 0.0
+
+
 def test_monitor_reductions_chunk_long_sequences_without_changing_values() -> None:
     torch.manual_seed(42)
     base = torch.randn(1, 11, 17, dtype=torch.bfloat16)
@@ -134,7 +163,12 @@ def test_monitor_reductions_chunk_long_sequences_without_changing_values() -> No
     candidate_log_probs = candidate[:, :-1].float().log_softmax(dim=-1)
     base_log_probs = base[:, :-1].float().log_softmax(dim=-1)
     expected_nll = -candidate_log_probs.gather(-1, ids[:, 1:].unsqueeze(-1)).sum()
-    expected_kl = (base_log_probs.exp() * (base_log_probs - candidate_log_probs)).sum()
+    expected_kl = (
+        (base_log_probs.exp() * (base_log_probs - candidate_log_probs))
+        .sum(dim=-1)
+        .clamp_min(0.0)
+        .sum()
+    )
 
     assert count == kl_count == 10
     assert nll == pytest.approx(float(expected_nll), rel=1e-6)
