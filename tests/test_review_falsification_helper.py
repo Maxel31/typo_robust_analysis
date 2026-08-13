@@ -150,6 +150,38 @@ def test_run_accepts_container_relative_venv_symlink(tmp_path: Path) -> None:
     assert "/workspace/tests/.review-tests/test_probe.py" in docker_log
 
 
+def test_review_test_mount_points_exist_and_are_real_directories() -> None:
+    expected = (
+        REPOSITORY_ROOT / "tests" / ".review-tests",
+        REPOSITORY_ROOT / "projects" / "typo-cot" / "tests" / ".review-tests",
+    )
+
+    for mount_point in expected:
+        assert mount_point.is_dir()
+        assert not mount_point.is_symlink()
+
+
+def test_run_rejects_a_symlinked_review_test_mount(tmp_path: Path) -> None:
+    helper, _, review_tests, environment = _make_helper(tmp_path)
+    prepared = _prepare(helper, environment)
+    assert prepared.returncode == 0, prepared.stderr
+    probe = review_tests / "test_probe.py"
+    probe.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    (workspace / "tests").mkdir(parents=True)
+    (workspace / "redirect").mkdir()
+    (workspace / "tests" / ".review-tests").symlink_to(workspace / "redirect")
+    (workspace / ".git").mkdir()
+    state_workspace = tmp_path / "state" / "workspace"
+    state_workspace.chmod(state_workspace.stat().st_mode | stat.S_IWUSR)
+    state_workspace.write_text(f"{workspace}\n", encoding="utf-8")
+
+    result = _run(helper, environment, "root", str(probe))
+
+    assert result.returncode == 2
+    assert "not a real directory" in result.stderr
+
+
 def test_self_test_fails_cleanly_before_prepare(tmp_path: Path) -> None:
     helper, _, _, environment = _make_helper(tmp_path)
 

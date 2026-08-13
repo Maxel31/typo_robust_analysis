@@ -100,7 +100,7 @@ prepare_sandbox() {
 run_test() {
   [[ $# -eq 2 ]] || die "usage: review-falsify {root|typo-cot|typo-robust-training} TEST_FILE"
   local project="$1"
-  local python_path pythonpath test_file test_mount test_relative workdir workspace
+  local host_test_mount python_path pythonpath test_file test_mount test_relative workdir workspace
   workspace="$(require_prepared_workspace)"
   if ! test_file="$(realpath --canonicalize-existing -- "$2" 2>/dev/null)"; then
     die "TEST_FILE must be an existing Python file below ${REVIEW_TEST_ROOT}"
@@ -113,6 +113,7 @@ run_test() {
     root)
       python_path="/review-envs/shared/bin/python"
       pythonpath="/workspace"
+      host_test_mount="${workspace}/tests/.review-tests"
       test_mount="/workspace/tests/.review-tests"
       workdir="/workspace"
       ;;
@@ -121,6 +122,7 @@ run_test() {
         || die "the ${project} environment was not provisioned because that project is unchanged"
       python_path="/review-envs/shared/bin/python"
       pythonpath="/workspace/projects/${project}/src"
+      host_test_mount="${workspace}/projects/${project}/tests/.review-tests"
       test_mount="/workspace/projects/${project}/tests/.review-tests"
       workdir="/workspace/projects/${project}"
       ;;
@@ -128,6 +130,17 @@ run_test() {
       die "unknown project: ${project}"
       ;;
   esac
+
+  # Docker cannot create a nested bind target below the read-only workspace.
+  # Require the tracked placeholder and reject PR-controlled symlink redirects.
+  local resolved_host_test_mount
+  if ! resolved_host_test_mount="$(
+    realpath --canonicalize-existing -- "${host_test_mount}" 2>/dev/null
+  )"; then
+    die "the tracked review-test mount point is missing for ${project}"
+  fi
+  [[ -d "${host_test_mount}" && "${resolved_host_test_mount}" == "${host_test_mount}" ]] \
+    || die "the review-test mount point is not a real directory for ${project}"
 
   local host_python="${REVIEW_ENV_ROOT}${python_path#/review-envs}"
   if [[ ! -f "${REVIEW_ENV_ROOT}/shared/pyvenv.cfg" ]] \
