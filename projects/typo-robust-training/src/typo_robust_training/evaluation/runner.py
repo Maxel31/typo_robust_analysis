@@ -48,7 +48,9 @@ RuntimeFactory = Callable[[AdapterDescriptor | None], RobustnessEvaluationRuntim
 @dataclass(frozen=True, slots=True)
 class RobustnessEvaluationRunConfig:
     config_path: Path
+    study_protocol_path: Path
     training_data_dir: Path
+    evaluation_data_dir: Path
     evaluation_role: str
     layer_selection_path: Path
     window_validation_path: Path | None
@@ -62,7 +64,9 @@ class RobustnessEvaluationRunConfig:
     def __post_init__(self) -> None:
         for field_name in (
             "config_path",
+            "study_protocol_path",
             "training_data_dir",
+            "evaluation_data_dir",
             "layer_selection_path",
             "output_dir",
         ):
@@ -124,6 +128,7 @@ def _condition_id(descriptor: AdapterDescriptor | None) -> str:
 def _experiment_binding(
     *,
     protocol: RobustnessEvaluationProtocol,
+    study_protocol_sha256: str,
     descriptors: Sequence[AdapterDescriptor],
     patch_window: PatchWindow,
 ) -> str:
@@ -131,6 +136,7 @@ def _experiment_binding(
         {
             "schema_version": "robustness-evaluation-experiment-binding/v1",
             "config_sha256": protocol.config_sha256,
+            "study_protocol_sha256": study_protocol_sha256,
             "patch_window_sha256": patch_window.artifact_sha256,
             "patch_layers": list(patch_window.layers),
             "adapters": [
@@ -267,7 +273,7 @@ def _validate_injected_inputs(
         raise ValueError("evaluation adapters were trained from different data identities")
     data_identities = {item.data_identity_sha256 for item in resolved_descriptors}
     if len(data_identities) != 1:
-        raise ValueError("evaluation adapters use different train/evaluation splits")
+        raise ValueError("evaluation adapters use different training data identities")
     for condition in {item.condition for item in resolved_descriptors}:
         config_hashes = {
             item.config_sha256 for item in resolved_descriptors if item.condition == condition
@@ -306,10 +312,6 @@ def _validate_injected_inputs(
             raise TypeError("injected evaluation data bundle is invalid")
         if data_bundle.evaluation_role != config.evaluation_role:
             raise ValueError("injected evaluation data role differs")
-        if {item.data_identity_sha256 for item in resolved_descriptors} != {
-            data_bundle.data_identity_sha256
-        }:
-            raise ValueError("evaluation adapters differ from the evaluation data identity")
     return resolved_descriptors, resolved_window, data_bundle
 
 
@@ -328,6 +330,17 @@ def run_robustness_evaluation(
     if not config.gpu_id or "," in config.gpu_id:
         raise ValueError("--gpu-id must name one physical GPU")
     protocol = load_robustness_evaluation_config(config.config_path)
+    from typo_robust_training.evaluation.study import load_evaluation_study_protocol
+
+    study = load_evaluation_study_protocol(config.study_protocol_path)
+    if (
+        study.training_seeds != protocol.seed_inventory
+        or study.bootstrap_replicates != protocol.bootstrap_replicates
+        or study.bootstrap_seed != protocol.bootstrap_seed
+        or study.confidence_level != protocol.confidence_level
+        or study.max_new_tokens != protocol.max_new_tokens
+    ):
+        raise ValueError("evaluation runtime and study protocols differ")
     if data_bundle is not None and config.evaluation_role != "tune":
         raise ValueError("sealed evaluation roles cannot use injected data bundles")
     resolved_descriptors, resolved_window, injected_bundle = _validate_injected_inputs(
@@ -339,6 +352,7 @@ def run_robustness_evaluation(
     )
     experiment_binding = _experiment_binding(
         protocol=protocol,
+        study_protocol_sha256=study.config_sha256,
         descriptors=resolved_descriptors,
         patch_window=resolved_window,
     )
@@ -360,8 +374,18 @@ def run_robustness_evaluation(
     work_dir.mkdir(exist_ok=True)
     records_path = output_dir / "records.jsonl"
     report_path = output_dir / "report.json"
+    if injected_bundle is None:
+        from typo_robust_training.training.data import load_training_data_provenance
+
+        training_bundle = load_training_data_provenance(config.training_data_dir)
+        if {item.training_data_sha256 for item in resolved_descriptors} != {
+            training_bundle.training_data_sha256
+        } or {item.data_identity_sha256 for item in resolved_descriptors} != {
+            training_bundle.data_identity_sha256
+        }:
+            raise ValueError("evaluation adapter training-data provenance differs")
     bundle = injected_bundle or load_evaluation_bundle(
-        config.training_data_dir,
+        config.evaluation_data_dir,
         evaluation_role=config.evaluation_role,
         splits=config.splits,
         model=protocol.model,
@@ -371,22 +395,21 @@ def run_robustness_evaluation(
         output_dir=output_dir,
         confirm_sealed_role=config.confirm_sealed_role,
         resume=config.resume,
-        expected_data_identity_sha256=next(
-            iter(item.data_identity_sha256 for item in resolved_descriptors)
-        ),
+        study_protocol_sha256=study.config_sha256,
     )
     if any(not set(pair.strata) & set(config.splits) for pair in bundle.records):
         raise ValueError("evaluation data bundle contains an unrequested record")
-    adapter_data_identities = {item.data_identity_sha256 for item in resolved_descriptors}
-    if adapter_data_identities != {bundle.data_identity_sha256}:
-        raise ValueError("evaluation adapters differ from the evaluation data identity")
     run_base = {
         "schema_version": "robustness-evaluation-run/v1",
         "operation": "evaluate-typo-robustness",
         "evaluation_role": config.evaluation_role,
         "splits": list(config.splits),
         "config_sha256": protocol.config_sha256,
-        "data_identity_sha256": bundle.data_identity_sha256,
+        "evaluation_data_identity_sha256": bundle.data_identity_sha256,
+        "training_data_identity_sha256": next(
+            iter(item.data_identity_sha256 for item in resolved_descriptors)
+        ),
+        "study_protocol_sha256": study.config_sha256,
         "role_manifest_sha256": bundle.manifest_sha256,
         "evaluation_manifest_sha256": bundle.evaluation_manifest_sha256,
         "patch_window_sha256": resolved_window.artifact_sha256,

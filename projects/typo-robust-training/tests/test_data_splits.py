@@ -155,3 +155,20 @@ def test_balanced_group_role_does_not_fix_the_largest_group_to_one_role() -> Non
         for seed in range(16)
     }
     assert len(roles) >= 2
+
+
+def test_balanced_group_role_coverage_cannot_pin_a_giant_group_to_a_tiny_role() -> None:
+    sizes = {"giant": 9_000, **{f"small-{index}": 10 for index in range(40)}}
+    assignments = assign_balanced_group_roles(
+        sizes,
+        seed=42,
+        namespace="skewed-coverage-fixture",
+        weights={"train": 0.98, "tune": 0.01, "held_out": 0.01},
+    )
+    counts: dict[str, int] = defaultdict(int)
+    for group, role in assignments.items():
+        counts[role] += sizes[group]
+
+    assert assignments["giant"] == "train"
+    assert counts["tune"] < 0.05 * sum(sizes.values())
+    assert counts["held_out"] < 0.05 * sum(sizes.values())

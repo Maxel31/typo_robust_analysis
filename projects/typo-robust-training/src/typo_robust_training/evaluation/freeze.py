@@ -235,6 +235,24 @@ def _retain_smallest(
         heapq.heapreplace(heap, entry)
 
 
+def _could_retain_smallest(
+    heap: Sequence[tuple[int, str, CleanRecord]],
+    *,
+    record_id: str,
+    key: int,
+    limit: int,
+) -> bool:
+    """Return whether an item can enter a bounded bottom-k heap."""
+
+    if limit < 0:
+        raise ValueError("bottom-k limit must be non-negative")
+    if limit == 0:
+        return False
+    if len(heap) < limit:
+        return True
+    return (-key, record_id) > heap[0][:2]
+
+
 def _collect_evaluation_sources(
     sources: TrainingDataProtocol,
     source_provider: DataSourceProvider,
@@ -271,31 +289,42 @@ def _collect_evaluation_sources(
                 continue
             fineweb_ids.add(raw_record.record_id)
             split_counts[raw_record.source_split] += 1
-            if _eligible_clean(raw_record, exclusions=exclusions, sealed=False):
-                tune_digest = int(
-                    _order_key(
-                        raw_record,
-                        namespace="evaluation-corpus-fineweb_edu-tune/v1",
-                        seed=protocol.seed,
-                    ),
-                    16,
-                )
-                tune_priority = 0 if raw_record.source_id in exclusions.prior_tune_source_ids else 1
+            tune_digest = int(
+                _order_key(
+                    raw_record,
+                    namespace="evaluation-corpus-fineweb_edu-tune/v1",
+                    seed=protocol.seed,
+                ),
+                16,
+            )
+            tune_priority = 0 if raw_record.source_id in exclusions.prior_tune_source_ids else 1
+            tune_key = (tune_priority << 256) | tune_digest
+            if _could_retain_smallest(
+                tune_heap,
+                record_id=raw_record.record_id,
+                key=tune_key,
+                limit=tune_limit,
+            ) and _eligible_clean(raw_record, exclusions=exclusions, sealed=False):
                 _retain_smallest(
                     tune_heap,
                     raw_record,
-                    key=(tune_priority << 256) | tune_digest,
+                    key=tune_key,
                     limit=tune_limit,
                 )
-            if _eligible_clean(raw_record, exclusions=exclusions, sealed=True):
-                sealed_key = int(
-                    _order_key(
-                        raw_record,
-                        namespace="evaluation-corpus-fineweb_edu-sealed/v1",
-                        seed=protocol.seed,
-                    ),
-                    16,
-                )
+            sealed_key = int(
+                _order_key(
+                    raw_record,
+                    namespace="evaluation-corpus-fineweb_edu-sealed/v1",
+                    seed=protocol.seed,
+                ),
+                16,
+            )
+            if _could_retain_smallest(
+                sealed_heap,
+                record_id=raw_record.record_id,
+                key=sealed_key,
+                limit=sealed_limit,
+            ) and _eligible_clean(raw_record, exclusions=exclusions, sealed=True):
                 _retain_smallest(
                     sealed_heap,
                     raw_record,
@@ -556,7 +585,11 @@ def _balanced_subset(
     return tuple(selected)
 
 
-def _natural_edit(record: NaturalTypoRecord) -> TypoEdit | None:
+def _natural_edit(
+    record: NaturalTypoRecord,
+    *,
+    minimum_word_letters: int,
+) -> TypoEdit | None:
     try:
         edit = infer_single_word_typo_edit(
             record.clean_text,
@@ -566,7 +599,7 @@ def _natural_edit(record: NaturalTypoRecord) -> TypoEdit | None:
     except ValueError:
         return None
     if (
-        len(edit.clean_word) < 3
+        len(edit.clean_word) < minimum_word_letters
         or not edit.clean_word.isascii()
         or not edit.clean_word.isalpha()
         or not edit.typo_word.isascii()
@@ -590,7 +623,15 @@ def _select_natural(
 ]:
     natural = tuple(record for record in records if isinstance(record, NaturalTypoRecord))
     valid = tuple(
-        (record, edit) for record in natural if (edit := _natural_edit(record)) is not None
+        (record, edit)
+        for record in natural
+        if (
+            edit := _natural_edit(
+                record,
+                minimum_word_letters=protocol.minimum_word_letters,
+            )
+        )
+        is not None
     )
     edits_by_record_id = {record.record_id: edit for record, edit in valid}
     dictionary_roles_by_record_id = (
@@ -801,7 +842,8 @@ def _select_corpus(
             (
                 record
                 for record in candidates
-                if record.source_id not in exclusions.prior_tune_source_ids
+                if _eligible_clean(record, exclusions=exclusions, sealed=True)
+                and record.source_id not in exclusions.prior_tune_source_ids
                 and (record.source, record.group_id) not in exclusions.prior_tune_groups
                 and record.source_id not in selected_tune_ids
                 and (record.source, record.group_id) not in selected_tune_groups

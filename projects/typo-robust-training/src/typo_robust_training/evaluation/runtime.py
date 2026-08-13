@@ -194,6 +194,109 @@ def teacher_forced_kl_readout(
     return tuple(trajectory[1:16])
 
 
+_MONITOR_POSITION_CHUNK = 4
+
+
+def causal_nll_sum(logits: Any, input_ids: Any) -> tuple[float, int]:
+    """Sum causal NLL without allocating a full-sequence float32 vocabulary tensor."""
+
+    if (
+        logits.ndim != 3
+        or input_ids.ndim != 2
+        or int(logits.shape[0]) != 1
+        or int(input_ids.shape[0]) != 1
+        or int(logits.shape[1]) != int(input_ids.shape[1])
+        or int(input_ids.shape[1]) < 2
+    ):
+        raise ValueError("causal monitor logits and token IDs have incompatible shapes")
+    targets = input_ids[:, 1:].long()
+    total = 0.0
+    for start in range(0, int(targets.shape[1]), _MONITOR_POSITION_CHUNK):
+        stop = min(start + _MONITOR_POSITION_CHUNK, int(targets.shape[1]))
+        log_probs = logits[:, start:stop, :].float().log_softmax(dim=-1)
+        value = -log_probs.gather(-1, targets[:, start:stop].unsqueeze(-1)).sum()
+        total += float(value.detach().cpu())
+    return total, int(targets.numel())
+
+
+def causal_nll_and_forward_kl(
+    candidate_logits: Any,
+    input_ids: Any,
+    *,
+    base_logits: Any,
+) -> tuple[float, int, float, int]:
+    """Sum causal NLL and KL(base || candidate) over every next-token target."""
+
+    if (
+        candidate_logits.ndim != 3
+        or base_logits.ndim != 3
+        or input_ids.ndim != 2
+        or candidate_logits.shape != base_logits.shape
+        or int(candidate_logits.shape[0]) != 1
+        or int(input_ids.shape[0]) != 1
+        or int(candidate_logits.shape[1]) != int(input_ids.shape[1])
+        or int(input_ids.shape[1]) < 2
+    ):
+        raise ValueError("causal monitor logits and token IDs have incompatible shapes")
+    targets = input_ids[:, 1:].long()
+    nll_total = 0.0
+    kl_total = 0.0
+    for start in range(0, int(targets.shape[1]), _MONITOR_POSITION_CHUNK):
+        stop = min(start + _MONITOR_POSITION_CHUNK, int(targets.shape[1]))
+        candidate_log_probs = candidate_logits[:, start:stop, :].float().log_softmax(dim=-1)
+        base_log_probs = base_logits[:, start:stop, :].float().log_softmax(dim=-1)
+        nll = -candidate_log_probs.gather(
+            -1,
+            targets[:, start:stop].unsqueeze(-1),
+        ).sum()
+        forward_kl = (base_log_probs.exp() * (base_log_probs - candidate_log_probs)).sum()
+        nll_total += float(nll.detach().cpu())
+        kl_total += float(forward_kl.detach().cpu())
+    count = int(targets.numel())
+    return nll_total, count, kl_total, count
+
+
+def aligned_forward_kl_sum(
+    clean_logits: Any,
+    typo_logits: Any,
+    *,
+    token_pairs: Sequence[tuple[int, int]],
+) -> tuple[float, int]:
+    """Sum KL(clean || typo) at aligned, unchanged next-token targets."""
+
+    if (
+        clean_logits.ndim != 3
+        or typo_logits.ndim != 3
+        or int(clean_logits.shape[0]) != 1
+        or int(typo_logits.shape[0]) != 1
+        or int(clean_logits.shape[2]) != int(typo_logits.shape[2])
+    ):
+        raise ValueError("aligned monitor logits must be [1, sequence, vocabulary]")
+    causal_pairs = tuple(
+        (clean - 1, typo - 1) for clean, typo in token_pairs if clean > 0 and typo > 0
+    )
+    if not causal_pairs:
+        return 0.0, 0
+    if any(
+        clean < 0
+        or typo < 0
+        or clean >= int(clean_logits.shape[1])
+        or typo >= int(typo_logits.shape[1])
+        for clean, typo in causal_pairs
+    ):
+        raise ValueError("aligned monitor token pair is outside its logits")
+    total = 0.0
+    for start in range(0, len(causal_pairs), _MONITOR_POSITION_CHUNK):
+        chunk = causal_pairs[start : start + _MONITOR_POSITION_CHUNK]
+        clean_selected = clean_logits[0, [clean for clean, _typo in chunk], :].float()
+        typo_selected = typo_logits[0, [typo for _clean, typo in chunk], :].float()
+        clean_log_probs = clean_selected.log_softmax(dim=-1)
+        typo_log_probs = typo_selected.log_softmax(dim=-1)
+        values = (clean_log_probs.exp() * (clean_log_probs - typo_log_probs)).sum()
+        total += float(values.detach().cpu())
+    return total, len(causal_pairs)
+
+
 def evaluation_teacher_targets(
     generated_token_ids: Sequence[int],
     *,
@@ -728,6 +831,9 @@ __all__ = [
     "HuggingFaceRobustnessEvaluationRuntime",
     "HuggingFaceRobustnessEvaluationRuntimeFactory",
     "PromptTokenizationProfile",
+    "aligned_forward_kl_sum",
+    "causal_nll_and_forward_kl",
+    "causal_nll_sum",
     "evaluation_teacher_targets",
     "prompt_tokenization_profile",
     "teacher_forced_kl_readout",

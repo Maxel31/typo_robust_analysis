@@ -162,6 +162,48 @@ def test_zero_edit_noop_is_byte_identical() -> None:
     assert no_op.edits == ()
 
 
+def test_frozen_record_identity_includes_seed_variant_and_edit_count() -> None:
+    record = _record()
+    common = {
+        "record": record,
+        "condition": "identity-fixture",
+        "operations": ("deletion",),
+        "role": "tune",
+    }
+    one = generate_evaluation_typo(**common, edit_count=1, seed=42, variant=0)
+    two = generate_evaluation_typo(**common, edit_count=2, seed=42, variant=0)
+    variant = generate_evaluation_typo(**common, edit_count=1, seed=42, variant=1)
+    seed = generate_evaluation_typo(**common, edit_count=1, seed=43, variant=0)
+
+    assert len({one.record_id, two.record_id, variant.record_id, seed.record_id}) == 4
+
+
+def test_mixed_operation_inventory_never_applies_identity_transposition() -> None:
+    record = CleanRecord(
+        source="mmlu",
+        source_revision="a" * 40,
+        source_split="test",
+        source_id="mmlu:repeated-letter-fixture",
+        group_id="mmlu:repeated-letter-fixture",
+        text="aaa lll eee nnn\nA. option one\nB. option two",
+        task="mmlu",
+        answer="B",
+        metadata={"fixture": True},
+    )
+    typo = generate_evaluation_typo(
+        record,
+        condition="mixed-operation-fixture",
+        edit_count=4,
+        operations=("adjacent-transposition", "deletion"),
+        seed=42,
+        role="tune",
+        variant=0,
+    )
+
+    assert len(typo.edits) == 4
+    assert {edit.operation for edit in typo.edits} == {"deletion"}
+
+
 def test_natural_injection_uses_eval_dictionary_and_keeps_options_unchanged() -> None:
     record = _record()
     injected = generate_natural_injection(

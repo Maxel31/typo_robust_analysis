@@ -95,8 +95,12 @@ def test_evaluation_command_requires_explicit_role_checkpoints_and_resume() -> N
             "evaluate-typo-robustness",
             "--config",
             "evaluation.yaml",
+            "--evaluation-protocol",
+            "study.yaml",
             "--training-data",
             "data",
+            "--evaluation-data",
+            "evaluation-data",
             "--evaluation-role",
             "pre-pr-gate",
             "--layer-selection",
@@ -123,7 +127,9 @@ def test_evaluation_command_requires_explicit_role_checkpoints_and_resume() -> N
 
     assert args.command == "evaluate-typo-robustness"
     assert args.config == Path("evaluation.yaml")
+    assert args.evaluation_protocol == Path("study.yaml")
     assert args.training_data == Path("data")
+    assert args.evaluation_data == Path("evaluation-data")
     assert args.evaluation_role == "pre-pr-gate"
     assert args.layer_selection == Path("layers.json")
     assert args.window_validation == Path("window-validation.json")
