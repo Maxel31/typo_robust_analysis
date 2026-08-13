@@ -453,18 +453,19 @@ def _pair_payload(
     variant: int,
 ) -> dict[str, object]:
     edit_count = len(edits)
-    if edit_count not in {1, 2, 4}:
-        raise ValueError("synthetic evaluation pairs require 1, 2, or 4 edits")
-    evaluation_condition = (
-        "transposition-2"
-        if edits and all(edit.operation == "adjacent-transposition" for edit in edits)
-        else f"random-{edit_count}"
-    )
     metadata = dict(record.metadata)
-    existing_condition = metadata.get("evaluation_condition")
-    if existing_condition not in {None, evaluation_condition}:
-        raise ValueError("clean record evaluation condition conflicts with its typo payload")
-    metadata["evaluation_condition"] = evaluation_condition
+    if split != "diagnostic":
+        if edit_count not in {1, 2, 4}:
+            raise ValueError("fixed synthetic evaluation pairs require 1, 2, or 4 edits")
+        evaluation_condition = (
+            "transposition-2"
+            if edits and all(edit.operation == "adjacent-transposition" for edit in edits)
+            else f"random-{edit_count}"
+        )
+        existing_condition = metadata.get("evaluation_condition")
+        if existing_condition not in {None, evaluation_condition}:
+            raise ValueError("clean record evaluation condition conflicts with its typo payload")
+        metadata["evaluation_condition"] = evaluation_condition
     return {
         "schema_version": "robustness-fixed-typo-pair/v1",
         "kind": "synthetic",
