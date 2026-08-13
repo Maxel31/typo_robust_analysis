@@ -233,8 +233,9 @@ matched output-only baselineとcontrolは、後続の有界residual-window学習
 
 公開する全学習commandではonline W&B trackingを必須にします。API keyは
 `WANDB_API_KEY`からだけ渡し、`WANDB_ENTITY`は任意です。完了したoptimizer stepごとに、
-集約total/component loss、learning rate、gradient norm、token throughput、GPU memoryを
-uploadします。corpus text、prompt、record ID、API key、checkpoint内容は送信しません。
+集約total/component loss、learning rate、gradient norm、token throughput、現在のGPU memory、
+学習開始以降のGPU memory peakをuploadします。corpus text、prompt、record ID、
+API key、checkpoint内容は送信しません。
 `wandb_run.json`には秘密情報を含まないrun identity、科学的binding/presentation、URL、
 status、resume境界だけを保存し、`--resume`時は同一W&B runへ継続してloss curveを
 重複させません。

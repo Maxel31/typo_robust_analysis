@@ -256,8 +256,9 @@ LoRA parameters may change.
 Every public training command requires online W&B tracking. Supply the API key
 only through `WANDB_API_KEY`; `WANDB_ENTITY` is optional. At each completed
 optimizer step the run uploads aggregate total/component losses, learning
-rate, gradient norm, token throughput, and GPU-memory telemetry. Raw corpus
-text, prompts, record IDs, the API key, and checkpoint contents are never sent.
+rate, gradient norm, token throughput, current GPU memory, and GPU-memory peak
+since training start. Raw corpus text, prompts, record IDs, the API key, and
+checkpoint contents are never sent.
 `wandb_run.json` stores only non-secret run identity, scientific
 bindings/presentation, URL, status, and the resume boundary so `--resume`
 continues the same W&B run without duplicating the loss curve.

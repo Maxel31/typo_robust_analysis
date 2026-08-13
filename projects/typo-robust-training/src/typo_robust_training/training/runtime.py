@@ -218,9 +218,9 @@ class HuggingFaceAdapterTrainingRuntime:
         torch = self._torch
         return {
             "gpu_memory_allocated_bytes": int(torch.cuda.memory_allocated()),
-            "gpu_peak_memory_allocated_bytes": int(torch.cuda.max_memory_allocated()),
+            "gpu_peak_memory_allocated_bytes_since_start": int(torch.cuda.max_memory_allocated()),
             "gpu_memory_reserved_bytes": int(torch.cuda.memory_reserved()),
-            "gpu_peak_memory_reserved_bytes": int(torch.cuda.max_memory_reserved()),
+            "gpu_peak_memory_reserved_bytes_since_start": int(torch.cuda.max_memory_reserved()),
         }
 
     def save_state(self, path: Path) -> None:
