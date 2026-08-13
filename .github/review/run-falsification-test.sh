@@ -251,6 +251,7 @@ CHILD = r"""
 import hashlib
 import hmac
 import os
+import site
 import sys
 import pytest
 
@@ -319,8 +320,10 @@ def _trusted_run():
                 self.user_passed += 1
 
     # pytest is already loaded from the root-owned runner. Only then expose the
-    # read-only PR source and its separately built dependency environment.
-    sys.path.extend([project_path, dependency_path])
+    # read-only PR source and process the separately built dependency
+    # environment like a normal venv, including its .pth files.
+    sys.path.append(project_path)
+    site.addsitedir(dependency_path)
     sys.dont_write_bytecode = True
     recorder = ResultRecorder(canary_path)
     try:

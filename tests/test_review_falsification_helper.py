@@ -545,10 +545,13 @@ def _run_inner_wrapper(
     *,
     project_module_source: str | None = None,
     add_repository_pytest_hooks: bool = False,
+    dependency_pth_source: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     workspace = tmp_path / "workspace"
+    dependency_path = tmp_path / "site-packages"
     test_mount = workspace / "tests" / ".review-tests"
     test_mount.mkdir(parents=True)
+    dependency_path.mkdir()
     canary = test_mount / "test_review_integrity_canary_7_31337.py"
     canary.write_text(
         "def test_review_integrity_canary_must_fail():\n"
@@ -570,6 +573,10 @@ def _run_inner_wrapper(
             "[pytest]\naddopts = --repository-option-must-not-load\n",
             encoding="utf-8",
         )
+    if dependency_pth_source is not None:
+        (dependency_path / "review-dependency.pth").write_text(
+            dependency_pth_source, encoding="utf-8"
+        )
     environment = os.environ.copy()
     environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     return subprocess.run(
@@ -579,7 +586,7 @@ def _run_inner_wrapper(
             "-c",
             _supervisor_program(),
             str(workspace),
-            str(workspace),
+            str(dependency_path),
             str(canary),
             str(probe),
             "-c",
@@ -619,6 +626,20 @@ def test_real_pytest_wrapper_excludes_repository_hooks_and_configuration(
         tmp_path,
         "def test_ok():\n    assert True\n",
         add_repository_pytest_hooks=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_real_pytest_wrapper_processes_dependency_pth_files(tmp_path: Path) -> None:
+    result = _run_inner_wrapper(
+        tmp_path,
+        "import builtins\n"
+        "def test_dependency_environment_matches_venv_semantics():\n"
+        "    assert builtins.REVIEW_PTH_LOADED is True\n",
+        dependency_pth_source=(
+            "import builtins; builtins.REVIEW_PTH_LOADED = True\n"
+        ),
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
