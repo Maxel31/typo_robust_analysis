@@ -849,17 +849,26 @@ class HuggingFaceRobustnessEvaluationRuntime:
             )
             untreated: tuple[float, ...] = ()
             patched: tuple[float, ...] = ()
-            patch_invalid_reason = invalid_reason
+            patch_invalid_reason = (
+                invalid_reason if pair.mechanistic_audit else "not-mechanistic-audit"
+            )
             patched_generation = None
             patched_answer = None
             if invalid_reason is None:
                 clean_full = self._append_targets(clean_ids, clean_mask, targets)
                 typo_full = self._append_targets(typo_ids, typo_mask, targets)
-                donors, clean_output = self._capture_donors_and_forward(
-                    input_ids=clean_full[0],
-                    attention_mask=clean_full[1],
-                    positions=profile.clean_positions,
-                )
+                if pair.mechanistic_audit:
+                    donors, clean_output = self._capture_donors_and_forward(
+                        input_ids=clean_full[0],
+                        attention_mask=clean_full[1],
+                        positions=profile.clean_positions,
+                    )
+                else:
+                    clean_output = self.model(
+                        input_ids=clean_full[0],
+                        attention_mask=clean_full[1],
+                        use_cache=False,
+                    )
                 typo_output = self.model(
                     input_ids=typo_full[0], attention_mask=typo_full[1], use_cache=False
                 )
@@ -876,51 +885,53 @@ class HuggingFaceRobustnessEvaluationRuntime:
                     typo_logits,
                     teacher_forced_tokens=self.protocol.teacher_forced_tokens,
                 )
-                patched_output = window_patched_forward(
-                    self.layers,
-                    layer_indices=self.patch_window.layers,
-                    positions=profile.typo_positions,
-                    donor_values=donors,
-                    forward=lambda: self.model(
-                        input_ids=typo_full[0],
-                        attention_mask=typo_full[1],
-                        use_cache=False,
-                    ),
-                )
-                patched_logits = self._target_logits(
-                    patched_output,
-                    prompt_tokens=len(profile.typo_input_ids),
-                )
-                patched = teacher_forced_kl_readout(
-                    clean_logits,
-                    patched_logits,
-                    teacher_forced_tokens=self.protocol.teacher_forced_tokens,
-                )
-                patch_invalid_reason = None
-                if prompts.task_for_extractor is not None:
-                    from typo_cot.experiments.fixed_window_answer_patching.patching import (
-                        PrefillBlockOutputWindowPatch,
-                    )
-
-                    patched_generation = self._generate(
-                        input_ids=typo_ids,
-                        attention_mask=typo_mask,
-                        field=f"{pair.record_id}:{self.condition}:patched",
-                        patch=PrefillBlockOutputWindowPatch(
-                            self.layers,
-                            layer_indices=self.patch_window.layers,
-                            positions=profile.typo_positions,
-                            donor_values=donors,
+                if pair.mechanistic_audit:
+                    patched_output = window_patched_forward(
+                        self.layers,
+                        layer_indices=self.patch_window.layers,
+                        positions=profile.typo_positions,
+                        donor_values=donors,
+                        forward=lambda: self.model(
+                            input_ids=typo_full[0],
+                            attention_mask=typo_full[1],
+                            use_cache=False,
                         ),
                     )
-                    if prompts.answer is None:
-                        raise RuntimeError("task evaluation prompt lost its gold answer")
-                    patched_answer = self._answer(
-                        patched_generation,
-                        task=prompts.task_for_extractor,
-                        gold=prompts.answer,
+                    patched_logits = self._target_logits(
+                        patched_output,
+                        prompt_tokens=len(profile.typo_input_ids),
                     )
-                del clean_output, typo_output, patched_output
+                    patched = teacher_forced_kl_readout(
+                        clean_logits,
+                        patched_logits,
+                        teacher_forced_tokens=self.protocol.teacher_forced_tokens,
+                    )
+                    patch_invalid_reason = None
+                    if prompts.task_for_extractor is not None:
+                        from typo_cot.experiments.fixed_window_answer_patching.patching import (
+                            PrefillBlockOutputWindowPatch,
+                        )
+
+                        patched_generation = self._generate(
+                            input_ids=typo_ids,
+                            attention_mask=typo_mask,
+                            field=f"{pair.record_id}:{self.condition}:patched",
+                            patch=PrefillBlockOutputWindowPatch(
+                                self.layers,
+                                layer_indices=self.patch_window.layers,
+                                positions=profile.typo_positions,
+                                donor_values=donors,
+                            ),
+                        )
+                        if prompts.answer is None:
+                            raise RuntimeError("task evaluation prompt lost its gold answer")
+                        patched_answer = self._answer(
+                            patched_generation,
+                            task=prompts.task_for_extractor,
+                            gold=prompts.answer,
+                        )
+                    del patched_output
+                del clean_output, typo_output
 
         task = pair.task
         evaluation_condition = pair.metadata.get("evaluation_condition")
@@ -935,6 +946,7 @@ class HuggingFaceRobustnessEvaluationRuntime:
             task=task,
             operation=pair.operation,
             edit_count=len(pair.edits),
+            mechanistic_audit=pair.mechanistic_audit,
             strata=pair.strata,
             clean_answer=None if clean_answer is None else str(clean_answer["value"]),
             typo_answer=None if typo_answer is None else str(typo_answer["value"]),
@@ -951,6 +963,7 @@ class HuggingFaceRobustnessEvaluationRuntime:
             typo_subtoken_counts=profile.typo_subtoken_counts,
             tokenization_stratum=profile.tokenization_stratum,
             audit={
+                "mechanistic_audit": pair.mechanistic_audit,
                 "clean_prompt_sha256": hashlib.sha256(prompts.clean.text.encode()).hexdigest(),
                 "typo_prompt_sha256": hashlib.sha256(prompts.typo.text.encode()).hexdigest(),
                 "clean_prompt_tokens": len(profile.clean_input_ids),

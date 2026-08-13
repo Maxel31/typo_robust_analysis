@@ -270,6 +270,7 @@ class EvaluationPair:
     answer: str | None
     operation: str
     edits: tuple[TypoEdit, ...]
+    mechanistic_audit: bool
     metadata: Mapping[str, object]
     strata: tuple[str, ...]
 
@@ -314,6 +315,13 @@ class EvaluationPair:
         evaluation_condition = metadata.get("evaluation_condition")
         if evaluation_condition not in _EVALUATION_CONDITIONS:
             raise ValueError("evaluation pair typo condition is unsupported")
+        mechanistic_audit = metadata.get("mechanistic_audit", False)
+        if type(mechanistic_audit) is not bool:
+            raise ValueError("evaluation pair mechanistic_audit must be boolean")
+        if mechanistic_audit and (
+            kind != "synthetic" or evaluation_condition != "random-2" or task is None
+        ):
+            raise ValueError("mechanistic audit must select a synthetic random-2 task pair")
         try:
             json.dumps(metadata, sort_keys=True, allow_nan=False)
         except (TypeError, ValueError) as exc:
@@ -395,6 +403,7 @@ class EvaluationPair:
             answer=answer,
             operation=operation,
             edits=parsed_edits,
+            mechanistic_audit=mechanistic_audit,
             metadata=MappingProxyType(dict(metadata)),
             strata=tuple(strata),
         )
