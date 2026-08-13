@@ -285,13 +285,32 @@ config and W&B mapping are introduced with that later training feature.
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot evaluate-typo-robustness \
   --config "${TRAIN_PROJECT}/configs/gemma4b-evaluation.yaml" \
-  --data-manifest "${TRAIN_ROOT}/data/gemma4b-sanity/evaluation_manifest.json" \
-  --base-model google/gemma-3-4b-it \
-  --checkpoints "${TRAIN_ROOT}/training" \
-  --splits same-task unseen-task unseen-typo \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --evaluation-role tune \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --checkpoint "${TRAIN_ROOT}/training/localized-state-distillation/seed-42/adapter" \
+  --splits same-task unseen-task unseen-content unseen-typo \
   --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/evaluation/gemma4b"
+  --output-dir "${TRAIN_ROOT}/evaluation/tune/targeted-seed-42"
 ```
+
+`base` is always evaluated automatically. Repeat `--checkpoint` to compare
+multiple completed adapters; each path must contain the hash-bound
+`training_runtime.json` written by its training command. Use only `tune` while
+changing the method. After all hyperparameters and the checkpoint are frozen,
+run the same command once with `--evaluation-role pre-pr-gate` and
+`--confirm-sealed-role`; use `final-test` only after the passing pre-PR
+checkpoint is frozen. Sealed-role access is recorded next to the immutable data
+artifacts and cannot be silently repeated.
+
+The generic-text window must include its independent passing validation
+artifact. The evaluator binds both files into the run identity; it will not
+silently fall back to the historical reasoning-task selector.
+
+The command above starts a fresh evaluation. Add `--resume` only after that
+evaluation output directory contains its existing `run.json` and pair
+checkpoints.
 
 The report includes clean/typo accuracy, wrong-to-right, right-to-wrong, net
 accuracy, clean harm, multi-token KL, additional paired-patch gain,

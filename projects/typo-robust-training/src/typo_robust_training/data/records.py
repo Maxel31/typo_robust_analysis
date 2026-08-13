@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Mapping
 
 
 _SHA40_LENGTH = 40
+_WORD_CHARACTER = re.compile(r"[A-Za-z']")
 
 
 def _nonempty(value: object, *, field_name: str) -> str:
@@ -156,6 +158,64 @@ class TypoEdit:
                 or value[1] <= value[0]
             ):
                 raise ValueError(f"{field_name} must be an increasing integer span")
+
+
+def _word_span(text: str, start: int, stop: int) -> tuple[int, int]:
+    anchor = start
+    if start == stop and (anchor == len(text) or not _WORD_CHARACTER.fullmatch(text[anchor])):
+        anchor -= 1
+    if not 0 <= anchor < len(text) or not _WORD_CHARACTER.fullmatch(text[anchor]):
+        raise ValueError("natural typo change is not inside an English word")
+    left = anchor
+    right = max(anchor + 1, stop)
+    while left and _WORD_CHARACTER.fullmatch(text[left - 1]):
+        left -= 1
+    while right < len(text) and _WORD_CHARACTER.fullmatch(text[right]):
+        right += 1
+    return left, right
+
+
+def infer_single_word_typo_edit(
+    clean_text: str,
+    typo_text: str,
+    *,
+    operation: str,
+) -> TypoEdit:
+    """Infer the one edited word shared by natural training and evaluation."""
+
+    for field_name, value in (
+        ("clean_text", clean_text),
+        ("typo_text", typo_text),
+        ("operation", operation),
+    ):
+        _nonempty(value, field_name=field_name)
+    if clean_text == typo_text:
+        raise ValueError("natural typo pair must differ")
+    prefix = 0
+    while prefix < min(len(clean_text), len(typo_text)) and clean_text[prefix] == typo_text[prefix]:
+        prefix += 1
+    clean_stop, typo_stop = len(clean_text), len(typo_text)
+    while (
+        clean_stop > prefix
+        and typo_stop > prefix
+        and clean_text[clean_stop - 1] == typo_text[typo_stop - 1]
+    ):
+        clean_stop -= 1
+        typo_stop -= 1
+    clean_span = _word_span(clean_text, prefix, clean_stop)
+    typo_span = _word_span(typo_text, prefix, typo_stop)
+    if (
+        clean_text[: clean_span[0]] != typo_text[: typo_span[0]]
+        or clean_text[clean_span[1] :] != typo_text[typo_span[1] :]
+    ):
+        raise ValueError("natural typo does not isolate one aligned edited word")
+    return TypoEdit(
+        operation=operation,
+        clean_word=clean_text[slice(*clean_span)],
+        typo_word=typo_text[slice(*typo_span)],
+        clean_char_span=clean_span,
+        typo_char_span=typo_span,
+    )
 
 
 @dataclass(frozen=True, slots=True)

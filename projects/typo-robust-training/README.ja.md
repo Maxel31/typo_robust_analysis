@@ -260,13 +260,29 @@ configはversion 1のCycle 1再現一式なので、過去のrunであること�
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot evaluate-typo-robustness \
   --config "${TRAIN_PROJECT}/configs/gemma4b-evaluation.yaml" \
-  --data-manifest "${TRAIN_ROOT}/data/gemma4b-sanity/evaluation_manifest.json" \
-  --base-model google/gemma-3-4b-it \
-  --checkpoints "${TRAIN_ROOT}/training" \
-  --splits same-task unseen-task unseen-typo \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --evaluation-role tune \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --checkpoint "${TRAIN_ROOT}/training/localized-state-distillation/seed-42/adapter" \
+  --splits same-task unseen-task unseen-content unseen-typo \
   --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/evaluation/gemma4b"
+  --output-dir "${TRAIN_ROOT}/evaluation/tune/targeted-seed-42"
 ```
+
+`base`は常に同じpair上で自動評価します。複数の完了済みadapterを比較する場合は
+`--checkpoint`を繰り返します。各pathには学習commandが書き出したhash-boundな
+`training_runtime.json`が必要です。手法を変更している間は`--evaluation-role tune`だけを
+使用します。全hyperparameterとcheckpointを固定した後に限り、同じcommandを
+`--evaluation-role pre-pr-gate --confirm-sealed-role`として一度だけ実行します。
+`final-test`は、合格したPR前checkpointを固定した後にだけ開封します。封印roleへのaccessは
+immutableなdata artifactの隣へ記録され、暗黙に繰り返せません。
+
+generic-text windowには、合格した独立validation artifactも必須です。評価器は両fileを
+run identityへ結合し、過去のreasoning-task selectorへ暗黙にfallbackしません。
+
+上のcommandは新規評価を開始します。その評価output directoryに既存の`run.json`と
+pair checkpointが作成された後に再開する場合だけ、`--resume`を追加します。
 
 reportにはclean/typo accuracy、wrong-to-right、right-to-wrong、net accuracy、clean harm、
 multi-token KL、追加paired-patch gain、tokenization strata、unseen task、unseen operation、
