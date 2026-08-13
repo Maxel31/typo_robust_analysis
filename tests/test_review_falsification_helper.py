@@ -5,9 +5,23 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 HELPER = REPOSITORY_ROOT / ".github" / "review" / "run-falsification-test.sh"
+
+
+@pytest.fixture(autouse=True)
+def _restore_temporary_permissions(tmp_path: Path):
+    """Undo the fake root-ownership mode before pytest removes tmp_path."""
+
+    yield
+    paths = sorted(tmp_path.rglob("*"), key=lambda path: len(path.parts), reverse=True)
+    for path in paths:
+        if not path.is_symlink():
+            path.chmod(path.stat().st_mode | stat.S_IWUSR)
+    tmp_path.chmod(tmp_path.stat().st_mode | stat.S_IWUSR)
 
 
 def _write_executable(path: Path, contents: str) -> None:
@@ -73,6 +87,7 @@ esac
         fake_bin / "docker",
         """#!/usr/bin/env bash
 set -euo pipefail
+printf '%s\\n' "$*" >>"${FAKE_DOCKER_LOG}"
 if [[ "${1:-}" == pull ]]; then
   exit 0
 fi
@@ -87,6 +102,7 @@ exit 0
     environment = os.environ.copy()
     environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
     environment["FAKE_REVIEW_ENV_ROOT"] = str(state / "envs")
+    environment["FAKE_DOCKER_LOG"] = str(tmp_path / "docker.log")
     return helper, state, review_tests, environment
 
 
@@ -129,6 +145,9 @@ def test_run_accepts_container_relative_venv_symlink(tmp_path: Path) -> None:
     result = _run(helper, environment, "root", str(probe))
 
     assert result.returncode == 0, result.stderr
+    docker_log = Path(environment["FAKE_DOCKER_LOG"]).read_text(encoding="utf-8")
+    assert "dst=/workspace/tests/.review-tests,readonly" in docker_log
+    assert "/workspace/tests/.review-tests/test_probe.py" in docker_log
 
 
 def test_self_test_fails_cleanly_before_prepare(tmp_path: Path) -> None:
@@ -159,3 +178,30 @@ def test_dependency_build_storage_is_disk_backed() -> None:
     assert '--mount "type=bind,src=${REVIEW_BUILD_ROOT},dst=/review-build"' in source
     assert "--env TMPDIR=/review-build/tmp" in source
     assert "--env UV_CACHE_DIR=/review-build/cache" in source
+
+
+def test_sandbox_checks_network_interfaces_and_rejects_timeouts() -> None:
+    source = HELPER.read_text(encoding="utf-8")
+
+    assert "socket.if_nameindex()" in source
+    assert 'interfaces <= {"lo"}' in source
+    assert "except TimeoutError as error:" in source
+    assert "error.errno in allowed" in source
+
+
+def test_prepare_and_test_execution_have_wall_clock_limits() -> None:
+    source = HELPER.read_text(encoding="utf-8")
+
+    assert '"${REVIEW_PREPARE_TIMEOUT_SECONDS}s"' in source
+    assert '"${REVIEW_TEST_TIMEOUT_SECONDS}s"' in source
+
+
+def test_missing_test_path_is_a_usage_error(tmp_path: Path) -> None:
+    helper, _, review_tests, environment = _make_helper(tmp_path)
+    prepared = _prepare(helper, environment)
+    assert prepared.returncode == 0, prepared.stderr
+
+    result = _run(helper, environment, "root", str(review_tests / "missing.py"))
+
+    assert result.returncode == 2
+    assert result.stderr.startswith("review-falsify:")

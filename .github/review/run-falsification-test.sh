@@ -7,6 +7,8 @@ readonly REVIEW_WORKSPACE_FILE="${REVIEW_STATE_DIR}/workspace"
 readonly REVIEW_ENV_ROOT="${REVIEW_STATE_DIR}/envs"
 readonly REVIEW_BUILD_ROOT="${REVIEW_STATE_DIR}/build"
 readonly REVIEW_TEST_ROOT="/tmp/claude-review-tests"
+readonly REVIEW_PREPARE_TIMEOUT_SECONDS=1800
+readonly REVIEW_TEST_TIMEOUT_SECONDS=600
 
 die() {
   printf 'review-falsify: %s\n' "$*" >&2
@@ -24,7 +26,9 @@ require_prepared_workspace() {
 prepare_sandbox() {
   [[ $# -eq 2 ]] || die "usage: review-falsify --prepare WORKSPACE BASE_SHA"
   local base_sha changed_paths workspace
-  workspace="$(realpath --canonicalize-existing -- "$1")"
+  if ! workspace="$(realpath --canonicalize-existing -- "$1" 2>/dev/null)"; then
+    die "WORKSPACE must be an existing Git checkout"
+  fi
   [[ -e "${workspace}/.git" ]] || die "WORKSPACE must be a Git checkout"
   base_sha="$2"
   [[ "${base_sha}" =~ ^[0-9a-f]{40}$ ]] || die "BASE_SHA must be a full commit digest"
@@ -57,7 +61,8 @@ prepare_sandbox() {
   printf '%s\n' "${selected_projects[@]}" >"${REVIEW_ENV_ROOT}/selected-projects"
 
   local prepare_status=0
-  docker run --rm \
+  timeout --signal=TERM --kill-after=30s "${REVIEW_PREPARE_TIMEOUT_SECONDS}s" \
+    docker run --rm \
     --network bridge \
     --cap-drop ALL \
     --security-opt no-new-privileges \
@@ -95,9 +100,11 @@ prepare_sandbox() {
 run_test() {
   [[ $# -eq 2 ]] || die "usage: review-falsify {root|typo-cot|typo-robust-training} TEST_FILE"
   local project="$1"
-  local python_path pythonpath test_file test_relative workdir workspace
+  local python_path pythonpath test_file test_mount test_relative workdir workspace
   workspace="$(require_prepared_workspace)"
-  test_file="$(realpath --canonicalize-existing -- "$2")"
+  if ! test_file="$(realpath --canonicalize-existing -- "$2" 2>/dev/null)"; then
+    die "TEST_FILE must be an existing Python file below ${REVIEW_TEST_ROOT}"
+  fi
   [[ -f "${test_file}" && "${test_file}" == "${REVIEW_TEST_ROOT}/"*.py ]] \
     || die "TEST_FILE must be an existing Python file below ${REVIEW_TEST_ROOT}"
   test_relative="${test_file#${REVIEW_TEST_ROOT}/}"
@@ -106,6 +113,7 @@ run_test() {
     root)
       python_path="/review-envs/shared/bin/python"
       pythonpath="/workspace"
+      test_mount="/workspace/tests/.review-tests"
       workdir="/workspace"
       ;;
     typo-cot | typo-robust-training)
@@ -113,6 +121,7 @@ run_test() {
         || die "the ${project} environment was not provisioned because that project is unchanged"
       python_path="/review-envs/shared/bin/python"
       pythonpath="/workspace/projects/${project}/src"
+      test_mount="/workspace/projects/${project}/tests/.review-tests"
       workdir="/workspace/projects/${project}"
       ;;
     *)
@@ -128,7 +137,8 @@ run_test() {
   # Tests are authored by the runner but executed by the unprivileged sandbox.
   chmod 0644 -- "${test_file}"
 
-  docker run --rm --pull never \
+  timeout --signal=TERM --kill-after=5s "${REVIEW_TEST_TIMEOUT_SECONDS}s" \
+    docker run --rm --pull never \
     --network none \
     --read-only \
     --cap-drop ALL \
@@ -140,14 +150,14 @@ run_test() {
     --tmpfs /tmp:rw,nosuid,nodev,size=1g \
     --mount "type=bind,src=${workspace},dst=/workspace,readonly" \
     --mount "type=bind,src=${REVIEW_ENV_ROOT},dst=/review-envs,readonly" \
-    --mount "type=bind,src=${REVIEW_TEST_ROOT},dst=/review-tests,readonly" \
+    --mount "type=bind,src=${REVIEW_TEST_ROOT},dst=${test_mount},readonly" \
     --workdir "${workdir}" \
     --env HOME=/tmp \
     --env "PYTHONPATH=${pythonpath}" \
     --env PYTHONDONTWRITEBYTECODE=1 \
     --entrypoint "${python_path}" \
     "${REVIEW_IMAGE}" \
-    -m pytest "/review-tests/${test_relative}" -q --disable-warnings --maxfail=1
+    -m pytest "${test_mount}/${test_relative}" -q --disable-warnings --maxfail=1
 }
 
 self_test() {
@@ -156,12 +166,15 @@ self_test() {
   local test_file="${REVIEW_TEST_ROOT}/test_review_sandbox.py"
   printf '%s\n' \
     'import os' \
+    'import errno' \
     'import socket' \
     'from pathlib import Path' \
     '' \
     'def test_review_code_is_uncredentialed_offline_and_read_only():' \
     '    forbidden = ("CLAUDE_CODE_OAUTH_TOKEN", "GITHUB_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "REVIEW_SANDBOX_SENTINEL")' \
     '    assert all(name not in os.environ for name in forbidden)' \
+    '    interfaces = {name for _index, name in socket.if_nameindex()}' \
+    '    assert interfaces <= {"lo"}, f"unexpected network interfaces: {interfaces}"' \
     '    try:' \
     '        Path("/workspace/.review-write-probe").write_text("unsafe", encoding="utf-8")' \
     '    except OSError:' \
@@ -169,11 +182,14 @@ self_test() {
     '    else:' \
     '        raise AssertionError("review workspace is writable")' \
     '    probe = socket.socket()' \
-    '    probe.settimeout(0.25)' \
+    '    probe.settimeout(2.0)' \
     '    try:' \
     '        probe.connect(("1.1.1.1", 53))' \
-    '    except OSError:' \
-    '        pass' \
+    '    except TimeoutError as error:' \
+    '        raise AssertionError("network probe timed out; isolation unproven") from error' \
+    '    except OSError as error:' \
+    '        allowed = (errno.ENETUNREACH, errno.EHOSTUNREACH, errno.EPERM, errno.EACCES)' \
+    '        assert error.errno in allowed, error' \
     '    else:' \
     '        raise AssertionError("review sandbox has network access")' \
     '    finally:' \
@@ -203,6 +219,6 @@ case "${1:-}" in
     run_test "${project}" "$@"
     ;;
   *)
-    die "usage: review-falsify --prepare WORKSPACE | --self-test | {root|typo-cot|typo-robust-training} TEST_FILE"
+    die "usage: review-falsify --prepare WORKSPACE BASE_SHA | --self-test | {root|typo-cot|typo-robust-training} TEST_FILE"
     ;;
 esac
