@@ -2,6 +2,8 @@
 set -euo pipefail
 
 readonly REVIEW_IMAGE="ghcr.io/astral-sh/uv:python3.12-bookworm"
+readonly REVIEW_PYTEST_VERSION="9.0.3"
+readonly REVIEW_SITE_PACKAGES="lib/python3.12/site-packages"
 readonly REVIEW_STATE_DIR="/var/lib/claude-pr-review"
 readonly REVIEW_WORKSPACE_FILE="${REVIEW_STATE_DIR}/workspace"
 readonly REVIEW_ENV_ROOT="${REVIEW_STATE_DIR}/envs"
@@ -72,6 +74,8 @@ prepare_sandbox() {
   # runner. Rebuild it from scratch so retries cannot mix dependency states.
   sudo rm -rf -- "${REVIEW_ENV_ROOT}" "${REVIEW_BUILD_ROOT}" "${REVIEW_GIT_MASK}"
   sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" "${REVIEW_ENV_ROOT}"
+  install -d -m 0755 "${REVIEW_ENV_ROOT}/runner"
+  install -d -m 0755 "${REVIEW_ENV_ROOT}/project"
   sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" "${REVIEW_BUILD_ROOT}"
   install -d -m 0755 "${REVIEW_BUILD_ROOT}/tmp"
   if [[ -d "${workspace}/.git" ]]; then
@@ -95,10 +99,47 @@ prepare_sandbox() {
     selected_projects+=(typo-robust-training)
   fi
   printf '%s\n' "${selected_projects[@]}" >"${REVIEW_ENV_ROOT}/selected-projects"
+  cp -- "${REVIEW_ENV_ROOT}/selected-projects" "${REVIEW_BUILD_ROOT}/selected-projects"
 
   local prepare_status=0
   local prepare_container_name
-  prepare_container_name="review-falsify-prepare-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$$-${RANDOM}"
+  prepare_container_name="review-falsify-runner-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$$-${RANDOM}"
+  run_docker_with_timeout \
+    "${REVIEW_PREPARE_TIMEOUT_SECONDS}" \
+    "${REVIEW_PREPARE_KILL_AFTER_SECONDS}" \
+    "${prepare_container_name}" \
+    --rm \
+    --network bridge \
+    --cap-drop ALL \
+    --security-opt no-new-privileges \
+    --pids-limit 512 \
+    --memory 10g \
+    --cpus 4 \
+    --user "$(id -u):$(id -g)" \
+    --tmpfs /tmp:rw,nosuid,nodev,size=1g \
+    --mount "type=bind,src=${REVIEW_ENV_ROOT}/runner,dst=/runner-env" \
+    --workdir / \
+    --env HOME=/tmp \
+    --entrypoint /bin/bash \
+    "${REVIEW_IMAGE}" \
+    -euo pipefail -c "
+      uv venv --python /usr/local/bin/python3.12 /runner-env
+      uv pip install --python /runner-env/bin/python --only-binary :all: \
+        pytest==${REVIEW_PYTEST_VERSION} --no-cache
+    " || prepare_status=$?
+  if ((prepare_status != 0)); then
+    sudo rm -rf -- "${REVIEW_ENV_ROOT}" "${REVIEW_BUILD_ROOT}" "${REVIEW_GIT_MASK}"
+    return "${prepare_status}"
+  fi
+  # The PR-controlled dependency build below can write only its sibling mount,
+  # never the trusted pytest runner used to interpret review results.
+  sudo chown -R root:root "${REVIEW_ENV_ROOT}/runner"
+  sudo chmod -R go-w "${REVIEW_ENV_ROOT}/runner"
+
+  # PR-controlled package build hooks run online but without host credentials.
+  # Their only writable persistent mount is /project-env; the trusted runner is
+  # neither mounted nor otherwise reachable from this preparation container.
+  prepare_container_name="review-falsify-project-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$$-${RANDOM}"
   run_docker_with_timeout \
     "${REVIEW_PREPARE_TIMEOUT_SECONDS}" \
     "${REVIEW_PREPARE_KILL_AFTER_SECONDS}" \
@@ -114,7 +155,7 @@ prepare_sandbox() {
     --tmpfs /tmp:rw,nosuid,nodev,size=1g \
     --mount "type=bind,src=${workspace},dst=/workspace,readonly" \
     --mount "type=bind,src=${REVIEW_GIT_MASK},dst=/workspace/.git,readonly" \
-    --mount "type=bind,src=${REVIEW_ENV_ROOT},dst=/review-envs" \
+    --mount "type=bind,src=${REVIEW_ENV_ROOT}/project,dst=/project-env" \
     --mount "type=bind,src=${REVIEW_BUILD_ROOT},dst=/review-build" \
     --workdir /workspace \
     --env HOME=/tmp \
@@ -122,15 +163,15 @@ prepare_sandbox() {
     --entrypoint /bin/bash \
     "${REVIEW_IMAGE}" \
     -euo pipefail -c '
-      UV_PROJECT_ENVIRONMENT=/review-envs/shared \
+      UV_PROJECT_ENVIRONMENT=/project-env \
         uv sync --locked --dev --no-install-workspace --no-cache
       while IFS= read -r project; do
         if [[ "${project}" != root ]]; then
-          UV_PROJECT_ENVIRONMENT=/review-envs/shared \
+          UV_PROJECT_ENVIRONMENT=/project-env \
             uv sync --project "projects/${project}" --locked --dev --all-extras \
               --no-install-project --inexact --no-cache
         fi
-      done </review-envs/selected-projects
+      done </review-build/selected-projects
     ' || prepare_status=$?
   sudo rm -rf -- "${REVIEW_BUILD_ROOT}"
   if ((prepare_status != 0)); then
@@ -145,16 +186,17 @@ prepare_sandbox() {
 }
 
 execute_sandboxed_pytest() {
-  [[ $# -eq 9 ]] || die "internal error: incomplete pytest invocation"
+  [[ $# -eq 10 ]] || die "internal error: incomplete pytest invocation"
   local workspace="$1"
   local python_path="$2"
   local project_path="$3"
-  local test_mount="$4"
-  local workdir="$5"
-  local test_file="$6"
-  local test_relative="$7"
-  local canary_file="$8"
-  local canary_relative="$9"
+  local dependency_path="$4"
+  local test_mount="$5"
+  local workdir="$6"
+  local test_file="$7"
+  local test_relative="$8"
+  local canary_file="$9"
+  local canary_relative="${10}"
 
   chmod 0644 -- "${test_file}" \
     || die "TEST_FILE could not be made sandbox-readable"
@@ -162,7 +204,7 @@ execute_sandboxed_pytest() {
     || die "review integrity canary could not be made sandbox-readable"
   local test_container_name
   test_container_name="review-falsify-test-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$$-${RANDOM}"
-  local encoded_status=0
+  local sandbox_status=0
   run_docker_with_timeout \
     "${REVIEW_TEST_TIMEOUT_SECONDS}" \
     "${REVIEW_TEST_KILL_AFTER_SECONDS}" \
@@ -188,27 +230,46 @@ execute_sandboxed_pytest() {
     "${REVIEW_IMAGE}" \
     -I -c '
 import os
+import secrets
+import subprocess
+import sys
+
+# Keep result interpretation in this trusted parent. The child imports and
+# executes PR code, but a normal exit is insufficient: it must also send a
+# complete report through the inherited pipe. Direct os._exit calls therefore
+# become an integrity refusal instead of a forged pass.
+CHILD = r"""
+import os
 import sys
 import pytest
 
-# Preserve a trusted exit primitive before importing any PR-controlled module.
-# Distinct encoded statuses make an early os._exit(0) a harness refusal rather
-# than a false passing result. os._exit also bypasses hostile atexit handlers.
 trusted_exit = os._exit
-STATUS = {"passed": 80, "failed": 81, "collect": 82, "internal": 83,
-          "interrupted": 84, "empty": 85, "integrity": 86}
+trusted_write = os.write
+project_path = sys.argv[1]
+dependency_path = sys.argv[2]
+canary_path = sys.argv[3]
+test_path = sys.argv[4]
+result_fd = int(sys.argv[5])
+nonce = sys.argv[6]
+pytest_args = sys.argv[7:]
 
 def finish(kind):
-    sys.stdout.flush()
-    sys.stderr.flush()
-    trusted_exit(STATUS[kind])
+    payload = f"{nonce}:{kind}\n".encode("ascii")
+    trusted_write(result_fd, payload)
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except BaseException:
+        pass
+    trusted_exit(0)
 
 class ResultRecorder:
-    def __init__(self, canary_path):
-        self.canary_path = os.path.realpath(canary_path)
+    def __init__(self, expected_canary_path):
+        self.canary_path = os.path.realpath(expected_canary_path)
         self.canary_nodeids = set()
         self.canary_calls = []
         self.user_items = 0
+        self.user_passed = 0
         self.user_failed = False
         self.user_error = False
         self.collection_failed = False
@@ -230,21 +291,26 @@ class ResultRecorder:
         if self._is_canary(report.nodeid):
             if report.when == "call":
                 self.canary_calls.append(report.outcome)
-        elif report.failed and report.when == "call":
+            return
+        if report.failed and report.when == "call":
             self.user_failed = True
         elif report.failed:
             self.user_error = True
+        elif (report.when == "call" and report.passed
+              and not hasattr(report, "wasxfail")):
+            self.user_passed += 1
 
-project_path = sys.argv[1]
-canary_path = sys.argv[2]
-test_path = sys.argv[3]
-pytest_args = sys.argv[4:]
-sys.path.append(project_path)
+# pytest is already loaded from the root-owned runner. Only then expose the
+# read-only PR source and its separately built dependency environment.
+sys.path.extend([project_path, dependency_path])
 sys.dont_write_bytecode = True
 recorder = ResultRecorder(canary_path)
-pytest_status = int(pytest.main(
-    [*pytest_args, canary_path, test_path], plugins=[recorder]
-))
+try:
+    pytest_status = int(pytest.main(
+        [*pytest_args, canary_path, test_path], plugins=[recorder]
+    ))
+except BaseException:
+    finish("internal")
 if pytest_status == 3:
     finish("internal")
 if pytest_status == 4:
@@ -255,30 +321,59 @@ if recorder.canary_calls != ["failed"]:
     finish("integrity")
 if recorder.user_items == 0 or pytest_status == 5:
     finish("empty")
-finish("failed" if recorder.user_failed else "passed")
-' "${project_path}" "${test_mount}/${canary_relative}" \
+if recorder.user_failed:
+    finish("failed")
+if recorder.user_passed != recorder.user_items:
+    finish("empty")
+finish("passed")
+"""
+
+project_path = sys.argv[1]
+dependency_path = sys.argv[2]
+canary_path = sys.argv[3]
+test_path = sys.argv[4]
+pytest_args = sys.argv[5:]
+read_fd, write_fd = os.pipe()
+nonce = secrets.token_hex(32)
+completed = subprocess.run(
+    [sys.executable, "-I", "-c", CHILD, project_path, dependency_path,
+     canary_path, test_path, str(write_fd), nonce, *pytest_args],
+    check=False,
+    pass_fds=(write_fd,),
+)
+os.close(write_fd)
+with os.fdopen(read_fd, "rb") as result_stream:
+    payload = result_stream.read(256)
+if completed.returncode != 0:
+    raise SystemExit(64)
+prefix = f"{nonce}:".encode("ascii")
+if not payload.startswith(prefix) or not payload.endswith(b"\n"):
+    raise SystemExit(64)
+kind_bytes = payload[len(prefix):-1]
+if b"\n" in kind_bytes or b":" in kind_bytes:
+    raise SystemExit(64)
+try:
+    kind = kind_bytes.decode("ascii")
+except UnicodeDecodeError:
+    raise SystemExit(64)
+statuses = {"passed": 0, "failed": 1, "collect": 2, "internal": 3,
+            "interrupted": 4, "empty": 5, "integrity": 64}
+raise SystemExit(statuses.get(kind, 64))
+' "${project_path}" "${dependency_path}" \
+    "${test_mount}/${canary_relative}" \
     "${test_mount}/${test_relative}" \
     -c /dev/null \
     --confcutdir "${test_mount}" \
     --rootdir "${test_mount}" \
     -q --disable-warnings \
-    || encoded_status=$?
-
-  case "${encoded_status}" in
-    80) return 0 ;;
-    81) return 1 ;;
-    82) return 2 ;;
-    83) return 3 ;;
-    84) return 4 ;;
-    85) return 5 ;;
-    *) return 64 ;;
-  esac
+    || sandbox_status=$?
+  return "${sandbox_status}"
 }
 
 run_test() {
   [[ $# -eq 2 ]] || die "usage: review-falsify {root|typo-cot|typo-robust-training} TEST_FILE"
   local project="$1"
-  local host_test_mount python_path pythonpath test_file test_mount test_relative workdir workspace
+  local dependency_path host_test_mount python_path pythonpath test_file test_mount test_relative workdir workspace
   workspace="$(require_prepared_workspace)"
   if ! test_file="$(realpath --canonicalize-existing -- "$2" 2>/dev/null)"; then
     die "TEST_FILE must be an existing Python file below ${REVIEW_TEST_ROOT}"
@@ -291,7 +386,8 @@ run_test() {
 
   case "${project}" in
     root)
-      python_path="/review-envs/shared/bin/python"
+      python_path="/review-envs/runner/bin/python"
+      dependency_path="/review-envs/project/${REVIEW_SITE_PACKAGES}"
       pythonpath="/workspace"
       host_test_mount="${workspace}/tests/.review-tests"
       test_mount="/workspace/tests/.review-tests"
@@ -300,7 +396,8 @@ run_test() {
     typo-cot | typo-robust-training)
       grep -Fxq -- "${project}" "${REVIEW_ENV_ROOT}/selected-projects" \
         || die "the ${project} environment was not provisioned because that project is unchanged"
-      python_path="/review-envs/shared/bin/python"
+      python_path="/review-envs/runner/bin/python"
+      dependency_path="/review-envs/project/${REVIEW_SITE_PACKAGES}"
       pythonpath="/workspace/projects/${project}/src"
       host_test_mount="${workspace}/projects/${project}/tests/.review-tests"
       test_mount="/workspace/projects/${project}/tests/.review-tests"
@@ -323,16 +420,17 @@ run_test() {
     || die "the review-test mount point is not a real directory for ${project}"
 
   local host_python="${REVIEW_ENV_ROOT}${python_path#/review-envs}"
-  if [[ ! -f "${REVIEW_ENV_ROOT}/shared/pyvenv.cfg" ]] \
-    || { [[ ! -L "${host_python}" ]] && [[ ! -f "${host_python}" ]]; }; then
+  if [[ ! -f "${REVIEW_ENV_ROOT}/runner/pyvenv.cfg" ]] \
+    || { [[ ! -L "${host_python}" ]] && [[ ! -f "${host_python}" ]]; } \
+    || [[ ! -d "${REVIEW_ENV_ROOT}/project/${REVIEW_SITE_PACKAGES}" ]]; then
     die "the ${project} review environment is not installed"
   fi
-  # Run the guaranteed failure and reviewer test in the same pytest session.
-  # The trusted wrapper records both outcomes and returns encoded statuses, so
-  # a PR module that rewrites process exit status cannot turn failure into pass.
+  # Run the guaranteed failure and reviewer test in the same child pytest
+  # session. A separate trusted parent validates the child result report.
   local canary_file canary_relative canary_status=0
   canary_relative="test_review_integrity_canary_$$_${RANDOM}.py"
   canary_file="${REVIEW_TEST_ROOT}/${canary_relative}"
+  trap 'rm -f -- "${canary_file}"' EXIT
   if ! printf '%s\n' \
     'def test_review_integrity_canary_must_fail():' \
     '    assert False, "review integrity canary"' \
@@ -340,15 +438,21 @@ run_test() {
     die "review integrity canary could not be created"
   fi
   execute_sandboxed_pytest \
-    "${workspace}" "${python_path}" "${pythonpath}" "${test_mount}" \
+    "${workspace}" "${python_path}" "${pythonpath}" "${dependency_path}" \
+    "${test_mount}" \
     "${workdir}" "${test_file}" "${test_relative}" \
     "${canary_file}" "${canary_relative}" \
     || canary_status=$?
   rm -f -- "${canary_file}" \
     || die "review integrity canary could not be removed"
-  ((canary_status != 64)) \
-    || die "pytest result integrity could not be established"
-  return "${canary_status}"
+  trap - EXIT
+  case "${canary_status}" in
+    0 | 1 | 2 | 3 | 4 | 5) return "${canary_status}" ;;
+    64) die "pytest result integrity could not be established" ;;
+    124 | 137) die "review test exceeded its wall-clock limit" ;;
+    125 | 126 | 127) die "review test sandbox could not be started" ;;
+    *) die "review test sandbox failed with status ${canary_status}" ;;
+  esac
 }
 
 self_test() {

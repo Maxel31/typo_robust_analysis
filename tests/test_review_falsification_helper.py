@@ -100,13 +100,22 @@ if [[ " $* " == *test_review_integrity_canary_* ]]; then
     -name 'test_review_integrity_canary_*.py' -print -quit)"
   [[ -n "${canary_path}" && "$(stat -c %a "${canary_path}")" == 644 ]] \
     || exit 87
-  exit "${FAKE_TEST_ENCODED_STATUS:-80}"
+  exit "${FAKE_TEST_STATUS:-0}"
 fi
 if [[ " $* " == *" --entrypoint /bin/bash "* ]]; then
-  mkdir -p "${FAKE_REVIEW_ENV_ROOT}/shared/bin"
-  printf 'home = /container-only\n' >"${FAKE_REVIEW_ENV_ROOT}/shared/pyvenv.cfg"
-  ln -s /container-only/python3.12 "${FAKE_REVIEW_ENV_ROOT}/shared/bin/python"
-  exit "${FAKE_PREPARE_STATUS:-0}"
+  if [[ " $* " == *"dst=/runner-env"* ]]; then
+    mkdir -p "${FAKE_REVIEW_ENV_ROOT}/runner/bin"
+    printf 'home = /container-only\n' \
+      >"${FAKE_REVIEW_ENV_ROOT}/runner/pyvenv.cfg"
+    ln -s /container-only/python3.12 \
+      "${FAKE_REVIEW_ENV_ROOT}/runner/bin/python"
+    exit "${FAKE_RUNNER_PREPARE_STATUS:-0}"
+  fi
+  if [[ " $* " == *"dst=/project-env"* ]]; then
+    mkdir -p \
+      "${FAKE_REVIEW_ENV_ROOT}/project/lib/python3.12/site-packages"
+    exit "${FAKE_PREPARE_STATUS:-0}"
+  fi
 fi
 exit 0
 """,
@@ -178,20 +187,22 @@ def _make_real_docker_helper(
     )
     _write_executable(helper, source)
 
-    shared = state / "envs" / "shared"
-    (shared / "bin").mkdir(parents=True)
-    (shared / "lib" / "python3.12" / "site-packages" / "pytest").mkdir(
+    runner = state / "envs" / "runner"
+    project = state / "envs" / "project"
+    (runner / "bin").mkdir(parents=True)
+    (runner / "lib" / "python3.12" / "site-packages" / "pytest").mkdir(
         parents=True
     )
-    (shared / "pyvenv.cfg").write_text(
+    (project / "lib" / "python3.12" / "site-packages").mkdir(parents=True)
+    (runner / "pyvenv.cfg").write_text(
         "home = /usr/local/bin\n"
         "include-system-site-packages = false\n"
         "version = 3.12.0\n"
         "executable = /usr/local/bin/python3.12\n",
         encoding="utf-8",
     )
-    (shared / "bin" / "python").symlink_to("/usr/local/bin/python3.12")
-    pytest_package = shared / "lib" / "python3.12" / "site-packages" / "pytest"
+    (runner / "bin" / "python").symlink_to("/usr/local/bin/python3.12")
+    pytest_package = runner / "lib" / "python3.12" / "site-packages" / "pytest"
     (pytest_package / "__init__.py").write_text(
         "from pathlib import Path\n"
         "from types import SimpleNamespace\n"
@@ -219,7 +230,8 @@ def _make_real_docker_helper(
         "            failed = True\n"
         "        recorder.pytest_runtest_logreport(SimpleNamespace(\n"
         "            nodeid=nodeid, when='call', outcome=outcome,\n"
-        "            failed=outcome == 'failed'))\n"
+        "            failed=outcome == 'failed',\n"
+        "            passed=outcome == 'passed'))\n"
         "    return 1 if failed else 0\n",
         encoding="utf-8",
     )
@@ -231,7 +243,7 @@ def _make_real_docker_helper(
         git_mask.mkdir()
     else:
         git_mask.touch()
-    for path in (state, state / "envs", shared, review_tests):
+    for path in (state, state / "envs", runner, project, review_tests):
         path.chmod(0o755)
 
     environment = os.environ.copy()
@@ -458,11 +470,28 @@ def test_pytest_integrity_controls_are_part_of_every_sandbox_run() -> None:
     assert '--rootdir "${test_mount}"' in source
     assert "test_review_integrity_canary_must_fail" in source
     assert 'recorder.canary_calls != ["failed"]' in source
-    assert 'finish("failed" if recorder.user_failed else "passed")' in source
+    assert "completed.returncode != 0" in source
+    assert "pass_fds=(write_fd,)" in source
+    assert "recorder.user_passed != recorder.user_items" in source
     assert 'chmod 0644 -- "${canary_file}"' in source
+    assert 'trap \'rm -f -- "${canary_file}"\' EXIT' in source
 
 
-def _inner_wrapper_program() -> str:
+def test_trusted_pytest_runner_is_separate_from_pr_dependency_environment() -> None:
+    source = HELPER.read_text(encoding="utf-8")
+
+    assert "dst=/runner-env" in source
+    assert "dst=/project-env" in source
+    assert "/review-envs/runner/bin/python" in source
+    assert "/review-envs/project/${REVIEW_SITE_PACKAGES}" in source
+    runner_section, project_section = source.split(
+        "prepare_container_name=\"review-falsify-project-", maxsplit=1
+    )
+    assert "dst=/runner-env" in runner_section
+    assert "dst=/runner-env" not in project_section
+
+
+def _supervisor_program() -> str:
     source = HELPER.read_text(encoding="utf-8")
     start = source.index("-I -c '") + len("-I -c '")
     end = source.index("\n' \"${project_path}\"", start)
@@ -490,7 +519,8 @@ def _run_inner_wrapper(
             sys.executable,
             "-I",
             "-c",
-            _inner_wrapper_program(),
+            _supervisor_program(),
+            str(workspace),
             str(workspace),
             str(canary),
             str(probe),
@@ -520,8 +550,8 @@ def test_real_pytest_wrapper_distinguishes_passing_and_failing_review_tests(
         tmp_path / "failing", "def test_counterexample():\n    assert False\n"
     )
 
-    assert passing.returncode == 80, passing.stdout + passing.stderr
-    assert failing.returncode == 81, failing.stdout + failing.stderr
+    assert passing.returncode == 0, passing.stdout + passing.stderr
+    assert failing.returncode == 1, failing.stdout + failing.stderr
 
 
 def test_real_pytest_wrapper_classifies_fixture_errors_as_malformed(
@@ -537,7 +567,34 @@ def test_real_pytest_wrapper_classifies_fixture_errors_as_malformed(
         "    assert True\n",
     )
 
-    assert result.returncode == 82, result.stdout + result.stderr
+    assert result.returncode == 2, result.stdout + result.stderr
+
+
+def test_direct_os_exit_cannot_forge_a_passing_review_result(tmp_path: Path) -> None:
+    result = _run_inner_wrapper(
+        tmp_path,
+        "import os\n"
+        "def test_forge_encoded_pass():\n"
+        "    os._exit(80)\n",
+    )
+
+    assert result.returncode == 64, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "user_source",
+    [
+        "import pytest\n@pytest.mark.skip\ndef test_skipped():\n    pass\n",
+        "import pytest\n@pytest.mark.xfail\ndef test_expected_failure():\n"
+        "    assert False\n",
+    ],
+)
+def test_skipped_or_xfailed_review_tests_are_not_accepted_as_passing(
+    tmp_path: Path, user_source: str
+) -> None:
+    result = _run_inner_wrapper(tmp_path, user_source)
+
+    assert result.returncode == 5, result.stdout + result.stderr
 
 
 def test_canary_is_readable_even_when_the_reviewer_uses_a_restrictive_umask(
@@ -626,6 +683,7 @@ def test_chmod_setup_failure_is_a_harness_refusal(tmp_path: Path) -> None:
 
     assert result.returncode == 64
     assert "could not be made sandbox-readable" in result.stderr
+    assert not list(review_tests.glob("test_review_integrity_canary_*.py"))
 
 
 def test_nested_review_test_is_rejected_before_the_sandbox(tmp_path: Path) -> None:
