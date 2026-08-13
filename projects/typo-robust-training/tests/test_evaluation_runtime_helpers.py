@@ -9,6 +9,7 @@ import torch
 
 from typo_robust_training.evaluation.prompting import EvaluationPrompts
 from typo_robust_training.evaluation.runtime import (
+    evaluation_teacher_targets,
     prompt_tokenization_profile,
     teacher_forced_kl_readout,
     window_patched_forward,
@@ -77,6 +78,28 @@ def test_teacher_forced_kl_is_clean_to_candidate_and_excludes_first_token() -> N
         (0.0,) * 15,
         abs=1e-7,
     )
+
+
+def test_evaluation_teacher_targets_drop_partial_prefix_when_readout_is_invalid() -> None:
+    targets, reason = evaluation_teacher_targets(
+        (11, 12, 99),
+        termination="eos",
+        effective_eos_token_ids=(99,),
+        count=16,
+    )
+
+    assert targets == ()
+    assert reason == "clean-continuation-lt-16-before-eos"
+
+    targets, reason = evaluation_teacher_targets(
+        tuple(range(16)) + (99,),
+        termination="eos",
+        effective_eos_token_ids=(99,),
+        count=16,
+    )
+
+    assert targets == tuple(range(16))
+    assert reason is None
 
 
 class _Add(torch.nn.Module):
