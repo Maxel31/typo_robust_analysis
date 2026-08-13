@@ -390,21 +390,53 @@ def _transpose_word(word: str) -> str | None:
     return None
 
 
-def _heldout_transposition(record: CleanRecord) -> tuple[str, TypoEdit]:
+def _heldout_transpositions(
+    record: CleanRecord,
+    *,
+    edit_count: int,
+) -> tuple[str, tuple[TypoEdit, ...]]:
+    selected: list[tuple[int, int, str, str]] = []
+    selected_words: set[str] = set()
     for start, stop in eligible_word_spans(record.text):
         clean_word = record.text[start:stop]
+        normalized_word = clean_word.casefold()
+        if normalized_word in selected_words:
+            continue
         typo_word = _transpose_word(clean_word)
         if typo_word is None:
             continue
-        typo_text = record.text[:start] + typo_word + record.text[stop:]
-        return typo_text, TypoEdit(
-            operation="adjacent-transposition",
-            clean_word=clean_word,
-            typo_word=typo_word,
-            clean_char_span=(start, stop),
-            typo_char_span=(start, start + len(typo_word)),
+        selected.append((start, stop, clean_word, typo_word))
+        selected_words.add(normalized_word)
+        if len(selected) == edit_count:
+            break
+    if len(selected) != edit_count:
+        raise ValueError(
+            f"record has fewer than {edit_count} distinct adjacent-transposition targets: "
+            f"{record.source_id}"
         )
-    raise ValueError(f"record has no adjacent-transposition target: {record.source_id}")
+
+    pieces: list[str] = []
+    edits: list[TypoEdit] = []
+    cursor = 0
+    typo_length = 0
+    for start, stop, clean_word, typo_word in selected:
+        unchanged = record.text[cursor:start]
+        pieces.extend((unchanged, typo_word))
+        typo_length += len(unchanged)
+        typo_start = typo_length
+        typo_length += len(typo_word)
+        edits.append(
+            TypoEdit(
+                operation="adjacent-transposition",
+                clean_word=clean_word,
+                typo_word=typo_word,
+                clean_char_span=(start, stop),
+                typo_char_span=(typo_start, typo_length),
+            )
+        )
+        cursor = stop
+    pieces.append(record.text[cursor:])
+    return "".join(pieces), tuple(edits)
 
 
 def _synthetic_pair_payload(
@@ -417,8 +449,7 @@ def _synthetic_pair_payload(
     variant: int,
 ) -> dict[str, object]:
     if operation == "adjacent-transposition":
-        typo_text, edit = _heldout_transposition(record)
-        edits = (edit,)
+        typo_text, edits = _heldout_transpositions(record, edit_count=2)
     else:
         pair = TypoGenerator(
             seed=protocol.seed,

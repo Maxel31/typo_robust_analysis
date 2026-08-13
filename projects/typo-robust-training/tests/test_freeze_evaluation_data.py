@@ -578,7 +578,7 @@ def test_freeze_writes_fixed_disjoint_primary_secondary_and_corpus_artifacts(
     assert registry["roles"]["final_test"]["task_primary_records"] == 2_940
     assert registry["roles"]["final_test"]["corpus_records"] == 3_000
     assert registry["opening_order"] == ["pre_pr_gate", "final_test"]
-    assert registry["generator"] == "frozen-evaluation-typo/v3"
+    assert registry["generator"] == "frozen-evaluation-typo/v4"
     assert registry["task_capacity_census"]["sealed"]["math_500"] == {
         "source_split_records": 500,
         "after_exclusions": 500,

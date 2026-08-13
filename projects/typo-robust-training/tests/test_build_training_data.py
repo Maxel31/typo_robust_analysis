@@ -234,7 +234,16 @@ def test_builder_writes_hash_bound_disjoint_replayable_artifacts(tmp_path: Path)
     assert all(
         row["operation"] != "adjacent-transposition" for row in training if row["kind"] == "natural"
     )
-    assert any(row["operation"] == "adjacent-transposition" for row in (*gate, *final))
+    transposition_rows = [
+        row
+        for row in (*gate, *final)
+        if row["metadata"]["evaluation_condition"] == "transposition-2"
+    ]
+    assert transposition_rows
+    assert all(row["edit_count"] == 2 and len(row["edits"]) == 2 for row in transposition_rows)
+    assert all(
+        set(row["operations"]) == {"adjacent-transposition"} for row in transposition_rows
+    )
 
     group_sets = [
         {(row["source"], row["group_id"]) for row in rows}
