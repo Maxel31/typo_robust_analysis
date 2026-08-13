@@ -14,13 +14,16 @@ from typing import Any
 
 from typo_robust_training.evaluation.checkpoints import AdapterDescriptor, PatchWindow
 from typo_robust_training.evaluation.config import RobustnessEvaluationProtocol
-from typo_robust_training.evaluation.data import EvaluationPair
+from typo_robust_training.evaluation.data import EvaluationCorpusRecord, EvaluationPair
 from typo_robust_training.evaluation.prompting import (
     EvaluationPrompts,
     build_evaluation_prompts,
     classify_tokenization_counts,
 )
-from typo_robust_training.evaluation.records import EvaluationObservation
+from typo_robust_training.evaluation.records import (
+    CorpusEvaluationObservation,
+    EvaluationObservation,
+)
 
 
 def _version(name: str) -> str:
@@ -406,6 +409,7 @@ class HuggingFaceRobustnessEvaluationRuntimeFactory:
         if getattr(self.tokenizer, "is_fast", False) is not True:
             raise ValueError("robustness evaluation requires a fast tokenizer with offsets")
         self.tokenizer.padding_side = "left"
+        self.tokenizer.truncation_side = "right"
         self.device = next(self.model.parameters()).device
         self.effective_eos_token_ids, self.eos_source = resolve_effective_eos_token_ids(
             generation_config=self.model.generation_config,
@@ -514,6 +518,156 @@ class HuggingFaceRobustnessEvaluationRuntime:
 
     def _tensor(self, values: tuple[int, ...]) -> Any:
         return self._torch.tensor([values], dtype=self._torch.long, device=self.device)
+
+    def _corpus_encoding(
+        self,
+        text: str,
+        *,
+        max_tokens: int,
+    ) -> tuple[Any, Any, tuple[tuple[int, int], ...]]:
+        encoded = self.tokenizer(
+            text,
+            add_special_tokens=True,
+            truncation=True,
+            max_length=max_tokens,
+            return_attention_mask=True,
+            return_offsets_mapping=True,
+        )
+        if not isinstance(encoded, Mapping):
+            raise ValueError("evaluation corpus tokenizer must return a mapping")
+        ids = _flat(encoded.get("input_ids"), field="corpus.input_ids")
+        mask = _flat(encoded.get("attention_mask"), field="corpus.attention_mask")
+        offsets_raw = _flat(encoded.get("offset_mapping"), field="corpus.offset_mapping")
+        if (
+            len(ids) < 2
+            or len(ids) != len(mask)
+            or len(ids) != len(offsets_raw)
+            or len(ids) > max_tokens
+        ):
+            raise ValueError("evaluation corpus tokenizer returned inconsistent fields")
+        normalized_ids: list[int] = []
+        normalized_mask: list[int] = []
+        offsets: list[tuple[int, int]] = []
+        for index, (token, attended, raw) in enumerate(zip(ids, mask, offsets_raw, strict=True)):
+            if isinstance(token, bool) or not isinstance(token, int) or token < 0:
+                raise ValueError(f"evaluation corpus input_ids[{index}] is invalid")
+            if isinstance(attended, bool) or not isinstance(attended, int) or attended != 1:
+                raise ValueError(f"evaluation corpus attention_mask[{index}] is invalid")
+            if (
+                not isinstance(raw, (tuple, list))
+                or len(raw) != 2
+                or any(isinstance(value, bool) or not isinstance(value, int) for value in raw)
+                or not 0 <= raw[0] <= raw[1] <= len(text)
+            ):
+                raise ValueError(f"evaluation corpus offset_mapping[{index}] is invalid")
+            normalized_ids.append(token)
+            normalized_mask.append(attended)
+            offsets.append((raw[0], raw[1]))
+        return (
+            self._tensor(tuple(normalized_ids)),
+            self._tensor(tuple(normalized_mask)),
+            tuple(offsets),
+        )
+
+    def _base_forward(self, *, input_ids: Any, attention_mask: Any) -> Any:
+        if self.descriptor is None:
+            return self.model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+        disable_adapter = getattr(self.model, "disable_adapter", None)
+        if not callable(disable_adapter):
+            raise RuntimeError("adapter evaluation model cannot expose its frozen base")
+        with disable_adapter():
+            return self.model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+
+    def scan_corpus(
+        self,
+        record: EvaluationCorpusRecord,
+        *,
+        max_tokens: int,
+    ) -> CorpusEvaluationObservation:
+        """Measure frozen-document PPL, base drift, and natural-pair aligned KL."""
+
+        if not isinstance(record, EvaluationCorpusRecord):
+            raise TypeError("evaluation corpus runtime requires a validated record")
+        clean_ids, clean_mask, clean_offsets = self._corpus_encoding(
+            record.clean_text,
+            max_tokens=max_tokens,
+        )
+        with self._torch.inference_mode():
+            candidate_clean = self.model(
+                input_ids=clean_ids,
+                attention_mask=clean_mask,
+                use_cache=False,
+            )
+            candidate_clean_logits = candidate_clean.logits
+            if self.descriptor is None:
+                base_clean_logits = candidate_clean_logits
+            else:
+                base_clean = self._base_forward(
+                    input_ids=clean_ids,
+                    attention_mask=clean_mask,
+                )
+                base_clean_logits = base_clean.logits
+            clean_nll, clean_tokens, base_kl, base_kl_tokens = causal_nll_and_forward_kl(
+                candidate_clean_logits,
+                clean_ids,
+                base_logits=base_clean_logits,
+            )
+            typo_nll = 0.0
+            typo_tokens = 0
+            natural_kl = 0.0
+            natural_kl_tokens = 0
+            if record.kind == "natural":
+                if record.typo_text is None or not record.edits:
+                    raise RuntimeError("validated natural corpus record lost its typo pair")
+                typo_ids, typo_mask, typo_offsets = self._corpus_encoding(
+                    record.typo_text,
+                    max_tokens=max_tokens,
+                )
+                candidate_typo = self.model(
+                    input_ids=typo_ids,
+                    attention_mask=typo_mask,
+                    use_cache=False,
+                )
+                typo_nll, typo_tokens = causal_nll_sum(candidate_typo.logits, typo_ids)
+                from typo_robust_training.training.pairs import align_unchanged_token_positions
+
+                token_pairs = align_unchanged_token_positions(
+                    clean_text=record.clean_text,
+                    typo_text=record.typo_text,
+                    clean_edit_spans=tuple(edit.clean_char_span for edit in record.edits),
+                    typo_edit_spans=tuple(edit.typo_char_span for edit in record.edits),
+                    clean_offsets=clean_offsets,
+                    typo_offsets=typo_offsets,
+                )
+                clean_token_ids = clean_ids[0].detach().cpu().tolist()
+                typo_token_ids = typo_ids[0].detach().cpu().tolist()
+                token_pairs = tuple(
+                    (clean, typo)
+                    for clean, typo in token_pairs
+                    if clean_token_ids[clean] == typo_token_ids[typo]
+                )
+                natural_kl, natural_kl_tokens = aligned_forward_kl_sum(
+                    candidate_clean_logits,
+                    candidate_typo.logits,
+                    token_pairs=token_pairs,
+                )
+                if natural_kl_tokens < 1:
+                    raise ValueError("natural corpus pair has no aligned next-token targets")
+        return CorpusEvaluationObservation(
+            record_id=record.record_id,
+            condition=self.condition,
+            seed=self.seed,
+            kind=record.kind,
+            source=record.source,
+            clean_nll_sum=clean_nll,
+            clean_nll_tokens=clean_tokens,
+            typo_nll_sum=typo_nll,
+            typo_nll_tokens=typo_tokens,
+            base_clean_kl_sum=base_kl,
+            base_clean_kl_tokens=base_kl_tokens,
+            natural_clean_typo_kl_sum=natural_kl,
+            natural_clean_typo_kl_tokens=natural_kl_tokens,
+        )
 
     def _generate(
         self,

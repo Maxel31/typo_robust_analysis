@@ -22,7 +22,6 @@ _TOP = {
     "generation",
     "metrics",
     "paired_patch",
-    "gate",
 }
 _MODEL = {"id", "revision", "dtype"}
 _SEQUENCE = {
@@ -44,14 +43,6 @@ _GENERATION = {
 }
 _METRICS = {"bootstrap_replicates", "bootstrap_seed", "confidence_level", "seed_inventory"}
 _PATCH = {"position", "window_source"}
-_GATE = {
-    "minimum_typo_accuracy_gain_points",
-    "maximum_clean_accuracy_drop_points",
-    "require_wrong_to_right_above_right_to_wrong",
-    "require_positive_unseen_task_gain",
-    "minimum_directional_seeds",
-    "minimum_patch_gain_reduction_fraction",
-}
 
 
 def _mapping(value: object, *, field: str, fields: set[str]) -> Mapping[str, object]:
@@ -102,7 +93,6 @@ class RobustnessEvaluationProtocol:
     seed_inventory: tuple[int, ...]
     patch_position: str
     patch_window_source: str
-    gate: Mapping[str, object]
     config_sha256: str
 
 
@@ -184,25 +174,6 @@ def load_robustness_evaluation_config(path: Path) -> RobustnessEvaluationProtoco
         "window_source": "frozen-layer-selection",
     }:
         raise ValueError("evaluation paired-patch protocol differs")
-    gate = dict(_mapping(top["gate"], field="gate", fields=_GATE))
-    for field in (
-        "require_wrong_to_right_above_right_to_wrong",
-        "require_positive_unseen_task_gain",
-    ):
-        if type(gate[field]) is not bool:
-            raise ValueError(f"evaluation gate.{field} must be boolean")
-    for field in (
-        "minimum_typo_accuracy_gain_points",
-        "maximum_clean_accuracy_drop_points",
-        "minimum_patch_gain_reduction_fraction",
-    ):
-        gate[field] = _number(gate[field], field=f"gate.{field}")
-    gate["minimum_directional_seeds"] = _integer(
-        gate["minimum_directional_seeds"], field="gate.minimum_directional_seeds", minimum=1
-    )
-    if gate["minimum_directional_seeds"] > len(seeds):
-        raise ValueError("evaluation directional seed gate exceeds seed inventory")
-
     return RobustnessEvaluationProtocol(
         schema_version=str(top["schema_version"]),
         model=model_id,
@@ -221,7 +192,6 @@ def load_robustness_evaluation_config(path: Path) -> RobustnessEvaluationProtoco
         seed_inventory=tuple(seeds),
         patch_position=str(patch["position"]),
         patch_window_source=str(patch["window_source"]),
-        gate=MappingProxyType(gate),
         config_sha256=hashlib.sha256(raw).hexdigest(),
     )
 

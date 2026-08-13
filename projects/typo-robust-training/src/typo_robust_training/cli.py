@@ -257,6 +257,7 @@ def _run_robustness_evaluation(args: argparse.Namespace) -> int:
         print(f"evaluate-typo-robustness: error: {exc}", file=sys.stderr)
         return 1
     print(f"evaluated {result.records} record(s): {result.records_path}")
+    print(f"evaluated {result.corpus_records} corpus record(s): {result.corpus_records_path}")
     print(f"robustness report: {result.report_path}")
     print(f"run manifest: {result.run_path}")
     return 0

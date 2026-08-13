@@ -165,6 +165,7 @@ For a model/candidate to pass:
 - typo `random-2` macro: estimate at least +2.0 points and 95% lower confidence
   bound above 0 versus Base;
 - clean PPL ratio at most 1.02;
+- clean forward `KL(Base || Adapter)` median at most 0.03 nats/token;
 - at least two of three seeds have non-negative clean change and positive typo
   change.
 
@@ -179,9 +180,10 @@ than evidence that causal target selection mattered. Natural injection
 must have a point change of at least -1.0 point and lower bound above -2.0
 points; held-out natural KL must not expand. These are key secondary gates.
 
-`KL(Base || Adapter) <= 0.03` nats/token is a safety diagnostic. State distance,
-state loss, clean--typo KL-gap closure, and paired-patch gain are mechanistic
-diagnostics and never block a behaviorally successful model.
+`KL(Base || Adapter) <= 0.03` nats/token is a frozen safety gate. State distance,
+state loss, and paired-patch gain are mechanistic diagnostics and never block a
+behaviorally successful model. The held-out natural-pair clean--typo KL gap is
+the separately declared key-secondary non-degradation gate above.
 
 ## 7. Mechanistic audit
 

@@ -34,13 +34,5 @@
   "paired_patch": {
     "position": "edited-word-final-token",
     "window_source": "frozen-layer-selection"
-  },
-  "gate": {
-    "minimum_typo_accuracy_gain_points": 2.0,
-    "maximum_clean_accuracy_drop_points": 1.0,
-    "require_wrong_to_right_above_right_to_wrong": true,
-    "require_positive_unseen_task_gain": true,
-    "minimum_directional_seeds": 2,
-    "minimum_patch_gain_reduction_fraction": 0.0
   }
 }

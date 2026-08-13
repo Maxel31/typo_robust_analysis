@@ -217,7 +217,10 @@ class EvaluationStudyProtocol:
     forbid_numbers_math_urls_email_identifiers: bool
     corpus_counts: Mapping[str, Mapping[str, int]]
     corpus_max_tokens: int
+    corpus_truncation: str
     corpus_ppl_sources: tuple[str, ...]
+    corpus_clean_kl_source: str
+    corpus_natural_alignment: str
     audit_records: Mapping[str, int]
     shots: Mapping[str, int]
     max_new_tokens: int
@@ -508,7 +511,10 @@ def load_evaluation_study_protocol(path: Path) -> EvaluationStudyProtocol:
         forbid_numbers_math_urls_email_identifiers=True,
         corpus_counts=MappingProxyType(corpus_counts),
         corpus_max_tokens=512,
+        corpus_truncation="tokenizer-right-prefix/v1",
         corpus_ppl_sources=corpus_ppl_sources,
+        corpus_clean_kl_source="fineweb_edu",
+        corpus_natural_alignment="exact-unchanged-token-spans/v1",
         audit_records=MappingProxyType({"tune": 100, "pre_pr_gate": 500, "final_test": 500}),
         shots=MappingProxyType(shots),
         max_new_tokens=512,
