@@ -137,6 +137,12 @@ _FROZEN_REGISTRY_FIELDS = {
     "task_capacity_census",
     "natural_evaluation_axes",
 }
+_EXCLUSION_ARTIFACTS = {
+    "training_sources.jsonl",
+    "diagnostic_manifest.jsonl",
+    "tune_manifest.jsonl",
+    "run.json",
+}
 
 
 def _valid_task_capacity_census(value: object) -> bool:
@@ -181,6 +187,15 @@ def _object(path: Path) -> Mapping[str, object]:
     return payload
 
 
+@dataclass(frozen=True, slots=True)
+class FrozenEvaluationProvenance:
+    """Data identities that a frozen evaluation population excluded."""
+
+    root: Path
+    data_identity_sha256: str
+    exclusion_artifact_sha256: Mapping[str, str]
+
+
 def _frozen_registry(
     root: Path,
     *,
@@ -191,6 +206,7 @@ def _frozen_registry(
     registry_path = root / "registry.json"
     registry = _object(registry_path)
     natural_axes = registry.get("natural_evaluation_axes")
+    exclusion_artifacts = registry.get("exclusion_artifact_sha256")
     corrected_words = (
         natural_axes.get("corrected_word_split") if isinstance(natural_axes, Mapping) else None
     )
@@ -202,6 +218,12 @@ def _frozen_registry(
         or registry.get("generator_seed") != 42
         or registry.get("generator") != FROZEN_EVALUATION_TYPO_VERSION
         or not _valid_task_capacity_census(registry.get("task_capacity_census"))
+        or not isinstance(exclusion_artifacts, Mapping)
+        or set(exclusion_artifacts) != _EXCLUSION_ARTIFACTS
+        or any(
+            not isinstance(digest, str) or _SHA64.fullmatch(digest) is None
+            for digest in exclusion_artifacts.values()
+        )
         or registry.get("source_config_sha256") != registry.get("exclusion_data_protocol_sha256")
         or registry.get("protocol_sha256") != study_protocol_sha256
         or not isinstance(natural_axes, Mapping)
@@ -222,6 +244,35 @@ def _frozen_registry(
     ):
         raise ValueError("frozen evaluation data build is not completed")
     return registry, registry_path
+
+
+def load_frozen_evaluation_provenance(
+    root: Path,
+    *,
+    study_protocol_sha256: str,
+) -> FrozenEvaluationProvenance:
+    """Return the exclusion identity before any frozen role is claimed."""
+
+    resolved = Path(root).resolve()
+    registry, _registry_path = _frozen_registry(
+        resolved,
+        study_protocol_sha256=study_protocol_sha256,
+    )
+    identity = registry.get("data_identity_sha256")
+    exclusions = registry.get("exclusion_artifact_sha256")
+    if (
+        not isinstance(identity, str)
+        or _SHA64.fullmatch(identity) is None
+        or not isinstance(exclusions, Mapping)
+    ):
+        raise ValueError("frozen evaluation provenance differs")
+    return FrozenEvaluationProvenance(
+        root=resolved,
+        data_identity_sha256=identity,
+        exclusion_artifact_sha256=MappingProxyType(
+            {str(name): str(digest) for name, digest in exclusions.items()}
+        ),
+    )
 
 
 def _text(value: object, *, field: str) -> str:
@@ -993,7 +1044,9 @@ __all__ = [
     "EvaluationCorpusRecord",
     "EvaluationDataBundle",
     "EvaluationPair",
+    "FrozenEvaluationProvenance",
     "complete_evaluation_role",
     "load_evaluation_corpus_bundle",
     "load_evaluation_bundle",
+    "load_frozen_evaluation_provenance",
 ]

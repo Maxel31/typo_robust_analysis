@@ -18,10 +18,12 @@ def test_default_study_freezes_tiers_population_typos_statistics_and_gates() -> 
     protocol = load_evaluation_study_protocol(DEFAULT_PROTOCOL)
 
     assert protocol.schema_version == "robustness-evaluation-study/v1"
-    assert protocol.protocol_id == "typo-robustness-evaluation-v1.3"
+    assert protocol.protocol_id == "typo-robustness-evaluation-v1.4"
     assert protocol.seed == 42
     assert protocol.training_seeds == (42, 43, 44)
     assert protocol.monitor_task_accuracy_allowed is False
+    assert not hasattr(protocol, "monitor_interval_optimizer_steps")
+    assert not hasattr(protocol, "attribution4_tasks")
     assert protocol.tune_task_records_total == 500
     assert protocol.tune_natural_injection_records == 100
     assert protocol.role_tasks == {
@@ -108,9 +110,9 @@ def test_study_rejects_scientific_drift_and_duplicate_json_keys(tmp_path: Path) 
     duplicate = tmp_path / "duplicate.yaml"
     duplicate.write_text(
         DEFAULT_PROTOCOL.read_text(encoding="utf-8").replace(
-            '"protocol_id": "typo-robustness-evaluation-v1.3",',
-            '"protocol_id": "typo-robustness-evaluation-v1.3",\n'
-            '  "protocol_id": "typo-robustness-evaluation-v1.3",',
+            '"protocol_id": "typo-robustness-evaluation-v1.4",',
+            '"protocol_id": "typo-robustness-evaluation-v1.4",\n'
+            '  "protocol_id": "typo-robustness-evaluation-v1.4",',
         ),
         encoding="utf-8",
     )
@@ -126,3 +128,27 @@ def test_study_digest_changes_if_any_frozen_byte_changes(tmp_path: Path) -> None
 
     assert copied_protocol.protocol_id == protocol.protocol_id
     assert copied_protocol.config_sha256 != protocol.config_sha256
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    (
+        ("monitor", "interval_optimizer_steps", 10),
+        ("secondary", "natural_lm_pairs", 1000),
+        ("secondary", "attribution4_tasks", ["gsm8k", "mmlu"]),
+    ),
+)
+def test_study_rejects_declared_features_without_an_evaluation_execution_path(
+    tmp_path: Path,
+    section: str,
+    field: str,
+    value: object,
+) -> None:
+    payload = json.loads(DEFAULT_PROTOCOL.read_text(encoding="utf-8"))
+    target = payload["tiers"]["monitor"] if section == "monitor" else payload["typos"][section]
+    target[field] = value
+    moved = tmp_path / f"unwired-{field}.yaml"
+    moved.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=f"{section} fields differ"):
+        load_evaluation_study_protocol(moved)
