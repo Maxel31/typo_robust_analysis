@@ -11,7 +11,7 @@ from types import MappingProxyType
 from typing import Mapping
 
 
-_SHA40_LENGTH = 40
+_SOURCE_REVISION = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 _WORD_CHARACTER = re.compile(r"[A-Za-z']")
 
 
@@ -68,8 +68,8 @@ class CleanRecord:
             "text",
         ):
             _nonempty(getattr(self, field_name), field_name=field_name)
-        if len(self.source_revision) != _SHA40_LENGTH:
-            raise ValueError("source_revision must be a pinned 40-character SHA")
+        if _SOURCE_REVISION.fullmatch(self.source_revision) is None:
+            raise ValueError("source_revision must be a pinned 40- or 64-character SHA")
         if self.task is not None:
             _nonempty(self.task, field_name="task")
         if self.answer is not None and not isinstance(self.answer, str):
@@ -116,8 +116,8 @@ class NaturalTypoRecord:
             "operation",
         ):
             _nonempty(getattr(self, field_name), field_name=field_name)
-        if len(self.source_revision) != _SHA40_LENGTH:
-            raise ValueError("source_revision must be a pinned 40-character SHA")
+        if _SOURCE_REVISION.fullmatch(self.source_revision) is None:
+            raise ValueError("source_revision must be a pinned 40- or 64-character SHA")
         if self.clean_text == self.typo_text:
             raise ValueError("natural clean and typo text must differ")
         if type(self.training_eligible) is not bool:

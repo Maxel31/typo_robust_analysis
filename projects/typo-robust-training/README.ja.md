@@ -254,17 +254,45 @@ configはversion 1のCycle 1再現一式なので、過去のrunであること�
 `Historical Cycle 1`という別groupに分けます。有界residual-window比較のconfigとW&B mappingは
 その学習機能と同じ変更で導入するため、未実装の確証用runと取り違えません。
 
-## 5. held-out頑健性を評価する
+## 5. 独立した評価studyを凍結する
+
+adapterを比較する前に、clean/typo textの実現値を固定します。source configには、
+除外用dataをbuildした際とbyte単位で同一のv3 configを指定します。これにより、
+各評価項目は除外すべきtraining、diagnostic、tune IDへhashで結合されます。
+この段階ではmodelを実行せず、model出力も参照しません。
+
+```bash
+EVALUATION_DATA="${TRAIN_ROOT}/evaluation-data/robustness-v1"
+SOURCE_CONFIG="${TRAIN_PROJECT}/configs/cycle3/gemma4b-data-64m.yaml"
+
+uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot freeze-robustness-evaluation \
+  --protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --source-config "${SOURCE_CONFIG}" \
+  --exclude-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --output-dir "${EVALUATION_DATA}"
+```
+
+このcommandはhash-boundな`tune`、一度だけ開封できる`pre_pr_gate`と`final_test`の
+task/corpus manifestを書き出します。typoの実文字列はBase、出力分布整合baseline、
+すべての提案adapterで共通です。task ID、corpus group、natural-typo repository、
+訂正語はtraining/tune/sealed role間で交差しません。commit済みprotocolとgate定義は
+[`../typo-cot/docs/robustness_evaluation_protocol_v1.md`](../typo-cot/docs/robustness_evaluation_protocol_v1.md)
+に記載しています。
+
+## 6. held-out頑健性を評価する
 
 ```bash
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot evaluate-typo-robustness \
   --config "${TRAIN_PROJECT}/configs/gemma4b-evaluation.yaml" \
-  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --evaluation-data "${EVALUATION_DATA}" \
   --evaluation-role tune \
   --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
   --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
-  --checkpoint "${TRAIN_ROOT}/training/localized-state-distillation/seed-42/adapter" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-42/adapter" \
   --splits same-task unseen-task unseen-content unseen-typo \
   --gpu-id "${GPU_ID}" \
   --output-dir "${TRAIN_ROOT}/evaluation/tune/targeted-seed-42"
@@ -286,9 +314,12 @@ pair checkpointが作成された後に再開する場合だけ、`--resume`を�
 
 reportにはclean/typo accuracy、wrong-to-right、right-to-wrong、net accuracy、clean harm、
 multi-token KL、追加paired-patch gain、tokenization strata、unseen task、unseen operation、
-natural typoを含めます。PR前gateはtypo accuracy +3 point以上、clean accuracy低下1 point以内、
-wrong-to-rightがright-to-wrongより大きいこと、unseen transferが正であること、seed 42/43/44の
-少なくとも2つで同方向であることです。失敗した試行もlocalに保持し、最終PRで要約します。
+natural typoを含めます。固定PR前gateは、primary random-2 typo accuracyがBase比+2 point以上で
+95%信頼区間の下限が0より大きいこと、clean macroの低下が1 point以内で単一taskを3 point以上
+壊さないこと、held-out clean perplexity比が1.02以下であること、natural typoを実質的に
+悪化させないことを要求します。mechanistic patch auditは報告しますがblocking gateでは
+ありません。確証的な主張にはさらに3つの学習seedを要求します。失敗した試行もlocalに保持し、
+最終PRで要約します。
 
 完全な固定protocolは
 [`../typo-cot/docs/robustness_training_plan_v1.md`](../typo-cot/docs/robustness_training_plan_v1.md)

@@ -279,17 +279,46 @@ of these version-1 runs are placed in the separate `Historical Cycle 1` group,
 so they cannot be mistaken for the bounded residual-window comparison, whose
 config and W&B mapping are introduced with that later training feature.
 
-## 5. Evaluate held-out robustness
+## 5. Freeze the independent evaluation study
+
+Freeze the exact clean/typo texts before comparing any adapter. The source
+config must be the byte-identical v3 config used to build the exclusion data;
+this binds every evaluation item to the training, diagnostic, and tune IDs it
+must exclude. This step runs no model and reveals no model output.
+
+```bash
+EVALUATION_DATA="${TRAIN_ROOT}/evaluation-data/robustness-v1"
+SOURCE_CONFIG="${TRAIN_PROJECT}/configs/cycle3/gemma4b-data-64m.yaml"
+
+uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot freeze-robustness-evaluation \
+  --protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --source-config "${SOURCE_CONFIG}" \
+  --exclude-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --output-dir "${EVALUATION_DATA}"
+```
+
+The command writes hash-bound `tune`, one-use `pre_pr_gate`, and one-use
+`final_test` task and corpus manifests. Exact typo strings are shared by Base,
+the output-distribution-matching baseline, and every proposed adapter. Task
+IDs, corpus groups, natural-typo repositories, and corrected words are
+disjoint across training/tune/sealed roles. The committed protocol and its
+gate definitions are described in
+[`../typo-cot/docs/robustness_evaluation_protocol_v1.md`](../typo-cot/docs/robustness_evaluation_protocol_v1.md).
+
+## 6. Evaluate held-out robustness
 
 ```bash
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot evaluate-typo-robustness \
   --config "${TRAIN_PROJECT}/configs/gemma4b-evaluation.yaml" \
-  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --evaluation-data "${EVALUATION_DATA}" \
   --evaluation-role tune \
   --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
   --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
-  --checkpoint "${TRAIN_ROOT}/training/localized-state-distillation/seed-42/adapter" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-42/adapter" \
   --splits same-task unseen-task unseen-content unseen-typo \
   --gpu-id "${GPU_ID}" \
   --output-dir "${TRAIN_ROOT}/evaluation/tune/targeted-seed-42"
@@ -314,10 +343,15 @@ checkpoints.
 
 The report includes clean/typo accuracy, wrong-to-right, right-to-wrong, net
 accuracy, clean harm, multi-token KL, additional paired-patch gain,
-tokenization strata, unseen tasks, unseen operations, and natural typos. The
-minimum pre-PR gate is +3 typo-accuracy points, at most -1 clean-accuracy point,
-wrong-to-right greater than right-to-wrong, positive unseen transfer, and the
-same improvement direction for at least two of seeds 42/43/44. Failed attempts
+tokenization strata, unseen tasks, unseen operations, held-out corpus PPL and
+Base-to-adapter clean KL, and natural typos. The
+frozen pre-PR gate requires a primary random-2 typo improvement of at least +2
+accuracy points over Base with a 95% confidence-interval lower bound above
+zero, a clean macro decrease of at most 1 point, no task decrease of 3 points
+or more, a held-out clean perplexity ratio at most 1.02, clean forward KL at
+most 0.03 nats/token, and no material natural typo accuracy or held-out-pair KL
+degradation. The mechanistic patch audit is reported but is not a blocking gate.
+Confirmatory claims additionally require three training seeds; failed attempts
 are retained locally and summarized in the eventual PR.
 
 The full frozen protocol is in

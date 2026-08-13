@@ -26,6 +26,16 @@ class TrainingDataBundle:
     artifact_sha256: Mapping[str, str]
 
 
+@dataclass(frozen=True, slots=True)
+class TrainingDataProvenance:
+    """Hash-validated training-data identity without constructing a generator."""
+
+    root: Path
+    data_identity_sha256: str
+    training_data_sha256: str
+    artifact_sha256: Mapping[str, str]
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -88,18 +98,18 @@ def _sources(path: Path) -> tuple[TrainingSource, ...]:
     return tuple(rows)
 
 
-def load_training_data_bundle(
+def _validated_training_data(
     root: Path,
-    *,
-    protocol: AdapterTrainingProtocol,
-    seed: int,
-) -> TrainingDataBundle:
-    """Revalidate builder hashes and reconstruct the frozen typo generator."""
+) -> tuple[
+    Path,
+    Mapping[str, object],
+    Mapping[str, object],
+    dict[str, str],
+    str,
+    str,
+]:
+    """Validate immutable builder artifacts shared by training and evaluation."""
 
-    if not isinstance(protocol, AdapterTrainingProtocol):
-        raise TypeError("training data requires AdapterTrainingProtocol")
-    if seed not in protocol.seed_inventory:
-        raise ValueError("training seed is outside the frozen seed inventory")
     resolved = Path(root).resolve()
     run_path = resolved / "run.json"
     source_path = resolved / "training_sources.jsonl"
@@ -114,6 +124,71 @@ def load_training_data_bundle(
     data_protocol = run.get("protocol")
     if not isinstance(data_protocol, Mapping):
         raise ValueError("training data run has no protocol")
+    artifacts = {
+        "training_sources.jsonl": _declared_hash(
+            run, name="training_sources.jsonl", path=source_path
+        ),
+        "typo_statistics.json": _declared_hash(
+            run, name="typo_statistics.json", path=statistics_path
+        ),
+        "evaluation_manifest.json": _declared_hash(
+            run, name="evaluation_manifest.json", path=evaluation_path
+        ),
+    }
+    evaluation = _object(evaluation_path)
+    if evaluation.get("schema_version") != "robustness-evaluation-manifest/v1":
+        raise ValueError("training evaluation manifest schema differs")
+    evaluation_hashes = evaluation.get("artifact_sha256")
+    if not isinstance(evaluation_hashes, Mapping) or any(
+        evaluation_hashes.get(name) != artifacts[name]
+        for name in ("training_sources.jsonl", "typo_statistics.json")
+    ):
+        raise ValueError("evaluation manifest training artifact hash differs")
+    identity = evaluation.get("data_identity_sha256")
+    if not isinstance(identity, str) or len(identity) != 64:
+        raise ValueError("evaluation manifest data identity differs")
+    binding = hashlib.sha256(
+        json.dumps(
+            {
+                "artifacts": artifacts,
+                "data_identity_sha256": identity,
+                "protocol": data_protocol,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+    ).hexdigest()
+    return resolved, data_protocol, evaluation, artifacts, identity, binding
+
+
+def load_training_data_provenance(root: Path) -> TrainingDataProvenance:
+    """Return the static training identity used to bind completed adapters."""
+
+    resolved, _protocol, _evaluation, artifacts, identity, binding = _validated_training_data(root)
+    return TrainingDataProvenance(
+        root=resolved,
+        data_identity_sha256=identity,
+        training_data_sha256=binding,
+        artifact_sha256=artifacts,
+    )
+
+
+def load_training_data_bundle(
+    root: Path,
+    *,
+    protocol: AdapterTrainingProtocol,
+    seed: int,
+) -> TrainingDataBundle:
+    """Revalidate builder hashes and reconstruct the frozen typo generator."""
+
+    if not isinstance(protocol, AdapterTrainingProtocol):
+        raise TypeError("training data requires AdapterTrainingProtocol")
+    if seed not in protocol.seed_inventory:
+        raise ValueError("training seed is outside the frozen seed inventory")
+    resolved, data_protocol, _evaluation, artifacts, identity, binding = _validated_training_data(
+        root
+    )
     if (
         data_protocol.get("model") != protocol.model
         or data_protocol.get("model_revision") != protocol.model_revision
@@ -148,47 +223,13 @@ def load_training_data_bundle(
         or minimum_letters < 2
     ):
         raise ValueError("training minimum word length differs")
-
-    artifacts = {
-        "training_sources.jsonl": _declared_hash(
-            run, name="training_sources.jsonl", path=source_path
-        ),
-        "typo_statistics.json": _declared_hash(
-            run, name="typo_statistics.json", path=statistics_path
-        ),
-        "evaluation_manifest.json": _declared_hash(
-            run, name="evaluation_manifest.json", path=evaluation_path
-        ),
-    }
-    evaluation = _object(evaluation_path)
-    if evaluation.get("schema_version") != "robustness-evaluation-manifest/v1":
-        raise ValueError("training evaluation manifest schema differs")
-    evaluation_hashes = evaluation.get("artifact_sha256")
-    if not isinstance(evaluation_hashes, Mapping) or any(
-        evaluation_hashes.get(name) != artifacts[name]
-        for name in ("training_sources.jsonl", "typo_statistics.json")
-    ):
-        raise ValueError("evaluation manifest training artifact hash differs")
-    identity = evaluation.get("data_identity_sha256")
-    if not isinstance(identity, str) or len(identity) != 64:
-        raise ValueError("evaluation manifest data identity differs")
+    statistics_path = resolved / "typo_statistics.json"
+    source_path = resolved / "training_sources.jsonl"
     statistics = _object(statistics_path)
     substitutions = substitutions_from_statistics(statistics)
     if statistics.get("held_out_operations") != ["adjacent-transposition"]:
         raise ValueError("natural typo statistics held-out inventory differs")
     sources = _sources(source_path)
-    binding = hashlib.sha256(
-        json.dumps(
-            {
-                "artifacts": artifacts,
-                "data_identity_sha256": identity,
-                "protocol": data_protocol,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode()
-    ).hexdigest()
     return TrainingDataBundle(
         root=resolved,
         sources=sources,
@@ -206,4 +247,9 @@ def load_training_data_bundle(
     )
 
 
-__all__ = ["TrainingDataBundle", "load_training_data_bundle"]
+__all__ = [
+    "TrainingDataBundle",
+    "TrainingDataProvenance",
+    "load_training_data_bundle",
+    "load_training_data_provenance",
+]

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import re
+import zlib
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from functools import cache
+
+import numpy as np
 
 from typo_robust_training.data.records import CleanRecord
 
@@ -39,8 +42,7 @@ def normalized_content_sha256(text: str) -> str:
     return hashlib.sha256(normalize_for_duplicate_detection(text).encode("utf-8")).hexdigest()
 
 
-def _shingles(text: str, size: int) -> frozenset[int]:
-    normalized = normalize_for_duplicate_detection(text)
+def _normalized_shingles(normalized: str, size: int) -> frozenset[int]:
     if not normalized:
         return frozenset()
     width = min(size, len(normalized))
@@ -55,6 +57,10 @@ def _shingles(text: str, size: int) -> frozenset[int]:
         value = ((value - outgoing * high) * _SHINGLE_BASE + incoming) & _HASH_MASK
         hashes.add(value)
     return frozenset(hashes)
+
+
+def _shingles(text: str, size: int) -> frozenset[int]:
+    return _normalized_shingles(normalize_for_duplicate_detection(text), size)
 
 
 def _jaccard(left: frozenset[int], right: frozenset[int]) -> float:
@@ -82,13 +88,74 @@ class _UnionFind:
         self.parent[larger] = smaller
 
 
+class NearDuplicateTextIndex:
+    """Query text against a fixed corpus using the clustering LSH/Jaccard rule."""
+
+    def __init__(
+        self,
+        texts: Sequence[str],
+        *,
+        shingle_size: int = 5,
+        threshold: float = 0.99,
+    ) -> None:
+        if isinstance(shingle_size, bool) or not isinstance(shingle_size, int) or shingle_size <= 0:
+            raise ValueError("shingle_size must be a positive integer")
+        if not isinstance(threshold, (int, float)) or not 0.0 < float(threshold) <= 1.0:
+            raise ValueError("threshold must be in (0, 1]")
+        self._shingle_size = shingle_size
+        self._threshold = float(threshold)
+        self._exact: set[bytes] = set()
+        self._compressed_normalized_texts: list[bytes] = []
+        self._buckets: dict[tuple[int, tuple[int, ...]], list[int]] = defaultdict(list)
+        for index, text in enumerate(texts):
+            if not isinstance(text, str):
+                raise TypeError("near-duplicate index texts must be strings")
+            normalized = normalize_for_duplicate_detection(text)
+            encoded = normalized.encode("utf-8")
+            self._exact.add(hashlib.sha256(encoded).digest())
+            self._compressed_normalized_texts.append(zlib.compress(encoded, level=1))
+            signature = _minhash_signature(_normalized_shingles(normalized, shingle_size))
+            for band_index in range(8):
+                start = band_index * 4
+                self._buckets[(band_index, signature[start : start + 4])].append(index)
+
+    def contains_near_duplicate(self, text: str) -> bool:
+        """Return whether ``text`` is exact/near-duplicate to the indexed corpus."""
+
+        if not isinstance(text, str):
+            raise TypeError("near-duplicate query text must be a string")
+        normalized = normalize_for_duplicate_detection(text)
+        if hashlib.sha256(normalized.encode("utf-8")).digest() in self._exact:
+            return True
+        query_shingles = _normalized_shingles(normalized, self._shingle_size)
+        signature = _minhash_signature(query_shingles)
+        candidates: set[int] = set()
+        for band_index in range(8):
+            start = band_index * 4
+            candidates.update(self._buckets.get((band_index, signature[start : start + 4]), ()))
+        for index in candidates:
+            indexed = _normalized_shingles(
+                zlib.decompress(self._compressed_normalized_texts[index]).decode("utf-8"),
+                self._shingle_size,
+            )
+            if _jaccard(query_shingles, indexed) >= self._threshold:
+                return True
+        return False
+
+
 def _minhash_signature(shingles: frozenset[int], *, components: int = 32) -> tuple[int, ...]:
     if not shingles:
         return (0,) * components
-    return tuple(
-        min((multiplier * shingle + offset) & _HASH_MASK for shingle in shingles)
-        for multiplier, offset in _minhash_coefficients(components)
-    )
+    values = np.fromiter(shingles, dtype=np.uint64, count=len(shingles))
+    coefficients = np.asarray(_minhash_coefficients(components), dtype=np.uint64)
+    minima = np.full(components, np.iinfo(np.uint64).max, dtype=np.uint64)
+    # Bound the temporary matrix while evaluating the same 64-bit affine hashes
+    # as the scalar implementation. NumPy unsigned arithmetic wraps modulo 2**64.
+    for start in range(0, values.size, 4096):
+        block = values[start : start + 4096, None]
+        transformed = block * coefficients[None, :, 0] + coefficients[None, :, 1]
+        minima = np.minimum(minima, transformed.min(axis=0))
+    return tuple(int(value) for value in minima)
 
 
 def cluster_near_duplicates(
@@ -185,6 +252,102 @@ def stable_weighted_split(
     return ordered[-1][0]
 
 
+def assign_balanced_group_roles(
+    group_sizes: Mapping[str, int],
+    *,
+    seed: int,
+    namespace: str,
+    weights: Mapping[str, float],
+) -> dict[str, str]:
+    """Assign whole groups in hash-random order while limiting count imbalance.
+
+    The seeded hash order deliberately does not depend on group size.  This avoids
+    making the largest repositories systematically inherit the largest role while
+    retaining deterministic greedy balancing of the final record counts.
+    """
+
+    if not group_sizes:
+        return {}
+    if any(
+        not group or not isinstance(size, int) or size <= 0 for group, size in group_sizes.items()
+    ):
+        raise ValueError("group sizes require non-empty names and positive integer counts")
+    ordered_weights = _validate_weights(weights)
+    positive_weights = tuple((role, weight) for role, weight in ordered_weights if weight > 0.0)
+    if not positive_weights:
+        raise ValueError("balanced group-role weights require a positive role")
+    roles = tuple(role for role, _weight in positive_weights)
+    record_total = sum(group_sizes.values())
+    targets = {role: record_total * dict(positive_weights)[role] for role in roles}
+    counts = {role: 0 for role in roles}
+    assignments: dict[str, str] = {}
+
+    def digest(value: str, *, purpose: str) -> str:
+        return hashlib.sha256(f"{namespace}-{purpose}\0{seed}\0{value}".encode("utf-8")).hexdigest()
+
+    group_inventory = tuple(group_sizes.items())
+    if len(group_inventory) < len(roles):
+        raise ValueError("balanced group roles require at least one group per positive role")
+
+    # Guarantee role coverage with the smallest indivisible groups. Assigning the
+    # first hash-ordered groups can pin a very large repository to a 1% role and
+    # overwhelm the requested record proportions before greedy balancing begins.
+    coverage_groups = sorted(
+        group_inventory,
+        key=lambda item: (item[1], digest(item[0], purpose="coverage-group"), item[0]),
+    )[: len(roles)]
+    # Find the globally best one-to-one role assignment for the mandatory
+    # coverage groups.  Hash-zipping the groups to roles ignores the requested
+    # weights entirely and can place the only large group in a tiny role when
+    # the number of groups is close to the number of roles.  This dynamic
+    # program is O(r * 2**r) in the (normally very small) number of roles.
+    coverage_states: dict[int, tuple[float, tuple[str, ...], tuple[str, ...]]] = {0: (0.0, (), ())}
+    for group, size in coverage_groups:
+        next_states: dict[int, tuple[float, tuple[str, ...], tuple[str, ...]]] = {}
+        for mask, (cost, tie_keys, assigned_roles) in coverage_states.items():
+            for role_index, role in enumerate(roles):
+                bit = 1 << role_index
+                if mask & bit:
+                    continue
+                candidate = (
+                    cost + (size - targets[role]) ** 2,
+                    (*tie_keys, digest(f"{group}\0{role}", purpose="coverage-role")),
+                    (*assigned_roles, role),
+                )
+                previous = next_states.get(mask | bit)
+                if previous is None or candidate < previous:
+                    next_states[mask | bit] = candidate
+        coverage_states = next_states
+    full_mask = (1 << len(roles)) - 1
+    coverage_roles = coverage_states[full_mask][2]
+    covered = {group for group, _size in coverage_groups}
+    for (group, size), role in zip(coverage_groups, coverage_roles, strict=True):
+        assignments[group] = role
+        counts[role] += size
+
+    ordered_groups = sorted(
+        (item for item in group_inventory if item[0] not in covered),
+        key=lambda item: (digest(item[0], purpose="group-order"), item[0]),
+    )
+    for group, size in ordered_groups:
+
+        def candidate_key(candidate: str) -> tuple[float, str, str]:
+            squared_error = sum(
+                (counts[role] + (size if role == candidate else 0) - targets[role]) ** 2
+                for role in roles
+            )
+            return (
+                squared_error,
+                digest(f"{group}\0{candidate}", purpose="role-tie"),
+                candidate,
+            )
+
+        role = min(roles, key=candidate_key)
+        assignments[group] = role
+        counts[role] += size
+    return assignments
+
+
 def assign_content_splits(
     records: Sequence[CleanRecord],
     *,
@@ -259,6 +422,7 @@ def assign_repository_split(
 
 
 __all__ = [
+    "NearDuplicateTextIndex",
     "assign_content_splits",
     "assign_repository_split",
     "cluster_near_duplicates",

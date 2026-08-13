@@ -12,7 +12,8 @@ from types import MappingProxyType
 from typing import Mapping
 
 
-_REVISION = re.compile(r"[0-9a-f]{40}")
+_GIT_REVISION = re.compile(r"[0-9a-f]{40}")
+_SOURCE_REVISION = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 _TOP_LEVEL_FIELDS = {
     "schema_version",
     "stage",
@@ -150,6 +151,7 @@ class TrainingDataProtocol:
     max_sequence_length: int
     document_character_window: int
     training_mixture: Mapping[str, float]
+    reasoning_task_mixture: Mapping[str, float]
     explicit_clean_pair_probability: float
     edit_count_probabilities: Mapping[str, float]
     training_operations: tuple[str, ...]
@@ -159,6 +161,7 @@ class TrainingDataProtocol:
     distinct_words: bool
     fineweb_content_split: Mapping[str, float]
     natural_repository_split: Mapping[str, float]
+    natural_dictionary_word_split: Mapping[str, float] | None
     held_out_repository_evaluation_split: Mapping[str, float]
     diagnostic_per_task: int
     fixed_pairs_per_source_split: int
@@ -189,6 +192,7 @@ class TrainingDataProtocol:
                 "token_budget": self.training_token_budget,
                 "max_sequence_length": self.max_sequence_length,
                 "mixture": dict(self.training_mixture),
+                "reasoning_task_mixture": dict(self.reasoning_task_mixture),
                 "explicit_clean_pair_probability": self.explicit_clean_pair_probability,
             },
             "preprocessing": {
@@ -205,6 +209,11 @@ class TrainingDataProtocol:
             "splits": {
                 "fineweb_content": dict(self.fineweb_content_split),
                 "natural_repository": dict(self.natural_repository_split),
+                **(
+                    {"natural_dictionary_word": dict(self.natural_dictionary_word_split)}
+                    if self.natural_dictionary_word_split is not None
+                    else {}
+                ),
                 "held_out_repository_evaluation": dict(self.held_out_repository_evaluation_split),
             },
             "sampling": {
@@ -231,8 +240,8 @@ class TrainingDataProtocol:
 def _load_source(name: str, value: object) -> DatasetSource:
     payload = _mapping(value, field=f"sources.{name}", fields=_SOURCE_FIELDS)
     revision = _string(payload["revision"], field=f"sources.{name}.revision")
-    if _REVISION.fullmatch(revision) is None:
-        raise ValueError(f"sources.{name}.revision must be a pinned 40-character SHA")
+    if _SOURCE_REVISION.fullmatch(revision) is None:
+        raise ValueError(f"sources.{name}.revision must be a pinned SHA")
     subset = payload["subset"]
     if subset is not None and (not isinstance(subset, str) or not subset):
         raise ValueError(f"sources.{name}.subset must be null or a non-empty string")
@@ -265,7 +274,7 @@ def _load_source(name: str, value: object) -> DatasetSource:
 
 
 def load_training_data_config(path: Path) -> TrainingDataProtocol:
-    """Load the strict v1 data protocol without accepting silent drift."""
+    """Load a strict versioned data protocol without accepting silent drift."""
 
     resolved = Path(path).resolve()
     if not resolved.is_file():
@@ -278,25 +287,43 @@ def load_training_data_config(path: Path) -> TrainingDataProtocol:
     root = _mapping(
         strict_loads(text, context=str(resolved)), field="config", fields=_TOP_LEVEL_FIELDS
     )
-    if root["schema_version"] != "robustness-training-data-config/v1":
+    schema_version = root["schema_version"]
+    if schema_version not in {
+        "robustness-training-data-config/v1",
+        "robustness-training-data-config/v2",
+        "robustness-training-data-config/v3",
+    }:
         raise ValueError("training data schema_version differs")
-    if root["stage"] != "sanity" or root["seed"] != 42:
+    expected_stage = "sanity" if schema_version.endswith("/v1") else "mvp"
+    if root["stage"] != expected_stage or root["seed"] != 42:
         raise ValueError("training data stage or seed differs")
 
+    training_fields = {
+        "token_budget",
+        "max_sequence_length",
+        "mixture",
+        "explicit_clean_pair_probability",
+    }
+    if not schema_version.endswith("/v1"):
+        training_fields.add("reasoning_task_mixture")
     training = _mapping(
         root["training"],
         field="training",
-        fields={
-            "token_budget",
-            "max_sequence_length",
-            "mixture",
-            "explicit_clean_pair_probability",
-        },
+        fields=training_fields,
     )
     mixture = _probability_map(
         training["mixture"],
         field="training.mixture",
         keys=("fineweb_edu", "reasoning", "natural_typo"),
+    )
+    reasoning_task_mixture = (
+        _probability_map(
+            training["reasoning_task_mixture"],
+            field="training.reasoning_task_mixture",
+            keys=("gsm8k", "mmlu", "arc"),
+        )
+        if "reasoning_task_mixture" in training
+        else MappingProxyType({"gsm8k": 1.0 / 3.0, "mmlu": 1.0 / 3.0, "arc": 1.0 / 3.0})
     )
     preprocessing = _mapping(
         root["preprocessing"],
@@ -347,14 +374,17 @@ def load_training_data_config(path: Path) -> TrainingDataProtocol:
     if distinct_words is not True:
         raise ValueError("v1 typo edits must target distinct words")
 
+    split_fields = {
+        "fineweb_content",
+        "natural_repository",
+        "held_out_repository_evaluation",
+    }
+    if schema_version.endswith("/v3"):
+        split_fields.add("natural_dictionary_word")
     splits = _mapping(
         root["splits"],
         field="splits",
-        fields={
-            "fineweb_content",
-            "natural_repository",
-            "held_out_repository_evaluation",
-        },
+        fields=split_fields,
     )
     fineweb_split = _probability_map(
         splits["fineweb_content"],
@@ -365,6 +395,15 @@ def load_training_data_config(path: Path) -> TrainingDataProtocol:
         splits["natural_repository"],
         field="splits.natural_repository",
         keys=("train", "tune", "held_out"),
+    )
+    natural_dictionary_word_split = (
+        _probability_map(
+            splits["natural_dictionary_word"],
+            field="splits.natural_dictionary_word",
+            keys=("train", "tune", "pre_pr_gate", "final_test"),
+        )
+        if schema_version.endswith("/v3")
+        else None
     )
     heldout_natural_split = _probability_map(
         splits["held_out_repository_evaluation"],
@@ -389,8 +428,8 @@ def load_training_data_config(path: Path) -> TrainingDataProtocol:
     )
 
     protocol = TrainingDataProtocol(
-        schema_version="robustness-training-data-config/v1",
-        stage="sanity",
+        schema_version=str(schema_version),
+        stage=expected_stage,
         seed=42,
         model=_string(root["model"], field="model"),
         model_revision=_string(root["model_revision"], field="model_revision"),
@@ -405,6 +444,7 @@ def load_training_data_config(path: Path) -> TrainingDataProtocol:
             field="preprocessing.document_character_window",
         ),
         training_mixture=mixture,
+        reasoning_task_mixture=reasoning_task_mixture,
         explicit_clean_pair_probability=_probability(
             training["explicit_clean_pair_probability"],
             field="training.explicit_clean_pair_probability",
@@ -419,6 +459,7 @@ def load_training_data_config(path: Path) -> TrainingDataProtocol:
         distinct_words=True,
         fineweb_content_split=fineweb_split,
         natural_repository_split=natural_split,
+        natural_dictionary_word_split=natural_dictionary_word_split,
         held_out_repository_evaluation_split=heldout_natural_split,
         diagnostic_per_task=_positive_int(
             sampling["diagnostic_per_task"], field="sampling.diagnostic_per_task"
@@ -434,10 +475,10 @@ def load_training_data_config(path: Path) -> TrainingDataProtocol:
         config_sha256=hashlib.sha256(raw).hexdigest(),
     )
     if protocol.max_sequence_length != 512:
-        raise ValueError("sanity max_sequence_length must remain 512")
+        raise ValueError("training max_sequence_length must remain 512")
     if protocol.document_character_window != 8_192:
-        raise ValueError("sanity document_character_window must remain 8192")
-    if _REVISION.fullmatch(protocol.model_revision) is None:
+        raise ValueError("training document_character_window must remain 8192")
+    if _GIT_REVISION.fullmatch(protocol.model_revision) is None:
         raise ValueError("model_revision must be a pinned 40-character SHA")
     return protocol
 

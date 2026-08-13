@@ -33,6 +33,29 @@ def _run_build_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_freeze_evaluation(args: argparse.Namespace) -> int:
+    from typo_robust_training.evaluation.freeze import (
+        FreezeEvaluationRunConfig,
+        run_freeze_robustness_evaluation,
+    )
+
+    try:
+        result = run_freeze_robustness_evaluation(
+            FreezeEvaluationRunConfig(
+                protocol_path=args.protocol,
+                source_config_path=args.source_config,
+                exclude_data_dir=args.exclude_data,
+                output_dir=args.output_dir,
+            )
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"freeze-robustness-evaluation: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"frozen evaluation registry: {result.registry_path}")
+    print(f"run manifest: {result.run_path}")
+    return 0
+
+
 def _run_select_layers(args: argparse.Namespace) -> int:
     from typo_robust_training.localization.runner import (
         LayerSelectionRunConfig,
@@ -216,7 +239,9 @@ def _run_robustness_evaluation(args: argparse.Namespace) -> int:
         result = run_robustness_evaluation(
             RobustnessEvaluationRunConfig(
                 config_path=args.config,
+                study_protocol_path=args.evaluation_protocol,
                 training_data_dir=args.training_data,
+                evaluation_data_dir=args.evaluation_data,
                 evaluation_role=args.evaluation_role,
                 layer_selection_path=args.layer_selection,
                 window_validation_path=args.window_validation,
@@ -232,6 +257,7 @@ def _run_robustness_evaluation(args: argparse.Namespace) -> int:
         print(f"evaluate-typo-robustness: error: {exc}", file=sys.stderr)
         return 1
     print(f"evaluated {result.records} record(s): {result.records_path}")
+    print(f"evaluated {result.corpus_records} corpus record(s): {result.corpus_records_path}")
     print(f"robustness report: {result.report_path}")
     print(f"run manifest: {result.run_path}")
     return 0
@@ -274,6 +300,16 @@ def register_commands(
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.set_defaults(_typo_cot_plugin_handler=_run_build_data)
+
+    freeze = commands.add_parser(
+        "freeze-robustness-evaluation",
+        help="Freeze model-independent paired evaluation text and one-use roles.",
+    )
+    freeze.add_argument("--protocol", required=True, type=Path)
+    freeze.add_argument("--source-config", required=True, type=Path)
+    freeze.add_argument("--exclude-data", required=True, type=Path)
+    freeze.add_argument("--output-dir", required=True, type=Path)
+    freeze.set_defaults(_typo_cot_plugin_handler=_run_freeze_evaluation)
 
     generic_pairs = commands.add_parser(
         "freeze-generic-localization-pairs",
@@ -365,7 +401,9 @@ def register_commands(
         help="Evaluate base and explicit adapters on one fixed held-out role.",
     )
     evaluation.add_argument("--config", required=True, type=Path)
+    evaluation.add_argument("--evaluation-protocol", required=True, type=Path)
     evaluation.add_argument("--training-data", required=True, type=Path)
+    evaluation.add_argument("--evaluation-data", required=True, type=Path)
     evaluation.add_argument(
         "--evaluation-role",
         required=True,

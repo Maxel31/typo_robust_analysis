@@ -15,6 +15,7 @@ from typing import Iterator
 
 from typo_robust_training.data.config import strict_loads
 from typo_robust_training.data.records import TypoEdit, infer_single_word_typo_edit
+from typo_robust_training.evaluation.perturb import FROZEN_EVALUATION_TYPO_VERSION
 from typo_robust_training.integrity import sha256_file as _sha256_file
 
 
@@ -30,6 +31,16 @@ _SPLITS = ("same-task", "unseen-task", "unseen-content", "unseen-typo")
 _SAME_TASKS = frozenset({"gsm8k", "mmlu", "arc"})
 _UNSEEN_TASKS = frozenset({"mmlu_pro", "math_500", "commonsense_qa"})
 _UNSEEN_CONTENT_SOURCES = frozenset({"fineweb_edu", "dolma"})
+_EVALUATION_CONDITIONS = frozenset(
+    {
+        "random-1",
+        "random-2",
+        "random-4",
+        "transposition-2",
+        "natural-injection",
+        "natural-lm-pair",
+    }
+)
 _SYNTHETIC_FIELDS = {
     "schema_version",
     "kind",
@@ -74,6 +85,20 @@ _NATURAL_FIELDS = {
     "typo_sha256",
     "metadata",
 }
+_CLEAN_CORPUS_FIELDS = {
+    "schema_version",
+    "kind",
+    "record_id",
+    "source",
+    "source_revision",
+    "source_split",
+    "source_id",
+    "group_id",
+    "split",
+    "text",
+    "content_sha256",
+    "metadata",
+}
 _EDIT_FIELDS = {
     "operation",
     "clean_word",
@@ -94,6 +119,63 @@ _EVALUATION_MANIFEST_FIELDS = {
     "artifact_sha256",
     "data_identity_sha256",
 }
+_FROZEN_REGISTRY_FIELDS = {
+    "schema_version",
+    "protocol_id",
+    "protocol_sha256",
+    "source_config_sha256",
+    "exclusion_data_protocol_sha256",
+    "source_revisions",
+    "exclusion_artifact_sha256",
+    "artifact_sha256",
+    "data_identity_sha256",
+    "roles",
+    "opening_order",
+    "primary_condition",
+    "generator_seed",
+    "generator",
+    "task_capacity_census",
+    "natural_evaluation_axes",
+}
+_EXCLUSION_ARTIFACTS = {
+    "training_sources.jsonl",
+    "diagnostic_manifest.jsonl",
+    "tune_manifest.jsonl",
+    "run.json",
+}
+
+
+def _valid_task_capacity_census(value: object) -> bool:
+    if not isinstance(value, Mapping) or set(value) != {"tune", "sealed"}:
+        return False
+    expected_tasks = {
+        "tune": {"gsm8k", "mmlu", "arc"},
+        "sealed": {"gsm8k", "mmlu", "arc", "mmlu_pro", "math_500", "commonsense_qa"},
+    }
+    fields = {
+        "source_split_records",
+        "after_exclusions",
+        "typo_grid_eligible",
+        "transposition_eligible",
+        "required",
+    }
+    for role, tasks in expected_tasks.items():
+        rows = value.get(role)
+        if not isinstance(rows, Mapping) or set(rows) != tasks:
+            return False
+        for row in rows.values():
+            if (
+                not isinstance(row, Mapping)
+                or set(row) != fields
+                or any(type(row[field]) is not int or row[field] < 0 for field in fields)
+                or not row["source_split_records"]
+                >= row["after_exclusions"]
+                >= row["typo_grid_eligible"]
+                >= row["required"]
+                or row["transposition_eligible"] > row["typo_grid_eligible"]
+            ):
+                return False
+    return True
 
 
 def _object(path: Path) -> Mapping[str, object]:
@@ -103,6 +185,94 @@ def _object(path: Path) -> Mapping[str, object]:
     if not isinstance(payload, Mapping):
         raise ValueError(f"evaluation artifact must contain an object: {path}")
     return payload
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenEvaluationProvenance:
+    """Data identities that a frozen evaluation population excluded."""
+
+    root: Path
+    data_identity_sha256: str
+    exclusion_artifact_sha256: Mapping[str, str]
+
+
+def _frozen_registry(
+    root: Path,
+    *,
+    study_protocol_sha256: str,
+) -> tuple[Mapping[str, object], Path]:
+    if _SHA64.fullmatch(study_protocol_sha256) is None:
+        raise ValueError("frozen evaluation study protocol hash differs")
+    registry_path = root / "registry.json"
+    registry = _object(registry_path)
+    natural_axes = registry.get("natural_evaluation_axes")
+    exclusion_artifacts = registry.get("exclusion_artifact_sha256")
+    corrected_words = (
+        natural_axes.get("corrected_word_split") if isinstance(natural_axes, Mapping) else None
+    )
+    if (
+        set(registry) != _FROZEN_REGISTRY_FIELDS
+        or registry.get("schema_version") != "robustness-evaluation-registry/v1"
+        or registry.get("opening_order") != ["pre_pr_gate", "final_test"]
+        or registry.get("primary_condition") != "random-2"
+        or registry.get("generator_seed") != 42
+        or registry.get("generator") != FROZEN_EVALUATION_TYPO_VERSION
+        or not _valid_task_capacity_census(registry.get("task_capacity_census"))
+        or not isinstance(exclusion_artifacts, Mapping)
+        or set(exclusion_artifacts) != _EXCLUSION_ARTIFACTS
+        or any(
+            not isinstance(digest, str) or _SHA64.fullmatch(digest) is None
+            for digest in exclusion_artifacts.values()
+        )
+        or registry.get("source_config_sha256") != registry.get("exclusion_data_protocol_sha256")
+        or registry.get("protocol_sha256") != study_protocol_sha256
+        or not isinstance(natural_axes, Mapping)
+        or natural_axes.get("language_model_pairs") != "repository-disjoint/v1"
+        or natural_axes.get("task_injection") != "corrected-word-disjoint/v1"
+        or not isinstance(corrected_words, Mapping)
+        or set(corrected_words) != {"train", "tune", "pre_pr_gate", "final_test"}
+    ):
+        raise ValueError("frozen evaluation registry fields or protocol differ")
+    run = _object(root / "run.json")
+    if (
+        run.get("schema_version") != "freeze-robustness-evaluation-run/v1"
+        or run.get("status") != "completed"
+        or run.get("protocol_sha256") != study_protocol_sha256
+        or run.get("source_config_sha256") != registry.get("source_config_sha256")
+        or run.get("task_capacity_census") != registry.get("task_capacity_census")
+        or run.get("registry_sha256") != _sha256_file(registry_path)
+    ):
+        raise ValueError("frozen evaluation data build is not completed")
+    return registry, registry_path
+
+
+def load_frozen_evaluation_provenance(
+    root: Path,
+    *,
+    study_protocol_sha256: str,
+) -> FrozenEvaluationProvenance:
+    """Return the exclusion identity before any frozen role is claimed."""
+
+    resolved = Path(root).resolve()
+    registry, _registry_path = _frozen_registry(
+        resolved,
+        study_protocol_sha256=study_protocol_sha256,
+    )
+    identity = registry.get("data_identity_sha256")
+    exclusions = registry.get("exclusion_artifact_sha256")
+    if (
+        not isinstance(identity, str)
+        or _SHA64.fullmatch(identity) is None
+        or not isinstance(exclusions, Mapping)
+    ):
+        raise ValueError("frozen evaluation provenance differs")
+    return FrozenEvaluationProvenance(
+        root=resolved,
+        data_identity_sha256=identity,
+        exclusion_artifact_sha256=MappingProxyType(
+            {str(name): str(digest) for name, digest in exclusions.items()}
+        ),
+    )
 
 
 def _text(value: object, *, field: str) -> str:
@@ -151,6 +321,7 @@ class EvaluationPair:
     answer: str | None
     operation: str
     edits: tuple[TypoEdit, ...]
+    mechanistic_audit: bool
     metadata: Mapping[str, object]
     strata: tuple[str, ...]
 
@@ -192,6 +363,16 @@ class EvaluationPair:
         metadata = value.get("metadata")
         if not isinstance(metadata, Mapping):
             raise ValueError("evaluation pair metadata must be an object")
+        evaluation_condition = metadata.get("evaluation_condition")
+        if evaluation_condition not in _EVALUATION_CONDITIONS:
+            raise ValueError("evaluation pair typo condition is unsupported")
+        mechanistic_audit = metadata.get("mechanistic_audit", False)
+        if type(mechanistic_audit) is not bool:
+            raise ValueError("evaluation pair mechanistic_audit must be boolean")
+        if mechanistic_audit and (
+            kind != "synthetic" or evaluation_condition != "random-2" or task is None
+        ):
+            raise ValueError("mechanistic audit must select a synthetic random-2 task pair")
         try:
             json.dumps(metadata, sort_keys=True, allow_nan=False)
         except (TypeError, ValueError) as exc:
@@ -252,7 +433,11 @@ class EvaluationPair:
             strata.append("unseen-task")
         if source in _UNSEEN_CONTENT_SOURCES:
             strata.append("unseen-content")
-        if kind == "natural" or any(edit.operation in held_out_operations for edit in parsed_edits):
+        if (
+            kind == "natural"
+            or evaluation_condition in {"natural-injection", "transposition-2"}
+            or any(edit.operation in held_out_operations for edit in parsed_edits)
+        ):
             strata.append("unseen-typo")
         return cls(
             record_id=record_id,
@@ -269,6 +454,7 @@ class EvaluationPair:
             answer=answer,
             operation=operation,
             edits=parsed_edits,
+            mechanistic_audit=mechanistic_audit,
             metadata=MappingProxyType(dict(metadata)),
             strata=tuple(strata),
         )
@@ -284,6 +470,157 @@ class EvaluationDataBundle:
     evaluation_manifest_sha256: str
     data_identity_sha256: str
     held_out_operations: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationCorpusRecord:
+    record_id: str
+    kind: str
+    source: str
+    source_revision: str
+    source_split: str
+    source_id: str
+    group_id: str
+    role: str
+    clean_text: str
+    typo_text: str | None
+    edits: tuple[TypoEdit, ...]
+    metadata: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationCorpusBundle:
+    root: Path
+    evaluation_role: str
+    records: tuple[EvaluationCorpusRecord, ...]
+    manifest_path: Path
+    manifest_sha256: str
+
+
+def _corpus_record(value: object, *, expected_role: str) -> EvaluationCorpusRecord:
+    if not isinstance(value, Mapping):
+        raise ValueError("evaluation corpus row must be an object")
+    kind = value.get("kind")
+    expected_fields = _CLEAN_CORPUS_FIELDS if kind == "clean-corpus" else _NATURAL_FIELDS
+    expected_schema = (
+        "robustness-evaluation-corpus-record/v1"
+        if kind == "clean-corpus"
+        else "robustness-natural-pair/v1"
+    )
+    if kind not in {"clean-corpus", "natural"} or set(value) != expected_fields:
+        raise ValueError("evaluation corpus row fields differ")
+    if value.get("schema_version") != expected_schema or value.get("split") != expected_role:
+        raise ValueError("evaluation corpus row schema or role differs")
+    record_id = _text(value.get("record_id"), field="record_id")
+    revision = _text(value.get("source_revision"), field="source_revision")
+    if _SHA64.fullmatch(record_id) is None or _SOURCE_REVISION.fullmatch(revision) is None:
+        raise ValueError("evaluation corpus row identity differs")
+    metadata = value.get("metadata")
+    if not isinstance(metadata, Mapping):
+        raise ValueError("evaluation corpus metadata must be an object")
+    try:
+        json.dumps(metadata, sort_keys=True, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("evaluation corpus metadata must be canonical JSON") from exc
+    if kind == "clean-corpus":
+        clean_text = _text(value.get("text"), field="text")
+        if value.get("content_sha256") != hashlib.sha256(clean_text.encode()).hexdigest():
+            raise ValueError("evaluation corpus content hash differs")
+        typo_text = None
+        edits: tuple[TypoEdit, ...] = ()
+    else:
+        clean_text = _text(value.get("clean_text"), field="clean_text")
+        typo_text = _text(value.get("typo_text"), field="typo_text")
+        if (
+            value.get("clean_sha256") != hashlib.sha256(clean_text.encode()).hexdigest()
+            or value.get("typo_sha256") != hashlib.sha256(typo_text.encode()).hexdigest()
+        ):
+            raise ValueError("evaluation natural corpus content hash differs")
+        edits = (
+            infer_single_word_typo_edit(
+                clean_text,
+                typo_text,
+                operation=_text(value.get("operation"), field="operation"),
+            ),
+        )
+    return EvaluationCorpusRecord(
+        record_id=record_id,
+        kind=str(kind),
+        source=_text(value.get("source"), field="source"),
+        source_revision=revision,
+        source_split=_text(value.get("source_split"), field="source_split"),
+        source_id=_text(value.get("source_id"), field="source_id"),
+        group_id=_text(value.get("group_id"), field="group_id"),
+        role=expected_role,
+        clean_text=clean_text,
+        typo_text=typo_text,
+        edits=edits,
+        metadata=MappingProxyType(dict(metadata)),
+    )
+
+
+def load_evaluation_corpus_bundle(
+    root: Path,
+    *,
+    evaluation_role: str,
+    study_protocol_sha256: str,
+    access_binding_sha256: str,
+    experiment_binding_sha256: str,
+    output_dir: Path,
+    confirm_sealed_role: bool,
+    resume: bool,
+) -> EvaluationCorpusBundle:
+    """Claim one role and load its hash-bound corpus artifact."""
+
+    if evaluation_role not in _ROLES:
+        raise ValueError("evaluation corpus role is unsupported")
+    if (
+        _SHA64.fullmatch(access_binding_sha256) is None
+        or _SHA64.fullmatch(experiment_binding_sha256) is None
+    ):
+        raise ValueError("evaluation corpus access identity differs")
+    resolved = Path(root).resolve()
+    registry, _registry_path = _frozen_registry(
+        resolved,
+        study_protocol_sha256=study_protocol_sha256,
+    )
+    roles = registry.get("roles")
+    expected_role = _ROLES[evaluation_role][1]
+    role = roles.get(expected_role) if isinstance(roles, Mapping) else None
+    if not isinstance(role, Mapping):
+        raise ValueError("evaluation corpus role is missing")
+    expected_filename = f"{expected_role}_corpus_manifest.jsonl"
+    if role.get("corpus_artifact") != expected_filename:
+        raise ValueError("evaluation corpus artifact name differs")
+    path = resolved / expected_filename
+    digest = _sha256_file(path) if path.is_file() else None
+    artifacts = registry.get("artifact_sha256")
+    if (
+        digest != role.get("corpus_sha256")
+        or not isinstance(artifacts, Mapping)
+        or digest != artifacts.get(expected_filename)
+    ):
+        raise ValueError("evaluation corpus artifact hash differs")
+    _claim_evaluation_role(
+        resolved,
+        role=evaluation_role,
+        artifact_kind="corpus",
+        binding=access_binding_sha256,
+        experiment_binding=experiment_binding_sha256,
+        output_dir=Path(output_dir),
+        confirm=confirm_sealed_role,
+        resume=resume,
+    )
+    records = tuple(_corpus_record(row, expected_role=expected_role) for row in _rows(path))
+    if len({record.record_id for record in records}) != len(records):
+        raise ValueError("evaluation corpus role contains duplicate record IDs")
+    return EvaluationCorpusBundle(
+        root=resolved,
+        evaluation_role=evaluation_role,
+        records=records,
+        manifest_path=path,
+        manifest_sha256=str(digest),
+    )
 
 
 def _atomic_json(path: Path, payload: object) -> None:
@@ -337,7 +674,10 @@ def _claim_evaluation_role(
     output_dir: Path,
     confirm: bool,
     resume: bool,
+    artifact_kind: str = "task",
 ) -> None:
+    if artifact_kind not in {"task", "corpus"}:
+        raise ValueError("evaluation artifact kind is unsupported")
     if role == "tune":
         if confirm:
             raise ValueError("tune evaluation does not accept sealed-role confirmation")
@@ -368,14 +708,28 @@ def _claim_evaluation_role(
             "output_dir": str(output_dir.resolve()),
         }
         if existing is not None:
-            if (
-                not resume
-                or not isinstance(existing, Mapping)
-                or any(existing.get(field) != value for field, value in expected_identity.items())
+            if not isinstance(existing, Mapping) or any(
+                existing.get(field) != value for field, value in expected_identity.items()
             ):
                 raise ValueError(f"sealed evaluation role {role} was already opened")
             if existing.get("status") != "opened":
                 raise ValueError(f"sealed evaluation role {role} was already completed")
+            raw_claimed = existing.get("claimed_artifacts", ["task"])
+            if (
+                not isinstance(raw_claimed, list)
+                or any(item not in {"task", "corpus"} for item in raw_claimed)
+                or len(set(raw_claimed)) != len(raw_claimed)
+            ):
+                raise ValueError("sealed evaluation artifact claims differ")
+            if artifact_kind in raw_claimed:
+                if not resume:
+                    raise ValueError(f"sealed evaluation role {role} was already opened")
+                return
+            roles[key] = {
+                **dict(existing),
+                "claimed_artifacts": sorted((*raw_claimed, artifact_kind)),
+            }
+            _atomic_json(access_path, registry)
             return
         if resume:
             raise ValueError("sealed evaluation --resume has no matching access record")
@@ -384,6 +738,7 @@ def _claim_evaluation_role(
             "status": "opened",
             "report_sha256": None,
             "gate_passed": None,
+            "claimed_artifacts": [artifact_kind],
         }
         _atomic_json(access_path, registry)
 
@@ -461,6 +816,92 @@ def _rows(path: Path) -> tuple[object, ...]:
     return tuple(rows)
 
 
+def _load_frozen_evaluation_bundle(
+    root: Path,
+    *,
+    evaluation_role: str,
+    requested_splits: tuple[str, ...],
+    access_binding_sha256: str,
+    experiment_binding_sha256: str,
+    output_dir: Path,
+    confirm_sealed_role: bool,
+    resume: bool,
+    study_protocol_sha256: str,
+    expected_data_identity_sha256: str | None,
+) -> EvaluationDataBundle:
+    registry, registry_path = _frozen_registry(
+        root,
+        study_protocol_sha256=study_protocol_sha256,
+    )
+    roles = registry.get("roles")
+    expected_role = _ROLES[evaluation_role][1]
+    role = roles.get(expected_role) if isinstance(roles, Mapping) else None
+    if not isinstance(role, Mapping):
+        raise ValueError("frozen evaluation role is missing")
+    filename = role.get("task_artifact")
+    declared_sha = role.get("task_sha256")
+    if not isinstance(filename, str) or filename != _ROLES[evaluation_role][0]:
+        raise ValueError("frozen evaluation task artifact name differs")
+    manifest_path = root / filename
+    manifest_sha = _sha256_file(manifest_path) if manifest_path.is_file() else None
+    artifacts = registry.get("artifact_sha256")
+    if (
+        not isinstance(artifacts, Mapping)
+        or declared_sha != manifest_sha
+        or artifacts.get(filename) != manifest_sha
+    ):
+        raise ValueError("frozen evaluation task artifact hash differs")
+    identity = registry.get("data_identity_sha256")
+    if not isinstance(identity, str) or _SHA64.fullmatch(identity) is None:
+        raise ValueError("frozen evaluation data identity differs")
+    if expected_data_identity_sha256 is not None and identity != expected_data_identity_sha256:
+        raise ValueError("evaluation data identity differs from the trained adapters")
+    _claim_evaluation_role(
+        root,
+        role=evaluation_role,
+        artifact_kind="task",
+        binding=access_binding_sha256,
+        experiment_binding=experiment_binding_sha256,
+        output_dir=output_dir,
+        confirm=confirm_sealed_role,
+        resume=resume,
+    )
+    held_out = ("adjacent-transposition",)
+    parsed = tuple(
+        EvaluationPair.from_dict(
+            row,
+            expected_role=expected_role,
+            held_out_operations=frozenset(held_out),
+        )
+        for row in _rows(manifest_path)
+    )
+    if len({row.record_id for row in parsed}) != len(parsed):
+        raise ValueError("evaluation role contains duplicate record IDs")
+    if evaluation_role != "tune":
+        observed_strata = {stratum for row in parsed for stratum in row.strata}
+        expected_task_strata = set(_SPLITS) - {"unseen-content"}
+        if any(not row.strata for row in parsed) or observed_strata != expected_task_strata:
+            raise ValueError("sealed evaluation manifest lacks the complete frozen strata")
+    selected = tuple(
+        sorted(
+            (row for row in parsed if set(row.strata) & set(requested_splits)),
+            key=lambda row: row.record_id,
+        )
+    )
+    if not selected:
+        raise ValueError("evaluation requested splits select no records")
+    return EvaluationDataBundle(
+        root=root,
+        evaluation_role=evaluation_role,
+        records=selected,
+        manifest_path=manifest_path,
+        manifest_sha256=str(manifest_sha),
+        evaluation_manifest_sha256=_sha256_file(registry_path),
+        data_identity_sha256=identity,
+        held_out_operations=held_out,
+    )
+
+
 def load_evaluation_bundle(
     root: Path,
     *,
@@ -474,8 +915,16 @@ def load_evaluation_bundle(
     confirm_sealed_role: bool,
     resume: bool,
     expected_data_identity_sha256: str | None = None,
+    study_protocol_sha256: str | None = None,
 ) -> EvaluationDataBundle:
-    """Validate one role and return only the requested overlapping strata."""
+    """Validate one role and return only the requested overlapping strata.
+
+    Frozen text is intentionally model-independent: ``model`` and
+    ``model_revision`` retain the legacy-call signature and the revision format
+    check, while the evaluation runner binds the concrete model/config in its
+    experiment and access hashes. The frozen registry instead binds source
+    revisions, the study protocol, and every realized text artifact.
+    """
 
     if evaluation_role not in _ROLES:
         raise ValueError("evaluation role is unsupported")
@@ -487,7 +936,9 @@ def load_evaluation_bundle(
     ):
         raise ValueError("evaluation splits must be unique members of the frozen inventory")
     if (
-        _SHA40.fullmatch(model_revision) is None
+        not isinstance(model, str)
+        or not model
+        or _SHA40.fullmatch(model_revision) is None
         or _SHA64.fullmatch(access_binding_sha256) is None
         or _SHA64.fullmatch(experiment_binding_sha256) is None
     ):
@@ -495,6 +946,21 @@ def load_evaluation_bundle(
     if evaluation_role != "tune" and requested != _SPLITS:
         raise ValueError("sealed evaluation roles require the complete frozen split inventory")
     resolved = Path(root).resolve()
+    if (resolved / "registry.json").is_file():
+        if study_protocol_sha256 is None:
+            raise ValueError("frozen evaluation requires the study protocol hash")
+        return _load_frozen_evaluation_bundle(
+            resolved,
+            evaluation_role=evaluation_role,
+            requested_splits=requested,
+            access_binding_sha256=access_binding_sha256,
+            experiment_binding_sha256=experiment_binding_sha256,
+            output_dir=Path(output_dir),
+            confirm_sealed_role=confirm_sealed_role,
+            resume=resume,
+            study_protocol_sha256=study_protocol_sha256,
+            expected_data_identity_sha256=expected_data_identity_sha256,
+        )
     run = _object(resolved / "run.json")
     if (
         run.get("schema_version") != "build-robustness-training-data-run/v1"
@@ -532,6 +998,7 @@ def load_evaluation_bundle(
     _claim_evaluation_role(
         resolved,
         role=evaluation_role,
+        artifact_kind="task",
         binding=access_binding_sha256,
         experiment_binding=experiment_binding_sha256,
         output_dir=Path(output_dir),
@@ -573,8 +1040,13 @@ def load_evaluation_bundle(
 
 
 __all__ = [
+    "EvaluationCorpusBundle",
+    "EvaluationCorpusRecord",
     "EvaluationDataBundle",
     "EvaluationPair",
+    "FrozenEvaluationProvenance",
     "complete_evaluation_role",
+    "load_evaluation_corpus_bundle",
     "load_evaluation_bundle",
+    "load_frozen_evaluation_provenance",
 ]
