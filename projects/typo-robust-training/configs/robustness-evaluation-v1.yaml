@@ -1,6 +1,6 @@
 {
   "schema_version": "robustness-evaluation-study/v1",
-  "protocol_id": "typo-robustness-evaluation-v1.2",
+  "protocol_id": "typo-robustness-evaluation-v1.3",
   "seed": 42,
   "tiers": {
     "monitor": {
@@ -34,7 +34,7 @@
         "mmlu": 500,
         "arc": 500,
         "mmlu_pro": 500,
-        "math_500": 466,
+        "math_500": 440,
         "commonsense_qa": 500
       },
       "tasks": ["gsm8k", "mmlu", "arc", "mmlu_pro", "math_500", "commonsense_qa"]

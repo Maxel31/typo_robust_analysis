@@ -95,6 +95,30 @@ def test_gsm8k_currency_does_not_hide_prose_between_dollar_amounts() -> None:
     assert {"every", "single", "delicious", "cupcake", "and"} <= words
 
 
+def test_math_currency_does_not_hide_prose_but_latex_stays_ineligible() -> None:
+    text = (
+        "A shop charges $12 for every delicious cupcake and $30 total; "
+        "then compute $\\frac{3}{4}$ of $\\$120$."
+    )
+    record = CleanRecord(
+        source="math_500",
+        source_revision="a" * 40,
+        source_split="test",
+        source_id="math:currency-fixture",
+        group_id="math:currency-fixture",
+        text=text,
+        task="math_500",
+        answer="90",
+        metadata={},
+    )
+
+    spans = evaluation_eligible_word_spans(record, minimum_word_letters=3)
+    words = {text[start:stop] for start, stop in spans}
+
+    assert {"every", "delicious", "cupcake", "and", "total", "then", "compute"} <= words
+    assert "frac" not in words
+
+
 def test_fixed_evaluation_typo_has_exact_distinct_edits_and_is_replayable() -> None:
     record = _record()
     first = generate_evaluation_typo(
@@ -124,6 +148,53 @@ def test_fixed_evaluation_typo_has_exact_distinct_edits_and_is_replayable() -> N
     assert first.record_id != record.record_id
     assert first.metadata["evaluation_condition"] == "random-2"
     assert first.metadata["base_record_id"] == record.record_id
+
+
+def test_fixed_evaluation_typo_selects_distinct_lexical_words() -> None:
+    record = CleanRecord(
+        source="gsm8k",
+        source_revision="a" * 40,
+        source_split="test",
+        source_id="gsm8k:repeated-word-fixture",
+        group_id="gsm8k:repeated-word-fixture",
+        text="The airport serves the airport while reliable staff monitor the airport.",
+        task="gsm8k",
+        answer="42",
+        metadata={},
+    )
+
+    for variant in range(64):
+        typo = generate_evaluation_typo(
+            record,
+            condition="random-2",
+            edit_count=2,
+            operations=("keyboard-neighbor-substitution", "deletion", "duplication"),
+            seed=42,
+            role="final_test",
+            variant=variant,
+        )
+        assert len({edit.clean_word.casefold() for edit in typo.edits}) == 2
+
+
+def test_question_spans_are_serialized_in_clean_and_typo_coordinates() -> None:
+    record = _record()
+    typo = generate_evaluation_typo(
+        record,
+        condition="deletion-fixture",
+        edit_count=2,
+        operations=("deletion",),
+        seed=42,
+        role="final_test",
+        variant=0,
+    )
+
+    clean_span = typo.metadata["clean_question_char_span"]
+    typo_span = typo.metadata["typo_question_char_span"]
+    assert record.text[slice(*clean_span)].endswith("district?")
+    assert typo_span == [0, typo.typo_text.find("\n")]
+    assert "\n" not in typo.typo_text[slice(*typo_span)]
+    assert clean_span[1] - typo_span[1] == 2
+    assert "question_char_span" not in typo.metadata
 
 
 def test_severity_and_transposition_have_frozen_exact_edit_counts() -> None:

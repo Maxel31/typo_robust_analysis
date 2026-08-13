@@ -243,7 +243,7 @@ def load_evaluation_study_protocol(path: Path) -> EvaluationStudyProtocol:
     top = _mapping(payload, field="config", fields=_TOP)
     if (
         top["schema_version"] != "robustness-evaluation-study/v1"
-        or top["protocol_id"] != "typo-robustness-evaluation-v1.2"
+        or top["protocol_id"] != "typo-robustness-evaluation-v1.3"
         or top["seed"] != 42
     ):
         raise ValueError("evaluation study identity differs")
@@ -297,7 +297,7 @@ def load_evaluation_study_protocol(path: Path) -> EvaluationStudyProtocol:
         for task in final_tasks
     }
     expected_pre_pr_counts = {task: 500 for task in pre_pr_tasks}
-    expected_final_counts = {task: (466 if task == "math_500" else 500) for task in final_tasks}
+    expected_final_counts = {task: (440 if task == "math_500" else 500) for task in final_tasks}
     if pre_pr_counts != expected_pre_pr_counts or final_counts != expected_final_counts:
         raise ValueError("evaluation study sealed task sample size differs")
 

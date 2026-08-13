@@ -25,8 +25,9 @@ _SUPPORTED = frozenset(
         "adjacent-transposition",
     }
 )
+FROZEN_EVALUATION_TYPO_VERSION = "frozen-evaluation-typo/v2"
 _ANSWER_WORD = re.compile(r"[A-Za-z]{3,}")
-_DOLLAR_MATH_SPAN = re.compile(r"\$[^$\n]+\$")
+_DOLLAR_MATH_SPAN = re.compile(r"(?<!\\)\$(?!\s)(?:\\.|[^$\\\n])*(?<![\s\\])\$")
 _MATH_SPANS = (
     re.compile(r"\\\([^\n]*?\\\)"),
     re.compile(r"\\\[[^\n]*?\\\]"),
@@ -114,6 +115,22 @@ def _question_stop(record: CleanRecord) -> int:
     return len(record.text)
 
 
+def _question_span_metadata(record: CleanRecord, typo_text: str) -> Mapping[str, object]:
+    clean_stop = _question_stop(record)
+    if record.task in _MULTIPLE_CHOICE_TASKS:
+        typo_stop = typo_text.find("\n")
+        if typo_stop <= 0:
+            raise RuntimeError("multiple-choice typo text has no option separator")
+    else:
+        typo_stop = len(typo_text)
+    return MappingProxyType(
+        {
+            "clean_question_char_span": [0, clean_stop],
+            "typo_question_char_span": [0, typo_stop],
+        }
+    )
+
+
 def evaluation_eligible_word_spans(
     record: CleanRecord,
     *,
@@ -152,7 +169,8 @@ def _rng(
     variant: int,
 ) -> random.Random:
     material = (
-        f"frozen-evaluation-typo/v1\0{seed}\0{role}\0{condition}\0{variant}\0{record.record_id}"
+        f"{FROZEN_EVALUATION_TYPO_VERSION}\0{seed}\0{role}\0{condition}\0{variant}\0"
+        f"{record.record_id}"
     ).encode("utf-8")
     return random.Random(int.from_bytes(hashlib.sha256(material).digest(), "big"))
 
@@ -220,7 +238,7 @@ def generate_evaluation_typo(
                 {
                     "evaluation_condition": condition,
                     "base_record_id": record.record_id,
-                    "question_char_span": [0, _question_stop(record)],
+                    **_question_span_metadata(record, record.text),
                 }
             ),
         )
@@ -243,13 +261,19 @@ def generate_evaluation_typo(
             if operation != "adjacent-transposition" or transposable
         )
 
-    spans = tuple(span for span in spans if compatible_operations(record.text[slice(*span)]))
-    if len(spans) < edit_count:
+    spans_by_word: dict[str, list[tuple[int, int]]] = {}
+    for span in spans:
+        word = record.text[slice(*span)]
+        if compatible_operations(word):
+            spans_by_word.setdefault(word.casefold(), []).append(span)
+    if len(spans_by_word) < edit_count:
         raise ValueError(
-            f"evaluation record has {len(spans)} eligible words but requires {edit_count}"
+            "evaluation record has "
+            f"{len(spans_by_word)} eligible distinct words but requires {edit_count}"
         )
     rng = _rng(record, condition=condition, seed=seed, role=role, variant=variant)
-    selected = sorted(rng.sample(spans, edit_count))
+    selected_word_keys = rng.sample(tuple(spans_by_word), edit_count)
+    selected = sorted(rng.choice(spans_by_word[key]) for key in selected_word_keys)
     replacements: list[tuple[tuple[int, int], str, str, str]] = []
     for span in selected:
         clean_word = record.text[slice(*span)]
@@ -284,6 +308,8 @@ def generate_evaluation_typo(
     typo_text = "".join(chunks)
     if len(edits) != edit_count or len({edit.clean_char_span for edit in edits}) != edit_count:
         raise RuntimeError("evaluation typo generator violated exact distinct-edit count")
+    if len({edit.clean_word.casefold() for edit in edits}) != edit_count:
+        raise RuntimeError("evaluation typo generator violated exact distinct-word count")
     for edit in edits:
         if (
             record.text[slice(*edit.clean_char_span)] != edit.clean_word
@@ -309,7 +335,7 @@ def generate_evaluation_typo(
             {
                 "evaluation_condition": condition,
                 "base_record_id": record.record_id,
-                "question_char_span": [0, _question_stop(record)],
+                **_question_span_metadata(record, typo_text),
             }
         ),
     )
@@ -390,13 +416,14 @@ def generate_natural_injection(
             {
                 "evaluation_condition": "natural-injection",
                 "base_record_id": record.record_id,
-                "question_char_span": [0, _question_stop(record)],
+                **_question_span_metadata(record, typo_text),
             }
         ),
     )
 
 
 __all__ = [
+    "FROZEN_EVALUATION_TYPO_VERSION",
     "FrozenEvaluationTypo",
     "NaturalInjectionDictionary",
     "NoNaturalInjectionTargetError",

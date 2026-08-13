@@ -1,6 +1,7 @@
-# Typo-robustness evaluation protocol v1.2
+# Typo-robustness evaluation protocol v1.3
 
-Status: **prospectively frozen before training cycle 2**.
+Status: **endpoints frozen before training cycle 2; v1.3 is a pre-opening
+correctness amendment with no model-output access**.
 
 This document is the evaluation contract for typo-robustness training. Training
 losses, data mixtures, adapter placement, and stopping rules may change between
@@ -58,8 +59,8 @@ MMLU-Pro, and CommonsenseQA (2,500 task items). MATH-500 is reserved for the
 final test because its released test set has only 500 records.
 
 The final test contains 500 records each from GSM8K, MMLU, ARC-Challenge,
-MMLU-Pro, and CommonsenseQA, plus all 466 MATH-500 records that support the
-unchanged four-distinct-word severity condition (2,966 task items). MMLU and
+MMLU-Pro, and CommonsenseQA, plus all 440 MATH-500 records that support the
+unchanged four-distinct-word severity condition (2,940 task items). MMLU and
 MMLU-Pro are stratified by subject/category; MATH-500 is stratified by subject
 and level.
 Selections are deterministic from source ID, namespace, and seed 42. All pools
@@ -195,18 +196,16 @@ changes the primary pass/fail decision.
 ## 8. Change control and reporting
 
 Version 1.1 was a prospective source-capacity amendment made before cycle-2
-training and before any model outcome was evaluated. The released MATH-500
-split has 500 records, but 34 have fewer than four eligible distinct words
-under the already frozen minimum-three-letter, question-only eligibility rule.
-Version 1.0 was therefore impossible to materialize without weakening the typo
-definition. Version 1.1 retains that definition and freezes all 466 eligible
-records; no accuracy, KL, or patching result informed the amendment.
+training and before any model outcome was evaluated. Its initial audit reported
+that 34 of the released 500 MATH-500 records had fewer than four eligible words
+and consequently declared a 466-record population. Version 1.3 below documents
+why that audit did not enforce the full distinct-word eligibility contract.
 
-The pre-training source-capacity audit was: GSM8K 1,319/1,000 eligible/needed,
+The v1.1 pre-training source-capacity audit reported: GSM8K 1,319/1,000 eligible/needed,
 MMLU 13,667/1,000, ARC-Challenge 1,156/1,000, MMLU-Pro 11,792/1,000,
-MATH-500 466/466, and CommonsenseQA 1,213/1,000. Thus only MATH-500 exhausted
-its released population; every other task retains a deterministic unused
-margin.
+MATH-500 466/466, and CommonsenseQA 1,213/1,000. The MATH-500 value is
+superseded by the corrected v1.3 census; the other task pools retain a
+deterministic unused margin.
 
 Version 1.2 separates two prespecified natural-typo estimands that v1.1's first
 implementation had incorrectly coupled. Natural LM pairs test unseen
@@ -218,6 +217,20 @@ repository. The first v1.1 materialization attempt failed before writing a
 registry because its coupled tune dictionary covered 0/100 task items. This
 amendment was made without model inference or outcome access and preserves all
 endpoints, typo operations, thresholds, and opening rules.
+
+Version 1.3 is a prospective correctness amendment made before any frozen
+evaluation role was opened or any model output was read. A falsification test
+showed that the v1.1 capacity audit counted eligible word occurrences rather
+than case-insensitive distinct lexical words and did not apply the complete
+mathematical-expression and gold-answer exclusions. Re-running a full census
+against the pinned MATH-500 revision with the already declared eligibility
+rules yields 440/500 records with at least four eligible distinct words; all
+440 also support two distinct adjacent-transposition targets. The previous
+v1.2 artifacts are invalidated rather than opened. Version 1.3 freezes those
+440 records, records the task-level source/exclusion/eligibility census in the
+registry, and does not weaken any edit rule, endpoint, threshold, or opening
+condition. No accuracy, KL, likelihood, generation, or patching result informed
+this amendment.
 
 `registry.json` binds protocol/config/source hashes, item and pair files,
 prompt/extractor versions, opening records, and reports. A pre-opening memo
