@@ -266,8 +266,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --checkpoint "${TRAIN_ROOT}/training/localized-state-distillation/seed-42/adapter" \
   --splits same-task unseen-task unseen-content unseen-typo \
   --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/evaluation/tune/targeted-seed-42" \
-  --resume
+  --output-dir "${TRAIN_ROOT}/evaluation/tune/targeted-seed-42"
 ```
 
 `base`は常に同じpair上で自動評価します。複数の完了済みadapterを比較する場合は
@@ -277,6 +276,9 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 `--evaluation-role pre-pr-gate --confirm-sealed-role`として一度だけ実行します。
 `final-test`は、合格したPR前checkpointを固定した後にだけ開封します。封印roleへのaccessは
 immutableなdata artifactの隣へ記録され、暗黙に繰り返せません。
+
+上のcommandは新規評価を開始します。その評価output directoryに既存の`run.json`と
+pair checkpointが作成された後に再開する場合だけ、`--resume`を追加します。
 
 reportにはclean/typo accuracy、wrong-to-right、right-to-wrong、net accuracy、clean harm、
 multi-token KL、追加paired-patch gain、tokenization strata、unseen task、unseen operation、

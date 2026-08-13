@@ -291,8 +291,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --checkpoint "${TRAIN_ROOT}/training/localized-state-distillation/seed-42/adapter" \
   --splits same-task unseen-task unseen-content unseen-typo \
   --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/evaluation/tune/targeted-seed-42" \
-  --resume
+  --output-dir "${TRAIN_ROOT}/evaluation/tune/targeted-seed-42"
 ```
 
 `base` is always evaluated automatically. Repeat `--checkpoint` to compare
@@ -303,6 +302,10 @@ run the same command once with `--evaluation-role pre-pr-gate` and
 `--confirm-sealed-role`; use `final-test` only after the passing pre-PR
 checkpoint is frozen. Sealed-role access is recorded next to the immutable data
 artifacts and cannot be silently repeated.
+
+The command above starts a fresh evaluation. Add `--resume` only after that
+evaluation output directory contains its existing `run.json` and pair
+checkpoints.
 
 The report includes clean/typo accuracy, wrong-to-right, right-to-wrong, net
 accuracy, clean harm, multi-token KL, additional paired-patch gain,
