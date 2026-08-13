@@ -318,6 +318,11 @@ def _clean_payload(
 def _natural_payload(
     record: NaturalTypoRecord, *, split: str, token_count: int | None = None
 ) -> dict[str, object]:
+    metadata = dict(record.metadata)
+    existing_condition = metadata.get("evaluation_condition")
+    if existing_condition not in {None, "natural-lm-pair"}:
+        raise ValueError("natural record evaluation condition conflicts with its payload")
+    metadata["evaluation_condition"] = "natural-lm-pair"
     payload: dict[str, object] = {
         "schema_version": "robustness-natural-pair/v1",
         "kind": "natural",
@@ -338,7 +343,7 @@ def _natural_payload(
         "repository_license": record.repository_license,
         "clean_sha256": hashlib.sha256(record.clean_text.encode("utf-8")).hexdigest(),
         "typo_sha256": hashlib.sha256(record.typo_text.encode("utf-8")).hexdigest(),
-        "metadata": dict(record.metadata),
+        "metadata": metadata,
     }
     if token_count is not None:
         payload["token_count"] = token_count
@@ -447,6 +452,19 @@ def _pair_payload(
     protocol: TrainingDataProtocol,
     variant: int,
 ) -> dict[str, object]:
+    edit_count = len(edits)
+    if edit_count not in {1, 2, 4}:
+        raise ValueError("synthetic evaluation pairs require 1, 2, or 4 edits")
+    evaluation_condition = (
+        "transposition-2"
+        if edits and all(edit.operation == "adjacent-transposition" for edit in edits)
+        else f"random-{edit_count}"
+    )
+    metadata = dict(record.metadata)
+    existing_condition = metadata.get("evaluation_condition")
+    if existing_condition not in {None, evaluation_condition}:
+        raise ValueError("clean record evaluation condition conflicts with its typo payload")
+    metadata["evaluation_condition"] = evaluation_condition
     return {
         "schema_version": "robustness-fixed-typo-pair/v1",
         "kind": "synthetic",
@@ -461,10 +479,10 @@ def _pair_payload(
         "typo_text": typo_text,
         "task": record.task,
         "answer": record.answer,
-        "metadata": dict(record.metadata),
-        "operation": edits[0].operation if len(edits) == 1 else "multiple",
+        "metadata": metadata,
+        "operation": edits[0].operation if edit_count == 1 else "multiple",
         "operations": [edit.operation for edit in edits],
-        "edit_count": len(edits),
+        "edit_count": edit_count,
         "generator_seed": protocol.seed,
         "generator_variant": variant,
         "edits": [

@@ -14,6 +14,7 @@ from typo_robust_training.evaluation.records import EvaluationObservation
 
 _PATCH_GAIN_DENOMINATOR_EPSILON = 1e-6
 _PRIMARY_EVALUATION_CONDITION = "random-2"
+_REPORT_STRATA = ("same-task", "unseen-task", "unseen-content", "unseen-typo")
 
 
 def _mean(values: Iterable[float]) -> float | None:
@@ -361,9 +362,15 @@ def build_evaluation_report(
             ),
             "strata": {
                 stratum: _condition_summary(
+                    tuple(row for row in condition_rows if stratum in row.strata)
+                )
+                for stratum in _REPORT_STRATA
+            },
+            "primary_strata": {
+                stratum: _condition_summary(
                     tuple(row for row in primary_rows if stratum in row.strata)
                 )
-                for stratum in ("same-task", "unseen-task", "unseen-content", "unseen-typo")
+                for stratum in _REPORT_STRATA
             },
             "tasks": _breakdown(
                 primary_rows, key=lambda row: row.task if row.task is not None else "none"
@@ -418,13 +425,23 @@ def build_evaluation_report(
                 bootstrap=False,
             )
         strata = {}
-        for stratum in ("same-task", "unseen-task", "unseen-content", "unseen-typo"):
-            base_subset = tuple(row for row in primary_base if stratum in row.strata)
-            adapter_subset = tuple(row for row in primary_adapter if stratum in row.strata)
+        primary_strata = {}
+        for stratum in _REPORT_STRATA:
+            base_subset = tuple(row for row in base if stratum in row.strata)
+            adapter_subset = tuple(row for row in adapter if stratum in row.strata)
             strata[stratum] = _paired_metrics(
                 base_subset,
                 adapter_subset,
                 label=f"{condition_id}:{stratum}",
+                protocol=protocol,
+                bootstrap=False,
+            )
+            primary_base_subset = tuple(row for row in primary_base if stratum in row.strata)
+            primary_adapter_subset = tuple(row for row in primary_adapter if stratum in row.strata)
+            primary_strata[stratum] = _paired_metrics(
+                primary_base_subset,
+                primary_adapter_subset,
+                label=f"{condition_id}:primary:{stratum}",
                 protocol=protocol,
                 bootstrap=False,
             )
@@ -434,6 +451,7 @@ def build_evaluation_report(
             "all_conditions": all_conditions,
             "evaluation_conditions": evaluation_conditions,
             "strata": strata,
+            "primary_strata": primary_strata,
         }
 
     method_rows: dict[str, dict[int, list[EvaluationObservation]]] = defaultdict(
@@ -470,7 +488,7 @@ def build_evaluation_report(
         if not isinstance(comparison, dict):
             continue
         overall = comparison["overall"]
-        strata = comparison["strata"]
+        strata = comparison["primary_strata"]
         if not isinstance(overall, dict) or not isinstance(strata, dict):
             raise RuntimeError("validated evaluation comparison changed type")
         unseen = strata["unseen-task"]
@@ -505,7 +523,7 @@ def build_evaluation_report(
         gate["minimum_directional_seeds"]
     )
     return {
-        "schema_version": "robustness-evaluation-report/v2",
+        "schema_version": "robustness-evaluation-report/v3",
         "conditions": condition_report,
         "comparisons": comparisons,
         "method_comparisons": method_comparisons,
