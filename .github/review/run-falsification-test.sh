@@ -64,6 +64,8 @@ prepare_sandbox() {
   changed_paths="$(git -C "${workspace}" diff --name-only "${base_sha}...HEAD")"
 
   sudo install -d -m 0755 -o root -g root "${REVIEW_STATE_DIR}"
+  # Invalidate readiness before touching any previously complete environment.
+  sudo rm -f -- "${REVIEW_WORKSPACE_FILE}"
   # A previous run makes the environment root-owned and immutable to the
   # runner. Rebuild it from scratch so retries cannot mix dependency states.
   sudo rm -rf -- "${REVIEW_ENV_ROOT}" "${REVIEW_BUILD_ROOT}" "${REVIEW_GIT_MASK}"
@@ -75,8 +77,6 @@ prepare_sandbox() {
   else
     sudo install -m 0444 -o root -g root /dev/null "${REVIEW_GIT_MASK}"
   fi
-  printf '%s\n' "${workspace}" | sudo tee "${REVIEW_WORKSPACE_FILE}" >/dev/null
-  sudo chmod 0444 "${REVIEW_WORKSPACE_FILE}"
   # The reviewer owns this directory; the sandbox only needs read/execute.
   install -d -m 0755 "${REVIEW_TEST_ROOT}"
 
@@ -129,9 +129,15 @@ prepare_sandbox() {
       done </review-envs/selected-projects
     ' || prepare_status=$?
   sudo rm -rf -- "${REVIEW_BUILD_ROOT}"
-  ((prepare_status == 0)) || return "${prepare_status}"
+  if ((prepare_status != 0)); then
+    sudo rm -rf -- "${REVIEW_ENV_ROOT}" "${REVIEW_GIT_MASK}"
+    return "${prepare_status}"
+  fi
   sudo chown -R root:root "${REVIEW_ENV_ROOT}"
   sudo chmod -R go-w "${REVIEW_ENV_ROOT}"
+  # This file is the completion marker and must be the final prepare write.
+  printf '%s\n' "${workspace}" | sudo tee "${REVIEW_WORKSPACE_FILE}" >/dev/null
+  sudo chmod 0444 "${REVIEW_WORKSPACE_FILE}"
 }
 
 run_test() {
@@ -145,6 +151,8 @@ run_test() {
   [[ -f "${test_file}" && "${test_file}" == "${REVIEW_TEST_ROOT}/"*.py ]] \
     || die "TEST_FILE must be an existing Python file below ${REVIEW_TEST_ROOT}"
   test_relative="${test_file#${REVIEW_TEST_ROOT}/}"
+  [[ "${test_relative}" != */* ]] \
+    || die "TEST_FILE must be directly below ${REVIEW_TEST_ROOT}"
 
   case "${project}" in
     root)
@@ -219,6 +227,8 @@ run_test() {
 self_test() {
   [[ $# -eq 0 ]] || die "usage: review-falsify --self-test"
   require_prepared_workspace >/dev/null
+  [[ -d "${REVIEW_TEST_ROOT}" && -w "${REVIEW_TEST_ROOT}" ]] \
+    || die "review test root ${REVIEW_TEST_ROOT} is unavailable"
   local test_file="${REVIEW_TEST_ROOT}/test_review_sandbox.py"
   printf '%s\n' \
     'import os' \

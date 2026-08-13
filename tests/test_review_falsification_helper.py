@@ -98,6 +98,7 @@ if [[ " $* " == *" --entrypoint /bin/bash "* ]]; then
   mkdir -p "${FAKE_REVIEW_ENV_ROOT}/shared/bin"
   printf 'home = /container-only\n' >"${FAKE_REVIEW_ENV_ROOT}/shared/pyvenv.cfg"
   ln -s /container-only/python3.12 "${FAKE_REVIEW_ENV_ROOT}/shared/bin/python"
+  exit "${FAKE_PREPARE_STATUS:-0}"
 fi
 exit 0
 """,
@@ -218,6 +219,24 @@ def test_prepare_is_rerunnable(tmp_path: Path) -> None:
     assert second.returncode == 0, second.stderr
 
 
+def test_failed_prepare_cannot_leave_a_runnable_partial_environment(
+    tmp_path: Path,
+) -> None:
+    helper, state, review_tests, environment = _make_helper(tmp_path)
+    environment["FAKE_PREPARE_STATUS"] = "1"
+
+    prepared = _prepare(helper, environment)
+    probe = review_tests / "test_probe.py"
+    probe.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    attempted_run = _run(helper, environment, "root", str(probe))
+
+    assert prepared.returncode == 1
+    assert attempted_run.returncode == 64
+    assert "sandbox is not prepared" in attempted_run.stderr
+    assert not (state / "workspace").exists()
+    assert not (state / "envs").exists()
+
+
 def test_run_accepts_container_relative_venv_symlink(tmp_path: Path) -> None:
     helper, _, review_tests, environment = _make_helper(tmp_path)
     prepared = _prepare(helper, environment)
@@ -273,6 +292,18 @@ def test_self_test_fails_cleanly_before_prepare(tmp_path: Path) -> None:
 
     assert result.returncode == 64
     assert "sandbox is not prepared" in result.stderr
+
+
+def test_self_test_rejects_a_missing_review_test_root(tmp_path: Path) -> None:
+    helper, _, review_tests, environment = _make_helper(tmp_path)
+    prepared = _prepare(helper, environment)
+    assert prepared.returncode == 0, prepared.stderr
+    review_tests.rmdir()
+
+    result = _run(helper, environment, "--self-test")
+
+    assert result.returncode == 64
+    assert "review test root" in result.stderr
 
 
 def test_self_test_arms_sentinel_and_always_removes_probe(tmp_path: Path) -> None:
@@ -374,3 +405,18 @@ def test_missing_test_path_is_a_usage_error(tmp_path: Path) -> None:
 
     assert result.returncode == 64
     assert result.stderr.startswith("review-falsify:")
+
+
+def test_nested_review_test_is_rejected_before_the_sandbox(tmp_path: Path) -> None:
+    helper, _, review_tests, environment = _make_helper(tmp_path)
+    prepared = _prepare(helper, environment)
+    assert prepared.returncode == 0, prepared.stderr
+    nested = review_tests / "case"
+    nested.mkdir(mode=0o700)
+    probe = nested / "test_probe.py"
+    probe.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+    result = _run(helper, environment, "root", str(probe))
+
+    assert result.returncode == 64
+    assert "directly below" in result.stderr
