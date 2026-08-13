@@ -68,7 +68,11 @@ prepare_sandbox() {
   [[ "${base_sha}" =~ ^[0-9a-f]{40}$ ]] || die "BASE_SHA must be a full commit digest"
   git -C "${workspace}" cat-file -e "${base_sha}^{commit}" \
     || die "BASE_SHA is not present in the checkout"
-  changed_paths="$(git -C "${workspace}" diff --name-only "${base_sha}...HEAD")"
+  if ! changed_paths="$(
+    git -C "${workspace}" diff --name-only "${base_sha}...HEAD"
+  )"; then
+    die "BASE_SHA does not share usable history with the checkout"
+  fi
 
   # A previous run makes the environment root-owned and immutable to the
   # runner. Rebuild it from scratch so retries cannot mix dependency states.
@@ -271,6 +275,7 @@ def _trusted_run():
             self.canary_path = os.path.realpath(expected_canary_path)
             self.canary_nodeids = set()
             self.canary_calls = []
+            self.xfail_nodeids = set()
             self.user_items = 0
             self.user_passed = 0
             self.user_failed = False
@@ -284,6 +289,10 @@ def _trusted_run():
             for item in items:
                 if os.path.realpath(str(item.path)) == self.canary_path:
                     self.canary_nodeids.add(item.nodeid)
+                elif hasattr(item, "iter_markers") and any(
+                    item.iter_markers(name="xfail")
+                ):
+                    self.xfail_nodeids.add(item.nodeid)
             self.user_items = sum(
                 not self._is_canary(item.nodeid) for item in items
             )
@@ -296,6 +305,10 @@ def _trusted_run():
             if self._is_canary(report.nodeid):
                 if report.when == "call":
                     self.canary_calls.append(report.outcome)
+                return
+            # Neither an expected failure nor a strict XPASS is evidence that
+            # a reviewer-authored counterexample reproduced a product defect.
+            if report.nodeid in self.xfail_nodeids:
                 return
             if report.failed and report.when == "call":
                 self.user_failed = True
@@ -317,18 +330,27 @@ def _trusted_run():
     except BaseException:
         kind = "internal"
     else:
-        if pytest_status == 3:
+        if pytest_status == int(pytest.ExitCode.INTERNAL_ERROR):
             kind = "internal"
-        elif pytest_status == 4:
-            kind = "interrupted"
-        elif recorder.collection_failed or recorder.user_error or pytest_status == 2:
-            kind = "collect"
+        elif pytest_status == int(pytest.ExitCode.USAGE_ERROR):
+            kind = "usage"
+        elif recorder.collection_failed:
+            kind = "malformed"
         elif recorder.canary_calls != ["failed"]:
             kind = "integrity"
-        elif recorder.user_items == 0 or pytest_status == 5:
-            kind = "empty"
+        # Once a call-phase assertion falsifies the feature, a later teardown
+        # error must not erase that evidence.
         elif recorder.user_failed:
             kind = "failed"
+        elif recorder.user_error:
+            kind = "malformed"
+        elif pytest_status == int(pytest.ExitCode.INTERRUPTED):
+            kind = "interrupted"
+        elif (
+            recorder.user_items == 0
+            or pytest_status == int(pytest.ExitCode.NO_TESTS_COLLECTED)
+        ):
+            kind = "empty"
         elif recorder.user_passed != recorder.user_items:
             kind = "empty"
         else:
@@ -363,8 +385,8 @@ completed = subprocess.Popen(
      *pytest_args],
     pass_fds=(result_write_fd, challenge_read_fd),
 )
-statuses = {"passed": 0, "failed": 1, "collect": 2, "internal": 3,
-            "interrupted": 4, "empty": 5, "integrity": 64}
+statuses = {"passed": 0, "failed": 1, "interrupted": 2, "internal": 3,
+            "usage": 4, "malformed": 4, "empty": 5, "integrity": 64}
 os.close(result_write_fd)
 os.close(challenge_read_fd)
 protocol_ok = True

@@ -6,6 +6,7 @@ import stat
 import subprocess
 import sys
 import time
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -150,19 +151,30 @@ def _run(
     )
 
 
-def _docker_image_is_ready() -> bool:
+@cache
+def _docker_backend_is_ready() -> bool:
     if shutil.which("docker") is None:
         return False
     daemon = subprocess.run(
         ["docker", "info"], check=False, capture_output=True, text=True
     )
+    if daemon.returncode != 0:
+        return False
     image = subprocess.run(
         ["docker", "image", "inspect", REVIEW_IMAGE],
         check=False,
         capture_output=True,
         text=True,
     )
-    return daemon.returncode == 0 and image.returncode == 0
+    if image.returncode == 0:
+        return True
+    pulled = subprocess.run(
+        ["docker", "pull", "--quiet", REVIEW_IMAGE],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return pulled.returncode == 0
 
 
 def _make_real_docker_helper(
@@ -204,8 +216,16 @@ def _make_real_docker_helper(
     (runner / "bin" / "python").symlink_to("/usr/local/bin/python3.12")
     pytest_package = runner / "lib" / "python3.12" / "site-packages" / "pytest"
     (pytest_package / "__init__.py").write_text(
+        "from enum import IntEnum\n"
         "from pathlib import Path\n"
         "from types import SimpleNamespace\n"
+        "class ExitCode(IntEnum):\n"
+        "    OK = 0\n"
+        "    TESTS_FAILED = 1\n"
+        "    INTERRUPTED = 2\n"
+        "    INTERNAL_ERROR = 3\n"
+        "    USAGE_ERROR = 4\n"
+        "    NO_TESTS_COLLECTED = 5\n"
         "def main(arguments, plugins=None):\n"
         "    paths = [Path(arg) for arg in arguments if arg.endswith('.py')]\n"
         "    recorder = plugins[0]\n"
@@ -259,6 +279,17 @@ def _prepare(helper: Path, environment: dict[str, str]) -> subprocess.CompletedP
     return _run(helper, environment, "--prepare", str(REPOSITORY_ROOT), base_sha)
 
 
+def _git(repository: Path, *arguments: str) -> str:
+    result = subprocess.run(
+        ["git", *arguments],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
 def test_prepare_is_rerunnable(tmp_path: Path) -> None:
     helper, _, _, environment = _make_helper(tmp_path)
 
@@ -267,6 +298,36 @@ def test_prepare_is_rerunnable(tmp_path: Path) -> None:
 
     assert first.returncode == 0, first.stderr
     assert second.returncode == 0, second.stderr
+
+
+def test_prepare_refuses_a_base_without_shared_history(tmp_path: Path) -> None:
+    helper, _, _, environment = _make_helper(tmp_path)
+    workspace = tmp_path / "disconnected-history"
+    workspace.mkdir()
+    _git(workspace, "init", "-q", "-b", "main")
+    _git(workspace, "config", "user.name", "Review Test")
+    _git(workspace, "config", "user.email", "review@example.invalid")
+    (workspace / "main.txt").write_text("main\n", encoding="utf-8")
+    _git(workspace, "add", "main.txt")
+    _git(workspace, "commit", "-qm", "main root")
+    _git(workspace, "checkout", "-q", "--orphan", "unrelated")
+    _git(workspace, "rm", "-qf", "main.txt")
+    (workspace / "unrelated.txt").write_text("unrelated\n", encoding="utf-8")
+    _git(workspace, "add", "unrelated.txt")
+    _git(workspace, "commit", "-qm", "unrelated root")
+    unrelated_sha = _git(workspace, "rev-parse", "HEAD")
+    _git(workspace, "checkout", "-q", "main")
+
+    result = _run(
+        helper,
+        environment,
+        "--prepare",
+        str(workspace),
+        unrelated_sha,
+    )
+
+    assert result.returncode == 64
+    assert "does not share usable history" in result.stderr
 
 
 def test_failed_prepare_cannot_leave_a_runnable_partial_environment(
@@ -384,32 +445,32 @@ def test_self_test_arms_sentinel_and_always_removes_probe(tmp_path: Path) -> Non
     assert stat.S_IMODE(review_tests.stat().st_mode) == 0o755
 
 
-def test_dependency_build_temporary_storage_is_disk_backed() -> None:
-    source = HELPER.read_text(encoding="utf-8")
+def test_prepare_isolates_the_trusted_runner_and_uses_disk_backed_build_storage(
+    tmp_path: Path,
+) -> None:
+    helper, state, _, environment = _make_helper(tmp_path)
 
-    assert '--mount "type=bind,src=${REVIEW_BUILD_ROOT},dst=/review-build"' in source
-    assert "--env TMPDIR=/review-build/tmp" in source
-    assert "UV_CACHE_DIR" not in source
+    prepared = _prepare(helper, environment)
 
-
-def test_sandbox_checks_network_interfaces_and_rejects_timeouts() -> None:
-    source = HELPER.read_text(encoding="utf-8")
-
-    assert "socket.if_nameindex()" in source
-    assert 'interfaces <= {"lo"}' in source
-    assert "except TimeoutError as error:" in source
-    assert "error.errno in allowed" in source
-
-
-def test_prepare_and_test_execution_have_wall_clock_limits() -> None:
-    source = HELPER.read_text(encoding="utf-8")
-
-    assert '"${REVIEW_PREPARE_TIMEOUT_SECONDS}"' in source
-    assert '"${REVIEW_TEST_TIMEOUT_SECONDS}"' in source
-    assert 'docker kill "${container_name}"' in source
+    assert prepared.returncode == 0, prepared.stderr
+    docker_calls = Path(environment["FAKE_DOCKER_LOG"]).read_text(
+        encoding="utf-8"
+    ).splitlines()
+    runner_call = next(call for call in docker_calls if "dst=/runner-env" in call)
+    project_call = next(call for call in docker_calls if "dst=/project-env" in call)
+    assert "dst=/workspace" not in runner_call
+    assert "dst=/project-env" not in runner_call
+    assert "dst=/runner-env" not in project_call
+    assert "dst=/review-build" in project_call
+    assert "TMPDIR=/review-build/tmp" in project_call
+    runner_mode = (state / "envs" / "runner").stat().st_mode
+    assert runner_mode & 0o222 == 0
 
 
-@pytest.mark.skipif(not _docker_image_is_ready(), reason="local Docker image unavailable")
+@pytest.mark.skipif(
+    not _docker_backend_is_ready(),
+    reason="Docker daemon unavailable or review image pull failed",
+)
 def test_real_docker_executes_a_review_test_through_the_nested_mount(
     tmp_path: Path,
 ) -> None:
@@ -431,7 +492,23 @@ def test_real_docker_executes_a_review_test_through_the_nested_mount(
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.skipif(not _docker_image_is_ready(), reason="local Docker image unavailable")
+@pytest.mark.skipif(
+    not _docker_backend_is_ready(),
+    reason="Docker daemon unavailable or review image pull failed",
+)
+def test_real_docker_self_test_enforces_the_isolation_boundary(tmp_path: Path) -> None:
+    helper, _, environment = _make_real_docker_helper(tmp_path)
+    environment["REVIEW_SANDBOX_SENTINEL"] = "armed"
+
+    result = _run(helper, environment, "--self-test")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(
+    not _docker_backend_is_ready(),
+    reason="Docker daemon unavailable or review image pull failed",
+)
 def test_timeout_removes_the_actual_container(tmp_path: Path) -> None:
     helper, review_tests, environment = _make_real_docker_helper(
         tmp_path, timeout_seconds=1, kill_after_seconds=1
@@ -455,43 +532,6 @@ def test_timeout_removes_the_actual_container(tmp_path: Path) -> None:
     assert not running.stdout.strip(), running.stdout
 
 
-def test_harness_refusal_does_not_overlap_pytest_statuses() -> None:
-    source = HELPER.read_text(encoding="utf-8")
-
-    assert "exit 64" in source
-
-
-def test_pytest_integrity_controls_are_part_of_every_sandbox_run() -> None:
-    source = HELPER.read_text(encoding="utf-8")
-
-    assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1" in source
-    assert '-c /dev/null' in source
-    assert '--confcutdir "${test_mount}"' in source
-    assert '--rootdir "${test_mount}"' in source
-    assert "test_review_integrity_canary_must_fail" in source
-    assert 'recorder.canary_calls != ["failed"]' in source
-    assert "returncode != 0 or not protocol_ok" in source
-    assert "pass_fds=(result_write_fd, challenge_read_fd)" in source
-    assert "challenge = secrets.token_bytes(32)" in source
-    assert "recorder.user_passed != recorder.user_items" in source
-    assert 'chmod 0644 -- "${canary_file}"' in source
-    assert 'trap \'rm -f -- "${canary_file}"\' EXIT' in source
-
-
-def test_trusted_pytest_runner_is_separate_from_pr_dependency_environment() -> None:
-    source = HELPER.read_text(encoding="utf-8")
-
-    assert "dst=/runner-env" in source
-    assert "dst=/project-env" in source
-    assert "/review-envs/runner/bin/python" in source
-    assert "/review-envs/project/${REVIEW_SITE_PACKAGES}" in source
-    runner_section, project_section = source.split(
-        "prepare_container_name=\"review-falsify-project-", maxsplit=1
-    )
-    assert "dst=/runner-env" in runner_section
-    assert "dst=/runner-env" not in project_section
-
-
 def _supervisor_program() -> str:
     source = HELPER.read_text(encoding="utf-8")
     start = source.index("-I -c '") + len("-I -c '")
@@ -500,7 +540,11 @@ def _supervisor_program() -> str:
 
 
 def _run_inner_wrapper(
-    tmp_path: Path, user_source: str, *, project_module_source: str | None = None
+    tmp_path: Path,
+    user_source: str,
+    *,
+    project_module_source: str | None = None,
+    add_repository_pytest_hooks: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     workspace = tmp_path / "workspace"
     test_mount = workspace / "tests" / ".review-tests"
@@ -516,6 +560,15 @@ def _run_inner_wrapper(
     if project_module_source is not None:
         (workspace / "typo_helper.py").write_text(
             project_module_source, encoding="utf-8"
+        )
+    if add_repository_pytest_hooks:
+        (workspace / "conftest.py").write_text(
+            "raise RuntimeError('repository conftest must not load')\n",
+            encoding="utf-8",
+        )
+        (workspace / "pytest.ini").write_text(
+            "[pytest]\naddopts = --repository-option-must-not-load\n",
+            encoding="utf-8",
         )
     environment = os.environ.copy()
     environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
@@ -559,7 +612,19 @@ def test_real_pytest_wrapper_distinguishes_passing_and_failing_review_tests(
     assert failing.returncode == 1, failing.stdout + failing.stderr
 
 
-def test_real_pytest_wrapper_classifies_fixture_errors_as_malformed(
+def test_real_pytest_wrapper_excludes_repository_hooks_and_configuration(
+    tmp_path: Path,
+) -> None:
+    result = _run_inner_wrapper(
+        tmp_path,
+        "def test_ok():\n    assert True\n",
+        add_repository_pytest_hooks=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_real_pytest_wrapper_classifies_fixture_errors_as_usage_errors(
     tmp_path: Path,
 ) -> None:
     result = _run_inner_wrapper(
@@ -570,6 +635,34 @@ def test_real_pytest_wrapper_classifies_fixture_errors_as_malformed(
         "    raise RuntimeError('fixture failed')\n"
         "def test_uses_fixture(broken_fixture):\n"
         "    assert True\n",
+    )
+
+    assert result.returncode == 4, result.stdout + result.stderr
+
+
+def test_teardown_error_does_not_hide_a_genuine_counterexample(
+    tmp_path: Path,
+) -> None:
+    result = _run_inner_wrapper(
+        tmp_path,
+        "import pytest\n"
+        "@pytest.fixture\n"
+        "def resource():\n"
+        "    yield 1\n"
+        "    raise RuntimeError('noisy teardown')\n"
+        "def test_counterexample(resource):\n"
+        "    assert False\n",
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+
+
+def test_pytest_exit_is_classified_as_interrupted(tmp_path: Path) -> None:
+    result = _run_inner_wrapper(
+        tmp_path,
+        "import pytest\n"
+        "def test_interrupted():\n"
+        "    pytest.exit('review interrupted')\n",
     )
 
     assert result.returncode == 2, result.stdout + result.stderr
@@ -621,6 +714,8 @@ def test_pr_module_cannot_use_the_previous_protocol_to_forge_a_pass(
         "import pytest\n@pytest.mark.skip\ndef test_skipped():\n    pass\n",
         "import pytest\n@pytest.mark.xfail\ndef test_expected_failure():\n"
         "    assert False\n",
+        "import pytest\n@pytest.mark.xfail(strict=True)\n"
+        "def test_unexpected_pass():\n    assert True\n",
     ],
 )
 def test_skipped_or_xfailed_review_tests_are_not_accepted_as_passing(
@@ -659,7 +754,10 @@ def test_canary_is_readable_even_when_the_reviewer_uses_a_restrictive_umask(
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.skipif(not _docker_image_is_ready(), reason="local Docker image unavailable")
+@pytest.mark.skipif(
+    not _docker_backend_is_ready(),
+    reason="Docker daemon unavailable or review image pull failed",
+)
 def test_pr_atexit_handler_cannot_turn_a_failing_review_test_into_a_pass(
     tmp_path: Path,
 ) -> None:
