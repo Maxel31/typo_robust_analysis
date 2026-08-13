@@ -256,6 +256,14 @@ def _config(root: Path, output: Path, *, resume: bool) -> RobustnessEvaluationRu
     )
 
 
+def test_runner_rejects_legacy_evaluation_data_without_frozen_registry(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="requires a frozen evaluation registry"):
+        run_robustness_evaluation(
+            _config(tmp_path, tmp_path / "out", resume=False),
+            runtime_factory=_RuntimeFactory(),
+        )
+
+
 def test_runner_resume_is_byte_identical_to_uninterrupted_evaluation(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path)
     descriptors = _descriptors(tmp_path)
@@ -421,6 +429,8 @@ def test_runner_keeps_training_and_frozen_evaluation_identities_separate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     evaluation_root = tmp_path / "frozen-evaluation"
+    evaluation_root.mkdir()
+    (evaluation_root / "registry.json").write_text("{}\n", encoding="utf-8")
     config = replace(
         _config(tmp_path, tmp_path / "evaluation-output", resume=False),
         evaluation_data_dir=evaluation_root,
