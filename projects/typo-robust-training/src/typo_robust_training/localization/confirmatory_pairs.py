@@ -23,7 +23,7 @@ from typo_robust_training.localization.confirmatory_config import (
     ConfirmatoryLocalizationProtocol,
     load_confirmatory_localization_config,
 )
-from typo_robust_training.localization.generic_runtime import clean_corpus_targets
+from typo_robust_training.localization.corpus_targets import clean_corpus_targets
 from typo_robust_training.localization.prompting import word_final_token_positions
 
 

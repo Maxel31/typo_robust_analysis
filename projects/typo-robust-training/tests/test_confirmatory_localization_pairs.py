@@ -18,6 +18,7 @@ from typo_robust_training.localization.confirmatory_pairs import (
     GenericLocalizationPairFreezeConfig,
     run_freeze_generic_localization_pairs,
 )
+from typo_robust_training.localization.corpus_targets import clean_corpus_targets
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -204,3 +205,34 @@ def test_pair_freeze_requires_every_declared_exclusion_path(tmp_path: Path) -> N
 
 def test_confirmatory_config_fixes_model_sequence_limit() -> None:
     assert load_confirmatory_localization_config(DEFAULT_CONFIG).max_sequence_length == 512
+
+
+def test_corpus_targets_begin_after_a_stable_edited_word_prefix() -> None:
+    targets, reason = clean_corpus_targets(
+        full_clean_token_ids=(10, 20, 30, 40, 50),
+        clean_prompt_token_ids=(10, 20),
+        final_edited_token=1,
+        count=3,
+    )
+
+    assert targets == (30, 40, 50)
+    assert reason is None
+
+
+def test_corpus_targets_reject_unstable_or_short_continuations() -> None:
+    with pytest.raises(ValueError, match="stable prefix"):
+        clean_corpus_targets(
+            full_clean_token_ids=(10, 99, 30),
+            clean_prompt_token_ids=(10, 20),
+            final_edited_token=1,
+            count=1,
+        )
+
+    targets, reason = clean_corpus_targets(
+        full_clean_token_ids=(10, 20, 30),
+        clean_prompt_token_ids=(10, 20),
+        final_edited_token=1,
+        count=2,
+    )
+    assert targets == ()
+    assert reason == "fewer-than-16-clean-corpus-tokens-after-final-edit"
