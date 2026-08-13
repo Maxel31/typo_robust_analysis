@@ -4,6 +4,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -95,6 +96,10 @@ if [[ "${1:-}" == pull ]]; then
   exit 0
 fi
 if [[ " $* " == *test_review_integrity_canary_* ]]; then
+  canary_path="$(find "${FAKE_REVIEW_TEST_ROOT}" -maxdepth 1 \
+    -name 'test_review_integrity_canary_*.py' -print -quit)"
+  [[ -n "${canary_path}" && "$(stat -c %a "${canary_path}")" == 644 ]] \
+    || exit 87
   exit "${FAKE_TEST_ENCODED_STATUS:-80}"
 fi
 if [[ " $* " == *" --entrypoint /bin/bash "* ]]; then
@@ -119,6 +124,7 @@ exec /usr/bin/chmod "$@"
     environment = os.environ.copy()
     environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
     environment["FAKE_REVIEW_ENV_ROOT"] = str(state / "envs")
+    environment["FAKE_REVIEW_TEST_ROOT"] = str(review_tests)
     environment["FAKE_DOCKER_LOG"] = str(tmp_path / "docker.log")
     return helper, state, review_tests, environment
 
@@ -200,7 +206,7 @@ def _make_real_docker_helper(
         "        for name, value in sorted(namespace.items()):\n"
         "            if name.startswith('test_') and callable(value):\n"
         "                nodeid = f'{path}::{name}'\n"
-        "                items.append(SimpleNamespace(nodeid=nodeid))\n"
+        "                items.append(SimpleNamespace(nodeid=nodeid, path=path))\n"
         "                tests.append((nodeid, value))\n"
         "    recorder.pytest_collection_modifyitems(None, None, items)\n"
         "    failed = False\n"
@@ -449,9 +455,117 @@ def test_pytest_integrity_controls_are_part_of_every_sandbox_run() -> None:
     assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1" in source
     assert '-c /dev/null' in source
     assert '--confcutdir "${test_mount}"' in source
+    assert '--rootdir "${test_mount}"' in source
     assert "test_review_integrity_canary_must_fail" in source
     assert 'recorder.canary_calls != ["failed"]' in source
     assert 'finish("failed" if recorder.user_failed else "passed")' in source
+    assert 'chmod 0644 -- "${canary_file}"' in source
+
+
+def _inner_wrapper_program() -> str:
+    source = HELPER.read_text(encoding="utf-8")
+    start = source.index("-I -c '") + len("-I -c '")
+    end = source.index("\n' \"${project_path}\"", start)
+    return source[start:end]
+
+
+def _run_inner_wrapper(
+    tmp_path: Path, user_source: str
+) -> subprocess.CompletedProcess[str]:
+    workspace = tmp_path / "workspace"
+    test_mount = workspace / "tests" / ".review-tests"
+    test_mount.mkdir(parents=True)
+    canary = test_mount / "test_review_integrity_canary_7_31337.py"
+    canary.write_text(
+        "def test_review_integrity_canary_must_fail():\n"
+        "    assert False, 'review integrity canary'\n",
+        encoding="utf-8",
+    )
+    probe = test_mount / "test_probe.py"
+    probe.write_text(user_source, encoding="utf-8")
+    environment = os.environ.copy()
+    environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+    return subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            _inner_wrapper_program(),
+            str(workspace),
+            str(canary),
+            str(probe),
+            "-c",
+            "/dev/null",
+            "--confcutdir",
+            str(test_mount),
+            "--rootdir",
+            str(test_mount),
+            "-q",
+            "--disable-warnings",
+        ],
+        check=False,
+        capture_output=True,
+        env=environment,
+        text=True,
+    )
+
+
+def test_real_pytest_wrapper_distinguishes_passing_and_failing_review_tests(
+    tmp_path: Path,
+) -> None:
+    passing = _run_inner_wrapper(
+        tmp_path / "passing", "def test_ok():\n    assert True\n"
+    )
+    failing = _run_inner_wrapper(
+        tmp_path / "failing", "def test_counterexample():\n    assert False\n"
+    )
+
+    assert passing.returncode == 80, passing.stdout + passing.stderr
+    assert failing.returncode == 81, failing.stdout + failing.stderr
+
+
+def test_real_pytest_wrapper_classifies_fixture_errors_as_malformed(
+    tmp_path: Path,
+) -> None:
+    result = _run_inner_wrapper(
+        tmp_path,
+        "import pytest\n"
+        "@pytest.fixture\n"
+        "def broken_fixture():\n"
+        "    raise RuntimeError('fixture failed')\n"
+        "def test_uses_fixture(broken_fixture):\n"
+        "    assert True\n",
+    )
+
+    assert result.returncode == 82, result.stdout + result.stderr
+
+
+def test_canary_is_readable_even_when_the_reviewer_uses_a_restrictive_umask(
+    tmp_path: Path,
+) -> None:
+    helper, _, review_tests, environment = _make_helper(tmp_path)
+    prepared = _prepare(helper, environment)
+    assert prepared.returncode == 0, prepared.stderr
+    probe = review_tests / "test_probe.py"
+    probe.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'umask 077; exec "$@"',
+            "review-test",
+            str(helper),
+            "root",
+            str(probe),
+        ],
+        check=False,
+        capture_output=True,
+        env=environment,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.skipif(not _docker_image_is_ready(), reason="local Docker image unavailable")

@@ -158,6 +158,8 @@ execute_sandboxed_pytest() {
 
   chmod 0644 -- "${test_file}" \
     || die "TEST_FILE could not be made sandbox-readable"
+  chmod 0644 -- "${canary_file}" \
+    || die "review integrity canary could not be made sandbox-readable"
   local test_container_name
   test_container_name="review-falsify-test-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$$-${RANDOM}"
   local encoded_status=0
@@ -202,17 +204,22 @@ def finish(kind):
     trusted_exit(STATUS[kind])
 
 class ResultRecorder:
-    def __init__(self, canary_name):
-        self.canary_name = canary_name
+    def __init__(self, canary_path):
+        self.canary_path = os.path.realpath(canary_path)
+        self.canary_nodeids = set()
         self.canary_calls = []
         self.user_items = 0
         self.user_failed = False
+        self.user_error = False
         self.collection_failed = False
 
     def _is_canary(self, nodeid):
-        return self.canary_name in nodeid
+        return nodeid in self.canary_nodeids
 
     def pytest_collection_modifyitems(self, session, config, items):
+        for item in items:
+            if os.path.realpath(str(item.path)) == self.canary_path:
+                self.canary_nodeids.add(item.nodeid)
         self.user_items = sum(not self._is_canary(item.nodeid) for item in items)
 
     def pytest_collectreport(self, report):
@@ -223,8 +230,10 @@ class ResultRecorder:
         if self._is_canary(report.nodeid):
             if report.when == "call":
                 self.canary_calls.append(report.outcome)
-        elif report.failed:
+        elif report.failed and report.when == "call":
             self.user_failed = True
+        elif report.failed:
+            self.user_error = True
 
 project_path = sys.argv[1]
 canary_path = sys.argv[2]
@@ -232,7 +241,7 @@ test_path = sys.argv[3]
 pytest_args = sys.argv[4:]
 sys.path.append(project_path)
 sys.dont_write_bytecode = True
-recorder = ResultRecorder(os.path.basename(canary_path))
+recorder = ResultRecorder(canary_path)
 pytest_status = int(pytest.main(
     [*pytest_args, canary_path, test_path], plugins=[recorder]
 ))
@@ -240,7 +249,7 @@ if pytest_status == 3:
     finish("internal")
 if pytest_status == 4:
     finish("interrupted")
-if recorder.collection_failed or pytest_status == 2:
+if recorder.collection_failed or recorder.user_error or pytest_status == 2:
     finish("collect")
 if recorder.canary_calls != ["failed"]:
     finish("integrity")
@@ -251,6 +260,7 @@ finish("failed" if recorder.user_failed else "passed")
     "${test_mount}/${test_relative}" \
     -c /dev/null \
     --confcutdir "${test_mount}" \
+    --rootdir "${test_mount}" \
     -q --disable-warnings \
     || encoded_status=$?
 
