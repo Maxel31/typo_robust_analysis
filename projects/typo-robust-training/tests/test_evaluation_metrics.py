@@ -28,6 +28,9 @@ def _observation(
     evaluation_condition: str = "random-2",
 ) -> EvaluationObservation:
     unseen = index >= 10
+    strata = ["unseen-task"] if unseen else ["same-task"]
+    if evaluation_condition in {"transposition-2", "natural-injection"}:
+        strata.append("unseen-typo")
     return EvaluationObservation(
         record_id=f"{index:064x}",
         condition=condition,
@@ -39,7 +42,7 @@ def _observation(
             "multiple" if edit_count > 1 else "adjacent-transposition" if unseen else "deletion"
         ),
         edit_count=edit_count,
-        strata=("unseen-task", "unseen-typo") if unseen else ("same-task",),
+        strata=tuple(strata),
         clean_answer="A" if clean_correct else "B",
         typo_answer="A" if typo_correct else "B",
         patched_answer="A" if typo_correct or patch_gain > 0.0 else "B",
@@ -110,7 +113,9 @@ def test_report_computes_paired_transitions_strata_patch_reliance_and_gate() -> 
     assert comparison["overall"]["wrong_to_right"] == 4
     assert comparison["overall"]["right_to_wrong"] == 0
     assert comparison["overall"]["clean_harm"] == 0
-    assert comparison["strata"]["unseen-task"]["typo_accuracy_gain_points"] == pytest.approx(40.0)
+    assert comparison["primary_strata"]["unseen-task"][
+        "typo_accuracy_gain_points"
+    ] == pytest.approx(40.0)
     assert comparison["overall"]["base_mean_patch_gain"] == pytest.approx(0.50)
     assert comparison["overall"]["adapter_mean_patch_gain"] == pytest.approx(0.25)
     assert comparison["overall"]["patch_gain_reduction_fraction"] == pytest.approx(0.50)
@@ -319,3 +324,42 @@ def test_confirmatory_endpoint_excludes_secondary_typo_conditions() -> None:
     assert comparison["evaluation_conditions"]["random-4"][
         "typo_accuracy_gain_points"
     ] == pytest.approx(100.0)
+
+
+def test_secondary_held_out_conditions_populate_descriptive_not_primary_strata() -> None:
+    observations: list[EvaluationObservation] = []
+    for index in range(20):
+        for condition, seed in (("base", None), ("localized-state-distillation", 42)):
+            observations.append(
+                _observation(
+                    index,
+                    condition=condition,
+                    seed=seed,
+                    clean_correct=True,
+                    typo_correct=index % 2 == 0,
+                    patch_gain=0.5,
+                )
+            )
+    for index in range(100, 120):
+        for condition, seed in (("base", None), ("localized-state-distillation", 42)):
+            observations.append(
+                _observation(
+                    index,
+                    condition=condition,
+                    seed=seed,
+                    clean_correct=True,
+                    typo_correct=index % 2 == 0,
+                    patch_gain=0.5,
+                    evaluation_condition="transposition-2",
+                    edit_count=2,
+                )
+            )
+
+    report = build_evaluation_report(observations, protocol=PROTOCOL)
+    base = report["conditions"]["base"]
+    comparison = report["comparisons"]["localized-state-distillation:seed-42"]
+
+    assert base["strata"]["unseen-typo"]["n_records"] == 20
+    assert base["primary_strata"]["unseen-typo"]["n_records"] == 0
+    assert comparison["strata"]["unseen-typo"]["n_records"] == 20
+    assert comparison["primary_strata"]["unseen-typo"]["n_records"] == 0
