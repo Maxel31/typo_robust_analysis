@@ -1,0 +1,138 @@
+{
+  "schema_version": "robustness-evaluation-study/v1",
+  "protocol_id": "typo-robustness-evaluation-v1.2",
+  "seed": 42,
+  "tiers": {
+    "monitor": {
+      "task_accuracy_allowed": false,
+      "clean_documents": 200,
+      "paired_documents": 100,
+      "interval_optimizer_steps": 10
+    },
+    "tune": {
+      "repeatable": true,
+      "task_records_total": 500,
+      "fineweb_documents": 200,
+      "natural_pairs": 100,
+      "natural_injection_records": 100
+    },
+    "pre_pr_gate": {
+      "maximum_openings": 1,
+      "records_per_task": {
+        "gsm8k": 500,
+        "mmlu": 500,
+        "arc": 500,
+        "mmlu_pro": 500,
+        "commonsense_qa": 500
+      },
+      "tasks": ["gsm8k", "mmlu", "arc", "mmlu_pro", "commonsense_qa"]
+    },
+    "final_test": {
+      "maximum_openings": 1,
+      "records_per_task": {
+        "gsm8k": 500,
+        "mmlu": 500,
+        "arc": 500,
+        "mmlu_pro": 500,
+        "math_500": 466,
+        "commonsense_qa": 500
+      },
+      "tasks": ["gsm8k", "mmlu", "arc", "mmlu_pro", "math_500", "commonsense_qa"]
+    }
+  },
+  "typos": {
+    "primary": {
+      "condition": "random-2",
+      "edit_count": 2,
+      "operations": ["keyboard-neighbor-substitution", "deletion", "duplication"],
+      "targeting": "uniform-eligible-question-words-without-replacement/v1"
+    },
+    "secondary": {
+      "severity_edit_counts": [1, 4],
+      "severity_records_total": 1200,
+      "held_out_condition": "transposition-2",
+      "held_out_records_total": 500,
+      "natural_injection_records_total": 500,
+      "natural_injection_edit_count": 1,
+      "natural_lm_pairs": 1000,
+      "attribution4_records_per_task": 200,
+      "attribution4_tasks": ["gsm8k", "mmlu"]
+    },
+    "eligibility": {
+      "minimum_word_letters": 3,
+      "distinct_words": true,
+      "question_only": true,
+      "forbid_option_text": true,
+      "forbid_gold_answer": true,
+      "forbid_numbers_math_urls_email_identifiers": true
+    }
+  },
+  "corpora": {
+    "tune": {"fineweb_edu": 200, "dolma": 0, "natural_pairs": 100},
+    "pre_pr_gate": {"fineweb_edu": 1000, "dolma": 500, "natural_pairs": 500},
+    "final_test": {"fineweb_edu": 1000, "dolma": 1000, "natural_pairs": 1000}
+  },
+  "corpus_runtime": {
+    "max_tokens": 512,
+    "truncation": "tokenizer-right-prefix/v1",
+    "ppl_sources": ["fineweb_edu", "dolma"],
+    "clean_kl_source": "fineweb_edu",
+    "natural_alignment": "exact-unchanged-token-spans/v1"
+  },
+  "audit": {
+    "tune_records": 100,
+    "sealed_records": 500,
+    "condition": "random-2",
+    "blocking": false,
+    "operator": "paired-clean-to-typo-frozen-window/v1"
+  },
+  "generation": {
+    "prompt_protocol": "paper-cot-templates/v1",
+    "answer_extraction": "paper-task-extractors/v1",
+    "shots": {
+      "gsm8k": 8,
+      "mmlu": 5,
+      "arc": 5,
+      "mmlu_pro": 5,
+      "math_500": 4,
+      "commonsense_qa": 5
+    },
+    "dtype": "bfloat16",
+    "max_new_tokens": 512,
+    "do_sample": false,
+    "num_beams": 1,
+    "num_return_sequences": 1,
+    "temperature": null,
+    "top_p": null,
+    "top_k": null,
+    "use_cache": true,
+    "termination_protocol": "effective-eos-vs-length-cap/v1"
+  },
+  "statistics": {
+    "training_seeds": [42, 43, 44],
+    "bootstrap_replicates": 10000,
+    "bootstrap_seed": 42,
+    "confidence_level": 0.95,
+    "bootstrap": "hierarchical-learning-seed-task-item/v1",
+    "paired_test": "exact-mcnemar/v1",
+    "primary_multiplicity": "intersection-union-no-adjustment/v1"
+  },
+  "gates": {
+    "clean_noninferiority_margin_points": 1.0,
+    "minimum_task_clean_change_points": -3.0,
+    "minimum_typo_gain_points": 2.0,
+    "require_typo_ci_lower_above_zero": true,
+    "maximum_clean_ppl_ratio": 1.02,
+    "maximum_clean_kl_nats_per_token": 0.03,
+    "minimum_directional_seeds": 2,
+    "natural_minimum_point_change": -1.0,
+    "natural_minimum_ci_lower": -2.0,
+    "patch_audit_is_blocking": false
+  },
+  "opening": {
+    "pre_pr_requires_frozen_arm_seed_config_checkpoint_hashes": true,
+    "final_requires_passing_pre_pr": true,
+    "final_requires_all_models_and_analyses_frozen": true,
+    "resume_requires_exact_access_binding": true
+  }
+}

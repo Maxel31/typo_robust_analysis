@@ -17,6 +17,10 @@ from typo_robust_training.data.config import (
     TrainingDataProtocol,
     load_training_data_config,
 )
+from typo_robust_training.data.natural_words import (
+    natural_corrected_word,
+    natural_dictionary_word_role,
+)
 from typo_robust_training.data.perturb import (
     TRAINING_OPERATIONS,
     TypoGenerator,
@@ -29,6 +33,7 @@ from typo_robust_training.data.records import (
     TypoPair,
 )
 from typo_robust_training.data.splits import (
+    assign_balanced_group_roles,
     assign_content_splits,
     assign_repository_split,
     cluster_near_duplicates,
@@ -55,10 +60,25 @@ _PUBLIC_OUTPUTS = (
 )
 _REASONING_SOURCES = ("gsm8k", "mmlu", "arc")
 _UNSEEN_SOURCES = ("dolma", "mmlu_pro", "math_500", "commonsense_qa")
-_REASONING_TRAINING_SPLITS = {
+_REASONING_V1_SPLITS = {
     "gsm8k": frozenset({"train"}),
     "mmlu": frozenset({"dev"}),
     "arc": frozenset({"train"}),
+}
+_REASONING_TRAINING_SPLITS = {
+    "gsm8k": frozenset({"train"}),
+    "mmlu": frozenset({"auxiliary_train"}),
+    "arc": frozenset({"train"}),
+}
+_REASONING_DIAGNOSTIC_SPLITS = {
+    "gsm8k": frozenset({"train"}),
+    "mmlu": frozenset({"dev"}),
+    "arc": frozenset({"train"}),
+}
+_REASONING_EVALUATION_SPLITS = {
+    "gsm8k": frozenset({"test"}),
+    "mmlu": frozenset({"validation", "test"}),
+    "arc": frozenset({"validation", "test"}),
 }
 
 
@@ -168,7 +188,7 @@ def _stable_order_key(value: str, *, seed: int, namespace: str) -> tuple[str, st
     return digest, value
 
 
-def _collect_limit(source_name: str, protocol: TrainingDataProtocol) -> int:
+def source_collection_limit(source_name: str, protocol: TrainingDataProtocol) -> int:
     fixed = protocol.fixed_pairs_per_source_split
     if source_name == "fineweb_edu":
         target = protocol.training_token_budget * protocol.training_mixture["fineweb_edu"]
@@ -181,18 +201,25 @@ def _collect_limit(source_name: str, protocol: TrainingDataProtocol) -> int:
     return max(1_000, fixed * 10)
 
 
-def _collect_sources(
+def collect_sources(
     protocol: TrainingDataProtocol,
     provider: DataSourceProvider,
     *,
     record_preparer: Callable[[CleanRecord], CleanRecord] | None = None,
+    source_names: Sequence[str] | None = None,
 ) -> dict[str, tuple[CleanRecord | NaturalTypoRecord, ...]]:
     collected: dict[str, tuple[CleanRecord | NaturalTypoRecord, ...]] = {}
     global_ids: set[str] = set()
-    for name, source in protocol.sources.items():
+    selected_names = tuple(protocol.sources) if source_names is None else tuple(source_names)
+    if len(set(selected_names)) != len(selected_names) or any(
+        name not in protocol.sources for name in selected_names
+    ):
+        raise ValueError("source collection names must be unique configured sources")
+    for name in selected_names:
+        source = protocol.sources[name]
         rows: list[CleanRecord | NaturalTypoRecord] = []
         split_counts: dict[str, int] = defaultdict(int)
-        per_split_limit = _collect_limit(name, protocol)
+        per_split_limit = source_collection_limit(name, protocol)
         iterator = iter(provider.iter_records(name, source))
         try:
             for record in iterator:
@@ -565,6 +592,9 @@ def _partition_clean_records(
         if isinstance(record, CleanRecord)
     )
     clusters = cluster_near_duplicates(all_clean, shingle_size=5, threshold=0.99)
+    legacy_v1 = protocol.schema_version == "robustness-training-data-config/v1"
+    training_splits = _REASONING_V1_SPLITS if legacy_v1 else _REASONING_TRAINING_SPLITS
+    diagnostic_splits = _REASONING_V1_SPLITS if legacy_v1 else _REASONING_DIAGNOSTIC_SPLITS
     by_split: dict[str, list[CleanRecord]] = defaultdict(list)
     diagnostic: list[CleanRecord] = []
     unseen_records = tuple(
@@ -576,7 +606,11 @@ def _partition_clean_records(
         record
         for source_name in _REASONING_SOURCES
         for record in _clean_records(collected[source_name])
-        if record.source_split not in _REASONING_TRAINING_SPLITS[source_name]
+        if (
+            record.source_split not in training_splits[source_name]
+            if legacy_v1
+            else record.source_split in _REASONING_EVALUATION_SPLITS[source_name]
+        )
     )
     evaluation_records = (*same_task_evaluation_records, *unseen_records)
     evaluation_clusters = {clusters[record.source_id] for record in evaluation_records}
@@ -586,7 +620,7 @@ def _partition_clean_records(
         records = tuple(
             record
             for record in _clean_records(collected[source_name])
-            if record.source_split in _REASONING_TRAINING_SPLITS[source_name]
+            if record.source_split in diagnostic_splits[source_name]
         )
         selected = _diagnostic_selection(
             records,
@@ -603,10 +637,7 @@ def _partition_clean_records(
         record
         for source_name in general_sources
         for record in _clean_records(collected[source_name])
-        if (
-            source_name == "fineweb_edu"
-            or record.source_split in _REASONING_TRAINING_SPLITS[source_name]
-        )
+        if (source_name == "fineweb_edu" or record.source_split in training_splits[source_name])
         if clusters[record.source_id] not in diagnostic_clusters
         and clusters[record.source_id] not in evaluation_clusters
     )
@@ -638,10 +669,7 @@ def _partition_clean_records(
         1
         for source_name in general_sources
         for record in _clean_records(collected[source_name])
-        if (
-            source_name == "fineweb_edu"
-            or record.source_split in _REASONING_TRAINING_SPLITS[source_name]
-        )
+        if (source_name == "fineweb_edu" or record.source_split in training_splits[source_name])
         and clusters[record.source_id] in evaluation_clusters
     )
 
@@ -680,31 +708,72 @@ def _partition_natural_records(
     protocol: TrainingDataProtocol,
 ) -> dict[str, list[NaturalTypoRecord]]:
     natural = tuple(record for record in records if isinstance(record, NaturalTypoRecord))
-    repository_roles: dict[str, str] = {}
-    output: dict[str, list[NaturalTypoRecord]] = defaultdict(list)
+    records_by_repository: dict[str, list[NaturalTypoRecord]] = defaultdict(list)
     for record in natural:
-        role = repository_roles.setdefault(
-            record.repository,
-            assign_repository_split(
-                record.repository,
+        records_by_repository[record.repository].append(record)
+    if protocol.schema_version == "robustness-training-data-config/v1":
+        repository_roles = {
+            repository: assign_repository_split(
+                repository,
                 seed=protocol.seed,
                 weights=protocol.natural_repository_split,
-            ),
+            )
+            for repository in records_by_repository
+        }
+        held_out_roles = {
+            repository: stable_weighted_split(
+                repository,
+                seed=protocol.seed,
+                namespace="held-out-natural-evaluation/v1",
+                weights=protocol.held_out_repository_evaluation_split,
+            )
+            for repository, role in repository_roles.items()
+            if role == "held_out"
+        }
+    else:
+        repository_roles = assign_balanced_group_roles(
+            {
+                repository: len(repository_records)
+                for repository, repository_records in records_by_repository.items()
+            },
+            seed=protocol.seed,
+            namespace="github-typo-repository-split/v2",
+            weights=protocol.natural_repository_split,
         )
+        held_out_roles = assign_balanced_group_roles(
+            {
+                repository: len(records_by_repository[repository])
+                for repository, role in repository_roles.items()
+                if role == "held_out"
+            },
+            seed=protocol.seed,
+            namespace="held-out-natural-evaluation/v2",
+            weights=protocol.held_out_repository_evaluation_split,
+        )
+    output: dict[str, list[NaturalTypoRecord]] = defaultdict(list)
+    for record in natural:
+        role = repository_roles[record.repository]
         if role == "train":
-            if record.training_eligible and record.operation not in protocol.held_out_operations:
+            if (
+                record.training_eligible
+                and record.operation in protocol.training_operations
+                and record.operation not in protocol.held_out_operations
+                and (
+                    protocol.natural_dictionary_word_split is None
+                    or natural_dictionary_word_role(
+                        record,
+                        seed=protocol.seed,
+                        weights=protocol.natural_dictionary_word_split,
+                    )
+                    == "train"
+                )
+            ):
                 output["train"].append(record)
         elif role == "tune":
             if record.operation not in protocol.held_out_operations:
                 output["tune"].append(record)
         else:
-            evaluation_split = stable_weighted_split(
-                record.repository,
-                seed=protocol.seed,
-                namespace="held-out-natural-evaluation/v1",
-                weights=protocol.held_out_repository_evaluation_split,
-            )
-            output[evaluation_split].append(record)
+            output[held_out_roles[record.repository]].append(record)
     for split in output:
         output[split].sort(key=lambda record: record.record_id)
     repositories_by_split: dict[str, set[str]] = defaultdict(set)
@@ -724,7 +793,7 @@ def _build_training_rows(
     *,
     protocol: TrainingDataProtocol,
     token_counter: Callable[[str], int],
-) -> tuple[list[dict[str, object]], int, dict[str, int]]:
+) -> tuple[list[dict[str, object]], int, dict[str, int], dict[str, dict[str, int]]]:
     pools: dict[str, Sequence[CleanRecord | NaturalTypoRecord]] = {
         "fineweb_edu": tuple(
             record for record in clean_by_split["train"] if record.source == "fineweb_edu"
@@ -736,8 +805,39 @@ def _build_training_rows(
     }
     rows: list[dict[str, object]] = []
     token_counts: dict[str, int] = {}
+    source_token_counts: dict[str, dict[str, int]] = {}
     for category, fraction in protocol.training_mixture.items():
-        target = max(1, round(protocol.training_token_budget * fraction))
+        if fraction == 0.0:
+            continue
+        target = round(protocol.training_token_budget * fraction)
+        if target <= 0:
+            raise ValueError(f"positive training mixture {category} rounded to zero tokens")
+        if (
+            category == "reasoning"
+            and protocol.schema_version != "robustness-training-data-config/v1"
+        ):
+            selected_by_task: list[dict[str, object]] = []
+            task_tokens: dict[str, int] = {}
+            for task, task_fraction in protocol.reasoning_task_mixture.items():
+                if task_fraction == 0.0:
+                    continue
+                task_target = round(target * task_fraction)
+                if task_target <= 0:
+                    raise ValueError(f"positive reasoning mixture {task} rounded to zero tokens")
+                selected, tokens = _select_to_token_budget(
+                    tuple(record for record in pools[category] if record.source == task),
+                    target_tokens=task_target,
+                    seed=protocol.seed,
+                    namespace=f"training-mixture-{category}-{task}/v1",
+                    token_counter=token_counter,
+                    max_sequence_length=protocol.max_sequence_length,
+                )
+                selected_by_task.extend(selected)
+                task_tokens[task] = tokens
+            rows.extend(selected_by_task)
+            token_counts[category] = sum(task_tokens.values())
+            source_token_counts[category] = task_tokens
+            continue
         selected, tokens = _select_to_token_budget(
             pools[category],
             target_tokens=target,
@@ -748,8 +848,9 @@ def _build_training_rows(
         )
         rows.extend(selected)
         token_counts[category] = tokens
+        source_token_counts[category] = {str(selected[0]["source"]): tokens}
     rows.sort(key=lambda row: str(row["record_id"]))
-    return rows, sum(token_counts.values()), token_counts
+    return rows, sum(token_counts.values()), token_counts, source_token_counts
 
 
 def _assert_output_group_disjointness(
@@ -808,6 +909,12 @@ def run_build_training_data(
             max_sequence_length=protocol.max_sequence_length,
         )
     provider_provenance = dict(source_provider.provenance())
+    token_counter_provenance = getattr(token_counter, "provenance", None)
+    token_counter_record = (
+        dict(token_counter_provenance())
+        if callable(token_counter_provenance)
+        else {"provider": "injected-token-counter/v1"}
+    )
     started_at = _now()
     base_run: dict[str, object] = {
         "schema_version": _RUN_SCHEMA,
@@ -817,6 +924,7 @@ def run_build_training_data(
         "protocol": protocol.as_dict(),
         "protocol_sha256": protocol.config_sha256,
         "source_provider": provider_provenance,
+        "token_counter": token_counter_record,
         "started_at": started_at,
         "updated_at": started_at,
         "failures": [],
@@ -824,7 +932,7 @@ def run_build_training_data(
     _write_json_atomic(output_dir / "run.json", base_run)
     try:
         prepare_record = getattr(token_counter, "prepare_record", None)
-        collected = _collect_sources(
+        collected = collect_sources(
             protocol,
             source_provider,
             record_preparer=prepare_record if callable(prepare_record) else None,
@@ -837,9 +945,48 @@ def run_build_training_data(
             collected["github_typo_corpus"],
             protocol=protocol,
         )
+        natural_dictionary_word_counts: dict[str, int] | None = None
+        natural_dictionary_record_counts: dict[str, int] | None = None
+        if protocol.natural_dictionary_word_split is not None:
+            words_by_role: dict[str, set[str]] = defaultdict(set)
+            records_by_role: dict[str, int] = defaultdict(int)
+            for record in collected["github_typo_corpus"]:
+                if not isinstance(record, NaturalTypoRecord):
+                    continue
+                word = natural_corrected_word(record)
+                role = natural_dictionary_word_role(
+                    record,
+                    seed=protocol.seed,
+                    weights=protocol.natural_dictionary_word_split,
+                )
+                if word is None or role is None:
+                    continue
+                words_by_role[role].add(word)
+                records_by_role[role] += 1
+            natural_dictionary_word_counts = {
+                role: len(words_by_role[role]) for role in protocol.natural_dictionary_word_split
+            }
+            natural_dictionary_record_counts = {
+                role: records_by_role[role] for role in protocol.natural_dictionary_word_split
+            }
+            train_words = {
+                word
+                for record in natural_by_split.get("train", ())
+                if (word := natural_corrected_word(record)) is not None
+            }
+            held_out_words = set().union(
+                *(words_by_role[role] for role in words_by_role if role != "train")
+            )
+            if train_words & held_out_words:
+                raise ValueError("natural corrected words cross training/evaluation roles")
         typo_statistics = derive_natural_typo_statistics(tuple(natural_by_split.get("train", ())))
         natural_substitutions = substitutions_from_statistics(typo_statistics)
-        training_rows, training_tokens, mixture_tokens = _build_training_rows(
+        (
+            training_rows,
+            training_tokens,
+            mixture_tokens,
+            mixture_source_tokens,
+        ) = _build_training_rows(
             clean_by_split,
             natural_by_split,
             protocol=protocol,
@@ -875,7 +1022,28 @@ def run_build_training_data(
         decontamination.update(
             {
                 "natural_repository_split": dict(protocol.natural_repository_split),
-                "natural_repository_grouping": "exact-repository-url/v1",
+                "natural_dictionary_word_split": (
+                    dict(protocol.natural_dictionary_word_split)
+                    if protocol.natural_dictionary_word_split is not None
+                    else None
+                ),
+                "natural_dictionary_unique_word_counts": natural_dictionary_word_counts,
+                "natural_dictionary_record_counts": natural_dictionary_record_counts,
+                "natural_dictionary_training_evaluation_disjoint": (
+                    protocol.natural_dictionary_word_split is not None
+                ),
+                "natural_repository_grouping": (
+                    "exact-repository-url/v1"
+                    if protocol.schema_version == "robustness-training-data-config/v1"
+                    else "exact-repository-url-balanced-by-record-count/v2"
+                ),
+                "natural_repository_counts": {
+                    split: len({record.repository for record in records})
+                    for split, records in sorted(natural_by_split.items())
+                },
+                "natural_record_counts": {
+                    split: len(records) for split, records in sorted(natural_by_split.items())
+                },
                 "artifact_group_disjoint": True,
             }
         )
@@ -937,6 +1105,7 @@ def run_build_training_data(
             "status": "completed",
             "counts": counts,
             "mixture_tokens": mixture_tokens,
+            "mixture_source_tokens": mixture_source_tokens,
             "outputs": outputs,
             "updated_at": _now(),
         }
@@ -959,5 +1128,7 @@ __all__ = [
     "BuildTrainingDataConfig",
     "BuildTrainingDataResult",
     "DataSourceProvider",
+    "collect_sources",
     "run_build_training_data",
+    "source_collection_limit",
 ]
