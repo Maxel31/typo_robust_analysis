@@ -25,8 +25,8 @@ _SUPPORTED = frozenset(
         "adjacent-transposition",
     }
 )
-FROZEN_EVALUATION_TYPO_VERSION = "frozen-evaluation-typo/v3"
-_ANSWER_WORD = re.compile(r"[A-Za-z]{3,}")
+FROZEN_EVALUATION_TYPO_VERSION = "frozen-evaluation-typo/v4"
+_ANSWER_WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 _DOLLAR_MATH_SPAN = re.compile(r"(?<!\\)\$(?!\s)(?:\\.|[^$\\\n])*(?<![\s\\])\$")
 _MATH_SPANS = (
     re.compile(r"\\\([^\n]*?\\\)"),
@@ -175,9 +175,10 @@ def evaluation_eligible_word_spans(
     stop = _question_stop(record)
     question = record.text[:stop]
     answer_words = _forbidden_answer_words(record)
-    math_patterns = (*_MATH_SPANS, _DOLLAR_MATH_SPAN) if record.task == "math_500" else _MATH_SPANS
     math_spans = tuple(
-        match.span() for pattern in math_patterns for match in pattern.finditer(question)
+        match.span()
+        for pattern in (*_MATH_SPANS, _DOLLAR_MATH_SPAN)
+        for match in pattern.finditer(question)
     )
     return tuple(
         (start, end)
@@ -218,7 +219,7 @@ def _record_id(
 ) -> str:
     return hashlib.sha256(
         (
-            "frozen-evaluation-pair/v3\0"
+            "frozen-evaluation-pair/v4\0"
             f"{role}\0{condition}\0{seed}\0{variant}\0{edit_count}\0{record.record_id}"
         ).encode()
     ).hexdigest()

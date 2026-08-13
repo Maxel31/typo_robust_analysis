@@ -69,6 +69,47 @@ def test_multiple_choice_label_excludes_gold_option_words_from_question() -> Non
     assert "planet" in words
 
 
+def test_gold_option_word_with_apostrophe_is_not_a_typo_target() -> None:
+    record = CleanRecord(
+        source="mmlu",
+        source_revision="a" * 40,
+        source_split="test",
+        source_id="mmlu:apostrophe-gold-option-fixture",
+        group_id="mmlu:apostrophe-gold-option-fixture",
+        text="Where should researchers locate a bee's nest?\nA. bee's nest\nB. empty hive",
+        task="mmlu",
+        answer="A",
+        metadata={"fixture": True},
+    )
+
+    spans = evaluation_eligible_word_spans(record, minimum_word_letters=3)
+    words = {record.text[start:stop].casefold() for start, stop in spans}
+
+    assert "bee's" not in words
+    assert "nest" not in words
+    assert "researchers" in words
+
+
+def test_inline_dollar_math_is_protected_for_every_task() -> None:
+    record = CleanRecord(
+        source="mmlu_pro",
+        source_revision="a" * 40,
+        source_split="test",
+        source_id="mmlu-pro:inline-math-fixture",
+        group_id="mmlu-pro:inline-math-fixture",
+        text="Which statement follows from $alpha + mgh$ in ordinary prose?\nA. force\nB. energy",
+        task="mmlu_pro",
+        answer="B",
+        metadata={"fixture": True},
+    )
+
+    spans = evaluation_eligible_word_spans(record, minimum_word_letters=3)
+    words = {record.text[start:stop] for start, stop in spans}
+
+    assert {"alpha", "mgh"}.isdisjoint(words)
+    assert {"Which", "statement", "follows", "ordinary", "prose"} <= words
+
+
 def test_math_and_identifier_spans_are_never_typo_targets() -> None:
     record = CleanRecord(
         source="math_500",
