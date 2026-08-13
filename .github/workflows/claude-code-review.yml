@@ -23,7 +23,9 @@ jobs:
       - name: Install review test environments
         run: |
           uv sync --all-packages --locked --dev
-          uv sync --project projects/typo-robust-training --locked --dev
+          if [[ -f projects/typo-robust-training/pyproject.toml ]]; then
+            uv sync --project projects/typo-robust-training --locked --dev
+          fi
 
       - uses: anthropics/claude-code-action@v1
         with:
