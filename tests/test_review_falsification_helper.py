@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import shutil
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -10,6 +12,7 @@ import pytest
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 HELPER = REPOSITORY_ROOT / ".github" / "review" / "run-falsification-test.sh"
+REVIEW_IMAGE = "ghcr.io/astral-sh/uv:python3.12-bookworm"
 
 
 @pytest.fixture(autouse=True)
@@ -118,6 +121,81 @@ def _run(
     )
 
 
+def _docker_image_is_ready() -> bool:
+    if shutil.which("docker") is None:
+        return False
+    daemon = subprocess.run(
+        ["docker", "info"], check=False, capture_output=True, text=True
+    )
+    image = subprocess.run(
+        ["docker", "image", "inspect", REVIEW_IMAGE],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return daemon.returncode == 0 and image.returncode == 0
+
+
+def _make_real_docker_helper(
+    tmp_path: Path, *, timeout_seconds: int = 600, kill_after_seconds: int = 5
+) -> tuple[Path, Path, dict[str, str]]:
+    state = tmp_path / "real-state"
+    review_tests = tmp_path / "real-review-tests"
+    helper = tmp_path / "real-review-falsify"
+    source = HELPER.read_text(encoding="utf-8")
+    source = source.replace(
+        'readonly REVIEW_STATE_DIR="/var/lib/claude-pr-review"',
+        f'readonly REVIEW_STATE_DIR="{state}"',
+    ).replace(
+        'readonly REVIEW_TEST_ROOT="/tmp/claude-review-tests"',
+        f'readonly REVIEW_TEST_ROOT="{review_tests}"',
+    ).replace(
+        "readonly REVIEW_TEST_TIMEOUT_SECONDS=600",
+        f"readonly REVIEW_TEST_TIMEOUT_SECONDS={timeout_seconds}",
+    ).replace(
+        "readonly REVIEW_TEST_KILL_AFTER_SECONDS=5",
+        f"readonly REVIEW_TEST_KILL_AFTER_SECONDS={kill_after_seconds}",
+    )
+    _write_executable(helper, source)
+
+    shared = state / "envs" / "shared"
+    (shared / "bin").mkdir(parents=True)
+    (shared / "lib" / "python3.12" / "site-packages" / "pytest").mkdir(
+        parents=True
+    )
+    (shared / "pyvenv.cfg").write_text(
+        "home = /usr/local/bin\n"
+        "include-system-site-packages = false\n"
+        "version = 3.12.0\n"
+        "executable = /usr/local/bin/python3.12\n",
+        encoding="utf-8",
+    )
+    (shared / "bin" / "python").symlink_to("/usr/local/bin/python3.12")
+    pytest_package = shared / "lib" / "python3.12" / "site-packages" / "pytest"
+    (pytest_package / "__init__.py").write_text("", encoding="utf-8")
+    (pytest_package / "__main__.py").write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "test_path = next(Path(arg) for arg in sys.argv[1:] if arg.endswith('.py'))\n"
+        "namespace = {}\n"
+        "exec(compile(test_path.read_text(), str(test_path), 'exec'), namespace)\n"
+        "for name, value in sorted(namespace.items()):\n"
+        "    if name.startswith('test_') and callable(value):\n"
+        "        value()\n",
+        encoding="utf-8",
+    )
+    review_tests.mkdir(mode=0o755)
+    (state / "workspace").write_text(f"{REPOSITORY_ROOT}\n", encoding="utf-8")
+    (state / "envs" / "selected-projects").write_text("root\n", encoding="utf-8")
+    for path in (state, state / "envs", shared, review_tests):
+        path.chmod(0o755)
+
+    environment = os.environ.copy()
+    environment["GITHUB_RUN_ID"] = f"pytest{os.getpid()}"
+    environment["GITHUB_RUN_ATTEMPT"] = "0"
+    return helper, review_tests, environment
+
+
 def _prepare(helper: Path, environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
     base_sha = subprocess.check_output(
         ["git", "rev-parse", "HEAD^"], cwd=REPOSITORY_ROOT, text=True
@@ -204,12 +282,12 @@ def test_self_test_arms_sentinel_and_always_removes_probe(tmp_path: Path) -> Non
     assert stat.S_IMODE(review_tests.stat().st_mode) == 0o755
 
 
-def test_dependency_build_storage_is_disk_backed() -> None:
+def test_dependency_build_temporary_storage_is_disk_backed() -> None:
     source = HELPER.read_text(encoding="utf-8")
 
     assert '--mount "type=bind,src=${REVIEW_BUILD_ROOT},dst=/review-build"' in source
     assert "--env TMPDIR=/review-build/tmp" in source
-    assert "--env UV_CACHE_DIR=/review-build/cache" in source
+    assert "UV_CACHE_DIR" not in source
 
 
 def test_sandbox_checks_network_interfaces_and_rejects_timeouts() -> None:
@@ -224,8 +302,46 @@ def test_sandbox_checks_network_interfaces_and_rejects_timeouts() -> None:
 def test_prepare_and_test_execution_have_wall_clock_limits() -> None:
     source = HELPER.read_text(encoding="utf-8")
 
-    assert '"${REVIEW_PREPARE_TIMEOUT_SECONDS}s"' in source
-    assert '"${REVIEW_TEST_TIMEOUT_SECONDS}s"' in source
+    assert '"${REVIEW_PREPARE_TIMEOUT_SECONDS}"' in source
+    assert '"${REVIEW_TEST_TIMEOUT_SECONDS}"' in source
+    assert 'docker kill "${container_name}"' in source
+
+
+@pytest.mark.skipif(not _docker_image_is_ready(), reason="local Docker image unavailable")
+def test_real_docker_executes_a_review_test_through_the_nested_mount(
+    tmp_path: Path,
+) -> None:
+    helper, review_tests, environment = _make_real_docker_helper(tmp_path)
+    probe = review_tests / "test_probe.py"
+    probe.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+    result = _run(helper, environment, "root", str(probe))
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(not _docker_image_is_ready(), reason="local Docker image unavailable")
+def test_timeout_removes_the_actual_container(tmp_path: Path) -> None:
+    helper, review_tests, environment = _make_real_docker_helper(
+        tmp_path, timeout_seconds=1, kill_after_seconds=1
+    )
+    probe = review_tests / "test_sleep.py"
+    probe.write_text("import time\ndef test_sleep():\n    time.sleep(60)\n", encoding="utf-8")
+    name_filter = f"name=review-falsify-test-{environment['GITHUB_RUN_ID']}-"
+
+    started = time.monotonic()
+    result = _run(helper, environment, "root", str(probe))
+    elapsed = time.monotonic() - started
+    running = subprocess.run(
+        ["docker", "ps", "--filter", name_filter, "--format", "{{.Names}}"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert elapsed < 10
+    assert not running.stdout.strip(), running.stdout
 
 
 def test_missing_test_path_is_a_usage_error(tmp_path: Path) -> None:

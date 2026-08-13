@@ -9,6 +9,8 @@ readonly REVIEW_BUILD_ROOT="${REVIEW_STATE_DIR}/build"
 readonly REVIEW_TEST_ROOT="/tmp/claude-review-tests"
 readonly REVIEW_PREPARE_TIMEOUT_SECONDS=1800
 readonly REVIEW_TEST_TIMEOUT_SECONDS=600
+readonly REVIEW_PREPARE_KILL_AFTER_SECONDS=30
+readonly REVIEW_TEST_KILL_AFTER_SECONDS=5
 
 die() {
   printf 'review-falsify: %s\n' "$*" >&2
@@ -21,6 +23,28 @@ require_prepared_workspace() {
   workspace="$(<"${REVIEW_WORKSPACE_FILE}")"
   [[ -e "${workspace}/.git" ]] || die "prepared workspace is unavailable"
   printf '%s\n' "${workspace}"
+}
+
+run_docker_with_timeout() {
+  [[ $# -ge 4 ]] || die "internal error: incomplete Docker timeout invocation"
+  local timeout_seconds="$1"
+  local kill_after_seconds="$2"
+  local container_name="$3"
+  shift 3
+
+  local status=0
+  timeout --signal=TERM --kill-after="${kill_after_seconds}s" \
+    "${timeout_seconds}s" docker run --name "${container_name}" "$@" \
+    || status=$?
+  if ((status != 0)); then
+    # GNU timeout only owns the Docker client. A container PID 1 may ignore
+    # the proxied TERM and outlive that client, so remove it explicitly.
+    timeout --signal=KILL 30s docker kill "${container_name}" >/dev/null 2>&1 \
+      || true
+  fi
+  timeout --signal=KILL 30s docker rm -f "${container_name}" >/dev/null 2>&1 \
+    || true
+  return "${status}"
 }
 
 prepare_sandbox() {
@@ -42,7 +66,7 @@ prepare_sandbox() {
   sudo rm -rf -- "${REVIEW_ENV_ROOT}" "${REVIEW_BUILD_ROOT}"
   sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" "${REVIEW_ENV_ROOT}"
   sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" "${REVIEW_BUILD_ROOT}"
-  install -d -m 0755 "${REVIEW_BUILD_ROOT}/tmp" "${REVIEW_BUILD_ROOT}/cache"
+  install -d -m 0755 "${REVIEW_BUILD_ROOT}/tmp"
   printf '%s\n' "${workspace}" | sudo tee "${REVIEW_WORKSPACE_FILE}" >/dev/null
   sudo chmod 0444 "${REVIEW_WORKSPACE_FILE}"
   # The reviewer owns this directory; the sandbox only needs read/execute.
@@ -61,8 +85,13 @@ prepare_sandbox() {
   printf '%s\n' "${selected_projects[@]}" >"${REVIEW_ENV_ROOT}/selected-projects"
 
   local prepare_status=0
-  timeout --signal=TERM --kill-after=30s "${REVIEW_PREPARE_TIMEOUT_SECONDS}s" \
-    docker run --rm \
+  local prepare_container_name
+  prepare_container_name="review-falsify-prepare-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$$-${RANDOM}"
+  run_docker_with_timeout \
+    "${REVIEW_PREPARE_TIMEOUT_SECONDS}" \
+    "${REVIEW_PREPARE_KILL_AFTER_SECONDS}" \
+    "${prepare_container_name}" \
+    --rm \
     --network bridge \
     --cap-drop ALL \
     --security-opt no-new-privileges \
@@ -77,7 +106,6 @@ prepare_sandbox() {
     --workdir /workspace \
     --env HOME=/tmp \
     --env TMPDIR=/review-build/tmp \
-    --env UV_CACHE_DIR=/review-build/cache \
     --entrypoint /bin/bash \
     "${REVIEW_IMAGE}" \
     -euo pipefail -c '
@@ -150,8 +178,13 @@ run_test() {
   # Tests are authored by the runner but executed by the unprivileged sandbox.
   chmod 0644 -- "${test_file}"
 
-  timeout --signal=TERM --kill-after=5s "${REVIEW_TEST_TIMEOUT_SECONDS}s" \
-    docker run --rm --pull never \
+  local test_container_name
+  test_container_name="review-falsify-test-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$$-${RANDOM}"
+  run_docker_with_timeout \
+    "${REVIEW_TEST_TIMEOUT_SECONDS}" \
+    "${REVIEW_TEST_KILL_AFTER_SECONDS}" \
+    "${test_container_name}" \
+    --rm --pull never \
     --network none \
     --read-only \
     --cap-drop ALL \
