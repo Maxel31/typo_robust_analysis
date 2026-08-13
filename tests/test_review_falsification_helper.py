@@ -777,8 +777,12 @@ def test_pr_atexit_handler_cannot_turn_a_failing_review_test_into_a_pass(
     helper, review_tests, environment = _make_real_docker_helper(tmp_path)
     state = tmp_path / "real-state"
     (state / "workspace").write_text(f"{workspace}\n", encoding="utf-8")
-    (state / "git-mask").unlink()
-    (state / "git-mask").mkdir()
+    git_mask = state / "git-mask"
+    if git_mask.is_dir():
+        shutil.rmtree(git_mask)
+    else:
+        git_mask.unlink()
+    git_mask.mkdir()
     probe = review_tests / "test_falsify.py"
     probe.write_text(
         "from typo_helper import normalise\n"
