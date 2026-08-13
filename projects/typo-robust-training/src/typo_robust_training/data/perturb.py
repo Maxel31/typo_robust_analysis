@@ -78,6 +78,10 @@ def eligible_word_spans(text: str, *, minimum_letters: int = 2) -> tuple[tuple[i
     for match in _WORD.finditer(text):
         span = match.span()
         word = match.group()
+        if (span[0] and text[span[0] - 1].isalnum()) or (
+            span[1] < len(text) and text[span[1]].isalnum()
+        ):
+            continue
         if sum(character.isalpha() for character in word) < minimum_letters:
             continue
         if any(_overlaps(span, blocked) for blocked in forbidden):
@@ -204,7 +208,9 @@ def apply_typo_operation_to_word(
     if not isinstance(rng, random.Random):
         raise TypeError("typo operation rng must be random.Random")
     if operation == "adjacent-transposition":
-        candidates = [index for index in range(len(word) - 1) if word[index] != word[index + 1]]
+        candidates = [
+            index for index in range(len(word) - 1) if word[index] != word[index + 1]
+        ]
         if not candidates:
             raise ValueError("word has no non-identity adjacent transposition")
         index = rng.choice(candidates)
@@ -315,6 +321,7 @@ class TypoGenerator:
         variant: int = 0,
         force_operations: Sequence[str] | None = None,
         force_edit_count: int | None = None,
+        force_noop: bool | None = None,
     ) -> TypoPair:
         if not isinstance(record, CleanRecord):
             raise TypeError("record must be a CleanRecord")
@@ -323,6 +330,10 @@ class TypoGenerator:
             for value in (epoch, variant)
         ):
             raise ValueError("epoch and variant must be non-negative integers")
+        if force_noop is not None and type(force_noop) is not bool:
+            raise TypeError("force_noop must be boolean or None")
+        if force_noop is True and (force_operations is not None or force_edit_count is not None):
+            raise ValueError("forced clean pairs cannot also force typo edits")
         if force_operations is not None:
             if not force_operations:
                 raise ValueError("force_operations cannot be empty")
@@ -335,7 +346,11 @@ class TypoGenerator:
             if unsupported:
                 raise ValueError(f"unsupported forced operations: {sorted(unsupported)}")
         rng = _derived_rng(seed=self.seed, epoch=epoch, variant=variant, record_id=record.record_id)
-        if force_edit_count is None and rng.random() < self.explicit_clean_pair_probability:
+        if force_noop is True or (
+            force_noop is None
+            and force_edit_count is None
+            and rng.random() < self.explicit_clean_pair_probability
+        ):
             return TypoPair(
                 record_id=record.record_id,
                 source_id=record.source_id,
