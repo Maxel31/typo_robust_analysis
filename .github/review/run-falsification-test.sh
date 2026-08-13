@@ -51,6 +51,11 @@ run_docker_with_timeout() {
 }
 
 prepare_sandbox() {
+  # Any prepare attempt invalidates the previous environment before validating
+  # its new inputs. Otherwise a rejected retry could silently leave stale
+  # dependencies runnable on a persistent runner.
+  sudo install -d -m 0755 -o root -g root "${REVIEW_STATE_DIR}"
+  sudo rm -f -- "${REVIEW_WORKSPACE_FILE}"
   [[ $# -eq 2 ]] || die "usage: review-falsify --prepare WORKSPACE BASE_SHA"
   local base_sha changed_paths workspace
   if ! workspace="$(realpath --canonicalize-existing -- "$1" 2>/dev/null)"; then
@@ -63,9 +68,6 @@ prepare_sandbox() {
     || die "BASE_SHA is not present in the checkout"
   changed_paths="$(git -C "${workspace}" diff --name-only "${base_sha}...HEAD")"
 
-  sudo install -d -m 0755 -o root -g root "${REVIEW_STATE_DIR}"
-  # Invalidate readiness before touching any previously complete environment.
-  sudo rm -f -- "${REVIEW_WORKSPACE_FILE}"
   # A previous run makes the environment root-owned and immutable to the
   # runner. Rebuild it from scratch so retries cannot mix dependency states.
   sudo rm -rf -- "${REVIEW_ENV_ROOT}" "${REVIEW_BUILD_ROOT}" "${REVIEW_GIT_MASK}"
@@ -143,7 +145,7 @@ prepare_sandbox() {
 }
 
 execute_sandboxed_pytest() {
-  [[ $# -eq 7 ]] || die "internal error: incomplete pytest invocation"
+  [[ $# -eq 9 ]] || die "internal error: incomplete pytest invocation"
   local workspace="$1"
   local python_path="$2"
   local project_path="$3"
@@ -151,11 +153,14 @@ execute_sandboxed_pytest() {
   local workdir="$5"
   local test_file="$6"
   local test_relative="$7"
+  local canary_file="$8"
+  local canary_relative="$9"
 
   chmod 0644 -- "${test_file}" \
     || die "TEST_FILE could not be made sandbox-readable"
   local test_container_name
   test_container_name="review-falsify-test-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$$-${RANDOM}"
+  local encoded_status=0
   run_docker_with_timeout \
     "${REVIEW_TEST_TIMEOUT_SECONDS}" \
     "${REVIEW_TEST_KILL_AFTER_SECONDS}" \
@@ -176,22 +181,88 @@ execute_sandboxed_pytest() {
     --mount "type=bind,src=${REVIEW_TEST_ROOT},dst=${test_mount},readonly" \
     --workdir "${workdir}" \
     --env HOME=/tmp \
-    --env PYTHONDONTWRITEBYTECODE=1 \
     --env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
     --entrypoint "${python_path}" \
     "${REVIEW_IMAGE}" \
     -I -c '
+import os
 import sys
 import pytest
+
+# Preserve a trusted exit primitive before importing any PR-controlled module.
+# Distinct encoded statuses make an early os._exit(0) a harness refusal rather
+# than a false passing result. os._exit also bypasses hostile atexit handlers.
+trusted_exit = os._exit
+STATUS = {"passed": 80, "failed": 81, "collect": 82, "internal": 83,
+          "interrupted": 84, "empty": 85, "integrity": 86}
+
+def finish(kind):
+    sys.stdout.flush()
+    sys.stderr.flush()
+    trusted_exit(STATUS[kind])
+
+class ResultRecorder:
+    def __init__(self, canary_name):
+        self.canary_name = canary_name
+        self.canary_calls = []
+        self.user_items = 0
+        self.user_failed = False
+        self.collection_failed = False
+
+    def _is_canary(self, nodeid):
+        return self.canary_name in nodeid
+
+    def pytest_collection_modifyitems(self, session, config, items):
+        self.user_items = sum(not self._is_canary(item.nodeid) for item in items)
+
+    def pytest_collectreport(self, report):
+        if report.failed:
+            self.collection_failed = True
+
+    def pytest_runtest_logreport(self, report):
+        if self._is_canary(report.nodeid):
+            if report.when == "call":
+                self.canary_calls.append(report.outcome)
+        elif report.failed:
+            self.user_failed = True
+
 project_path = sys.argv[1]
-pytest_args = sys.argv[2:]
+canary_path = sys.argv[2]
+test_path = sys.argv[3]
+pytest_args = sys.argv[4:]
 sys.path.append(project_path)
-raise SystemExit(pytest.main(pytest_args))
-' "${project_path}" \
+sys.dont_write_bytecode = True
+recorder = ResultRecorder(os.path.basename(canary_path))
+pytest_status = int(pytest.main(
+    [*pytest_args, canary_path, test_path], plugins=[recorder]
+))
+if pytest_status == 3:
+    finish("internal")
+if pytest_status == 4:
+    finish("interrupted")
+if recorder.collection_failed or pytest_status == 2:
+    finish("collect")
+if recorder.canary_calls != ["failed"]:
+    finish("integrity")
+if recorder.user_items == 0 or pytest_status == 5:
+    finish("empty")
+finish("failed" if recorder.user_failed else "passed")
+' "${project_path}" "${test_mount}/${canary_relative}" \
+    "${test_mount}/${test_relative}" \
     -c /dev/null \
     --confcutdir "${test_mount}" \
-    "${test_mount}/${test_relative}" \
-    -q --disable-warnings --maxfail=1
+    -q --disable-warnings \
+    || encoded_status=$?
+
+  case "${encoded_status}" in
+    80) return 0 ;;
+    81) return 1 ;;
+    82) return 2 ;;
+    83) return 3 ;;
+    84) return 4 ;;
+    85) return 5 ;;
+    *) return 64 ;;
+  esac
 }
 
 run_test() {
@@ -246,8 +317,9 @@ run_test() {
     || { [[ ! -L "${host_python}" ]] && [[ ! -f "${host_python}" ]]; }; then
     die "the ${project} review environment is not installed"
   fi
-  # Before trusting pytest's status, verify that PR-controlled hooks cannot
-  # rewrite a guaranteed failure into a pass.
+  # Run the guaranteed failure and reviewer test in the same pytest session.
+  # The trusted wrapper records both outcomes and returns encoded statuses, so
+  # a PR module that rewrites process exit status cannot turn failure into pass.
   local canary_file canary_relative canary_status=0
   canary_relative="test_review_integrity_canary_$$_${RANDOM}.py"
   canary_file="${REVIEW_TEST_ROOT}/${canary_relative}"
@@ -259,16 +331,14 @@ run_test() {
   fi
   execute_sandboxed_pytest \
     "${workspace}" "${python_path}" "${pythonpath}" "${test_mount}" \
-    "${workdir}" "${canary_file}" "${canary_relative}" \
+    "${workdir}" "${test_file}" "${test_relative}" \
+    "${canary_file}" "${canary_relative}" \
     || canary_status=$?
   rm -f -- "${canary_file}" \
     || die "review integrity canary could not be removed"
-  ((canary_status == 1)) \
-    || die "pytest integrity canary returned unexpected status ${canary_status}"
-
-  execute_sandboxed_pytest \
-    "${workspace}" "${python_path}" "${pythonpath}" "${test_mount}" \
-    "${workdir}" "${test_file}" "${test_relative}"
+  ((canary_status != 64)) \
+    || die "pytest result integrity could not be established"
+  return "${canary_status}"
 }
 
 self_test() {

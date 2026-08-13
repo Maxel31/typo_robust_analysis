@@ -95,7 +95,7 @@ if [[ "${1:-}" == pull ]]; then
   exit 0
 fi
 if [[ " $* " == *test_review_integrity_canary_* ]]; then
-  exit 1
+  exit "${FAKE_TEST_ENCODED_STATUS:-80}"
 fi
 if [[ " $* " == *" --entrypoint /bin/bash "* ]]; then
   mkdir -p "${FAKE_REVIEW_ENV_ROOT}/shared/bin"
@@ -188,17 +188,33 @@ def _make_real_docker_helper(
     pytest_package = shared / "lib" / "python3.12" / "site-packages" / "pytest"
     (pytest_package / "__init__.py").write_text(
         "from pathlib import Path\n"
-        "def main(arguments):\n"
-        "    test_path = next(Path(arg) for arg in arguments if arg.endswith('.py'))\n"
-        "    namespace = {}\n"
-        "    exec(compile(test_path.read_text(), str(test_path), 'exec'), namespace)\n"
-        "    try:\n"
+        "from types import SimpleNamespace\n"
+        "def main(arguments, plugins=None):\n"
+        "    paths = [Path(arg) for arg in arguments if arg.endswith('.py')]\n"
+        "    recorder = plugins[0]\n"
+        "    items = []\n"
+        "    tests = []\n"
+        "    for path in paths:\n"
+        "        namespace = {}\n"
+        "        exec(compile(path.read_text(), str(path), 'exec'), namespace)\n"
         "        for name, value in sorted(namespace.items()):\n"
         "            if name.startswith('test_') and callable(value):\n"
-        "                value()\n"
-        "    except AssertionError:\n"
-        "        return 1\n"
-        "    return 0\n",
+        "                nodeid = f'{path}::{name}'\n"
+        "                items.append(SimpleNamespace(nodeid=nodeid))\n"
+        "                tests.append((nodeid, value))\n"
+        "    recorder.pytest_collection_modifyitems(None, None, items)\n"
+        "    failed = False\n"
+        "    for nodeid, value in tests:\n"
+        "        outcome = 'passed'\n"
+        "        try:\n"
+        "            value()\n"
+        "        except AssertionError:\n"
+        "            outcome = 'failed'\n"
+        "            failed = True\n"
+        "        recorder.pytest_runtest_logreport(SimpleNamespace(\n"
+        "            nodeid=nodeid, when='call', outcome=outcome,\n"
+        "            failed=outcome == 'failed'))\n"
+        "    return 1 if failed else 0\n",
         encoding="utf-8",
     )
     review_tests.mkdir(mode=0o755)
@@ -251,6 +267,21 @@ def test_failed_prepare_cannot_leave_a_runnable_partial_environment(
     assert "sandbox is not prepared" in attempted_run.stderr
     assert not (state / "workspace").exists()
     assert not (state / "envs").exists()
+
+
+def test_rejected_prepare_invalidates_the_previous_environment(tmp_path: Path) -> None:
+    helper, _, review_tests, environment = _make_helper(tmp_path)
+    prepared = _prepare(helper, environment)
+    assert prepared.returncode == 0, prepared.stderr
+
+    rejected = _run(helper, environment, "--prepare", str(REPOSITORY_ROOT), "0" * 40)
+    probe = review_tests / "test_probe.py"
+    probe.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    attempted_run = _run(helper, environment, "root", str(probe))
+
+    assert rejected.returncode == 64
+    assert attempted_run.returncode == 64
+    assert "sandbox is not prepared" in attempted_run.stderr
 
 
 def test_run_accepts_container_relative_venv_symlink(tmp_path: Path) -> None:
@@ -419,7 +450,43 @@ def test_pytest_integrity_controls_are_part_of_every_sandbox_run() -> None:
     assert '-c /dev/null' in source
     assert '--confcutdir "${test_mount}"' in source
     assert "test_review_integrity_canary_must_fail" in source
-    assert "((canary_status == 1))" in source
+    assert 'recorder.canary_calls != ["failed"]' in source
+    assert 'finish("failed" if recorder.user_failed else "passed")' in source
+
+
+@pytest.mark.skipif(not _docker_image_is_ready(), reason="local Docker image unavailable")
+def test_pr_atexit_handler_cannot_turn_a_failing_review_test_into_a_pass(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    (workspace / ".git").mkdir(parents=True)
+    (workspace / "tests" / ".review-tests").mkdir(parents=True)
+    (workspace / "typo_helper.py").write_text(
+        "import atexit\n"
+        "import os\n"
+        "def normalise(text):\n"
+        "    return text\n"
+        "@atexit.register\n"
+        "def _flush():\n"
+        "    os._exit(0)\n",
+        encoding="utf-8",
+    )
+    helper, review_tests, environment = _make_real_docker_helper(tmp_path)
+    state = tmp_path / "real-state"
+    (state / "workspace").write_text(f"{workspace}\n", encoding="utf-8")
+    (state / "git-mask").unlink()
+    (state / "git-mask").mkdir()
+    probe = review_tests / "test_falsify.py"
+    probe.write_text(
+        "from typo_helper import normalise\n"
+        "def test_counterexample():\n"
+        "    assert normalise('wrong') == 'right'\n",
+        encoding="utf-8",
+    )
+
+    result = _run(helper, environment, "root", str(probe))
+
+    assert result.returncode == 1, result.stderr
 
 
 def test_missing_test_path_is_a_usage_error(tmp_path: Path) -> None:
