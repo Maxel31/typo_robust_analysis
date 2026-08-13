@@ -13,6 +13,7 @@ import pytest
 
 from typo_robust_training.data.config import DatasetSource, load_training_data_config
 from typo_robust_training.data.records import CleanRecord, NaturalTypoRecord
+from typo_robust_training.data.splits import NearDuplicateTextIndex
 from typo_robust_training.evaluation.freeze import (
     FreezeEvaluationRunConfig,
     _Exclusions,
@@ -329,6 +330,8 @@ def test_natural_lm_pairs_are_repository_held_out_while_injection_words_are_disj
         hard_groups=frozenset(),
         prior_tune_source_ids=frozenset(record.source_id for record in tune),
         prior_tune_groups=frozenset((record.source, record.group_id) for record in tune),
+        hard_near_duplicates=NearDuplicateTextIndex(()),
+        prior_tune_near_duplicates=NearDuplicateTextIndex(()),
         training_repositories=frozenset({train.repository}),
         tune_repositories=frozenset({tune[0].repository}),
         artifact_sha256={},
@@ -473,6 +476,26 @@ def test_freeze_writes_fixed_disjoint_primary_secondary_and_corpus_artifacts(
     assert len(corpus.records) == 300
     assert sum(record.kind == "clean-corpus" for record in corpus.records) == 200
     assert sum(record.kind == "natural" for record in corpus.records) == 100
+
+    sealed_arguments = {
+        "evaluation_role": "pre-pr-gate",
+        "study_protocol_sha256": hashlib.sha256(STUDY.read_bytes()).hexdigest(),
+        "access_binding_sha256": "a" * 64,
+        "experiment_binding_sha256": "b" * 64,
+        "output_dir": tmp_path / "sealed-evaluation-output",
+        "confirm_sealed_role": True,
+        "resume": False,
+    }
+    sealed_tasks = load_evaluation_bundle(
+        output,
+        splits=("same-task", "unseen-task", "unseen-content", "unseen-typo"),
+        model="google/gemma-3-4b-it",
+        model_revision="093f9f388b31de276ce2de164bdc2081324b9767",
+        **sealed_arguments,
+    )
+    sealed_corpus = load_evaluation_corpus_bundle(output, **sealed_arguments)
+    assert sealed_tasks.records
+    assert sealed_corpus.records
 
     with pytest.raises(ValueError, match="completed passing pre-PR gate"):
         load_evaluation_corpus_bundle(

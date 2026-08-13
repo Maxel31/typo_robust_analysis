@@ -11,6 +11,24 @@ from typo_robust_training.data.splits import stable_weighted_split
 _WORD_SPLIT_NAMESPACE = "github-typo-corrected-word-split/v1"
 
 
+def natural_dictionary_role_for_word(
+    word: str,
+    *,
+    seed: int,
+    weights: Mapping[str, float],
+) -> str:
+    """Assign one already-normalized corrected word to a deterministic role."""
+
+    if not isinstance(word, str) or not word or not word.isascii() or not word.isalpha():
+        raise ValueError("natural dictionary corrected word must be normalized ASCII letters")
+    return stable_weighted_split(
+        word.casefold(),
+        seed=seed,
+        namespace=_WORD_SPLIT_NAMESPACE,
+        weights=weights,
+    )
+
+
 def natural_corrected_word(record: NaturalTypoRecord) -> str | None:
     """Return one normalized corrected word, or None for an unusable pair."""
 
@@ -39,12 +57,15 @@ def natural_dictionary_word_role(
     word = natural_corrected_word(record)
     if word is None:
         return None
-    return stable_weighted_split(
+    return natural_dictionary_role_for_word(
         word,
         seed=seed,
-        namespace=_WORD_SPLIT_NAMESPACE,
         weights=weights,
     )
 
 
-__all__ = ["natural_corrected_word", "natural_dictionary_word_role"]
+__all__ = [
+    "natural_corrected_word",
+    "natural_dictionary_role_for_word",
+    "natural_dictionary_word_role",
+]

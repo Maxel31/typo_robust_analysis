@@ -8,6 +8,7 @@ import pytest
 
 from typo_robust_training.data.records import CleanRecord
 from typo_robust_training.data.splits import (
+    NearDuplicateTextIndex,
     assign_balanced_group_roles,
     assign_content_splits,
     assign_repository_split,
@@ -62,6 +63,18 @@ def test_near_duplicate_clusters_are_order_independent_and_split_atomically() ->
     leaked["row-1"] = "final_test" if leaked["row-0"] != "final_test" else "train"
     with pytest.raises(ValueError, match="near-duplicate cluster"):
         validate_group_disjointness(records, leaked, clusters=forward)
+
+
+def test_near_duplicate_text_index_reuses_the_clustering_rule() -> None:
+    index = NearDuplicateTextIndex(
+        ("The airport is located in Chicago and serves many passengers.",),
+        shingle_size=3,
+        threshold=0.80,
+    )
+    assert index.contains_near_duplicate(
+        "The airport is located in Chicago and serves many passenger."
+    )
+    assert not index.contains_near_duplicate("A completely unrelated medieval discussion.")
 
 
 def test_content_assignment_does_not_depend_on_input_order() -> None:
@@ -128,3 +141,17 @@ def test_balanced_group_roles_are_order_independent_and_keep_groups_atomic() -> 
     assert observed == expected
     assert set(observed) == set(sizes)
     assert set(observed.values()) == set(weights)
+
+
+def test_balanced_group_role_does_not_fix_the_largest_group_to_one_role() -> None:
+    sizes = {"largest": 100, "a": 20, "b": 19, "c": 18, "d": 17, "e": 16}
+    roles = {
+        assign_balanced_group_roles(
+            sizes,
+            seed=seed,
+            namespace="size-independence-fixture",
+            weights={"train": 0.55, "tune": 0.10, "held_out": 0.35},
+        )["largest"]
+        for seed in range(16)
+    }
+    assert len(roles) >= 2
