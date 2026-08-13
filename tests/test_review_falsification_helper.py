@@ -470,8 +470,9 @@ def test_pytest_integrity_controls_are_part_of_every_sandbox_run() -> None:
     assert '--rootdir "${test_mount}"' in source
     assert "test_review_integrity_canary_must_fail" in source
     assert 'recorder.canary_calls != ["failed"]' in source
-    assert "completed.returncode != 0" in source
-    assert "pass_fds=(write_fd,)" in source
+    assert "returncode != 0 or not protocol_ok" in source
+    assert "pass_fds=(result_write_fd, challenge_read_fd)" in source
+    assert "challenge = secrets.token_bytes(32)" in source
     assert "recorder.user_passed != recorder.user_items" in source
     assert 'chmod 0644 -- "${canary_file}"' in source
     assert 'trap \'rm -f -- "${canary_file}"\' EXIT' in source
@@ -499,7 +500,7 @@ def _supervisor_program() -> str:
 
 
 def _run_inner_wrapper(
-    tmp_path: Path, user_source: str
+    tmp_path: Path, user_source: str, *, project_module_source: str | None = None
 ) -> subprocess.CompletedProcess[str]:
     workspace = tmp_path / "workspace"
     test_mount = workspace / "tests" / ".review-tests"
@@ -512,6 +513,10 @@ def _run_inner_wrapper(
     )
     probe = test_mount / "test_probe.py"
     probe.write_text(user_source, encoding="utf-8")
+    if project_module_source is not None:
+        (workspace / "typo_helper.py").write_text(
+            project_module_source, encoding="utf-8"
+        )
     environment = os.environ.copy()
     environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
     return subprocess.run(
@@ -570,7 +575,7 @@ def test_real_pytest_wrapper_classifies_fixture_errors_as_malformed(
     assert result.returncode == 2, result.stdout + result.stderr
 
 
-def test_direct_os_exit_cannot_forge_a_passing_review_result(tmp_path: Path) -> None:
+def test_direct_os_exit_without_a_completion_report_is_refused(tmp_path: Path) -> None:
     result = _run_inner_wrapper(
         tmp_path,
         "import os\n"
@@ -579,6 +584,35 @@ def test_direct_os_exit_cannot_forge_a_passing_review_result(tmp_path: Path) -> 
     )
 
     assert result.returncode == 64, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "project_module_source",
+    [
+        "import __main__\n"
+        "__main__.finish('passed')\n"
+        "def normalise(text):\n"
+        "    return text\n",
+        "import os, sys\n"
+        "os.write(int(sys.argv[5]), "
+        "(sys.argv[6] + ':passed\\n').encode('ascii'))\n"
+        "os._exit(0)\n"
+        "def normalise(text):\n"
+        "    return text\n",
+    ],
+)
+def test_pr_module_cannot_use_the_previous_protocol_to_forge_a_pass(
+    tmp_path: Path, project_module_source: str
+) -> None:
+    result = _run_inner_wrapper(
+        tmp_path,
+        "from typo_helper import normalise\n"
+        "def test_counterexample():\n"
+        "    assert normalise('wrong') == 'right'\n",
+        project_module_source=project_module_source,
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize(

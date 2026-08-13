@@ -205,6 +205,8 @@ execute_sandboxed_pytest() {
   local test_container_name
   test_container_name="review-falsify-test-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$$-${RANDOM}"
   local sandbox_status=0
+  # Repository pytest configuration and conftest files are intentionally
+  # excluded: only the reviewer-authored test and imported product code run.
   run_docker_with_timeout \
     "${REVIEW_TEST_TIMEOUT_SECONDS}" \
     "${REVIEW_TEST_KILL_AFTER_SECONDS}" \
@@ -230,32 +232,114 @@ execute_sandboxed_pytest() {
     "${REVIEW_IMAGE}" \
     -I -c '
 import os
+import hashlib
+import hmac
 import secrets
 import subprocess
 import sys
 
 # Keep result interpretation in this trusted parent. The child imports and
-# executes PR code, but a normal exit is insufficient: it must also send a
-# complete report through the inherited pipe. Direct os._exit calls therefore
-# become an integrity refusal instead of a forged pass.
+# executes PR code, but a normal exit is insufficient: it must complete a
+# parent-initiated challenge after pytest returns. This catches accidental and
+# obvious early exits; it is not a security proof against arbitrary hostile
+# Python sharing the child process.
 CHILD = r"""
+import hashlib
+import hmac
 import os
 import sys
 import pytest
 
-trusted_exit = os._exit
-trusted_write = os.write
-project_path = sys.argv[1]
-dependency_path = sys.argv[2]
-canary_path = sys.argv[3]
-test_path = sys.argv[4]
-result_fd = int(sys.argv[5])
-nonce = sys.argv[6]
-pytest_args = sys.argv[7:]
+def _trusted_run():
+    trusted_exit = os._exit
+    trusted_read = os.read
+    trusted_write = os.write
+    project_path = sys.argv[1]
+    dependency_path = sys.argv[2]
+    canary_path = sys.argv[3]
+    test_path = sys.argv[4]
+    result_fd = int(sys.argv[5])
+    challenge_fd = int(sys.argv[6])
+    pytest_args = sys.argv[7:]
+    # Do not expose protocol descriptors or pytest paths through sys.argv to
+    # imported PR modules. Remove this controller entry point as well.
+    sys.argv[:] = [sys.argv[0]]
+    globals().pop("_trusted_run", None)
 
-def finish(kind):
-    payload = f"{nonce}:{kind}\n".encode("ascii")
-    trusted_write(result_fd, payload)
+    class ResultRecorder:
+        def __init__(self, expected_canary_path):
+            self.canary_path = os.path.realpath(expected_canary_path)
+            self.canary_nodeids = set()
+            self.canary_calls = []
+            self.user_items = 0
+            self.user_passed = 0
+            self.user_failed = False
+            self.user_error = False
+            self.collection_failed = False
+
+        def _is_canary(self, nodeid):
+            return nodeid in self.canary_nodeids
+
+        def pytest_collection_modifyitems(self, session, config, items):
+            for item in items:
+                if os.path.realpath(str(item.path)) == self.canary_path:
+                    self.canary_nodeids.add(item.nodeid)
+            self.user_items = sum(
+                not self._is_canary(item.nodeid) for item in items
+            )
+
+        def pytest_collectreport(self, report):
+            if report.failed:
+                self.collection_failed = True
+
+        def pytest_runtest_logreport(self, report):
+            if self._is_canary(report.nodeid):
+                if report.when == "call":
+                    self.canary_calls.append(report.outcome)
+                return
+            if report.failed and report.when == "call":
+                self.user_failed = True
+            elif report.failed:
+                self.user_error = True
+            elif (report.when == "call" and report.passed
+                  and not hasattr(report, "wasxfail")):
+                self.user_passed += 1
+
+    # pytest is already loaded from the root-owned runner. Only then expose the
+    # read-only PR source and its separately built dependency environment.
+    sys.path.extend([project_path, dependency_path])
+    sys.dont_write_bytecode = True
+    recorder = ResultRecorder(canary_path)
+    try:
+        pytest_status = int(pytest.main(
+            [*pytest_args, canary_path, test_path], plugins=[recorder]
+        ))
+    except BaseException:
+        kind = "internal"
+    else:
+        if pytest_status == 3:
+            kind = "internal"
+        elif pytest_status == 4:
+            kind = "interrupted"
+        elif recorder.collection_failed or recorder.user_error or pytest_status == 2:
+            kind = "collect"
+        elif recorder.canary_calls != ["failed"]:
+            kind = "integrity"
+        elif recorder.user_items == 0 or pytest_status == 5:
+            kind = "empty"
+        elif recorder.user_failed:
+            kind = "failed"
+        elif recorder.user_passed != recorder.user_items:
+            kind = "empty"
+        else:
+            kind = "passed"
+
+    trusted_write(result_fd, f"ready:{kind}\n".encode("ascii"))
+    challenge = trusted_read(challenge_fd, 32)
+    if len(challenge) != 32:
+        trusted_exit(64)
+    proof = hmac.new(challenge, kind.encode("ascii"), hashlib.sha256).hexdigest()
+    trusted_write(result_fd, f"done:{proof}\n".encode("ascii"))
     try:
         sys.stdout.flush()
         sys.stderr.flush()
@@ -263,69 +347,7 @@ def finish(kind):
         pass
     trusted_exit(0)
 
-class ResultRecorder:
-    def __init__(self, expected_canary_path):
-        self.canary_path = os.path.realpath(expected_canary_path)
-        self.canary_nodeids = set()
-        self.canary_calls = []
-        self.user_items = 0
-        self.user_passed = 0
-        self.user_failed = False
-        self.user_error = False
-        self.collection_failed = False
-
-    def _is_canary(self, nodeid):
-        return nodeid in self.canary_nodeids
-
-    def pytest_collection_modifyitems(self, session, config, items):
-        for item in items:
-            if os.path.realpath(str(item.path)) == self.canary_path:
-                self.canary_nodeids.add(item.nodeid)
-        self.user_items = sum(not self._is_canary(item.nodeid) for item in items)
-
-    def pytest_collectreport(self, report):
-        if report.failed:
-            self.collection_failed = True
-
-    def pytest_runtest_logreport(self, report):
-        if self._is_canary(report.nodeid):
-            if report.when == "call":
-                self.canary_calls.append(report.outcome)
-            return
-        if report.failed and report.when == "call":
-            self.user_failed = True
-        elif report.failed:
-            self.user_error = True
-        elif (report.when == "call" and report.passed
-              and not hasattr(report, "wasxfail")):
-            self.user_passed += 1
-
-# pytest is already loaded from the root-owned runner. Only then expose the
-# read-only PR source and its separately built dependency environment.
-sys.path.extend([project_path, dependency_path])
-sys.dont_write_bytecode = True
-recorder = ResultRecorder(canary_path)
-try:
-    pytest_status = int(pytest.main(
-        [*pytest_args, canary_path, test_path], plugins=[recorder]
-    ))
-except BaseException:
-    finish("internal")
-if pytest_status == 3:
-    finish("internal")
-if pytest_status == 4:
-    finish("interrupted")
-if recorder.collection_failed or recorder.user_error or pytest_status == 2:
-    finish("collect")
-if recorder.canary_calls != ["failed"]:
-    finish("integrity")
-if recorder.user_items == 0 or pytest_status == 5:
-    finish("empty")
-if recorder.user_failed:
-    finish("failed")
-if recorder.user_passed != recorder.user_items:
-    finish("empty")
-finish("passed")
+_trusted_run()
 """
 
 project_path = sys.argv[1]
@@ -333,32 +355,46 @@ dependency_path = sys.argv[2]
 canary_path = sys.argv[3]
 test_path = sys.argv[4]
 pytest_args = sys.argv[5:]
-read_fd, write_fd = os.pipe()
-nonce = secrets.token_hex(32)
-completed = subprocess.run(
+result_read_fd, result_write_fd = os.pipe()
+challenge_read_fd, challenge_write_fd = os.pipe()
+completed = subprocess.Popen(
     [sys.executable, "-I", "-c", CHILD, project_path, dependency_path,
-     canary_path, test_path, str(write_fd), nonce, *pytest_args],
-    check=False,
-    pass_fds=(write_fd,),
+     canary_path, test_path, str(result_write_fd), str(challenge_read_fd),
+     *pytest_args],
+    pass_fds=(result_write_fd, challenge_read_fd),
 )
-os.close(write_fd)
-with os.fdopen(read_fd, "rb") as result_stream:
-    payload = result_stream.read(256)
-if completed.returncode != 0:
-    raise SystemExit(64)
-prefix = f"{nonce}:".encode("ascii")
-if not payload.startswith(prefix) or not payload.endswith(b"\n"):
-    raise SystemExit(64)
-kind_bytes = payload[len(prefix):-1]
-if b"\n" in kind_bytes or b":" in kind_bytes:
-    raise SystemExit(64)
-try:
-    kind = kind_bytes.decode("ascii")
-except UnicodeDecodeError:
-    raise SystemExit(64)
 statuses = {"passed": 0, "failed": 1, "collect": 2, "internal": 3,
             "interrupted": 4, "empty": 5, "integrity": 64}
-raise SystemExit(statuses.get(kind, 64))
+os.close(result_write_fd)
+os.close(challenge_read_fd)
+protocol_ok = True
+kind = ""
+challenge = secrets.token_bytes(32)
+with os.fdopen(result_read_fd, "rb", buffering=0) as result_stream:
+    ready = result_stream.readline(256)
+    if ready.startswith(b"ready:") and ready.endswith(b"\n"):
+        try:
+            kind = ready[6:-1].decode("ascii")
+        except UnicodeDecodeError:
+            protocol_ok = False
+    else:
+        protocol_ok = False
+    if kind not in statuses:
+        protocol_ok = False
+    if protocol_ok:
+        try:
+            os.write(challenge_write_fd, challenge)
+        except BrokenPipeError:
+            protocol_ok = False
+    os.close(challenge_write_fd)
+    done = result_stream.readline(256)
+returncode = completed.wait()
+expected = b"done:" + hmac.new(
+    challenge, kind.encode("ascii"), hashlib.sha256
+).hexdigest().encode("ascii") + b"\n"
+if returncode != 0 or not protocol_ok or done != expected:
+    raise SystemExit(64)
+raise SystemExit(statuses[kind])
 ' "${project_path}" "${dependency_path}" \
     "${test_mount}/${canary_relative}" \
     "${test_mount}/${test_relative}" \
