@@ -12,22 +12,39 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout pull request
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v6
+      # Never trust the helper from the pull-request checkout. Install the
+      # exact version from the immutable base commit into a root-owned path.
+      - name: Checkout trusted review helper
+        uses: actions/checkout@v6
         with:
-          enable-cache: true
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-review-helper
+          sparse-checkout: .github/review/run-falsification-test.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
 
-      - name: Install review test environments
+      - name: Install trusted review helper
         run: |
-          uv sync --all-packages --locked --dev
-          if [[ -f projects/typo-robust-training/pyproject.toml ]]; then
-            uv sync --project projects/typo-robust-training --locked --dev
-          fi
+          sudo install -o root -g root -m 0755 \
+            "${GITHUB_WORKSPACE}/.trusted-review-helper/.github/review/run-falsification-test.sh" \
+            /usr/local/bin/review-falsify
+          rm -rf -- "${GITHUB_WORKSPACE}/.trusted-review-helper"
 
-      - uses: anthropics/claude-code-action@v1
+      - name: Prepare and verify isolated review sandbox
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          review-falsify --prepare "${GITHUB_WORKSPACE}" "${BASE_SHA}"
+          review-falsify --self-test
+
+      - name: Run falsification-first review
+        uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
@@ -41,11 +58,28 @@ jobs:
             - Performance considerations
 
             Use a falsification-first review process for every suspected defect:
-            - Create a minimal test that proves the feature is wrong, and run that test against the PR code.
-            - Only report an issue as an actionable defect when the test fails for the claimed reason and the expected behavior is well-defined.
-            - Include the reproducing test (or its exact patch), command, and observed failure in the review comment.
-            - If you cannot produce such a counterexample after a reasonable attempt, do not claim that the feature is incorrect; at most record it as an explicitly unproven suggestion.
-            - Create review-only test files under `/tmp`; they are local evidence only. Do not commit or push them.
+            - 「この機能が"間違っている"ことを証明するtestを作成する」
+            - Create each review-only Python test directly under
+              `/tmp/claude-review-tests`; never write a review test elsewhere.
+            - Run review tests only through one of these commands:
+              `review-falsify root TEST_FILE`,
+              `review-falsify typo-cot TEST_FILE`, or
+              `review-falsify typo-robust-training TEST_FILE`.
+            - Never invoke pytest, uv, Python, or another test runner directly.
+            - Interpret helper exit status 1 as the only evidence that a
+              counterexample reproduced a product defect. Status 0 means the
+              attempted falsification did not reproduce a defect. Every other
+              status is inconclusive or a review-harness failure and must not
+              be reported as an actionable product defect.
+            - Only report an issue as actionable when status 1 was observed for
+              the claimed reason and the expected behavior is well-defined.
+            - Include the exact review test, helper command, exit status, and
+              observed failure in every actionable review comment.
+            - If you cannot produce such a counterexample after a reasonable
+              attempt, do not claim that the feature is incorrect; at most
+              record it as an explicitly unproven suggestion.
+            - Review tests are local evidence only. Do not modify repository
+              files, commit, or push anything.
 
             Note: The PR branch is already checked out in the current working directory.
 
@@ -57,4 +91,4 @@ jobs:
 
           claude_args: |
             --model opus
-            --allowedTools "Read,Grep,Glob,Write,Edit,Bash(uv run pytest:*),Bash(uv run --project projects/typo-cot pytest:*),Bash(uv run --project projects/typo-robust-training pytest:*),Bash(pytest:*),Bash(git diff:*),Bash(git status:*),mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "Read,Grep,Glob,Write,Bash(review-falsify:*),mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
