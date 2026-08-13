@@ -311,7 +311,9 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         "on_the_fly_typo": "record-epoch-counter-based/v1",
         "natural_pairs": "fixed-clean-typo-source-pairs/v1",
         "answer_format": (
-            "short-answer-suffix/v1" if schema_version.endswith("/v1") else "no-hard-answer-target/v1"
+            "short-answer-suffix/v1"
+            if schema_version.endswith("/v1")
+            else "no-hard-answer-target/v1"
         ),
     }
     if not schema_version.endswith("/v1"):
@@ -335,9 +337,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     optimization = _mapping(
         root["optimization"],
         field="optimization",
-        fields=(
-            _OPTIMIZATION_V3 if schema_version.endswith("/v3") else _OPTIMIZATION
-        ),
+        fields=(_OPTIMIZATION_V3 if schema_version.endswith("/v3") else _OPTIMIZATION),
     )
     expected_optimization = {
         "optimizer": "adamw",
@@ -390,9 +390,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         state_window_policy=state_window_policy,
     )
     expected_distance = (
-        "normalized-squared-error/v1"
-        if schema_version.endswith("/v1")
-        else "cosine-residual/v1"
+        "normalized-squared-error/v1" if schema_version.endswith("/v1") else "cosine-residual/v1"
     )
     if objective["state_distance"] != expected_distance:
         raise ValueError("objective.state_distance differs")

@@ -80,9 +80,7 @@ def test_answer_and_noisy_lm_losses_use_only_declared_causal_targets() -> None:
 
 
 def test_residual_window_cosine_is_bounded_position_local_and_stops_teacher_gradient() -> None:
-    teacher = tuple(
-        torch.randn(1, 4, 3, requires_grad=True) for _ in range(4)
-    )
+    teacher = tuple(torch.randn(1, 4, 3, requires_grad=True) for _ in range(4))
     student = tuple(value.detach().clone().requires_grad_(True) for value in teacher)
     identity = residual_window_cosine_loss(
         teacher,

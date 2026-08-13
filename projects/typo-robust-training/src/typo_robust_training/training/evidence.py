@@ -151,7 +151,11 @@ def load_residual_state_evidence(
 ) -> ResidualStateEvidence:
     """Resolve a causal or same-width random residual window without outcomes."""
 
-    if isinstance(decoder_layers, bool) or not isinstance(decoder_layers, int) or decoder_layers < 2:
+    if (
+        isinstance(decoder_layers, bool)
+        or not isinstance(decoder_layers, int)
+        or decoder_layers < 2
+    ):
         raise ValueError("residual evidence decoder_layers must be at least two")
     layers, layer_sha256 = _load(layer_selection_path, artifact="layer selection")
     schema = layers.get("schema_version")
@@ -240,16 +244,13 @@ def load_residual_state_evidence(
             if (
                 not isinstance(control, Mapping)
                 or set(control) != {"start", "stop", "rule"}
-                or control.get("rule")
-                != "sha256-drawn-nonoverlapping-same-width/v1"
+                or control.get("rule") != "sha256-drawn-nonoverlapping-same-width/v1"
             ):
                 raise ValueError("confirmatory random control window fields differ")
             selected_start = _positive_int(
                 control.get("start"), field="random_control_window.start"
             )
-            selected_stop = _positive_int(
-                control.get("stop"), field="random_control_window.stop"
-            )
+            selected_stop = _positive_int(control.get("stop"), field="random_control_window.stop")
             if (
                 selected_stop - selected_start != width
                 or selected_stop > decoder_layers

@@ -144,9 +144,7 @@ def test_cycle2_checkpoint_binds_frozen_monitor_protocol_and_data(tmp_path: Path
         state_path=state,
         bindings=bindings,
     )
-    assert json.loads(checkpoint.read_text(encoding="utf-8"))["schema_version"].endswith(
-        "/v2"
-    )
+    assert json.loads(checkpoint.read_text(encoding="utf-8"))["schema_version"].endswith("/v2")
     loaded = load_training_checkpoint(checkpoint, expected_bindings=bindings)
     assert loaded.state_path == state.resolve()
     changed = {**bindings, "monitor_data_sha256": "f" * 64}

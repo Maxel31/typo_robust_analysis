@@ -208,9 +208,7 @@ def apply_typo_operation_to_word(
     if not isinstance(rng, random.Random):
         raise TypeError("typo operation rng must be random.Random")
     if operation == "adjacent-transposition":
-        candidates = [
-            index for index in range(len(word) - 1) if word[index] != word[index + 1]
-        ]
+        candidates = [index for index in range(len(word) - 1) if word[index] != word[index + 1]]
         if not candidates:
             raise ValueError("word has no non-identity adjacent transposition")
         index = rng.choice(candidates)

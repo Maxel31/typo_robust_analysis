@@ -394,8 +394,7 @@ def edited_word_final_token_positions(
     positions: list[int] = []
     for index, (start, stop) in enumerate(normalized_spans):
         if text_was_provided and (
-            (start > 0 and text[start - 1].isalnum())
-            or (stop < len(text) and text[stop].isalnum())
+            (start > 0 and text[start - 1].isalnum()) or (stop < len(text) and text[stop].isalnum())
         ):
             raise ValueError(f"spans[{index}] starts or ends inside an alphanumeric word")
         overlapping = [
