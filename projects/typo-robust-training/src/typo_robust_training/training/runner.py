@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
+from typo_robust_training.integrity import sha256_tree
 from typo_robust_training.training.checkpoint import (
     TrainingCursor,
     load_training_checkpoint,
@@ -460,6 +461,7 @@ def run_adapter_training(
                 "micro_steps": cursor.micro_steps,
                 "student_tokens": cursor.student_tokens,
                 "outputs": {
+                    "adapter": {"sha256": sha256_tree(adapter_path)},
                     "checkpoint.json": {"sha256": _sha256_file(checkpoint_path)},
                     "metrics.jsonl": {"sha256": _sha256_file(metrics_path)},
                 },

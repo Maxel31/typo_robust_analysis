@@ -161,16 +161,7 @@ def test_explicit_adapters_and_layer_window_are_validated_and_content_hashed(
     window = load_patch_window(_layers(tmp_path / "layers.json"), protocol=PROTOCOL)
     assert window.layers == tuple(range(6))
     assert len(window.artifact_sha256) == 64
-    expected_localization = hashlib.sha256(
-        (
-            "residual-state-evidence/v1\0"
-            f"{hashlib.sha256(selection.read_bytes()).hexdigest()}\0"
-            f"{hashlib.sha256(validation.read_bytes()).hexdigest()}\0"
-            "frozen-causal-window/v1\0"
-            + ",".join(map(str, range(6)))
-        ).encode()
-    ).hexdigest()
-    assert window.localization_sha256 == expected_localization
+    assert window.localization_sha256 is None
 
 
 def test_adapter_loader_rejects_duplicate_identity_incomplete_run_or_runtime_drift(
@@ -263,6 +254,15 @@ def test_current_training_runtime_and_independently_validated_window_are_accepte
 
     assert window.layers == tuple(range(6))
     assert len(window.artifact_sha256) == 64
+    expected_localization = hashlib.sha256(
+        (
+            "residual-state-evidence/v1\0"
+            f"{hashlib.sha256(selection.read_bytes()).hexdigest()}\0"
+            f"{hashlib.sha256(validation.read_bytes()).hexdigest()}\0"
+            "frozen-causal-window/v1\0" + ",".join(map(str, range(6)))
+        ).encode()
+    ).hexdigest()
+    assert window.localization_sha256 == expected_localization
 
 
 def test_generic_patch_window_requires_matching_passing_validation(tmp_path: Path) -> None:

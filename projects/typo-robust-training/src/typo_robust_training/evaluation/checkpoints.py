@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import re
 from collections.abc import Mapping, Sequence
@@ -12,6 +11,7 @@ from pathlib import Path
 
 from typo_robust_training.data.config import strict_loads
 from typo_robust_training.evaluation.config import RobustnessEvaluationProtocol
+from typo_robust_training.integrity import sha256_tree
 
 
 _SHA64 = re.compile(r"[0-9a-f]{64}")
@@ -40,23 +40,6 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _tree_sha256(root: Path) -> str:
-    files = tuple(sorted(path for path in root.rglob("*") if path.is_file()))
-    if not files or any(path.is_symlink() for path in files):
-        raise ValueError("evaluation adapter must contain regular files only")
-    inventory = [
-        {
-            "path": path.relative_to(root).as_posix(),
-            "bytes": path.stat().st_size,
-            "sha256": _sha256_file(path),
-        }
-        for path in files
-    ]
-    return hashlib.sha256(
-        json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-
-
 @dataclass(frozen=True, slots=True)
 class AdapterDescriptor:
     path: Path
@@ -64,6 +47,7 @@ class AdapterDescriptor:
     seed: int
     config_sha256: str
     training_data_sha256: str
+    data_identity_sha256: str
     localization_sha256: str | None
     adapter_sha256: str
 
@@ -77,6 +61,7 @@ class PatchWindow:
     start: int
     stop: int
     artifact_sha256: str
+    localization_sha256: str | None = None
 
     @property
     def layers(self) -> tuple[int, ...]:
@@ -158,6 +143,14 @@ def load_adapter_descriptors(
         )
         if (condition == "localized-state-distillation") != (localization is not None):
             raise ValueError("evaluation adapter localization provenance differs")
+        outputs = run.get("outputs")
+        adapter_output = outputs.get("adapter") if isinstance(outputs, Mapping) else None
+        adapter_sha256 = sha256_tree(path)
+        if (
+            not isinstance(adapter_output, Mapping)
+            or adapter_output.get("sha256") != adapter_sha256
+        ):
+            raise ValueError("evaluation adapter content hash differs from completed training")
         descriptors.append(
             AdapterDescriptor(
                 path=path,
@@ -167,13 +160,24 @@ def load_adapter_descriptors(
                 training_data_sha256=str(
                     _digest(run.get("training_data_sha256"), field="training_data_sha256")
                 ),
+                data_identity_sha256=str(
+                    _digest(run.get("data_identity_sha256"), field="data_identity_sha256")
+                ),
                 localization_sha256=localization,
-                adapter_sha256=_tree_sha256(path),
+                adapter_sha256=adapter_sha256,
             )
         )
     identities = [descriptor.condition_id for descriptor in descriptors]
     if len(set(identities)) != len(identities):
         raise ValueError("evaluation adapter identity is duplicated")
+    for condition in _CONDITIONS:
+        config_hashes = {
+            descriptor.config_sha256
+            for descriptor in descriptors
+            if descriptor.condition == condition
+        }
+        if len(config_hashes) > 1:
+            raise ValueError(f"evaluation {condition} training configuration differs across seeds")
     condition_order = {condition: index for index, condition in enumerate(_CONDITIONS)}
     return tuple(sorted(descriptors, key=lambda item: (condition_order[item.condition], item.seed)))
 
@@ -230,6 +234,7 @@ def load_patch_window(
         if validation_path is not None:
             raise ValueError("legacy evaluation patch-window cannot bind generic validation")
         artifact_sha256 = selection_sha256
+        localization_sha256 = None
     else:
         if validation_path is None:
             raise ValueError("generic evaluation patch-window requires independent validation")
@@ -287,7 +292,19 @@ def load_patch_window(
                 f"{selection_sha256}\0{validation_sha256}\0{start}:{stop}"
             ).encode()
         ).hexdigest()
-    return PatchWindow(start=start, stop=stop, artifact_sha256=artifact_sha256)
+        policy = "frozen-causal-window/v1"
+        localization_sha256 = hashlib.sha256(
+            (
+                f"residual-state-evidence/v1\0{selection_sha256}\0"
+                f"{validation_sha256}\0{policy}\0" + ",".join(map(str, range(start, stop)))
+            ).encode()
+        ).hexdigest()
+    return PatchWindow(
+        start=start,
+        stop=stop,
+        artifact_sha256=artifact_sha256,
+        localization_sha256=localization_sha256,
+    )
 
 
 __all__ = [

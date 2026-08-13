@@ -130,6 +130,8 @@ def load_robustness_evaluation_config(path: Path) -> RobustnessEvaluationProtoco
     max_input = _integer(sequence["max_input_tokens"], field="max_input_tokens", minimum=1)
     max_new = _integer(sequence["max_new_tokens"], field="max_new_tokens", minimum=1)
     forced = _integer(sequence["teacher_forced_tokens"], field="teacher_forced_tokens", minimum=2)
+    if forced != 16:
+        raise ValueError("evaluation requires exactly sixteen teacher-forced tokens")
     readout = sequence["readout_token_range"]
     if (
         not isinstance(readout, list)
@@ -138,6 +140,8 @@ def load_robustness_evaluation_config(path: Path) -> RobustnessEvaluationProtoco
         or not 1 <= readout[0] <= readout[1] <= forced
     ):
         raise ValueError("evaluation readout_token_range is invalid")
+    if readout != [2, 16]:
+        raise ValueError("evaluation readout must cover tokens two through sixteen")
 
     prompting = _mapping(top["prompting"], field="prompting", fields=_PROMPTING)
     if prompting != {

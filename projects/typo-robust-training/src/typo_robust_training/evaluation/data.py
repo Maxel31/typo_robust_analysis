@@ -7,9 +7,11 @@ import json
 import os
 import re
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
+from typing import Iterator
 
 from typo_robust_training.data.config import strict_loads
 from typo_robust_training.data.records import TypoEdit, infer_single_word_typo_edit
@@ -317,6 +319,21 @@ def _access_registry(path: Path) -> dict[str, object]:
     return {"schema_version": payload["schema_version"], "roles": dict(roles)}
 
 
+@contextmanager
+def _evaluation_access_lock(root: Path) -> Iterator[None]:
+    """Serialize the complete read-modify-write transaction for sealed roles."""
+
+    import fcntl
+
+    lock_path = Path(root).resolve() / "evaluation_access.lock"
+    with lock_path.open("a+b") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def _claim_evaluation_role(
     root: Path,
     *,
@@ -332,42 +349,43 @@ def _claim_evaluation_role(
         return
     if not confirm:
         raise ValueError("sealed evaluation role requires explicit confirmation")
-    access_path = root / "evaluation_access.json"
-    registry = _access_registry(access_path)
-    roles = registry["roles"]
-    if not isinstance(roles, dict):
-        raise RuntimeError("validated evaluation access roles changed type")
-    key = _ROLES[role][1]
-    if role == "final-test":
-        gate = roles.get("pre_pr_gate")
-        if (
-            not isinstance(gate, Mapping)
-            or gate.get("status") != "completed"
-            or gate.get("gate_passed") is not True
-        ):
-            raise ValueError("final-test requires a completed passing pre-PR gate")
-    existing = roles.get(key)
-    expected_identity = {
-        "access_binding_sha256": binding,
-        "output_dir": str(output_dir.resolve()),
-    }
-    if existing is not None:
-        if (
-            not resume
-            or not isinstance(existing, Mapping)
-            or any(existing.get(field) != value for field, value in expected_identity.items())
-        ):
-            raise ValueError(f"sealed evaluation role {role} was already opened")
-        return
-    if resume:
-        raise ValueError("sealed evaluation --resume has no matching access record")
-    roles[key] = {
-        **expected_identity,
-        "status": "opened",
-        "report_sha256": None,
-        "gate_passed": None,
-    }
-    _atomic_json(access_path, registry)
+    with _evaluation_access_lock(root):
+        access_path = root / "evaluation_access.json"
+        registry = _access_registry(access_path)
+        roles = registry["roles"]
+        if not isinstance(roles, dict):
+            raise RuntimeError("validated evaluation access roles changed type")
+        key = _ROLES[role][1]
+        if role == "final-test":
+            gate = roles.get("pre_pr_gate")
+            if (
+                not isinstance(gate, Mapping)
+                or gate.get("status") != "completed"
+                or gate.get("gate_passed") is not True
+            ):
+                raise ValueError("final-test requires a completed passing pre-PR gate")
+        existing = roles.get(key)
+        expected_identity = {
+            "access_binding_sha256": binding,
+            "output_dir": str(output_dir.resolve()),
+        }
+        if existing is not None:
+            if (
+                not resume
+                or not isinstance(existing, Mapping)
+                or any(existing.get(field) != value for field, value in expected_identity.items())
+            ):
+                raise ValueError(f"sealed evaluation role {role} was already opened")
+            return
+        if resume:
+            raise ValueError("sealed evaluation --resume has no matching access record")
+        roles[key] = {
+            **expected_identity,
+            "status": "opened",
+            "report_sha256": None,
+            "gate_passed": None,
+        }
+        _atomic_json(access_path, registry)
 
 
 def complete_evaluation_role(
@@ -386,26 +404,28 @@ def complete_evaluation_role(
         _SHA64.fullmatch(value) is None for value in (access_binding_sha256, report_sha256)
     ):
         raise ValueError("evaluation completion identity differs")
-    access_path = Path(root).resolve() / "evaluation_access.json"
-    registry = _access_registry(access_path)
-    roles = registry["roles"]
-    if not isinstance(roles, dict):
-        raise RuntimeError("validated evaluation access roles changed type")
-    key = _ROLES[evaluation_role][1]
-    entry = roles.get(key)
-    if (
-        not isinstance(entry, Mapping)
-        or entry.get("access_binding_sha256") != access_binding_sha256
-        or entry.get("status") not in {"opened", "completed"}
-    ):
-        raise ValueError("evaluation completion does not match the opened role")
-    roles[key] = {
-        **dict(entry),
-        "status": "completed",
-        "report_sha256": report_sha256,
-        "gate_passed": bool(gate_passed),
-    }
-    _atomic_json(access_path, registry)
+    resolved_root = Path(root).resolve()
+    with _evaluation_access_lock(resolved_root):
+        access_path = resolved_root / "evaluation_access.json"
+        registry = _access_registry(access_path)
+        roles = registry["roles"]
+        if not isinstance(roles, dict):
+            raise RuntimeError("validated evaluation access roles changed type")
+        key = _ROLES[evaluation_role][1]
+        entry = roles.get(key)
+        if (
+            not isinstance(entry, Mapping)
+            or entry.get("access_binding_sha256") != access_binding_sha256
+            or entry.get("status") not in {"opened", "completed"}
+        ):
+            raise ValueError("evaluation completion does not match the opened role")
+        roles[key] = {
+            **dict(entry),
+            "status": "completed",
+            "report_sha256": report_sha256,
+            "gate_passed": bool(gate_passed),
+        }
+        _atomic_json(access_path, registry)
 
 
 def _declared_hash(
@@ -452,6 +472,7 @@ def load_evaluation_bundle(
     output_dir: Path,
     confirm_sealed_role: bool,
     resume: bool,
+    expected_data_identity_sha256: str | None = None,
 ) -> EvaluationDataBundle:
     """Validate one role and return only the requested overlapping strata."""
 
@@ -499,6 +520,8 @@ def load_evaluation_bundle(
     identity = evaluation.get("data_identity_sha256")
     if not isinstance(identity, str) or _SHA64.fullmatch(identity) is None:
         raise ValueError("evaluation data identity differs")
+    if expected_data_identity_sha256 is not None and identity != expected_data_identity_sha256:
+        raise ValueError("evaluation data identity differs from the trained adapters")
     _claim_evaluation_role(
         resolved,
         role=evaluation_role,

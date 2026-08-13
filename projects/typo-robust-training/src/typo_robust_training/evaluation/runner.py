@@ -147,6 +147,7 @@ def _access_binding(
                     "condition_id": descriptor.condition_id,
                     "adapter_sha256": descriptor.adapter_sha256,
                     "training_data_sha256": descriptor.training_data_sha256,
+                    "data_identity_sha256": descriptor.data_identity_sha256,
                     "localization_sha256": descriptor.localization_sha256,
                 }
                 for descriptor in descriptors
@@ -257,6 +258,15 @@ def _validate_injected_inputs(
     training_hashes = {item.training_data_sha256 for item in resolved_descriptors}
     if len(training_hashes) != 1:
         raise ValueError("evaluation adapters were trained from different data identities")
+    data_identities = {item.data_identity_sha256 for item in resolved_descriptors}
+    if len(data_identities) != 1:
+        raise ValueError("evaluation adapters use different train/evaluation splits")
+    for condition in {item.condition for item in resolved_descriptors}:
+        config_hashes = {
+            item.config_sha256 for item in resolved_descriptors if item.condition == condition
+        }
+        if len(config_hashes) != 1:
+            raise ValueError(f"evaluation {condition} training configuration differs across seeds")
     if patch_window is None:
         resolved_window = load_patch_window(
             config.layer_selection_path,
@@ -267,11 +277,25 @@ def _validate_injected_inputs(
         raise TypeError("injected evaluation patch window is invalid")
     else:
         resolved_window = patch_window
+    localized = tuple(
+        item for item in resolved_descriptors if item.condition == "localized-state-distillation"
+    )
+    if localized and (
+        resolved_window.localization_sha256 is None
+        or any(
+            item.localization_sha256 != resolved_window.localization_sha256 for item in localized
+        )
+    ):
+        raise ValueError("evaluation patch window differs from adapter localization evidence")
     if data_bundle is not None:
         if not isinstance(data_bundle, EvaluationDataBundle):
             raise TypeError("injected evaluation data bundle is invalid")
         if data_bundle.evaluation_role != config.evaluation_role:
             raise ValueError("injected evaluation data role differs")
+        if {item.data_identity_sha256 for item in resolved_descriptors} != {
+            data_bundle.data_identity_sha256
+        }:
+            raise ValueError("evaluation adapters differ from the evaluation data identity")
     return resolved_descriptors, resolved_window, data_bundle
 
 
@@ -310,6 +334,12 @@ def run_robustness_evaluation(
     run_path = output_dir / "run.json"
     if config.resume and not run_path.is_file():
         raise ValueError("evaluation --resume requires an existing run manifest")
+    prior_run: Mapping[str, object] | None = None
+    if config.resume:
+        loaded = strict_loads(run_path.read_text(encoding="utf-8"), context=str(run_path))
+        if not isinstance(loaded, Mapping):
+            raise ValueError("evaluation resume run manifest must contain an object")
+        prior_run = loaded
     work_dir = output_dir / ".evaluate-work"
     work_dir.mkdir(exist_ok=True)
     records_path = output_dir / "records.jsonl"
@@ -324,9 +354,15 @@ def run_robustness_evaluation(
         output_dir=output_dir,
         confirm_sealed_role=config.confirm_sealed_role,
         resume=config.resume,
+        expected_data_identity_sha256=next(
+            iter(item.data_identity_sha256 for item in resolved_descriptors)
+        ),
     )
     if any(not set(pair.strata) & set(config.splits) for pair in bundle.records):
         raise ValueError("evaluation data bundle contains an unrequested record")
+    adapter_data_identities = {item.data_identity_sha256 for item in resolved_descriptors}
+    if adapter_data_identities != {bundle.data_identity_sha256}:
+        raise ValueError("evaluation adapters differ from the evaluation data identity")
     if runtime_factory is None:
         from typo_robust_training.evaluation.runtime import (
             HuggingFaceRobustnessEvaluationRuntime,
@@ -364,9 +400,28 @@ def run_robustness_evaluation(
         "resume": config.resume,
         "python": platform.python_version(),
     }
-    _write_json(run_path, {**run_base, "status": "running", "started_at": _now()})
+    prior_runtime: dict[str, object] = {}
+    started_at = _now()
+    if prior_run is not None:
+        if (
+            prior_run.get("schema_version") != run_base["schema_version"]
+            or prior_run.get("operation") != run_base["operation"]
+            or prior_run.get("access_binding_sha256") != binding
+        ):
+            raise ValueError("evaluation resume run binding differs")
+        previous_runtime = prior_run.get("runtime", {})
+        if not isinstance(previous_runtime, Mapping) or any(
+            not isinstance(name, str) or not isinstance(value, Mapping)
+            for name, value in previous_runtime.items()
+        ):
+            raise ValueError("evaluation resume runtime provenance differs")
+        prior_runtime = {name: dict(value) for name, value in previous_runtime.items()}
+        previous_started_at = prior_run.get("started_at")
+        if isinstance(previous_started_at, str) and previous_started_at:
+            started_at = previous_started_at
+    _write_json(run_path, {**run_base, "status": "running", "started_at": started_at})
     observations: list[EvaluationObservation] = []
-    runtime_provenance: dict[str, object] = {}
+    runtime_provenance: dict[str, object] = prior_runtime
     try:
         for descriptor in _condition_inventory(resolved_descriptors):
             condition_id = _condition_id(descriptor)

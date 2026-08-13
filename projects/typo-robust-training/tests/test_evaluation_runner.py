@@ -234,8 +234,7 @@ def test_runner_rejects_evaluation_data_or_patch_evidence_drift(tmp_path: Path) 
     config = _config(tmp_path, tmp_path / "evaluation", resume=False)
 
     wrong_data = tuple(
-        replace(descriptor, data_identity_sha256="0" * 64)
-        for descriptor in descriptors
+        replace(descriptor, data_identity_sha256="0" * 64) for descriptor in descriptors
     )
     with pytest.raises(ValueError, match="evaluation data identity"):
         run_robustness_evaluation(
