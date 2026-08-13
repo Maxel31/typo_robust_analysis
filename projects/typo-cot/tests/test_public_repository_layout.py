@@ -442,6 +442,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         "answer-line-deletion",
         "build-one-token-tables",
         "build-rebuttal-manifest",
+        "build-robustness-training-data",
         "build-typo-warning-summary",
         "build-input-corrector-summary",
         "build-restoration-order-table",
