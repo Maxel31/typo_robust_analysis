@@ -305,9 +305,7 @@ def test_root_workspace_isolates_training_from_the_reproduction_package() -> Non
     assert root_project["project"]["dependencies"] == []
     assert "sources" not in root_project["tool"]["uv"]
     assert root_project["tool"]["uv"]["workspace"]["members"] == ["projects/typo-cot"]
-    assert root_project["tool"]["uv"]["workspace"]["exclude"] == [
-        "projects/typo-robust-training"
-    ]
+    assert root_project["tool"]["uv"]["workspace"]["exclude"] == ["projects/typo-robust-training"]
 
 
 def test_development_dependencies_match_the_public_test_toolchain() -> None:
@@ -453,15 +451,23 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         "edit-count-sensitivity",
         "fixed-window-answer-patching",
         "freeze-generic-localization-pairs",
+        "freeze-robustness-evaluation",
         "layerwise-answer-patching",
         "layerwise-kl-patching",
+        "localize-robustness-components",
         "model-scale-cot-swap",
         "patch-coordinate-controls",
         "patch-position-controls",
         "patch-text-combination",
         "prepare-edited-pairs",
         "targeting-fidelity-audit",
+        "train-global-state-alignment",
+        "train-localized-state-distillation",
+        "train-noisy-language-model",
+        "train-output-matching",
+        "train-random-window-state-distillation",
         "typo-warning-prompt",
+        "evaluate-typo-robustness",
         "input-corrector-audit",
         "restoration-order-accuracy",
         "select-distillation-layers",

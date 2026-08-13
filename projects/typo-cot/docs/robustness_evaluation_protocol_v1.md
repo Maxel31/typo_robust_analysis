@@ -97,8 +97,8 @@ never silently changes its denominator.
 
 Every realized pair is serialized as canonical JSONL. The registry records its
 SHA-256 digest, source revision, generator version, condition, seed, item count,
-and coverage. Realized text is the source of truth and is never regenerated due
-to a library or environment update.
+and coverage. The frozen realized text is the canonical evaluation artifact and
+is never regenerated due to a library or environment update.
 
 ## 4. Generation and extraction
 
