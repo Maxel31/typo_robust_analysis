@@ -26,8 +26,8 @@ _SUPPORTED = frozenset(
     }
 )
 _ANSWER_WORD = re.compile(r"[A-Za-z]{3,}")
+_DOLLAR_MATH_SPAN = re.compile(r"\$[^$\n]+\$")
 _MATH_SPANS = (
-    re.compile(r"\$[^$\n]+\$"),
     re.compile(r"\\\([^\n]*?\\\)"),
     re.compile(r"\\\[[^\n]*?\\\]"),
     re.compile(r"\\[A-Za-z]+(?:\{[^{}]*\})*"),
@@ -126,8 +126,9 @@ def evaluation_eligible_word_spans(
     stop = _question_stop(record)
     question = record.text[:stop]
     answer_words = {word.casefold() for word in _ANSWER_WORD.findall(record.answer)}
+    math_patterns = (*_MATH_SPANS, _DOLLAR_MATH_SPAN) if record.task == "math_500" else _MATH_SPANS
     math_spans = tuple(
-        match.span() for pattern in _MATH_SPANS for match in pattern.finditer(question)
+        match.span() for pattern in math_patterns for match in pattern.finditer(question)
     )
     return tuple(
         (start, end)

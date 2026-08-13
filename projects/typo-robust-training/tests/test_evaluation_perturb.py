@@ -75,6 +75,26 @@ def test_math_and_identifier_spans_are_never_typo_targets() -> None:
     assert {"Carefully", "evaluate", "before", "describing", "ordinary", "prose"} <= words
 
 
+def test_gsm8k_currency_does_not_hide_prose_between_dollar_amounts() -> None:
+    text = "Ann pays $12 for every single delicious cupcake and $30 total."
+    record = CleanRecord(
+        source="gsm8k",
+        source_revision="a" * 40,
+        source_split="test",
+        source_id="gsm8k:currency-fixture",
+        group_id="gsm8k:currency-fixture",
+        text=text,
+        task="gsm8k",
+        answer="42",
+        metadata={},
+    )
+
+    spans = evaluation_eligible_word_spans(record, minimum_word_letters=3)
+    words = {text[start:stop] for start, stop in spans}
+
+    assert {"every", "single", "delicious", "cupcake", "and"} <= words
+
+
 def test_fixed_evaluation_typo_has_exact_distinct_edits_and_is_replayable() -> None:
     record = _record()
     first = generate_evaluation_typo(

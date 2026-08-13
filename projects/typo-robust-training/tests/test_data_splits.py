@@ -172,3 +172,16 @@ def test_balanced_group_role_coverage_cannot_pin_a_giant_group_to_a_tiny_role() 
     assert assignments["giant"] == "train"
     assert counts["tune"] < 0.05 * sum(sizes.values())
     assert counts["held_out"] < 0.05 * sum(sizes.values())
+
+
+def test_balanced_group_role_coverage_uses_weights_when_all_groups_are_required() -> None:
+    sizes = {"big": 1_000, "mid": 10, "small": 5}
+    assignments = assign_balanced_group_roles(
+        sizes,
+        seed=42,
+        namespace="small-inventory-fixture",
+        weights={"train": 0.70, "tune": 0.10, "held_out": 0.20},
+    )
+
+    assert assignments["big"] == "train"
+    assert set(assignments.values()) == {"train", "tune", "held_out"}

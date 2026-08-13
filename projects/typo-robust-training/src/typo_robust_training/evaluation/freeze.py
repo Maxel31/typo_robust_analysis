@@ -198,7 +198,15 @@ def _exclusions(root: Path) -> _Exclusions:
         return frozenset(values)
 
     def clean_texts(rows: Sequence[Mapping[str, object]]) -> tuple[str, ...]:
-        return tuple(str(row["text"]) for row in rows if isinstance(row.get("text"), str))
+        texts: list[str] = []
+        for row in rows:
+            value = row.get("text")
+            if not isinstance(value, str) or not value:
+                value = row.get("clean_text")
+            if not isinstance(value, str) or not value:
+                raise ValueError("evaluation exclusion row has no clean text")
+            texts.append(value)
+        return tuple(texts)
 
     return _Exclusions(
         hard_source_ids=frozenset(source_id(row) for row in (*training, *diagnostic)),
