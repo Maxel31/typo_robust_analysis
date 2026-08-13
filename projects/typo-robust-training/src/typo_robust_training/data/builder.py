@@ -444,6 +444,7 @@ def _pair_payload(
         "typo_text": typo_text,
         "task": record.task,
         "answer": record.answer,
+        "metadata": dict(record.metadata),
         "operation": edits[0].operation if len(edits) == 1 else "multiple",
         "operations": [edit.operation for edit in edits],
         "edit_count": len(edits),

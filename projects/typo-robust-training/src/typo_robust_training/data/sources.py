@@ -6,6 +6,7 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import urllib.request
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
@@ -44,7 +45,7 @@ def _multiple_choice_text(question: str, choices: tuple[tuple[str, str], ...]) -
     return question + "\n" + "\n".join(f"{label}. {text}" for label, text in choices)
 
 
-def _segment_document(record: CleanRecord, *, character_limit: int) -> CleanRecord:
+def segment_document(record: CleanRecord, *, character_limit: int) -> CleanRecord:
     if not isinstance(record, CleanRecord) or record.task is not None:
         raise TypeError("document segmentation requires a non-task CleanRecord")
     if (
@@ -105,8 +106,13 @@ def _format_huggingface_record(
     elif source_name == "gsm8k":
         source_id = f"{split}-{index}"
         text = _text(row.get("question"), field="question")
-        answer = _text(row.get("answer"), field="answer")
+        reference_solution = _text(row.get("answer"), field="answer")
+        matches = re.findall(r"####\s*(-?\d[\d,]*(?:\.\d+)?)", reference_solution)
+        if len(matches) != 1:
+            raise ValueError("GSM8K answer must contain exactly one canonical #### number")
+        answer = matches[0].replace(",", "")
         group_id = source_id
+        metadata["reference_solution"] = reference_solution
     elif source_name == "mmlu":
         source_id = f"{split}-{index}"
         choices = _choices(row.get("choices"))
@@ -389,7 +395,7 @@ class HuggingFaceDataSourceProvider:
             urls, _ = self._remote_dolma_urls(source)
             payloads = (payload for url in urls for payload in self._remote_dolma_rows(url))
         for index, payload in enumerate(payloads):
-            yield _segment_document(
+            yield segment_document(
                 _format_huggingface_record("dolma", source, "train", index, payload),
                 character_limit=self.protocol.document_character_window,
             )
@@ -425,7 +431,7 @@ class HuggingFaceDataSourceProvider:
                     raise ValueError(f"dataset {source_name}/{split} emitted a non-object row")
                 record = _format_huggingface_record(source_name, source, split, index, row)
                 if source_name == "fineweb_edu":
-                    record = _segment_document(
+                    record = segment_document(
                         record,
                         character_limit=self.protocol.document_character_window,
                     )
@@ -507,4 +513,4 @@ class HuggingFaceTokenCounter:
         return len(token_ids)
 
 
-__all__ = ["HuggingFaceDataSourceProvider", "HuggingFaceTokenCounter"]
+__all__ = ["HuggingFaceDataSourceProvider", "HuggingFaceTokenCounter", "segment_document"]

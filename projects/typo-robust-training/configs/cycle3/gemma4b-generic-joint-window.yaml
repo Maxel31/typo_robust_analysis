@@ -1,0 +1,60 @@
+{
+  "schema_version": "robustness-confirmatory-localization-config/v1",
+  "model": {
+    "id": "google/gemma-3-4b-it",
+    "revision": "093f9f388b31de276ce2de164bdc2081324b9767",
+    "dtype": "bfloat16",
+    "decoder_layers": 34
+  },
+  "data": {
+    "source": "fineweb_edu",
+    "dataset": "HuggingFaceFW/fineweb-edu",
+    "subset": "sample-10BT",
+    "revision": "fc9850dff5e2d0f8f776efe41b24a1c49556cfc5",
+    "split": "train",
+    "selection_records": 200,
+    "validation_records": 200,
+    "seed": 42,
+    "character_window": 8192,
+    "max_sequence_length": 512,
+    "minimum_following_tokens": 16
+  },
+  "typos": {
+    "edit_count": 1,
+    "minimum_word_letters": 2,
+    "operations": [
+      "keyboard-neighbor-substitution",
+      "deletion",
+      "duplication"
+    ],
+    "assignment": "balanced-deterministic/v1"
+  },
+  "readout": {
+    "coordinate": "edited-word-final-token/v1",
+    "continuation": "first-16-clean-corpus-tokens-after-edit/v1",
+    "teacher_forced_tokens": 16,
+    "token_start": 2,
+    "token_stop": 16,
+    "denominator_min_exclusive": 0.000000001
+  },
+  "intervention": {
+    "direction": "clean-to-typo",
+    "patch_site": "complete-decoder-block-residual-output",
+    "scan_layers": "all/v1",
+    "window_width_rule": "round-half-up-decoder-layers-divided-by-six/v1"
+  },
+  "selection": {
+    "metric": "median-pairwise-kl-restoration/v1",
+    "tie_break": "smallest-start-layer/v1",
+    "validation_rule": "bootstrap-95ci-lower-strictly-positive/v1",
+    "minimum_eligible": 160,
+    "minimum_eligible_fraction": 0.8,
+    "random_control_rule": "sha256-drawn-nonoverlapping-same-width/v1",
+    "random_control_seed": 42
+  },
+  "statistics": {
+    "bootstrap_replicates": 10000,
+    "bootstrap_seed": 42,
+    "confidence_level": 0.95
+  }
+}

@@ -1,20 +1,20 @@
 # typo頑健化学習
 
 このprojectは、投稿済みActivation Patching論文の固定環境を変更せず、typo頑健なadapterを
-学習・評価します。本手法は今後の研究です。固定したPR前gateでclean性能を維持しながら
-held-out typo頑健性が向上するまで、実装branchはlocalに保持し、学習PRを作成しません。
+学習・評価します。本手法は今後の研究です。実装は機能単位のPRでreviewし、生成data、
+checkpoint、実験結果は、固定評価protocolが主張を許すまでlocal artifactとして保持します。
 
 科学的な実装順は次のとおり固定します。
 
 ```text
-training/evaluation data -> layer localization -> neuron/head localization
+training/evaluation data -> 汎用文章上の因果layer localization
                          -> adapter training -> held-out evaluation
 ```
 
-neuron screeningでlayer localizationを置き換えません。診断dataで選んだlayer window内の
-componentだけを候補にし、少なくとも2つの診断taskでanswer-levelまたはmulti-token KLの
-causal patchingを通過させます。state-alignment lossは選択componentだけで計算し、parameterは
-そのcomponentを含むlayerのLoRA adapterを通じて更新します。
+確証用targetは、汎用文章へのjoint Activation Patchingで選ぶmodel固有residual-stream windowです。
+選択にはmulti-token KL restorationだけを使い、downstream answer、clean-harm score、neuron/head
+screening、学習結果からtargetを変更しません。neuron/head localizationは提案手法ではなく、
+探索的な負の結果として保持します。
 
 ## 環境
 
@@ -24,13 +24,15 @@ commandはrepository rootから実行します。学習projectは独自のlockfi
 ```bash
 TRAIN_PROJECT=projects/typo-robust-training
 TRAIN_ROOT=projects/typo-robust-training/results
-GPU_ID=0
+GPU_SELECT=5
+GPU_VALIDATE=6
+GPU_ID=5  # exploratory commands below
 
 uv sync --project "${TRAIN_PROJECT}" --locked
 ```
 
-公開commandは科学的操作ごとに1つです。このrepositoryでの実装検証では`GPU_ID=3`として
-物理GPU 3だけを使います。公開cloneでは利用可能な物理GPUを1枚だけ指定できます。
+公開commandは科学的操作ごとに1つです。現在の実験では物理GPU 5と6を使用します。
+公開cloneでは利用可能なGPUを指定できます。
 
 ## 1. leakageを防いだ学習・評価dataを構築する
 
@@ -92,21 +94,64 @@ PR前gateを通過したcheckpointが固定されるまで封印します。
 corpus text、生成pair、checkpoint、run outputは`results/`以下のlocal artifactであり、commit
 しません。
 
-## 2. layer windowを選択する
+## 2. 確証用の因果windowを凍結・選択する
+
+selection用200件とvalidation用200件のFineWeb-Edu pairを、学習data・全評価tierとID非重複で
+先に凍結します。各documentへ、論文と同じkeyboard-neighbor substitution、deletion、duplication
+から1 typoを決定的に適用します。幅`max(1, floor(L / 6 + 0.5))`の全連続windowについて、
+編集語末tokenのcomplete decoder-block residual outputをjoint patchします。token 2--16の
+pair単位multi-token KL restorationのmedianが最大のwindowを選び、完全同値なら浅い方を選びます。
+独立validationのbootstrap 95%信頼区間下限が0より大きいことを必須とします。
 
 ```bash
-CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+LOCALIZATION_ROOT="${TRAIN_ROOT}/localization/generic-joint-window-v1"
+
+uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot freeze-generic-localization-pairs \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-generic-joint-window.yaml" \
+  --exclude-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --output-dir "${LOCALIZATION_ROOT}/pairs"
+
+CUDA_VISIBLE_DEVICES="${GPU_SELECT}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot select-generic-joint-patch-window \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-generic-joint-window.yaml" \
+  --selection-manifest "${LOCALIZATION_ROOT}/pairs/selection_manifest.jsonl" \
+  --gpu-id "${GPU_SELECT}" \
+  --output-dir "${LOCALIZATION_ROOT}/selection" \
+  --resume
+
+CUDA_VISIBLE_DEVICES="${GPU_VALIDATE}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot validate-generic-joint-patch-window \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-generic-joint-window.yaml" \
+  --validation-manifest "${LOCALIZATION_ROOT}/pairs/validation_manifest.jsonl" \
+  --window-selection "${LOCALIZATION_ROOT}/selection/window_selection.json" \
+  --gpu-id "${GPU_VALIDATE}" \
+  --output-dir "${LOCALIZATION_ROOT}/validation" \
+  --resume
+```
+
+pair identity、除外集合、実現typo、source/model revision、pair別KL分母、scan、出力hashを
+run manifestへ結合します。独立validationを通過しないmodelではlocalized-state学習を行いません。
+validation不合格時も監査artifactは保存しますが、commandは非0で終了します。
+
+### reasoning taskを使った旧探索selector
+
+component localizationの負の結果を再現するために旧selectorも残しますが、確証用targetの選択には
+使用しません。
+
+```bash
+CUDA_VISIBLE_DEVICES="${GPU_SELECT}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot select-distillation-layers \
   --config "${TRAIN_PROJECT}/configs/gemma4b-layer-selection.yaml" \
   --diagnostic-manifest "${TRAIN_ROOT}/data/gemma4b-sanity/diagnostic_manifest.jsonl" \
   --tasks gsm8k mmlu arc \
-  --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/localization/layers"
+  --gpu-id "${GPU_SELECT}" \
+  --output-dir "${TRAIN_ROOT}/localization/layers" \
+  --resume
 ```
 
-編集語末位置で全layerを走査し、診断data上のmulti-token KL restoration、answer restoration、
-clean harmから連続windowを1つ固定します。`[0,6)`は論文に由来するGemmaの候補であり、
-強制される答えではありません。
+このcommandはreasoning診断dataの複合scoreを用いた過去のwindowを記録します。answer/harm項は、
+上記の確証用generic-text selectorでは使用しません。
 
 ## 3. neuronとattention headを因果的に局所化する
 

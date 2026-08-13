@@ -33,6 +33,9 @@ def test_readmes_freeze_matching_operation_commands_and_artifacts() -> None:
     contents = english.read_text(encoding="utf-8")
     for command in (
         "build-robustness-training-data",
+        "freeze-generic-localization-pairs",
+        "select-generic-joint-patch-window",
+        "validate-generic-joint-patch-window",
         "select-distillation-layers",
         "localize-robustness-components",
         "train-noisy-language-model",
@@ -54,8 +57,15 @@ def test_readmes_freeze_matching_operation_commands_and_artifacts() -> None:
         "run.json",
     ):
         assert artifact in contents
-    assert "GPU_ID=3" in contents
-    assert "no training pull request" in contents
+    japanese_contents = japanese.read_text(encoding="utf-8")
+    assert "GPU_SELECT=5" in contents
+    assert "GPU_SELECT=5" in japanese_contents
+    assert "GPU_VALIDATE=6" in contents
+    assert "GPU_VALIDATE=6" in japanese_contents
+    assert "GPU_ID=3" not in contents
+    assert "GPU_ID=3" not in japanese_contents
+    assert "feature-scoped pull" in contents
+    assert "generated data, checkpoints, and experimental results remain" in contents
 
 
 def test_sanity_config_pins_source_revisions_roles_and_unseen_axes() -> None:

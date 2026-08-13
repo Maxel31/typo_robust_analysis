@@ -188,6 +188,35 @@ def _apply_operation(
     raise ValueError(f"unsupported training typo operation: {operation}")
 
 
+def apply_typo_operation_to_word(
+    word: str,
+    operation: str,
+    rng: random.Random,
+    *,
+    natural_substitutions: Mapping[str, Mapping[str, float]] | None = None,
+) -> str:
+    """Apply one named character edit for a caller with an explicit RNG."""
+
+    if not isinstance(word, str) or not word or not any(character.isalpha() for character in word):
+        raise ValueError("typo operation requires a non-empty alphabetic word")
+    if not isinstance(operation, str) or not operation:
+        raise ValueError("typo operation name must be non-empty")
+    if not isinstance(rng, random.Random):
+        raise TypeError("typo operation rng must be random.Random")
+    if operation == "adjacent-transposition":
+        candidates = [index for index in range(len(word) - 1) if word[index] != word[index + 1]]
+        if not candidates:
+            raise ValueError("word has no non-identity adjacent transposition")
+        index = rng.choice(candidates)
+        return word[:index] + word[index + 1] + word[index] + word[index + 2 :]
+    return _apply_operation(
+        word,
+        operation,
+        rng,
+        natural_substitutions=natural_substitutions or {},
+    )
+
+
 def _derived_rng(*, seed: int, epoch: int, variant: int, record_id: str) -> random.Random:
     material = f"typo-generator/v1\0{seed}\0{epoch}\0{variant}\0{record_id}".encode("utf-8")
     return random.Random(int.from_bytes(hashlib.sha256(material).digest(), "big"))

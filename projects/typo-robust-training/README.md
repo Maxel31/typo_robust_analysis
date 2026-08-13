@@ -2,22 +2,22 @@
 
 This project trains and evaluates typo-robust adapters without changing the
 locked environment used to reproduce the submitted activation-patching paper.
-The method is prospective: implementation branches remain local and no training pull request
-is opened until the frozen pre-PR gate demonstrates
-better held-out typo robustness while preserving clean performance.
+The method is prospective. Implementation is reviewed in feature-scoped pull
+requests, while generated data, checkpoints, and experimental results remain
+local artifacts until the frozen evaluation protocol permits a claim.
 
 The scientific order is fixed as:
 
 ```text
-training/evaluation data -> layer localization -> neuron/head localization
+training/evaluation data -> generic-text causal layer localization
                          -> adapter training -> held-out evaluation
 ```
 
-Layer localization is not replaced by neuron screening. Components are first
-screened inside a diagnostic-data-selected layer window and then must pass
-answer-level or multi-token-KL causal patching on at least two diagnostic
-tasks. State-alignment loss is measured only on the selected components;
-parameters are updated through LoRA adapters on their containing layers.
+The confirmatory target is a model-specific residual-stream window selected by
+joint Activation Patching on generic text. Selection uses only multi-token KL
+restoration; downstream answers, clean-harm scores, neuron/head screening, and
+training outcomes cannot alter the target. Neuron/head localization remains an
+exploratory negative-result analysis rather than part of the proposed method.
 
 ## Environment
 
@@ -28,14 +28,15 @@ and its paper-reproduction environment are not refreshed.
 ```bash
 TRAIN_PROJECT=projects/typo-robust-training
 TRAIN_ROOT=projects/typo-robust-training/results
-GPU_ID=0
+GPU_SELECT=5
+GPU_VALIDATE=6
+GPU_ID=5  # exploratory commands below
 
 uv sync --project "${TRAIN_PROJECT}" --locked
 ```
 
-All released commands take one scientific operation. For local implementation
-validation in this repository, use physical GPU 3 by setting `GPU_ID=3`; a
-public clone may select any single available physical GPU.
+All released commands take one scientific operation. The current experiment
+uses physical GPUs 5 and 6; a public clone may select any available devices.
 
 ## 1. Build leakage-resistant training and evaluation data
 
@@ -104,22 +105,69 @@ The command writes:
 Corpus text, generated pairs, checkpoints, and run outputs are local artifacts
 under `results/` and are never committed.
 
-## 2. Select a layer window
+## 2. Freeze and select the confirmatory causal window
+
+The selector first freezes 200 selection and 200 validation FineWeb-Edu pairs
+that are disjoint from training and every evaluation tier. Each document gets
+one deterministic typo from the paper's keyboard-neighbor substitution,
+deletion, and duplication operations. For every contiguous window of width
+`max(1, floor(L / 6 + 0.5))`, it jointly patches complete decoder-block
+residual outputs at the edited-word-final token. The greatest median pairwise
+multi-token KL restoration over tokens 2--16 wins; exact ties select the
+shallower window. Independent validation must have a bootstrap 95% confidence
+interval whose lower bound is above zero.
 
 ```bash
-CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+LOCALIZATION_ROOT="${TRAIN_ROOT}/localization/generic-joint-window-v1"
+
+uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot freeze-generic-localization-pairs \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-generic-joint-window.yaml" \
+  --exclude-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --output-dir "${LOCALIZATION_ROOT}/pairs"
+
+CUDA_VISIBLE_DEVICES="${GPU_SELECT}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot select-generic-joint-patch-window \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-generic-joint-window.yaml" \
+  --selection-manifest "${LOCALIZATION_ROOT}/pairs/selection_manifest.jsonl" \
+  --gpu-id "${GPU_SELECT}" \
+  --output-dir "${LOCALIZATION_ROOT}/selection" \
+  --resume
+
+CUDA_VISIBLE_DEVICES="${GPU_VALIDATE}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot validate-generic-joint-patch-window \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-generic-joint-window.yaml" \
+  --validation-manifest "${LOCALIZATION_ROOT}/pairs/validation_manifest.jsonl" \
+  --window-selection "${LOCALIZATION_ROOT}/selection/window_selection.json" \
+  --gpu-id "${GPU_VALIDATE}" \
+  --output-dir "${LOCALIZATION_ROOT}/validation" \
+  --resume
+```
+
+Pair identities, exclusions, realized typos, source/model revisions, per-pair
+KL denominators, scans, and output hashes are bound into run manifests. A model
+whose independent validation fails is not eligible for localized-state
+training. Failed validation retains its audit artifacts and exits nonzero.
+
+### Exploratory reasoning-task selector
+
+The earlier exploratory selector remains available to reproduce the negative
+component-localization study, but it does not choose the confirmatory target.
+
+```bash
+CUDA_VISIBLE_DEVICES="${GPU_SELECT}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot select-distillation-layers \
   --config "${TRAIN_PROJECT}/configs/gemma4b-layer-selection.yaml" \
   --diagnostic-manifest "${TRAIN_ROOT}/data/gemma4b-sanity/diagnostic_manifest.jsonl" \
   --tasks gsm8k mmlu arc \
-  --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/localization/layers"
+  --gpu-id "${GPU_SELECT}" \
+  --output-dir "${TRAIN_ROOT}/localization/layers" \
+  --resume
 ```
 
-This command scans every layer at edited-word-final positions. It freezes one
-contiguous window from multi-token KL restoration, answer restoration, and
-clean-harm scores on diagnostic data only. `[0,6)` is a paper-derived Gemma
-candidate, not a forced answer.
+This command records the historical composite-score window using diagnostic
+reasoning data. Its answer and harm terms are not used by the confirmatory
+generic-text selector above.
 
 ## 3. Causally localize neurons and attention heads
 
