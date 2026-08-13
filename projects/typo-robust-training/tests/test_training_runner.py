@@ -22,6 +22,7 @@ from typo_robust_training.training.runner import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BASE_CONFIG = PROJECT_ROOT / "configs/baselines/noisy-language-model.yaml"
+GLOBAL_STATE_CONFIG = PROJECT_ROOT / "configs/baselines/global-state-alignment.yaml"
 NATURAL_SUBSTITUTIONS = {
     character: {"z" if character != "z" else "x": 1.0} for character in "abcdefghijklmnopqrstuvwxyz"
 }
@@ -72,6 +73,16 @@ def _config(tmp_path: Path) -> Path:
     return path
 
 
+def _global_state_config(tmp_path: Path) -> Path:
+    payload = json.loads(GLOBAL_STATE_CONFIG.read_text(encoding="utf-8"))
+    payload["optimization"]["gradient_accumulation_steps"] = 2
+    payload["optimization"]["max_optimizer_steps"] = 3
+    payload["optimization"]["checkpoint_every_optimizer_steps"] = 1
+    path = tmp_path / "global-state-training.yaml"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
 class _Runtime:
     def __init__(self, *, fail_after: int | None = None) -> None:
         self.fail_after = fail_after
@@ -108,7 +119,11 @@ class _Runtime:
         (path / "adapter.txt").write_text(str(self.optimizer_steps), encoding="utf-8")
 
     def provenance(self) -> dict[str, object]:
-        return {"runtime": "offline-training-fixture/v1", "gpu_id": "3"}
+        return {
+            "runtime": "offline-training-fixture/v1",
+            "gpu_id": "3",
+            "decoder_layers": 4,
+        }
 
 
 def _run_config(
@@ -118,9 +133,10 @@ def _run_config(
     *,
     resume: bool,
     tracking: bool = False,
+    condition: str = "noisy-language-model",
 ):
     return AdapterTrainingRunConfig(
-        condition="noisy-language-model",
+        condition=condition,
         config_path=config,
         training_data_dir=tmp_path,
         layer_selection_path=None,
@@ -267,3 +283,35 @@ def test_runner_starts_wandb_with_a_self_explanatory_series_name(
     assert "gpu_id" not in captured["bindings"]
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["gpu_id"] == "3"
+
+
+def test_runner_names_all_layer_state_control_from_runtime_depth(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    tracker = _Tracker()
+
+    def start_tracker(**kwargs: object) -> _Tracker:
+        captured.update(kwargs)
+        return tracker
+
+    monkeypatch.setattr(runner_module, "start_wandb_training_tracker", start_tracker)
+    run_adapter_training(
+        _run_config(
+            tmp_path,
+            _global_state_config(tmp_path),
+            tmp_path / "global-state-series",
+            resume=False,
+            tracking=True,
+            condition="global-state-alignment",
+        ),
+        runtime=_Runtime(),
+        data_bundle=_bundle(tmp_path),
+    )
+
+    presentation = captured["presentation"]
+    assert presentation.name == (
+        "Historical control · Global relative-MSE state alignment · "
+        "L0–3 · Gemma-3-4B-IT · 3 steps · seed 42"
+    )
