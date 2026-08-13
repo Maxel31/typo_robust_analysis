@@ -308,16 +308,25 @@ def _materialize_usable_pair(
         or maximum_target_stop <= 0
     ):
         raise ValueError("retained token window contains no eligible typo target")
-    constrained = materialize_training_pair(
-        source,
-        generator=generator,
-        epoch=epoch,
-        force_noop=force_noop,
-        maximum_target_stop=maximum_target_stop,
-    )
-    if not validator(constrained):
-        raise RuntimeError("constrained typo generation did not retain every edited coordinate")
-    return constrained
+    margin = 0
+    while maximum_target_stop - margin > 0:
+        target_stop = maximum_target_stop - margin
+        try:
+            constrained = materialize_training_pair(
+                source,
+                generator=generator,
+                epoch=epoch,
+                force_noop=force_noop,
+                maximum_target_stop=target_stop,
+            )
+        except ValueError as exc:
+            if "contains no eligible typo target" not in str(exc):
+                raise
+            break
+        if validator(constrained):
+            return constrained
+        margin = 1 if margin == 0 else margin * 2
+    raise ValueError("no tokenizer-visible synthetic typo target could be generated")
 
 
 def _monitor_violation_streak(
@@ -355,6 +364,47 @@ def _monitor_violation_streak(
 
 def _metrics_step_path(work_dir: Path, optimizer_step: int) -> Path:
     return work_dir / "metrics" / f"optimizer-step-{optimizer_step:06d}.json"
+
+
+def _expected_adapter_checkpoint_steps(
+    *,
+    optimizer_steps: int,
+    interval: int,
+) -> tuple[int, ...]:
+    """List every periodic checkpoint plus the current completed boundary."""
+
+    if (
+        isinstance(optimizer_steps, bool)
+        or not isinstance(optimizer_steps, int)
+        or optimizer_steps < 0
+        or isinstance(interval, bool)
+        or not isinstance(interval, int)
+        or interval <= 0
+    ):
+        raise ValueError("adapter checkpoint inventory inputs are invalid")
+    if optimizer_steps == 0:
+        return ()
+    periodic = set(range(interval, optimizer_steps + 1, interval))
+    periodic.add(optimizer_steps)
+    return tuple(sorted(periodic))
+
+
+def _validate_adapter_checkpoints(
+    output_dir: Path,
+    *,
+    optimizer_steps: int,
+    interval: int,
+) -> tuple[int, ...]:
+    """Fail before training when a resumed checkpoint inventory is incomplete."""
+
+    expected = _expected_adapter_checkpoint_steps(
+        optimizer_steps=optimizer_steps,
+        interval=interval,
+    )
+    for step in expected:
+        if not (output_dir / f"adapter-step-{step:06d}").is_dir():
+            raise RuntimeError(f"training adapter checkpoint is missing at step {step}")
+    return expected
 
 
 def _assemble_metrics(path: Path, *, work_dir: Path, optimizer_steps: int) -> None:
@@ -584,6 +634,11 @@ def run_adapter_training(
         )
         cursor = checkpoint.cursor
         runtime.load_state(checkpoint.state_path)
+        _validate_adapter_checkpoints(
+            output_dir,
+            optimizer_steps=cursor.optimizer_steps,
+            interval=protocol.checkpoint_every_optimizer_steps,
+        )
     elif protocol.calibration_micro_batches:
         calibration = getattr(runtime, "calibrate_state_weight", None)
         if not callable(calibration):
@@ -862,11 +917,9 @@ def run_adapter_training(
             optimizer_steps=cursor.optimizer_steps,
         )
         runtime.save_adapter(adapter_path)
-        expected_adapter_steps = tuple(
-            step
-            for step in range(1, cursor.optimizer_steps + 1)
-            if step % protocol.checkpoint_every_optimizer_steps == 0
-            or step == cursor.optimizer_steps
+        expected_adapter_steps = _expected_adapter_checkpoint_steps(
+            optimizer_steps=cursor.optimizer_steps,
+            interval=protocol.checkpoint_every_optimizer_steps,
         )
         adapter_checkpoints: list[dict[str, int | str]] = []
         for step in expected_adapter_steps:

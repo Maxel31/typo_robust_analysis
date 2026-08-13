@@ -17,6 +17,7 @@ from typo_robust_training.training.runner import (
     AdapterTrainingRunConfig,
     TrainingMicroStepResult,
     TrainingMicroStepScales,
+    _materialize_usable_pair,
     _monitor_violation_streak,
     _optimizer_step_telemetry,
     normalized_accumulation_scales,
@@ -290,6 +291,87 @@ def test_runner_resume_matches_uninterrupted_sample_sequence(tmp_path: Path) -> 
             "student_tokens": 42,
         },
     ]
+
+
+def test_resume_rejects_a_missing_adapter_checkpoint_before_more_training(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    bundle = _bundle(tmp_path)
+    output = tmp_path / "missing-adapter"
+    interrupted = _Runtime(fail_after=4)
+    with pytest.raises(RuntimeError, match="injected interruption"):
+        run_adapter_training(
+            _run_config(tmp_path, config, output, resume=False),
+            runtime=interrupted,
+            data_bundle=bundle,
+        )
+    (output / "adapter-step-000001").rename(output / "adapter-step-000001-missing")
+
+    resumed = _Runtime()
+    with pytest.raises(RuntimeError, match="adapter checkpoint is missing at step 1"):
+        run_adapter_training(
+            _run_config(tmp_path, config, output, resume=True),
+            runtime=resumed,
+            data_bundle=bundle,
+        )
+    assert resumed.seen == []
+
+
+def test_state_pair_generation_retries_until_typo_tokens_are_visible(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _source(0)
+    attempts: list[int | None] = []
+
+    def materialize(
+        candidate_source: TrainingSource,
+        *,
+        generator: TypoGenerator,
+        epoch: int,
+        force_noop: bool | None,
+        maximum_target_stop: int | None = None,
+    ) -> TrainingPair:
+        del generator, force_noop
+        attempts.append(maximum_target_stop)
+        return TrainingPair(
+            record_id=candidate_source.record_id,
+            clean_text=candidate_source.clean_text,
+            typo_text=candidate_source.clean_text.replace("airport", "arport"),
+            task=None,
+            answer=None,
+            metadata={"maximum_target_stop": maximum_target_stop},
+            edits=(),
+            is_noop=False,
+            epoch=epoch,
+        )
+
+    class Runtime:
+        @staticmethod
+        def pair_is_usable(pair: TrainingPair) -> bool:
+            limit = pair.metadata["maximum_target_stop"]
+            return isinstance(limit, int) and limit <= 24
+
+        @staticmethod
+        def retained_clean_character_extent(_pair: TrainingPair) -> int:
+            return 32
+
+    monkeypatch.setattr(
+        "typo_robust_training.training.runner.materialize_training_pair",
+        materialize,
+    )
+    pair = _materialize_usable_pair(
+        source=source,
+        generator=_bundle(tmp_path).generator,
+        epoch=0,
+        force_noop=False,
+        protocol=SimpleNamespace(schema_version="robustness-adapter-training-config/v3"),
+        runtime=Runtime(),
+    )
+
+    assert pair.metadata["maximum_target_stop"] == 24
+    assert attempts == [None, 32, 31, 30, 28, 24]
 
 
 def test_cycle2_runner_enforces_exact_clean_noisy_pairs_per_optimizer_step(

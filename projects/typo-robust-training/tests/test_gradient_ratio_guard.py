@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typo_robust_training.training.runtime import next_gradient_ratio_violations
+import math
+
+from typo_robust_training.training.runtime import _finite_ppl_ratio, next_gradient_ratio_violations
 
 
 def test_gradient_ratio_guard_counts_only_consecutive_startup_violations() -> None:
@@ -23,3 +25,9 @@ def test_gradient_ratio_guard_counts_only_consecutive_startup_violations() -> No
 
 def test_gradient_ratio_becomes_diagnostic_after_the_first_checkpoint() -> None:
     assert next_gradient_ratio_violations(2, ratio=4.0, optimizer_steps=50, guard_steps=50) == 0
+
+
+def test_collapsed_model_ppl_ratio_stays_finite_for_the_safety_gate() -> None:
+    ratio = _finite_ppl_ratio(1_000.0)
+    assert math.isfinite(ratio)
+    assert ratio > 1e300

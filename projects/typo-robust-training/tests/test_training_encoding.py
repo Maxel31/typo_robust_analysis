@@ -78,8 +78,8 @@ def test_rendered_reasoning_pair_shifts_edits_and_marks_only_answer_suffix() -> 
     assert rendered.typo_text.startswith("Question:\nThe arport works.\nAnswer:")
     assert rendered.clean_text[slice(*rendered.clean_edit_spans[0])] == "airport"
     assert rendered.typo_text[slice(*rendered.typo_edit_spans[0])] == "arport"
-    assert rendered.clean_text[slice(*rendered.clean_answer_span)] == " 72"
-    assert rendered.typo_text[slice(*rendered.typo_answer_span)] == " 72"
+    assert rendered.clean_text[slice(*rendered.clean_answer_span)] == " 72\n"
+    assert rendered.typo_text[slice(*rendered.typo_answer_span)] == " 72\n"
 
 
 def test_encoding_excludes_edited_targets_and_exposes_word_final_state_positions() -> None:

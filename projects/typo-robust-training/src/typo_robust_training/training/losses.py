@@ -225,9 +225,20 @@ def residual_window_cosine_loss(
         or len(student) != decoder_layers + 1
     ):
         raise ValueError("residual state hidden-state inventory differs from decoder layers")
-    if not layers or tuple(sorted(set(layers))) != layers or layers[-1] >= decoder_layers:
+    if (
+        not layers
+        or tuple(sorted(set(layers))) != layers
+        or layers[0] < 0
+        or layers[-1] >= decoder_layers
+    ):
         raise ValueError("residual state layers must be non-empty, ordered, and in range")
-    if not clean or len(clean) != len(typo) or len(set(clean)) != len(clean):
+    if (
+        not clean
+        or len(clean) != len(typo)
+        or len(set(clean)) != len(clean)
+        or len(set(typo)) != len(typo)
+        or min((*clean, *typo)) < 0
+    ):
         raise ValueError("residual state edited positions must align one-to-one")
     if not math.isfinite(float(epsilon)) or float(epsilon) <= 0.0:
         raise ValueError("residual state epsilon must be positive")

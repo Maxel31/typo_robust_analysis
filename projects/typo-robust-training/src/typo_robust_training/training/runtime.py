@@ -8,6 +8,7 @@ import math
 import os
 import platform
 import random
+import sys
 from collections import deque
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -61,6 +62,16 @@ def _cpu_cuda_rng_states(states: object) -> tuple[object, ...]:
     ):
         raise ValueError("CUDA RNG states must be non-empty one-dimensional byte tensors")
     return tuple(state.detach().cpu().contiguous() for state in states)
+
+
+def _finite_ppl_ratio(log_nll_delta: float) -> float:
+    """Exponentiate a log-PPL delta without bypassing the monitor safety gate."""
+
+    if not math.isfinite(float(log_nll_delta)):
+        raise ValueError("log PPL ratio must be finite")
+    maximum_log = math.log(sys.float_info.max)
+    minimum_log = math.log(sys.float_info.min)
+    return math.exp(min(max(float(log_nll_delta), minimum_log), maximum_log))
 
 
 def next_gradient_ratio_violations(
@@ -245,6 +256,7 @@ class HuggingFaceAdapterTrainingRuntime:
         self._gradient_ratio_violations = 0
         self._optimizer_steps = 0
         self._prepared_encodings: deque[tuple[TrainingPair, PairedEncoding]] = deque()
+        self._monitor_base_clean: tuple[float, int] | None = None
         self._monitor_base_natural: tuple[float, int] | None = None
         torch.cuda.reset_peak_memory_stats()
 
@@ -553,14 +565,19 @@ class HuggingFaceAdapterTrainingRuntime:
         from typo_robust_training.evaluation.runtime import (
             aligned_forward_kl_sum,
             causal_nll_and_forward_kl,
+            causal_nll_sum,
         )
         from typo_robust_training.training.pairs import align_unchanged_token_positions
 
         rows = tuple(records)
         if not rows or any(not isinstance(row, EvaluationCorpusRecord) for row in rows):
             raise ValueError("training monitor requires frozen evaluation corpus records")
-        base_nll = student_nll = 0.0
-        clean_tokens = 0
+        if self._monitor_base_clean is None:
+            base_nll, clean_tokens = 0.0, 0
+        else:
+            base_nll, clean_tokens = self._monitor_base_clean
+        student_nll = 0.0
+        student_clean_tokens = 0
         clean_kl = 0.0
         clean_kl_tokens = 0
         if self._monitor_base_natural is None:
@@ -585,21 +602,19 @@ class HuggingFaceAdapterTrainingRuntime:
                         attention_mask=clean_mask,
                         use_cache=False,
                     )
-                    teacher_nll, count, _zero_kl, _zero_count = causal_nll_and_forward_kl(
-                        teacher_clean.logits,
-                        clean_ids,
-                        base_logits=teacher_clean.logits,
-                    )
                     candidate_nll, candidate_count, kl_sum, kl_count = causal_nll_and_forward_kl(
                         student_clean.logits,
                         clean_ids,
                         base_logits=teacher_clean.logits,
                     )
-                    if candidate_count != count:
-                        raise RuntimeError("training monitor clean token counts differ")
-                    base_nll += teacher_nll
+                    if self._monitor_base_clean is None:
+                        teacher_nll, count = causal_nll_sum(teacher_clean.logits, clean_ids)
+                        if candidate_count != count:
+                            raise RuntimeError("training monitor clean token counts differ")
+                        base_nll += teacher_nll
+                        clean_tokens += count
                     student_nll += candidate_nll
-                    clean_tokens += count
+                    student_clean_tokens += candidate_count
                     clean_kl += kl_sum
                     clean_kl_tokens += kl_count
                 if record.kind == "natural":
@@ -653,18 +668,22 @@ class HuggingFaceAdapterTrainingRuntime:
             self.student.train()
         if (
             clean_tokens <= 0
+            or student_clean_tokens != clean_tokens
             or clean_kl_tokens <= 0
             or natural_tokens <= 0
             or student_natural_tokens != natural_tokens
         ):
             raise ValueError("training monitor has no valid frozen tokens")
+        if self._monitor_base_clean is None:
+            self._monitor_base_clean = (base_nll, clean_tokens)
         if self._monitor_base_natural is None:
             self._monitor_base_natural = (base_natural_kl, natural_tokens)
         base_gap = base_natural_kl / natural_tokens
         student_gap = student_natural_kl / natural_tokens
+        log_ppl_ratio = student_nll / clean_tokens - base_nll / clean_tokens
         return {
             "clean_kl_nats_per_token": clean_kl / clean_kl_tokens,
-            "fineweb_edu_ppl_ratio": math.exp(student_nll / clean_tokens - base_nll / clean_tokens),
+            "fineweb_edu_ppl_ratio": _finite_ppl_ratio(log_ppl_ratio),
             "base_natural_clean_typo_kl": base_gap,
             "natural_clean_typo_kl": student_gap,
             "natural_clean_typo_kl_ratio": student_gap / max(base_gap, 1e-12),

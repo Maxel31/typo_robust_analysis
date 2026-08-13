@@ -87,6 +87,7 @@ def test_concrete_monitor_runs_and_caches_frozen_teacher_natural_gap() -> None:
     runtime.teacher = _LogitModel(0.1)
     runtime.student = _LogitModel(0.2)
     runtime.student.train()
+    runtime._monitor_base_clean = None
     runtime._monitor_base_natural = None
     records = (_record(natural=False), _record(natural=True))
 

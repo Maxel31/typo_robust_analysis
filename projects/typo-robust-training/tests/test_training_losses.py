@@ -111,3 +111,25 @@ def test_residual_window_cosine_is_bounded_position_local_and_stops_teacher_grad
     assert changed[1].grad is not None
     assert torch.count_nonzero(changed[1].grad[0, :2, :]) == 0
     assert changed[3].grad is None
+
+
+@pytest.mark.parametrize(
+    ("layers", "clean", "typo"),
+    [((-1, 0), (1,), (1,)), ((0,), (-1,), (1,)), ((0,), (1,), (-1,))],
+)
+def test_residual_window_cosine_rejects_negative_indices(
+    layers: tuple[int, ...],
+    clean: tuple[int, ...],
+    typo: tuple[int, ...],
+) -> None:
+    hidden = tuple(torch.randn(1, 4, 3) for _ in range(4))
+    with pytest.raises(ValueError, match="layers|positions"):
+        residual_window_cosine_loss(
+            hidden,
+            hidden,
+            layer_indices=layers,
+            clean_positions=clean,
+            typo_positions=typo,
+            decoder_layers=3,
+            epsilon=1e-8,
+        )

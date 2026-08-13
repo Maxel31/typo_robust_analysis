@@ -64,8 +64,10 @@ def render_training_pair(pair: TrainingPair) -> RenderedTrainingPair:
         clean_text = clean_prompt + answer_suffix
         typo_text = typo_prompt + answer_suffix
         clean_shift = typo_shift = len(prefix)
-        clean_answer_span = len(clean_prompt), len(clean_prompt) + 1 + len(pair.answer)
-        typo_answer_span = len(typo_prompt), len(typo_prompt) + 1 + len(pair.answer)
+        # Keep the historical v1 answer target, including its trailing newline.
+        # Truncation validation below checks the answer content boundary separately.
+        clean_answer_span = len(clean_prompt), len(clean_text)
+        typo_answer_span = len(typo_prompt), len(typo_text)
     clean_spans = tuple(
         (edit.clean_char_span[0] + clean_shift, edit.clean_char_span[1] + clean_shift)
         for edit in pair.edits
@@ -148,7 +150,14 @@ def _answer_targets(
     if span is None:
         return ()
     start, stop = span
-    if stop > max((token_stop for _token_start, token_stop in offsets), default=0):
+    # ``render_training_pair`` appends exactly one newline. It remains a legacy
+    # hard target when tokenized, while only the answer content must be visible
+    # for truncation detection because some tokenizers omit whitespace offsets.
+    required_content_stop = stop - 1
+    if required_content_stop > max(
+        (token_stop for _token_start, token_stop in offsets),
+        default=0,
+    ):
         if required:
             raise ValueError("reasoning answer suffix was truncated from the training sequence")
         return ()
