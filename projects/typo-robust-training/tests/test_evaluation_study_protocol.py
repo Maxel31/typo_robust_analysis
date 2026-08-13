@@ -68,7 +68,10 @@ def test_default_study_freezes_tiers_population_typos_statistics_and_gates() -> 
         "final_test": {"fineweb_edu": 1000, "dolma": 1000, "natural_pairs": 1000},
     }
     assert protocol.corpus_max_tokens == 512
+    assert protocol.corpus_truncation == "tokenizer-right-prefix/v1"
     assert protocol.corpus_ppl_sources == ("fineweb_edu", "dolma")
+    assert protocol.corpus_clean_kl_source == "fineweb_edu"
+    assert protocol.corpus_natural_alignment == "exact-unchanged-token-spans/v1"
     assert protocol.audit_records == {"tune": 100, "pre_pr_gate": 500, "final_test": 500}
     assert protocol.shots == {
         "gsm8k": 8,

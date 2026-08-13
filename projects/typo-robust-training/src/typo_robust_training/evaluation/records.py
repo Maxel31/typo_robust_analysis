@@ -68,6 +68,22 @@ _FIELDS = {
     "tokenization_stratum",
     "audit",
 }
+_CORPUS_FIELDS = {
+    "schema_version",
+    "record_id",
+    "condition",
+    "seed",
+    "kind",
+    "source",
+    "clean_nll_sum",
+    "clean_nll_tokens",
+    "typo_nll_sum",
+    "typo_nll_tokens",
+    "base_clean_kl_sum",
+    "base_clean_kl_tokens",
+    "natural_clean_typo_kl_sum",
+    "natural_clean_typo_kl_tokens",
+}
 
 
 def _trajectory(value: object, *, field_name: str) -> tuple[float, ...]:
@@ -302,4 +318,124 @@ class EvaluationObservation:
         )
 
 
-__all__ = ["EvaluationObservation"]
+def _finite_nonnegative(value: object, *, field_name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"evaluation corpus {field_name} must be numeric")
+    result = float(value)
+    if not math.isfinite(result) or result < 0.0:
+        raise ValueError(f"evaluation corpus {field_name} must be finite and non-negative")
+    return result
+
+
+def _token_count(value: object, *, field_name: str, minimum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValueError(f"evaluation corpus {field_name} must be an integer >= {minimum}")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class CorpusEvaluationObservation:
+    """Per-document sufficient statistics for frozen corpus preservation gates."""
+
+    record_id: str
+    condition: str
+    seed: int | None
+    kind: str
+    source: str
+    clean_nll_sum: float
+    clean_nll_tokens: int
+    typo_nll_sum: float
+    typo_nll_tokens: int
+    base_clean_kl_sum: float
+    base_clean_kl_tokens: int
+    natural_clean_typo_kl_sum: float
+    natural_clean_typo_kl_tokens: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.record_id, str) or _SHA64.fullmatch(self.record_id) is None:
+            raise ValueError("evaluation corpus observation record_id must be a SHA-256 digest")
+        if self.condition not in _CONDITIONS:
+            raise ValueError("evaluation corpus observation condition is unsupported")
+        if self.condition == "base":
+            if self.seed is not None:
+                raise ValueError("base corpus observation must not have a seed")
+        elif isinstance(self.seed, bool) or not isinstance(self.seed, int) or self.seed < 0:
+            raise ValueError("adapter corpus observation must have a non-negative seed")
+        if self.kind not in {"clean-corpus", "natural"}:
+            raise ValueError("evaluation corpus observation kind is unsupported")
+        if not isinstance(self.source, str) or not self.source:
+            raise ValueError("evaluation corpus observation source must be non-empty")
+        for field_name in (
+            "clean_nll_sum",
+            "typo_nll_sum",
+            "base_clean_kl_sum",
+            "natural_clean_typo_kl_sum",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                _finite_nonnegative(getattr(self, field_name), field_name=field_name),
+            )
+        for field_name, minimum in (
+            ("clean_nll_tokens", 1),
+            ("typo_nll_tokens", 0),
+            ("base_clean_kl_tokens", 1),
+            ("natural_clean_typo_kl_tokens", 0),
+        ):
+            _token_count(getattr(self, field_name), field_name=field_name, minimum=minimum)
+        if self.kind == "clean-corpus":
+            if self.typo_nll_tokens != 0 or self.natural_clean_typo_kl_tokens != 0:
+                raise ValueError("clean corpus observations cannot contain natural-pair metrics")
+            if self.typo_nll_sum != 0.0 or self.natural_clean_typo_kl_sum != 0.0:
+                raise ValueError("clean corpus observations cannot contain natural-pair sums")
+        elif self.typo_nll_tokens < 1 or self.natural_clean_typo_kl_tokens < 1:
+            raise ValueError("natural corpus observations require typo likelihood and aligned KL")
+
+    @property
+    def condition_id(self) -> str:
+        return "base" if self.condition == "base" else f"{self.condition}:seed-{self.seed}"
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": "robustness-evaluation-corpus-observation/v1",
+            "record_id": self.record_id,
+            "condition": self.condition,
+            "seed": self.seed,
+            "kind": self.kind,
+            "source": self.source,
+            "clean_nll_sum": self.clean_nll_sum,
+            "clean_nll_tokens": self.clean_nll_tokens,
+            "typo_nll_sum": self.typo_nll_sum,
+            "typo_nll_tokens": self.typo_nll_tokens,
+            "base_clean_kl_sum": self.base_clean_kl_sum,
+            "base_clean_kl_tokens": self.base_clean_kl_tokens,
+            "natural_clean_typo_kl_sum": self.natural_clean_typo_kl_sum,
+            "natural_clean_typo_kl_tokens": self.natural_clean_typo_kl_tokens,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> CorpusEvaluationObservation:
+        if (
+            not isinstance(value, Mapping)
+            or set(value) != _CORPUS_FIELDS
+            or value.get("schema_version") != "robustness-evaluation-corpus-observation/v1"
+        ):
+            raise ValueError("evaluation corpus observation fields or schema differ")
+        return cls(
+            record_id=value["record_id"],  # type: ignore[arg-type]
+            condition=value["condition"],  # type: ignore[arg-type]
+            seed=value["seed"],  # type: ignore[arg-type]
+            kind=value["kind"],  # type: ignore[arg-type]
+            source=value["source"],  # type: ignore[arg-type]
+            clean_nll_sum=value["clean_nll_sum"],  # type: ignore[arg-type]
+            clean_nll_tokens=value["clean_nll_tokens"],  # type: ignore[arg-type]
+            typo_nll_sum=value["typo_nll_sum"],  # type: ignore[arg-type]
+            typo_nll_tokens=value["typo_nll_tokens"],  # type: ignore[arg-type]
+            base_clean_kl_sum=value["base_clean_kl_sum"],  # type: ignore[arg-type]
+            base_clean_kl_tokens=value["base_clean_kl_tokens"],  # type: ignore[arg-type]
+            natural_clean_typo_kl_sum=value["natural_clean_typo_kl_sum"],  # type: ignore[arg-type]
+            natural_clean_typo_kl_tokens=value["natural_clean_typo_kl_tokens"],  # type: ignore[arg-type]
+        )
+
+
+__all__ = ["CorpusEvaluationObservation", "EvaluationObservation"]
