@@ -187,6 +187,11 @@ def _make_real_docker_helper(
     review_tests.mkdir(mode=0o755)
     (state / "workspace").write_text(f"{REPOSITORY_ROOT}\n", encoding="utf-8")
     (state / "envs" / "selected-projects").write_text("root\n", encoding="utf-8")
+    git_mask = state / "git-mask"
+    if (REPOSITORY_ROOT / ".git").is_dir():
+        git_mask.mkdir()
+    else:
+        git_mask.touch()
     for path in (state, state / "envs", shared, review_tests):
         path.chmod(0o755)
 
@@ -225,6 +230,7 @@ def test_run_accepts_container_relative_venv_symlink(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     docker_log = Path(environment["FAKE_DOCKER_LOG"]).read_text(encoding="utf-8")
     assert "dst=/workspace/tests/.review-tests,readonly" in docker_log
+    assert "dst=/workspace/.git,readonly" in docker_log
     assert "/workspace/tests/.review-tests/test_probe.py" in docker_log
 
 
@@ -256,7 +262,7 @@ def test_run_rejects_a_symlinked_review_test_mount(tmp_path: Path) -> None:
 
     result = _run(helper, environment, "root", str(probe))
 
-    assert result.returncode == 2
+    assert result.returncode == 64
     assert "not a real directory" in result.stderr
 
 
@@ -265,7 +271,7 @@ def test_self_test_fails_cleanly_before_prepare(tmp_path: Path) -> None:
 
     result = _run(helper, environment, "--self-test")
 
-    assert result.returncode == 2
+    assert result.returncode == 64
     assert "sandbox is not prepared" in result.stderr
 
 
@@ -313,7 +319,16 @@ def test_real_docker_executes_a_review_test_through_the_nested_mount(
 ) -> None:
     helper, review_tests, environment = _make_real_docker_helper(tmp_path)
     probe = review_tests / "test_probe.py"
-    probe.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    probe.write_text(
+        "from pathlib import Path\n"
+        "def test_git_metadata_is_masked():\n"
+        "    metadata = Path('/workspace/.git')\n"
+        "    if metadata.is_file():\n"
+        "        assert not metadata.read_text()\n"
+        "    else:\n"
+        "        assert not any(metadata.iterdir())\n",
+        encoding="utf-8",
+    )
 
     result = _run(helper, environment, "root", str(probe))
 
@@ -344,6 +359,12 @@ def test_timeout_removes_the_actual_container(tmp_path: Path) -> None:
     assert not running.stdout.strip(), running.stdout
 
 
+def test_harness_refusal_does_not_overlap_pytest_statuses() -> None:
+    source = HELPER.read_text(encoding="utf-8")
+
+    assert "exit 64" in source
+
+
 def test_missing_test_path_is_a_usage_error(tmp_path: Path) -> None:
     helper, _, review_tests, environment = _make_helper(tmp_path)
     prepared = _prepare(helper, environment)
@@ -351,5 +372,5 @@ def test_missing_test_path_is_a_usage_error(tmp_path: Path) -> None:
 
     result = _run(helper, environment, "root", str(review_tests / "missing.py"))
 
-    assert result.returncode == 2
+    assert result.returncode == 64
     assert result.stderr.startswith("review-falsify:")

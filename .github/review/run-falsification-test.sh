@@ -6,6 +6,7 @@ readonly REVIEW_STATE_DIR="/var/lib/claude-pr-review"
 readonly REVIEW_WORKSPACE_FILE="${REVIEW_STATE_DIR}/workspace"
 readonly REVIEW_ENV_ROOT="${REVIEW_STATE_DIR}/envs"
 readonly REVIEW_BUILD_ROOT="${REVIEW_STATE_DIR}/build"
+readonly REVIEW_GIT_MASK="${REVIEW_STATE_DIR}/git-mask"
 readonly REVIEW_TEST_ROOT="/tmp/claude-review-tests"
 readonly REVIEW_PREPARE_TIMEOUT_SECONDS=1800
 readonly REVIEW_TEST_TIMEOUT_SECONDS=600
@@ -14,7 +15,9 @@ readonly REVIEW_TEST_KILL_AFTER_SECONDS=5
 
 die() {
   printf 'review-falsify: %s\n' "$*" >&2
-  exit 2
+  # pytest reserves statuses 1-5. Keep harness refusal distinguishable from
+  # both a falsifying test failure and a malformed review test.
+  exit 64
 }
 
 require_prepared_workspace() {
@@ -63,10 +66,15 @@ prepare_sandbox() {
   sudo install -d -m 0755 -o root -g root "${REVIEW_STATE_DIR}"
   # A previous run makes the environment root-owned and immutable to the
   # runner. Rebuild it from scratch so retries cannot mix dependency states.
-  sudo rm -rf -- "${REVIEW_ENV_ROOT}" "${REVIEW_BUILD_ROOT}"
+  sudo rm -rf -- "${REVIEW_ENV_ROOT}" "${REVIEW_BUILD_ROOT}" "${REVIEW_GIT_MASK}"
   sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" "${REVIEW_ENV_ROOT}"
   sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" "${REVIEW_BUILD_ROOT}"
   install -d -m 0755 "${REVIEW_BUILD_ROOT}/tmp"
+  if [[ -d "${workspace}/.git" ]]; then
+    sudo install -d -m 0555 -o root -g root "${REVIEW_GIT_MASK}"
+  else
+    sudo install -m 0444 -o root -g root /dev/null "${REVIEW_GIT_MASK}"
+  fi
   printf '%s\n' "${workspace}" | sudo tee "${REVIEW_WORKSPACE_FILE}" >/dev/null
   sudo chmod 0444 "${REVIEW_WORKSPACE_FILE}"
   # The reviewer owns this directory; the sandbox only needs read/execute.
@@ -101,6 +109,7 @@ prepare_sandbox() {
     --user "$(id -u):$(id -g)" \
     --tmpfs /tmp:rw,nosuid,nodev,size=1g \
     --mount "type=bind,src=${workspace},dst=/workspace,readonly" \
+    --mount "type=bind,src=${REVIEW_GIT_MASK},dst=/workspace/.git,readonly" \
     --mount "type=bind,src=${REVIEW_ENV_ROOT},dst=/review-envs" \
     --mount "type=bind,src=${REVIEW_BUILD_ROOT},dst=/review-build" \
     --workdir /workspace \
@@ -195,6 +204,7 @@ run_test() {
     --user 65534:65534 \
     --tmpfs /tmp:rw,nosuid,nodev,size=1g \
     --mount "type=bind,src=${workspace},dst=/workspace,readonly" \
+    --mount "type=bind,src=${REVIEW_GIT_MASK},dst=/workspace/.git,readonly" \
     --mount "type=bind,src=${REVIEW_ENV_ROOT},dst=/review-envs,readonly" \
     --mount "type=bind,src=${REVIEW_TEST_ROOT},dst=${test_mount},readonly" \
     --workdir "${workdir}" \
@@ -219,6 +229,11 @@ self_test() {
     'def test_review_code_is_uncredentialed_offline_and_read_only():' \
     '    forbidden = ("CLAUDE_CODE_OAUTH_TOKEN", "GITHUB_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "REVIEW_SANDBOX_SENTINEL")' \
     '    assert all(name not in os.environ for name in forbidden)' \
+    '    git_metadata = Path("/workspace/.git")' \
+    '    if git_metadata.is_file():' \
+    '        assert not git_metadata.read_text(encoding="utf-8")' \
+    '    else:' \
+    '        assert not any(git_metadata.iterdir())' \
     '    interfaces = {name for _index, name in socket.if_nameindex()}' \
     '    assert interfaces <= {"lo"}, f"unexpected network interfaces: {interfaces}"' \
     '    try:' \
