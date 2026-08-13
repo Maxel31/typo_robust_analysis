@@ -185,6 +185,56 @@ def stable_weighted_split(
     return ordered[-1][0]
 
 
+def assign_balanced_group_roles(
+    group_sizes: Mapping[str, int],
+    *,
+    seed: int,
+    namespace: str,
+    weights: Mapping[str, float],
+) -> dict[str, str]:
+    """Assign whole groups while minimizing deterministic record-count imbalance."""
+
+    if not group_sizes:
+        return {}
+    if any(
+        not group or not isinstance(size, int) or size <= 0 for group, size in group_sizes.items()
+    ):
+        raise ValueError("group sizes require non-empty names and positive integer counts")
+    ordered_weights = _validate_weights(weights)
+    if any(weight <= 0.0 for _role, weight in ordered_weights):
+        raise ValueError("balanced group-role weights must be positive")
+    roles = tuple(role for role, _weight in ordered_weights)
+    record_total = sum(group_sizes.values())
+    targets = {role: record_total * dict(ordered_weights)[role] for role in roles}
+    counts = {role: 0 for role in roles}
+    assignments: dict[str, str] = {}
+
+    def digest(value: str, *, purpose: str) -> str:
+        return hashlib.sha256(f"{namespace}-{purpose}\0{seed}\0{value}".encode("utf-8")).hexdigest()
+
+    ordered_groups = sorted(
+        group_sizes.items(),
+        key=lambda item: (-item[1], digest(item[0], purpose="group-order"), item[0]),
+    )
+    for group, size in ordered_groups:
+
+        def candidate_key(candidate: str) -> tuple[float, str, str]:
+            squared_error = sum(
+                (counts[role] + (size if role == candidate else 0) - targets[role]) ** 2
+                for role in roles
+            )
+            return (
+                squared_error,
+                digest(f"{group}\0{candidate}", purpose="role-tie"),
+                candidate,
+            )
+
+        role = min(roles, key=candidate_key)
+        assignments[group] = role
+        counts[role] += size
+    return assignments
+
+
 def assign_content_splits(
     records: Sequence[CleanRecord],
     *,

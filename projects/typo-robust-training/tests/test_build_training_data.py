@@ -20,6 +20,7 @@ from typo_robust_training.data.records import CleanRecord, NaturalTypoRecord
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "gemma4b-sanity.yaml"
+CYCLE3_CONFIG = PROJECT_ROOT / "configs" / "cycle3" / "gemma4b-data-64m.yaml"
 
 
 def _clean(
@@ -109,6 +110,23 @@ def _small_config(tmp_path: Path) -> Path:
     payload["sampling"]["fixed_pairs_per_source_split"] = 2
     payload["streaming"]["shuffle_buffer_size"] = 32
     path = tmp_path / "fixture-config.yaml"
+    path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    return path
+
+
+def _small_cycle3_config(tmp_path: Path) -> Path:
+    payload = json.loads(CYCLE3_CONFIG.read_text(encoding="utf-8"))
+    payload["training"]["token_budget"] = 240
+    payload["sampling"]["diagnostic_per_task"] = 2
+    payload["sampling"]["fixed_pairs_per_source_split"] = 2
+    payload["streaming"]["shuffle_buffer_size"] = 32
+    payload["splits"]["natural_dictionary_word"] = {
+        "train": 1.0,
+        "tune": 0.0,
+        "pre_pr_gate": 0.0,
+        "final_test": 0.0,
+    }
+    path = tmp_path / "cycle3-fixture-config.yaml"
     path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     return path
 
@@ -222,6 +240,28 @@ def test_builder_is_byte_deterministic_except_for_run_provenance(tmp_path: Path)
         "decontamination_report.json",
     ):
         assert (outputs[0] / filename).read_bytes() == (outputs[1] / filename).read_bytes()
+
+
+def test_cycle3_builder_uses_only_positive_mixture_sources_and_records_word_disjointness(
+    tmp_path: Path,
+) -> None:
+    config_path = _small_cycle3_config(tmp_path)
+    protocol = load_training_data_config(config_path)
+    output = tmp_path / "cycle3"
+
+    result = run_build_training_data(
+        BuildTrainingDataConfig(config_path=config_path, output_dir=output),
+        source_provider=_Provider(protocol.sources),
+        token_counter=lambda text: len(text.split()),
+    )
+
+    assert {row["source"] for row in _rows(result.training_sources_path)} == {"fineweb_edu"}
+    run = json.loads(result.run_path.read_text(encoding="utf-8"))
+    assert run["mixture_tokens"] == {"fineweb_edu": result.training_tokens}
+    assert run["mixture_source_tokens"] == {"fineweb_edu": {"fineweb_edu": result.training_tokens}}
+    report = json.loads(result.decontamination_report_path.read_text(encoding="utf-8"))
+    assert report["natural_dictionary_training_evaluation_disjoint"] is True
+    assert report["natural_repository_grouping"].endswith("balanced-by-record-count/v2")
 
 
 def test_builder_failure_is_visible_and_does_not_publish_final_artifacts(tmp_path: Path) -> None:

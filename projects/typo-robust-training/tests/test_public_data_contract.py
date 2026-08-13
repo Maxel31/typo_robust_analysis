@@ -13,6 +13,7 @@ from typo_robust_training.data.config import load_training_data_config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "gemma4b-sanity.yaml"
+CYCLE3_CONFIG = PROJECT_ROOT / "configs" / "cycle3" / "gemma4b-data-64m.yaml"
 
 
 def _bash_blocks(path: Path) -> tuple[str, ...]:
@@ -42,6 +43,7 @@ def test_readmes_freeze_matching_operation_commands_and_artifacts() -> None:
         "train-output-matching",
         "train-global-state-alignment",
         "train-localized-state-distillation",
+        "freeze-robustness-evaluation",
         "evaluate-typo-robustness",
     ):
         assert f"typo-cot {command}" in "\n".join(_bash_blocks(english))
@@ -83,6 +85,11 @@ def test_sanity_config_pins_source_revisions_roles_and_unseen_axes() -> None:
         "reasoning": 0.10,
         "natural_typo": 0.05,
     }
+    assert config.reasoning_task_mixture == {
+        "gsm8k": pytest.approx(1 / 3),
+        "mmlu": pytest.approx(1 / 3),
+        "arc": pytest.approx(1 / 3),
+    }
     assert config.explicit_clean_pair_probability == 0.10
     assert config.edit_count_probabilities == {"1": 0.50, "2": 0.30, "3-4": 0.20}
     assert set(config.training_operations) == {
@@ -101,6 +108,7 @@ def test_sanity_config_pins_source_revisions_roles_and_unseen_axes() -> None:
         "tune": 0.10,
         "held_out": 0.20,
     }
+    assert config.natural_dictionary_word_split is None
     assert config.fineweb_content_split == {
         "train": 0.80,
         "tune": 0.10,
@@ -121,6 +129,25 @@ def test_sanity_config_pins_source_revisions_roles_and_unseen_axes() -> None:
         assert re.fullmatch(r"[0-9a-f]{40}", source.revision)
         assert source.license
         assert source.role
+
+
+def test_cycle3_config_records_the_exact_training_inventory_for_evaluation_exclusion() -> None:
+    config = load_training_data_config(CYCLE3_CONFIG)
+
+    assert config.schema_version == "robustness-training-data-config/v3"
+    assert config.training_token_budget == 64_000_000
+    assert config.training_mixture == {
+        "fineweb_edu": 1.0,
+        "reasoning": 0.0,
+        "natural_typo": 0.0,
+    }
+    assert config.natural_dictionary_word_split == {
+        "train": 0.60,
+        "tune": 0.10,
+        "pre_pr_gate": 0.10,
+        "final_test": 0.20,
+    }
+    assert re.fullmatch(r"[0-9a-f]{64}", config.sources["github_typo_corpus"].revision)
 
 
 def test_config_rejects_duplicate_keys_nonstandard_numbers_and_moving_revisions(
