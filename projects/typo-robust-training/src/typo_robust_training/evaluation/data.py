@@ -15,6 +15,7 @@ from typing import Iterator
 
 from typo_robust_training.data.config import strict_loads
 from typo_robust_training.data.records import TypoEdit, infer_single_word_typo_edit
+from typo_robust_training.evaluation.perturb import FROZEN_EVALUATION_TYPO_VERSION
 from typo_robust_training.integrity import sha256_file as _sha256_file
 
 
@@ -123,8 +124,42 @@ _FROZEN_REGISTRY_FIELDS = {
     "primary_condition",
     "generator_seed",
     "generator",
+    "task_capacity_census",
     "natural_evaluation_axes",
 }
+
+
+def _valid_task_capacity_census(value: object) -> bool:
+    if not isinstance(value, Mapping) or set(value) != {"tune", "sealed"}:
+        return False
+    expected_tasks = {
+        "tune": {"gsm8k", "mmlu", "arc"},
+        "sealed": {"gsm8k", "mmlu", "arc", "mmlu_pro", "math_500", "commonsense_qa"},
+    }
+    fields = {
+        "source_split_records",
+        "after_exclusions",
+        "typo_grid_eligible",
+        "transposition_eligible",
+        "required",
+    }
+    for role, tasks in expected_tasks.items():
+        rows = value.get(role)
+        if not isinstance(rows, Mapping) or set(rows) != tasks:
+            return False
+        for row in rows.values():
+            if (
+                not isinstance(row, Mapping)
+                or set(row) != fields
+                or any(type(row[field]) is not int or row[field] < 0 for field in fields)
+                or not row["source_split_records"]
+                >= row["after_exclusions"]
+                >= row["typo_grid_eligible"]
+                >= row["required"]
+                or row["transposition_eligible"] > row["typo_grid_eligible"]
+            ):
+                return False
+    return True
 
 
 def _object(path: Path) -> Mapping[str, object]:
@@ -155,7 +190,8 @@ def _frozen_registry(
         or registry.get("opening_order") != ["pre_pr_gate", "final_test"]
         or registry.get("primary_condition") != "random-2"
         or registry.get("generator_seed") != 42
-        or registry.get("generator") != "frozen-evaluation-typo/v1"
+        or registry.get("generator") != FROZEN_EVALUATION_TYPO_VERSION
+        or not _valid_task_capacity_census(registry.get("task_capacity_census"))
         or registry.get("source_config_sha256") != registry.get("exclusion_data_protocol_sha256")
         or registry.get("protocol_sha256") != study_protocol_sha256
         or not isinstance(natural_axes, Mapping)
@@ -171,6 +207,7 @@ def _frozen_registry(
         or run.get("status") != "completed"
         or run.get("protocol_sha256") != study_protocol_sha256
         or run.get("source_config_sha256") != registry.get("source_config_sha256")
+        or run.get("task_capacity_census") != registry.get("task_capacity_census")
         or run.get("registry_sha256") != _sha256_file(registry_path)
     ):
         raise ValueError("frozen evaluation data build is not completed")
@@ -808,7 +845,14 @@ def load_evaluation_bundle(
     expected_data_identity_sha256: str | None = None,
     study_protocol_sha256: str | None = None,
 ) -> EvaluationDataBundle:
-    """Validate one role and return only the requested overlapping strata."""
+    """Validate one role and return only the requested overlapping strata.
+
+    Frozen text is intentionally model-independent: ``model`` and
+    ``model_revision`` retain the legacy-call signature and the revision format
+    check, while the evaluation runner binds the concrete model/config in its
+    experiment and access hashes. The frozen registry instead binds source
+    revisions, the study protocol, and every realized text artifact.
+    """
 
     if evaluation_role not in _ROLES:
         raise ValueError("evaluation role is unsupported")
@@ -820,7 +864,9 @@ def load_evaluation_bundle(
     ):
         raise ValueError("evaluation splits must be unique members of the frozen inventory")
     if (
-        _SHA40.fullmatch(model_revision) is None
+        not isinstance(model, str)
+        or not model
+        or _SHA40.fullmatch(model_revision) is None
         or _SHA64.fullmatch(access_binding_sha256) is None
         or _SHA64.fullmatch(experiment_binding_sha256) is None
     ):

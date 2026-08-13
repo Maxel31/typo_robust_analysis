@@ -18,7 +18,7 @@ def test_default_study_freezes_tiers_population_typos_statistics_and_gates() -> 
     protocol = load_evaluation_study_protocol(DEFAULT_PROTOCOL)
 
     assert protocol.schema_version == "robustness-evaluation-study/v1"
-    assert protocol.protocol_id == "typo-robustness-evaluation-v1.2"
+    assert protocol.protocol_id == "typo-robustness-evaluation-v1.3"
     assert protocol.seed == 42
     assert protocol.training_seeds == (42, 43, 44)
     assert protocol.monitor_task_accuracy_allowed is False
@@ -48,7 +48,7 @@ def test_default_study_freezes_tiers_population_typos_statistics_and_gates() -> 
             "mmlu": 500,
             "arc": 500,
             "mmlu_pro": 500,
-            "math_500": 466,
+            "math_500": 440,
             "commonsense_qa": 500,
         },
     }
@@ -105,9 +105,9 @@ def test_study_rejects_scientific_drift_and_duplicate_json_keys(tmp_path: Path) 
     duplicate = tmp_path / "duplicate.yaml"
     duplicate.write_text(
         DEFAULT_PROTOCOL.read_text(encoding="utf-8").replace(
-            '"protocol_id": "typo-robustness-evaluation-v1.2",',
-            '"protocol_id": "typo-robustness-evaluation-v1.2",\n'
-            '  "protocol_id": "typo-robustness-evaluation-v1.2",',
+            '"protocol_id": "typo-robustness-evaluation-v1.3",',
+            '"protocol_id": "typo-robustness-evaluation-v1.3",\n'
+            '  "protocol_id": "typo-robustness-evaluation-v1.3",',
         ),
         encoding="utf-8",
     )

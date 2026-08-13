@@ -36,6 +36,7 @@ from typo_robust_training.data.task_splits import (
     REASONING_TRAINING_SPLITS,
 )
 from typo_robust_training.evaluation.perturb import (
+    FROZEN_EVALUATION_TYPO_VERSION,
     FrozenEvaluationTypo,
     NoNaturalInjectionTargetError,
     evaluation_eligible_word_spans,
@@ -420,22 +421,80 @@ def _supports_frozen_typo_grid(
     *,
     protocol: EvaluationStudyProtocol,
 ) -> bool:
-    """Require enough valid question words for every frozen text-level condition."""
+    """Require enough distinct words for the primary and severity conditions."""
 
+    words = _eligible_distinct_words(record, protocol=protocol)
+    if words is None:
+        return False
+    required = max((protocol.primary_edit_count, *protocol.severity_edit_counts))
+    return len(words) >= required
+
+
+def _eligible_distinct_words(
+    record: CleanRecord,
+    *,
+    protocol: EvaluationStudyProtocol,
+) -> Mapping[str, str] | None:
     try:
         spans = evaluation_eligible_word_spans(
             record,
             minimum_word_letters=protocol.minimum_word_letters,
         )
     except (TypeError, ValueError):
+        return None
+    return {record.text[start:stop].casefold(): record.text[start:stop] for start, stop in spans}
+
+
+def _supports_transposition(
+    record: CleanRecord,
+    *,
+    protocol: EvaluationStudyProtocol,
+    edit_count: int = 2,
+) -> bool:
+    """Return whether one item supports the held-out transposition condition."""
+
+    words = _eligible_distinct_words(record, protocol=protocol)
+    if words is None:
         return False
-    required = max((protocol.primary_edit_count, *protocol.severity_edit_counts))
     transposable = sum(
-        any(left != right for left, right in zip(word, word[1:]))
-        for start, stop in spans
-        if (word := record.text[start:stop])
+        any(left != right for left, right in zip(word, word[1:])) for word in words.values()
     )
-    return len(spans) >= required and transposable >= 2
+    return transposable >= edit_count
+
+
+def _task_candidate_pool(
+    records: Sequence[CleanRecord | NaturalTypoRecord],
+    *,
+    splits: frozenset[str],
+    protocol: EvaluationStudyProtocol,
+    exclusions: _Exclusions,
+    sealed: bool,
+    required: int,
+) -> tuple[list[CleanRecord], dict[str, int]]:
+    """Return eligible records and a reason-preserving capacity census."""
+
+    source_split_records = 0
+    after_exclusions = 0
+    eligible: list[CleanRecord] = []
+    transposition_eligible = 0
+    for record in records:
+        if not isinstance(record, CleanRecord) or record.source_split not in splits:
+            continue
+        source_split_records += 1
+        if not _eligible_clean(record, exclusions=exclusions, sealed=sealed):
+            continue
+        after_exclusions += 1
+        if not _supports_frozen_typo_grid(record, protocol=protocol):
+            continue
+        eligible.append(record)
+        transposition_eligible += _supports_transposition(record, protocol=protocol)
+    return eligible, {
+        "source_split_records": source_split_records,
+        "after_exclusions": after_exclusions,
+        "typo_grid_eligible": len(eligible),
+        "transposition_eligible": transposition_eligible,
+        "required": required,
+    }
 
 
 def _select_task_items(
@@ -443,24 +502,30 @@ def _select_task_items(
     *,
     protocol: EvaluationStudyProtocol,
     exclusions: _Exclusions,
-) -> dict[str, dict[str, tuple[CleanRecord, ...]]]:
+) -> tuple[
+    dict[str, dict[str, tuple[CleanRecord, ...]]],
+    dict[str, dict[str, dict[str, int]]],
+]:
     selected: dict[str, dict[str, tuple[CleanRecord, ...]]] = {
         "tune": {},
         "pre_pr_gate": {},
         "final_test": {},
     }
+    census: dict[str, dict[str, dict[str, int]]] = {"tune": {}, "sealed": {}}
     tune_tasks = tuple(sorted(_TASK_TUNE_SPLITS))
     tune_base, tune_remainder = divmod(protocol.tune_task_records_total, len(tune_tasks))
     for task_index, source in enumerate(tune_tasks):
         splits = _TASK_TUNE_SPLITS[source]
-        candidates = [
-            record
-            for record in collected[source]
-            if isinstance(record, CleanRecord)
-            and record.source_split in splits
-            and _eligible_clean(record, exclusions=exclusions, sealed=False)
-            and _supports_frozen_typo_grid(record, protocol=protocol)
-        ]
+        count = tune_base + (1 if task_index < tune_remainder else 0)
+        candidates, task_census = _task_candidate_pool(
+            collected[source],
+            splits=splits,
+            protocol=protocol,
+            exclusions=exclusions,
+            sealed=False,
+            required=count,
+        )
+        census["tune"][source] = task_census
         candidates.sort(
             key=lambda record: (
                 record.source_id not in exclusions.prior_tune_source_ids,
@@ -471,24 +536,25 @@ def _select_task_items(
                 ),
             )
         )
-        count = tune_base + (1 if task_index < tune_remainder else 0)
         rows = tuple(candidates[:count])
         if len(rows) != count:
-            raise ValueError(
-                f"evaluation tune task {source} has {len(rows)} records but requires {count}"
-            )
+            raise ValueError(f"evaluation tune task {source} capacity census: {task_census}")
         selected["tune"][source] = rows
 
     sealed_by_task: dict[str, tuple[CleanRecord, ...]] = {}
     for task, splits in _TASK_EVALUATION_SPLITS.items():
-        candidates = tuple(
-            record
-            for record in collected[task]
-            if isinstance(record, CleanRecord)
-            and record.source_split in splits
-            and _eligible_clean(record, exclusions=exclusions, sealed=True)
-            and _supports_frozen_typo_grid(record, protocol=protocol)
+        required = sum(
+            protocol.records_per_task[role].get(task, 0) for role in ("pre_pr_gate", "final_test")
         )
+        candidates, task_census = _task_candidate_pool(
+            collected[task],
+            splits=splits,
+            protocol=protocol,
+            exclusions=exclusions,
+            sealed=True,
+            required=required,
+        )
+        census["sealed"][task] = task_census
         sealed_by_task[task] = _stratified_order(
             candidates,
             namespace=f"evaluation-sealed-task-{task}/v1",
@@ -499,7 +565,9 @@ def _select_task_items(
         count = protocol.records_per_task["pre_pr_gate"][task]
         rows = sealed_by_task[task][:count]
         if len(rows) != count:
-            raise ValueError(f"evaluation pre-PR task {task} has fewer than {count} records")
+            raise ValueError(
+                f"evaluation pre-PR task {task} capacity census: {census['sealed'][task]}"
+            )
         selected["pre_pr_gate"][task] = rows
     for task in protocol.role_tasks["final_test"]:
         count = protocol.records_per_task["final_test"][task]
@@ -510,9 +578,11 @@ def _select_task_items(
         )
         rows = sealed_by_task[task][offset : offset + count]
         if len(rows) != count:
-            raise ValueError(f"evaluation final task {task} has fewer than {count} records")
+            raise ValueError(
+                f"evaluation final task {task} capacity census: {census['sealed'][task]}"
+            )
         selected["final_test"][task] = rows
-    return selected
+    return selected, census
 
 
 def _pair_payload(
@@ -935,8 +1005,16 @@ def _task_rows(
                         minimum_word_letters=protocol.minimum_word_letters,
                     )
                     rows.append(_pair_payload(record, typo, role=role, primary=False))
+            transposition_by_task = {
+                task: tuple(
+                    record
+                    for record in records
+                    if _supports_transposition(record, protocol=protocol)
+                )
+                for task, records in by_task.items()
+            }
             transposition_items = _balanced_subset(
-                by_task,
+                transposition_by_task,
                 total=protocol.held_out_records_total,
                 namespace=f"evaluation-{role}-transposition/v1",
                 seed=protocol.seed,
@@ -1055,7 +1133,7 @@ def run_freeze_robustness_evaluation(
             protocol=study,
             exclusions=exclusions,
         )
-        task_items = _select_task_items(
+        task_items, task_capacity_census = _select_task_items(
             collected,
             protocol=study,
             exclusions=exclusions,
@@ -1131,7 +1209,8 @@ def run_freeze_robustness_evaluation(
             "opening_order": ["pre_pr_gate", "final_test"],
             "primary_condition": study.primary_typo_condition,
             "generator_seed": study.seed,
-            "generator": "frozen-evaluation-typo/v1",
+            "generator": FROZEN_EVALUATION_TYPO_VERSION,
+            "task_capacity_census": task_capacity_census,
             "natural_evaluation_axes": {
                 "language_model_pairs": "repository-disjoint/v1",
                 "task_injection": "corrected-word-disjoint/v1",
@@ -1153,6 +1232,7 @@ def run_freeze_robustness_evaluation(
                 "protocol_sha256": study.config_sha256,
                 "source_config_sha256": sources.config_sha256,
                 "source_provider": dict(source_provider.provenance()),
+                "task_capacity_census": task_capacity_census,
                 "registry_sha256": _sha256_file(output / "registry.json"),
                 "artifact_sha256": artifact_sha,
             },
