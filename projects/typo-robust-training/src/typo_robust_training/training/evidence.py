@@ -22,6 +22,16 @@ class LocalizationEvidence:
     component_selection_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class ResidualStateEvidence:
+    selected_window: tuple[int, int]
+    state_layers: tuple[int, ...]
+    policy: str
+    layer_selection_sha256: str
+    validation_sha256: str | None
+    evidence_sha256: str
+
+
 def _load(path: Path, *, artifact: str) -> tuple[Mapping[str, object], str]:
     resolved = Path(path).resolve()
     if not resolved.is_file():
@@ -130,4 +140,163 @@ def load_localization_evidence(
     )
 
 
-__all__ = ["LocalizationEvidence", "load_localization_evidence"]
+def load_residual_state_evidence(
+    *,
+    layer_selection_path: Path,
+    window_validation_path: Path | None = None,
+    model: str,
+    model_revision: str,
+    decoder_layers: int,
+    policy: str,
+) -> ResidualStateEvidence:
+    """Resolve a causal or same-width random residual window without outcomes."""
+
+    if isinstance(decoder_layers, bool) or not isinstance(decoder_layers, int) or decoder_layers < 2:
+        raise ValueError("residual evidence decoder_layers must be at least two")
+    layers, layer_sha256 = _load(layer_selection_path, artifact="layer selection")
+    schema = layers.get("schema_version")
+    if schema == "robustness-layer-selection/v1":
+        required = {
+            "operation": "select-distillation-layers",
+            "model": model,
+            "model_revision": model_revision,
+        }
+    elif schema == "robustness-joint-window-selection/v1":
+        required = {
+            "operation": "select-generic-joint-patch-window",
+            "model": model,
+            "model_revision": model_revision,
+        }
+    else:
+        raise ValueError("layer selection identity differs from residual training")
+    if any(layers.get(field) != expected for field, expected in required.items()):
+        raise ValueError("layer selection identity differs from residual training")
+    window = layers.get("selected_window")
+    expected_window_fields = (
+        {"start", "stop"}
+        if schema == "robustness-layer-selection/v1"
+        else {"start", "stop", "median_pairwise_restoration", "confidence_interval"}
+    )
+    if not isinstance(window, Mapping) or set(window) != expected_window_fields:
+        raise ValueError("layer selection window fields differ")
+    start = _positive_int(window.get("start"), field="selected_window.start")
+    stop = _positive_int(window.get("stop"), field="selected_window.stop")
+    if not 0 <= start < stop <= decoder_layers:
+        raise ValueError("layer selection window is outside the residual model")
+    width = stop - start
+    validation_sha256: str | None = None
+    if schema == "robustness-joint-window-selection/v1":
+        if window_validation_path is None:
+            raise ValueError("confirmatory layer selection requires independent validation")
+        validation, validation_sha256 = _load(
+            window_validation_path,
+            artifact="window validation",
+        )
+        validation_required = {
+            "schema_version": "robustness-joint-window-validation/v1",
+            "operation": "validate-generic-joint-patch-window",
+            "model": model,
+            "model_revision": model_revision,
+            "config_sha256": layers.get("config_sha256"),
+            "window_selection_sha256": layer_sha256,
+            "validation_rule": "bootstrap-95ci-lower-strictly-positive/v1",
+        }
+        for field, expected in validation_required.items():
+            if validation.get(field) != expected:
+                if field == "window_selection_sha256":
+                    raise ValueError("window validation selection hash differs")
+                raise ValueError("window validation identity differs from residual training")
+        if validation.get("passed") is not True:
+            raise ValueError("confirmatory window did not pass independent validation")
+        validation_window = validation.get("selected_window")
+        if (
+            not isinstance(validation_window, Mapping)
+            or set(validation_window) != {"start", "stop"}
+            or validation_window.get("start") != start
+            or validation_window.get("stop") != stop
+        ):
+            raise ValueError("window validation selected window differs")
+        interval = validation.get("confidence_interval")
+        if (
+            not isinstance(interval, list)
+            or len(interval) != 2
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                for value in interval
+            )
+            or float(interval[0]) <= 0.0
+            or float(interval[0]) > float(interval[1])
+        ):
+            raise ValueError("window validation confidence interval is not strictly positive")
+    elif window_validation_path is not None:
+        raise ValueError("legacy layer selection cannot bind confirmatory validation")
+    if policy == "frozen-causal-window/v1":
+        selected = tuple(range(start, stop))
+    elif policy == "sha256-seed42-middle-late-nonoverlap-same-width/v1":
+        if schema == "robustness-joint-window-selection/v1":
+            control = layers.get("random_control_window")
+            if (
+                not isinstance(control, Mapping)
+                or set(control) != {"start", "stop", "rule"}
+                or control.get("rule")
+                != "sha256-drawn-nonoverlapping-same-width/v1"
+            ):
+                raise ValueError("confirmatory random control window fields differ")
+            selected_start = _positive_int(
+                control.get("start"), field="random_control_window.start"
+            )
+            selected_stop = _positive_int(
+                control.get("stop"), field="random_control_window.stop"
+            )
+            if (
+                selected_stop - selected_start != width
+                or selected_stop > decoder_layers
+                or not (selected_stop <= start or stop <= selected_start)
+            ):
+                raise ValueError("confirmatory random control window is invalid")
+        else:
+            first_start = math.ceil(0.4 * decoder_layers)
+            candidates = tuple(
+                candidate
+                for candidate in range(first_start, decoder_layers - width + 1)
+                if candidate + width <= start or stop <= candidate
+            )
+            if not candidates:
+                raise ValueError("model has no eligible same-width random control window")
+            selected_start = min(
+                candidates,
+                key=lambda candidate: hashlib.sha256(
+                    (
+                        "random-residual-window/v1\0seed-42\0"
+                        f"{model}\0{model_revision}\0{layer_sha256}\0{candidate}"
+                    ).encode()
+                ).hexdigest(),
+            )
+            selected_stop = selected_start + width
+        selected = tuple(range(selected_start, selected_stop))
+    else:
+        raise ValueError("residual evidence window policy is unsupported")
+    evidence_sha = hashlib.sha256(
+        (
+            f"residual-state-evidence/v1\0{layer_sha256}\0{validation_sha256}\0{policy}\0"
+            + ",".join(map(str, selected))
+        ).encode()
+    ).hexdigest()
+    return ResidualStateEvidence(
+        selected_window=(selected[0], selected[-1] + 1),
+        state_layers=selected,
+        policy=policy,
+        layer_selection_sha256=layer_sha256,
+        validation_sha256=validation_sha256,
+        evidence_sha256=evidence_sha,
+    )
+
+
+__all__ = [
+    "LocalizationEvidence",
+    "ResidualStateEvidence",
+    "load_localization_evidence",
+    "load_residual_state_evidence",
+]

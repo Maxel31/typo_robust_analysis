@@ -124,3 +124,31 @@ def test_checkpoint_rejects_binding_or_runtime_state_tampering(tmp_path: Path) -
     checkpoint.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="cursor"):
         load_training_checkpoint(checkpoint, expected_bindings=bindings)
+
+
+def test_cycle2_checkpoint_binds_frozen_monitor_protocol_and_data(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "checkpoint.json"
+    state = tmp_path / "state.pt"
+    state.write_bytes(b"cycle-2-state")
+    bindings = {
+        "config_sha256": "a" * 64,
+        "training_data_sha256": "b" * 64,
+        "localization_sha256": "c" * 64,
+        "monitor_protocol_sha256": "d" * 64,
+        "monitor_data_sha256": "e" * 64,
+        "seed": 42,
+    }
+    write_training_checkpoint(
+        checkpoint,
+        cursor=TrainingCursor(0, 0, 0, 0, 0),
+        state_path=state,
+        bindings=bindings,
+    )
+    assert json.loads(checkpoint.read_text(encoding="utf-8"))["schema_version"].endswith(
+        "/v2"
+    )
+    loaded = load_training_checkpoint(checkpoint, expected_bindings=bindings)
+    assert loaded.state_path == state.resolve()
+    changed = {**bindings, "monitor_data_sha256": "f" * 64}
+    with pytest.raises(ValueError, match="bindings differ"):
+        load_training_checkpoint(checkpoint, expected_bindings=changed)

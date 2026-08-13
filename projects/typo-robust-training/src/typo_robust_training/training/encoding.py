@@ -60,8 +60,8 @@ def render_training_pair(pair: TrainingPair) -> RenderedTrainingPair:
         clean_text = clean_prompt + answer_suffix
         typo_text = typo_prompt + answer_suffix
         clean_shift = typo_shift = len(prefix)
-        clean_answer_span = len(clean_prompt), len(clean_text)
-        typo_answer_span = len(typo_prompt), len(typo_text)
+        clean_answer_span = len(clean_prompt), len(clean_prompt) + 1 + len(pair.answer)
+        typo_answer_span = len(typo_prompt), len(typo_prompt) + 1 + len(pair.answer)
     clean_spans = tuple(
         (edit.clean_char_span[0] + clean_shift, edit.clean_char_span[1] + clean_shift)
         for edit in pair.edits
@@ -143,6 +143,8 @@ def _answer_targets(
     if span is None:
         return ()
     start, stop = span
+    if stop > max((token_stop for _token_start, token_stop in offsets), default=0):
+        return ()
     targets = tuple(
         (index - 1, ids[index])
         for index, (token_start, token_stop) in enumerate(offsets)
@@ -193,14 +195,25 @@ def encode_training_pair(
     if not output_pairs:
         raise ValueError("training pair has no aligned non-edited next-token targets")
     if pair.edits:
+        clean_extent = max((stop for _start, stop in clean_offsets), default=0)
+        typo_extent = max((stop for _start, stop in typo_offsets), default=0)
+        visible_spans = tuple(
+            (clean_span, typo_span)
+            for clean_span, typo_span in zip(
+                rendered.clean_edit_spans,
+                rendered.typo_edit_spans,
+                strict=True,
+            )
+            if clean_span[1] <= clean_extent and typo_span[1] <= typo_extent
+        )
         clean_edit_positions = edited_word_final_token_positions(
             clean_offsets,
-            rendered.clean_edit_spans,
+            tuple(clean_span for clean_span, _typo_span in visible_spans),
             text=rendered.clean_text,
         )
         typo_edit_positions = edited_word_final_token_positions(
             typo_offsets,
-            rendered.typo_edit_spans,
+            tuple(typo_span for _clean_span, typo_span in visible_spans),
             text=rendered.typo_text,
         )
     else:

@@ -13,11 +13,15 @@ from typo_robust_training.data.config import strict_loads
 from typo_robust_training.training.pairs import TrainingSource, stable_epoch_sources
 
 
-_BINDINGS = {
+_BINDINGS_V1 = {
     "config_sha256",
     "training_data_sha256",
     "localization_sha256",
     "seed",
+}
+_BINDINGS_V2 = _BINDINGS_V1 | {
+    "monitor_protocol_sha256",
+    "monitor_data_sha256",
 }
 
 
@@ -84,7 +88,9 @@ def _sha256_file(path: Path) -> str:
 
 
 def _bindings(value: Mapping[str, object]) -> dict[str, object]:
-    if not isinstance(value, Mapping) or set(value) != _BINDINGS:
+    if not isinstance(value, Mapping) or (
+        set(value) != _BINDINGS_V1 and set(value) != _BINDINGS_V2
+    ):
         raise ValueError("training checkpoint bindings fields differ")
     result = dict(value)
     for field in ("config_sha256", "training_data_sha256"):
@@ -97,6 +103,11 @@ def _bindings(value: Mapping[str, object]) -> dict[str, object]:
     seed = result["seed"]
     if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
         raise ValueError("training checkpoint seed differs")
+    for field in ("monitor_protocol_sha256", "monitor_data_sha256"):
+        if field in result:
+            digest = result[field]
+            if not isinstance(digest, str) or len(digest) != 64:
+                raise ValueError(f"training checkpoint {field} differs")
     return result
 
 
@@ -155,7 +166,11 @@ def write_training_checkpoint(
         raise ValueError("training checkpoint runtime state must be inside its output") from exc
     normalized_bindings = _bindings(bindings)
     payload = {
-        "schema_version": "robustness-training-checkpoint/v1",
+        "schema_version": (
+            "robustness-training-checkpoint/v2"
+            if set(normalized_bindings) == _BINDINGS_V2
+            else "robustness-training-checkpoint/v1"
+        ),
         "bindings": normalized_bindings,
         "cursor": cursor.as_dict(),
         "runtime_state_file": relative_state.as_posix(),
@@ -194,7 +209,8 @@ def load_training_checkpoint(
     if (
         not isinstance(payload, Mapping)
         or set(payload) != fields
-        or payload.get("schema_version") != "robustness-training-checkpoint/v1"
+        or payload.get("schema_version")
+        not in {"robustness-training-checkpoint/v1", "robustness-training-checkpoint/v2"}
     ):
         raise ValueError("training checkpoint fields or schema differ")
     actual_bindings = _bindings(payload["bindings"])  # type: ignore[arg-type]

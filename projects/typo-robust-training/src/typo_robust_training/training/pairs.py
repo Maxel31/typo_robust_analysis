@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -18,7 +19,7 @@ from typo_robust_training.data.records import (
 from typo_robust_training.data.splits import normalized_content_sha256
 
 
-_SHA40 = re.compile(r"[0-9a-f]{40}")
+_SOURCE_REVISION = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 _SHA64 = re.compile(r"[0-9a-f]{64}")
 _CLEAN_FIELDS = {
     "schema_version",
@@ -107,7 +108,7 @@ class TrainingSource:
             raise ValueError("training source schema or split differs")
         record_id = _text(value.get("record_id"), field="record_id")
         revision = _text(value.get("source_revision"), field="source_revision")
-        if _SHA64.fullmatch(record_id) is None or _SHA40.fullmatch(revision) is None:
+        if _SHA64.fullmatch(record_id) is None or _SOURCE_REVISION.fullmatch(revision) is None:
             raise ValueError("training source identity hashes differ")
         token_count = value.get("token_count")
         if isinstance(token_count, bool) or not isinstance(token_count, int) or token_count <= 0:
@@ -230,6 +231,7 @@ def materialize_training_pair(
     *,
     generator: TypoGenerator,
     epoch: int,
+    force_noop: bool | None = None,
 ) -> TrainingPair:
     """Use fixed natural text or a record-local synthetic typo for this epoch."""
 
@@ -237,14 +239,22 @@ def materialize_training_pair(
         raise TypeError("materialization requires a TrainingSource and TypoGenerator")
     if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 0:
         raise ValueError("training pair epoch must be non-negative")
-    if source.kind == "natural":
+    if force_noop is not None and type(force_noop) is not bool:
+        raise TypeError("force_noop must be boolean or None")
+    if force_noop is True:
+        typo_text, edits, is_noop = source.clean_text, (), True
+    elif source.kind == "natural":
         edit = _natural_edit(source)
         typo_text = source.typo_text
         if typo_text is None:
             raise RuntimeError("validated natural source lost typo text")
         edits, is_noop = (edit,), False
     else:
-        pair = generator.generate(source.clean_record(), epoch=epoch)
+        pair = generator.generate(
+            source.clean_record(),
+            epoch=epoch,
+            force_noop=force_noop,
+        )
         typo_text, edits, is_noop = pair.typo_text, pair.edits, pair.is_noop
     return TrainingPair(
         record_id=source.record_id,
@@ -339,14 +349,13 @@ def align_unchanged_token_positions(
     segments = _unchanged_segments(clean_text, typo_text, clean_spans, typo_spans)
     clean_tokens = _offsets(clean_offsets, text=clean_text, field="clean_offsets")
     typo_tokens = _offsets(typo_offsets, text=typo_text, field="typo_offsets")
-    typo_by_span: dict[tuple[int, int], int] = {}
+    typo_by_span: dict[tuple[int, int], list[int]] = defaultdict(list)
     for index, span in enumerate(typo_tokens):
         if span[0] == span[1]:
             continue
-        if span in typo_by_span:
-            raise ValueError("typo token offsets are duplicated")
-        typo_by_span[span] = index
+        typo_by_span[span].append(index)
     aligned: list[tuple[int, int]] = []
+    mapped_occurrences: dict[tuple[int, int], int] = defaultdict(int)
     for clean_index, (token_start, token_stop) in enumerate(clean_tokens):
         if token_start == token_stop:
             continue
@@ -356,8 +365,11 @@ def align_unchanged_token_positions(
                 mapped = token_start + shift, token_stop + shift
                 if not typo_start <= mapped[0] <= mapped[1] <= typo_stop:
                     break
-                typo_index = typo_by_span.get(mapped)
-                if typo_index is not None:
+                occurrence = mapped_occurrences[mapped]
+                mapped_occurrences[mapped] += 1
+                candidates = typo_by_span.get(mapped, [])
+                if occurrence < len(candidates):
+                    typo_index = candidates[occurrence]
                     if clean_text[token_start:token_stop] != typo_text[slice(*mapped)]:
                         raise ValueError("aligned token text differs")
                     aligned.append((clean_index, typo_index))
@@ -382,7 +394,8 @@ def edited_word_final_token_positions(
     positions: list[int] = []
     for index, (start, stop) in enumerate(normalized_spans):
         if text_was_provided and (
-            (start > 0 and text[start - 1].isalnum()) or (stop < len(text) and text[stop].isalnum())
+            (start > 0 and text[start - 1].isalnum())
+            or (stop < len(text) and text[stop].isalnum())
         ):
             raise ValueError(f"spans[{index}] starts or ends inside an alphanumeric word")
         overlapping = [
@@ -390,12 +403,6 @@ def edited_word_final_token_positions(
             for token_index, (token_start, token_stop) in enumerate(tokens)
             if token_stop > token_start and token_start < stop and start < token_stop
         ]
-        if not overlapping:
-            raise ValueError(f"spans[{index}] is not exactly covered by tokenizer offsets")
-        if not text_was_provided and (
-            tokens[overlapping[0]][0] != start or tokens[overlapping[-1]][1] != stop
-        ):
-            raise ValueError(f"spans[{index}] is not exactly covered by tokenizer offsets")
         cursor = start
         for token_index in overlapping:
             token_start, token_stop = tokens[token_index]
@@ -404,7 +411,7 @@ def edited_word_final_token_positions(
             if covered_start > cursor:
                 break
             cursor = max(cursor, covered_stop)
-        if cursor < stop:
+        if not overlapping or cursor < stop:
             raise ValueError(f"spans[{index}] is not fully covered by tokenizer offsets")
         positions.append(overlapping[-1])
     if len(set(positions)) != len(positions):

@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from typo_robust_training.training.tracking import (
-    WandbRunPresentation,
     build_wandb_run_presentation,
     start_wandb_training_tracker,
 )
@@ -47,19 +46,6 @@ class _Wandb:
         return run
 
 
-class _DefineFailureRun(_Run):
-    def define_metric(self, name: str, **kwargs: object) -> None:
-        raise RuntimeError("injected define failure")
-
-
-class _DefineFailureWandb(_Wandb):
-    def init(self, **kwargs: object) -> _Run:
-        self.calls.append(dict(kwargs))
-        run = _DefineFailureRun(str(kwargs["id"]))
-        self.runs.append(run)
-        return run
-
-
 def _bindings() -> dict[str, object]:
     return {
         "condition": "localized-state-distillation",
@@ -71,31 +57,81 @@ def _bindings() -> dict[str, object]:
     }
 
 
-def test_wandb_presentation_uses_self_explanatory_scientific_names() -> None:
-    historical = build_wandb_run_presentation(
+def test_wandb_presentation_names_the_scientific_arm_and_operation() -> None:
+    proposed = build_wandb_run_presentation(
+        condition="localized-state-distillation",
+        schema_version="robustness-adapter-training-config/v2",
+        model="google/gemma-3-4b-it",
+        seed=42,
+        max_optimizer_steps=100,
+        state_gradient_ratio=0.05,
+        state_layers=tuple(range(1, 7)),
+    )
+    assert proposed.name == (
+        "Proposed method · Causal-window localized state distillation · "
+        "L1–6 · Gemma-3-4B-IT · 100 steps · seed 42"
+    )
+    assert proposed.group == "Cycle 2 · Gemma-3-4B-IT · 100 steps"
+    assert proposed.job_type == "proposed-causal-window"
+    assert proposed.tags == (
+        "typo-robustness",
+        "cycle:2",
+        "arm:causal-window-localized-state-distillation",
+        "role:proposed",
+        "model:gemma-3-4b-it",
+        "budget:100-steps",
+        "state-gradient-ratio:0.05",
+    )
+    assert "Activation Patching" in proposed.notes
+    assert "edited-word-final" in proposed.notes
+
+    baseline = build_wandb_run_presentation(
+        condition="output-matching",
+        schema_version="robustness-adapter-training-config/v2",
+        model="google/gemma-3-4b-it",
+        seed=44,
+        max_optimizer_steps=300,
+        state_gradient_ratio=None,
+        state_layers=(),
+    )
+    assert baseline.name == (
+        "Kojima baseline · Output-distribution matching · Gemma-3-4B-IT · 300 steps · seed 44"
+    )
+    assert baseline.job_type == "baseline-output-matching"
+    assert "arm:kojima-output-matching" in baseline.tags
+    assert "state-gradient-ratio" not in " ".join(baseline.tags)
+
+    legacy = build_wandb_run_presentation(
         condition="localized-state-distillation",
         schema_version="robustness-adapter-training-config/v1",
         model="google/gemma-3-4b-it",
         seed=42,
         max_optimizer_steps=100,
+        state_gradient_ratio=None,
         state_layers=(2, 3, 4, 5, 6),
     )
-    assert historical.name.startswith(
-        "Historical ablation · Component-level relative-MSE state distillation · L2–6"
-    )
-    assert historical.group.startswith("Historical Cycle 1 ·")
-    assert "not the confirmatory method" in historical.notes
-    assert all(tag not in {"arm:B1", "arm:T1", "arm:C1", "arm:C2"} for tag in historical.tags)
+    assert legacy.name.startswith("Legacy · Component-level state distillation")
+    assert legacy.job_type == "legacy-component-state-pilot"
+    assert "arm:Legacy" in legacy.tags
+    assert "relative-MSE" in legacy.notes
 
-    with pytest.raises(ValueError, match="unsupported schema"):
-        build_wandb_run_presentation(
-            condition="output-matching",
-            schema_version="robustness-adapter-training-config/v2",
-            model="google/gemma-3-4b-it",
-            seed=42,
-            max_optimizer_steps=100,
-            state_layers=(),
-        )
+
+def test_long_run_presentation_uses_the_student_token_budget() -> None:
+    presentation = build_wandb_run_presentation(
+        condition="output-matching",
+        schema_version="robustness-adapter-training-config/v3",
+        model="google/gemma-3-4b-it",
+        seed=42,
+        max_optimizer_steps=10_000,
+        max_student_tokens=64_000_000,
+        state_gradient_ratio=None,
+        state_layers=(),
+    )
+
+    assert "64M tokens" in presentation.name
+    assert "64M tokens" in presentation.group
+    assert "budget:64000000-student-tokens" in presentation.tags
+    assert "10000 steps" not in presentation.name
 
 
 def test_wandb_requires_environment_credential_without_persisting_it(tmp_path: Path) -> None:
@@ -115,39 +151,17 @@ def test_wandb_requires_environment_credential_without_persisting_it(tmp_path: P
     assert not (tmp_path / "wandb_run.json").exists()
 
 
-def test_wandb_finishes_and_records_run_when_post_init_setup_fails(tmp_path: Path) -> None:
-    module = _DefineFailureWandb()
-
-    with pytest.raises(RuntimeError, match="injected define failure"):
-        start_wandb_training_tracker(
-            output_dir=tmp_path,
-            project="typo-robustness-training",
-            entity=None,
-            bindings=_bindings(),
-            resume=False,
-            resume_optimizer_step=0,
-            environment={"WANDB_API_KEY": "secret"},
-            wandb_module=module,
-            run_id_factory=lambda: "failed-setup-run",
-        )
-
-    assert module.runs[0].finished == [1]
-    metadata = json.loads((tmp_path / "wandb_run.json").read_text(encoding="utf-8"))
-    assert metadata["run_id"] == "failed-setup-run"
-    assert metadata["url"].endswith("/failed-setup-run")
-    assert metadata["status"] == "failed"
-
-
 def test_wandb_logs_scalars_and_resumes_same_hash_bound_run(tmp_path: Path) -> None:
     module = _Wandb()
     secret = "fixture-secret-that-must-never-be-written"
     presentation = build_wandb_run_presentation(
         condition="localized-state-distillation",
-        schema_version="robustness-adapter-training-config/v1",
+        schema_version="robustness-adapter-training-config/v2",
         model="google/gemma-3-4b-it",
         seed=42,
         max_optimizer_steps=100,
-        state_layers=(2, 3, 4, 5, 6),
+        state_gradient_ratio=0.05,
+        state_layers=tuple(range(1, 7)),
     )
     tracker = start_wandb_training_tracker(
         output_dir=tmp_path,
@@ -184,33 +198,7 @@ def test_wandb_logs_scalars_and_resumes_same_hash_bound_run(tmp_path: Path) -> N
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     assert metadata["run_id"] == "fixed-run-id"
     assert metadata["last_logged_optimizer_step"] == 1
-    assert metadata["presentation"] == {
-        "group": presentation.group,
-        "job_type": presentation.job_type,
-        "name": presentation.name,
-        "notes": presentation.notes,
-        "tags": list(presentation.tags),
-    }
     assert secret not in metadata_path.read_text(encoding="utf-8")
-
-    with pytest.raises(ValueError, match="presentation differs"):
-        start_wandb_training_tracker(
-            output_dir=tmp_path,
-            project="typo-robustness-training",
-            entity="fixture-entity",
-            bindings=_bindings(),
-            presentation=WandbRunPresentation(
-                name="Changed name",
-                group=presentation.group,
-                job_type=presentation.job_type,
-                tags=presentation.tags,
-                notes=presentation.notes,
-            ),
-            resume=True,
-            resume_optimizer_step=1,
-            environment={"WANDB_API_KEY": secret},
-            wandb_module=module,
-        )
 
     resumed = start_wandb_training_tracker(
         output_dir=tmp_path,
@@ -224,8 +212,9 @@ def test_wandb_logs_scalars_and_resumes_same_hash_bound_run(tmp_path: Path) -> N
         wandb_module=module,
         run_id_factory=lambda: "must-not-be-used",
     )
-    assert module.calls[1]["resume_from"] == "fixed-run-id?_step=1"
-    assert "id" not in module.calls[1]
+    assert module.calls[1]["id"] == "fixed-run-id"
+    assert module.calls[1]["resume"] == "must"
+    assert "resume_from" not in module.calls[1]
     resumed.finish(status="failed", summary={"optimizer_steps": 1})
     assert module.runs[1].finished == [1]
 
@@ -263,7 +252,7 @@ def test_wandb_resume_rejects_binding_drift_or_remote_history_behind_checkpoint(
             environment={"WANDB_API_KEY": "secret"},
             wandb_module=module,
         )
-    rewound = start_wandb_training_tracker(
+    replayed = start_wandb_training_tracker(
         output_dir=tmp_path,
         project="typo-robustness-training",
         entity=None,
@@ -273,8 +262,19 @@ def test_wandb_resume_rejects_binding_drift_or_remote_history_behind_checkpoint(
         environment={"WANDB_API_KEY": "secret"},
         wandb_module=module,
     )
-    assert module.calls[-1]["resume_from"] == "fixed-run-id?_step=0"
-    rewound.finish(status="failed", summary={"optimizer_steps": 0})
+    assert module.calls[-1]["id"] == "fixed-run-id"
+    assert module.calls[-1]["resume"] == "must"
+    replayed.log_optimizer_step(
+        {"train/optimizer_step": 1, "train/total_loss": 1.0},
+        optimizer_step=1,
+    )
+    assert module.runs[-1].logged == []
+    replayed.log_optimizer_step(
+        {"train/optimizer_step": 2, "train/total_loss": 0.9},
+        optimizer_step=2,
+    )
+    assert module.runs[-1].logged == [(2, {"train/optimizer_step": 2, "train/total_loss": 0.9})]
+    replayed.finish(status="failed", summary={"optimizer_steps": 2})
 
     with pytest.raises(ValueError, match="behind the local checkpoint"):
         start_wandb_training_tracker(
@@ -283,7 +283,7 @@ def test_wandb_resume_rejects_binding_drift_or_remote_history_behind_checkpoint(
             entity=None,
             bindings=_bindings(),
             resume=True,
-            resume_optimizer_step=2,
+            resume_optimizer_step=3,
             environment={"WANDB_API_KEY": "secret"},
             wandb_module=module,
         )

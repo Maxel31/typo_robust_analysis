@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-import typo_robust_training.training.runner as runner_module
 from typo_robust_training.data.perturb import TypoGenerator
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.training.data import TrainingDataBundle
@@ -16,13 +15,16 @@ from typo_robust_training.training.pairs import TrainingPair, TrainingSource
 from typo_robust_training.training.runner import (
     AdapterTrainingRunConfig,
     TrainingMicroStepResult,
+    TrainingMicroStepScales,
+    _optimizer_step_telemetry,
+    normalized_accumulation_scales,
     run_adapter_training,
 )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BASE_CONFIG = PROJECT_ROOT / "configs/baselines/noisy-language-model.yaml"
-GLOBAL_STATE_CONFIG = PROJECT_ROOT / "configs/baselines/global-state-alignment.yaml"
+CYCLE2_OUTPUT_CONFIG = PROJECT_ROOT / "configs/cycle2/gemma4b-output-matching-100step.yaml"
 NATURAL_SUBSTITUTIONS = {
     character: {"z" if character != "z" else "x": 1.0} for character in "abcdefghijklmnopqrstuvwxyz"
 }
@@ -73,24 +75,25 @@ def _config(tmp_path: Path) -> Path:
     return path
 
 
-def _global_state_config(tmp_path: Path) -> Path:
-    payload = json.loads(GLOBAL_STATE_CONFIG.read_text(encoding="utf-8"))
-    payload["optimization"]["gradient_accumulation_steps"] = 2
-    payload["optimization"]["max_optimizer_steps"] = 3
-    payload["optimization"]["checkpoint_every_optimizer_steps"] = 1
-    path = tmp_path / "global-state-training.yaml"
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    return path
-
-
 class _Runtime:
     def __init__(self, *, fail_after: int | None = None) -> None:
         self.fail_after = fail_after
         self.seen: list[tuple[int, str, str]] = []
         self.optimizer_steps = 0
 
-    def train_micro_step(self, pair: TrainingPair, *, loss_scale: float) -> TrainingMicroStepResult:
+    def train_micro_step(
+        self,
+        pair: TrainingPair,
+        *,
+        loss_scale: float,
+        measure_gradient_ratio: bool = False,
+        output_loss_scale: float | None = None,
+        state_loss_scale: float | None = None,
+    ) -> TrainingMicroStepResult:
         assert loss_scale == pytest.approx(0.5)
+        assert measure_gradient_ratio is False
+        assert output_loss_scale is None
+        assert state_loss_scale is None
         if self.fail_after is not None and len(self.seen) >= self.fail_after:
             raise RuntimeError("injected interruption")
         self.seen.append((pair.epoch, pair.record_id, pair.typo_text))
@@ -119,11 +122,7 @@ class _Runtime:
         (path / "adapter.txt").write_text(str(self.optimizer_steps), encoding="utf-8")
 
     def provenance(self) -> dict[str, object]:
-        return {
-            "runtime": "offline-training-fixture/v1",
-            "gpu_id": "3",
-            "decoder_layers": 4,
-        }
+        return {"runtime": "offline-training-fixture/v1", "gpu_id": "3"}
 
 
 def _run_config(
@@ -133,10 +132,9 @@ def _run_config(
     *,
     resume: bool,
     tracking: bool = False,
-    condition: str = "noisy-language-model",
 ):
     return AdapterTrainingRunConfig(
-        condition=condition,
+        condition="noisy-language-model",
         config_path=config,
         training_data_dir=tmp_path,
         layer_selection_path=None,
@@ -176,6 +174,49 @@ class _Tracker:
         }
 
 
+class _Cycle2Runtime(_Runtime):
+    def __init__(self) -> None:
+        super().__init__()
+        self.noop_sequence: list[bool] = []
+        self.gradient_checks: list[bool] = []
+        self.scales: list[tuple[float, float]] = []
+
+    def prepare_accumulation(
+        self,
+        pairs: tuple[TrainingPair, ...],
+    ) -> tuple[TrainingMicroStepScales, ...]:
+        assert len(pairs) == 4
+        return tuple(
+            TrainingMicroStepScales(
+                output=0.25,
+                state=0.0,
+            )
+            for _ in pairs
+        )
+
+    def train_micro_step(
+        self,
+        pair: TrainingPair,
+        *,
+        loss_scale: float,
+        measure_gradient_ratio: bool = False,
+        output_loss_scale: float | None = None,
+        state_loss_scale: float | None = None,
+    ) -> TrainingMicroStepResult:
+        assert loss_scale == pytest.approx(0.25)
+        self.seen.append((pair.epoch, pair.record_id, pair.typo_text))
+        self.noop_sequence.append(pair.is_noop)
+        self.gradient_checks.append(measure_gradient_ratio)
+        assert output_loss_scale is not None
+        assert state_loss_scale is not None
+        self.scales.append((output_loss_scale, state_loss_scale))
+        return TrainingMicroStepResult(
+            losses={"output": 1.0, "state": 0.0},
+            total_loss=1.0,
+            student_tokens=7,
+        )
+
+
 def test_runner_resume_matches_uninterrupted_sample_sequence(tmp_path: Path) -> None:
     config = _config(tmp_path)
     bundle = _bundle(tmp_path)
@@ -187,6 +228,15 @@ def test_runner_resume_matches_uninterrupted_sample_sequence(tmp_path: Path) -> 
     )
     assert uninterrupted.optimizer_steps == 3
     assert uninterrupted.student_tokens == 42
+    assert {
+        path.name
+        for path in (tmp_path / "uninterrupted").iterdir()
+        if path.is_dir() and path.name.startswith("adapter-step-")
+    } == {
+        "adapter-step-000001",
+        "adapter-step-000002",
+        "adapter-step-000003",
+    }
 
     interrupted_runtime = _Runtime(fail_after=4)
     output = tmp_path / "resumed"
@@ -212,6 +262,150 @@ def test_runner_resume_matches_uninterrupted_sample_sequence(tmp_path: Path) -> 
     completed = json.loads(resumed.run_path.read_text(encoding="utf-8"))
     assert completed["status"] == "completed"
     assert len(completed["outputs"]["adapter"]["sha256"]) == 64
+    assert completed["adapter_checkpoints"] == [
+        {
+            "optimizer_step": 1,
+            "path": "adapter-step-000001",
+            "student_tokens": 14,
+        },
+        {
+            "optimizer_step": 2,
+            "path": "adapter-step-000002",
+            "student_tokens": 28,
+        },
+        {
+            "optimizer_step": 3,
+            "path": "adapter-step-000003",
+            "student_tokens": 42,
+        },
+    ]
+
+
+def test_cycle2_runner_enforces_exact_clean_noisy_pairs_per_optimizer_step(
+    tmp_path: Path,
+) -> None:
+    payload = json.loads(CYCLE2_OUTPUT_CONFIG.read_text(encoding="utf-8"))
+    payload["optimization"]["gradient_accumulation_steps"] = 4
+    payload["optimization"]["max_optimizer_steps"] = 2
+    payload["optimization"]["checkpoint_every_optimizer_steps"] = 1
+    config_path = tmp_path / "cycle2-output.yaml"
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    runtime = _Cycle2Runtime()
+    run_adapter_training(
+        AdapterTrainingRunConfig(
+            condition="output-matching",
+            config_path=config_path,
+            training_data_dir=tmp_path,
+            layer_selection_path=None,
+            component_selection_path=None,
+            seed=42,
+            gpu_id="1",
+            wandb_project=None,
+            wandb_entity=None,
+            output_dir=tmp_path / "cycle2-run",
+        ),
+        runtime=runtime,
+        data_bundle=_bundle(tmp_path),
+    )
+    assert runtime.noop_sequence == [True, False, True, False] * 2
+    assert runtime.gradient_checks == [False, True, False, False] * 2
+    assert runtime.scales == [(0.25, 0.0)] * 8
+
+
+def test_long_run_stops_at_first_optimizer_boundary_past_student_token_budget(
+    tmp_path: Path,
+) -> None:
+    payload = json.loads(CYCLE2_OUTPUT_CONFIG.read_text(encoding="utf-8"))
+    payload["schema_version"] = "robustness-adapter-training-config/v3"
+    payload["optimization"]["gradient_accumulation_steps"] = 4
+    payload["optimization"]["max_optimizer_steps"] = 10
+    payload["optimization"]["max_student_tokens"] = 50
+    payload["optimization"]["checkpoint_every_optimizer_steps"] = 1
+    config_path = tmp_path / "long-output.yaml"
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    runtime = _Cycle2Runtime()
+
+    result = run_adapter_training(
+        AdapterTrainingRunConfig(
+            condition="output-matching",
+            config_path=config_path,
+            training_data_dir=tmp_path,
+            layer_selection_path=None,
+            component_selection_path=None,
+            seed=42,
+            gpu_id="1",
+            wandb_project=None,
+            wandb_entity=None,
+            output_dir=tmp_path / "long-run",
+        ),
+        runtime=runtime,
+        data_bundle=_bundle(tmp_path),
+    )
+
+    assert result.optimizer_steps == 2
+    assert result.student_tokens == 56
+    run = json.loads(result.run_path.read_text(encoding="utf-8"))
+    assert run["requested_student_tokens"] == 50
+    assert run["student_token_overshoot"] == 6
+
+
+def test_accumulation_scales_use_total_token_and_edited_coordinate_denominators() -> None:
+    scales = normalized_accumulation_scales(
+        output_token_counts=(2, 6, 4, 8),
+        state_coordinate_counts=(0, 1, 0, 3),
+        state_active=True,
+    )
+    assert [scale.output for scale in scales] == pytest.approx([0.1, 0.3, 0.2, 0.4])
+    assert [scale.state for scale in scales] == pytest.approx([0.0, 0.25, 0.0, 0.75])
+
+
+def test_cycle2_telemetry_reports_the_exact_accumulation_objective() -> None:
+    micro_rows = [
+        {
+            "student_tokens": 3,
+            "edit_count": 0,
+            "is_noop": True,
+            "total_loss": 2.0,
+            "losses": {
+                "output": 2.0,
+                "state": 0.0,
+                "weighted_state": 0.0,
+                "output_accumulation_scale": 0.1,
+                "state_accumulation_scale": 0.0,
+                "backward_contribution": 0.2,
+            },
+        },
+        {
+            "student_tokens": 7,
+            "edit_count": 1,
+            "is_noop": False,
+            "total_loss": 6.5,
+            "losses": {
+                "output": 6.0,
+                "state": 1.0,
+                "weighted_state": 0.5,
+                "output_accumulation_scale": 0.9,
+                "state_accumulation_scale": 1.0,
+                "backward_contribution": 5.9,
+            },
+        },
+    ]
+
+    metrics = _optimizer_step_telemetry(
+        micro_rows,
+        optimizer_step=1,
+        micro_steps=2,
+        cumulative_student_tokens=10,
+        gradient_norm=0.25,
+        learning_rate=1e-4,
+        elapsed_seconds=1.0,
+        runtime=_Runtime(),
+    )
+
+    assert metrics["train/total_loss"] == pytest.approx(6.1)
+    assert metrics["train/objective/output"] == pytest.approx(5.6)
+    assert metrics["train/objective/state"] == pytest.approx(1.0)
+    assert metrics["train/objective/weighted_state"] == pytest.approx(0.5)
 
 
 def test_runner_uploads_only_aggregate_optimizer_step_telemetry(tmp_path: Path) -> None:
@@ -250,69 +444,3 @@ def test_runner_uploads_only_aggregate_optimizer_step_telemetry(tmp_path: Path) 
     ]
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["tracking"] == tracker.provenance()
-
-
-def test_runner_starts_wandb_with_a_self_explanatory_series_name(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, object] = {}
-    tracker = _Tracker()
-
-    def start_tracker(**kwargs: object) -> _Tracker:
-        captured.update(kwargs)
-        return tracker
-
-    monkeypatch.setattr(runner_module, "start_wandb_training_tracker", start_tracker)
-    result = run_adapter_training(
-        _run_config(
-            tmp_path,
-            _config(tmp_path),
-            tmp_path / "descriptive-series",
-            resume=False,
-            tracking=True,
-        ),
-        runtime=_Runtime(),
-        data_bundle=_bundle(tmp_path),
-    )
-
-    presentation = captured["presentation"]
-    assert presentation.name == (
-        "Historical baseline · Noisy-language-model training · Gemma-3-4B-IT · 3 steps · seed 42"
-    )
-    assert presentation.group == "Historical Cycle 1 · Gemma-3-4B-IT · 3 steps"
-    assert "gpu_id" not in captured["bindings"]
-    run = json.loads(result.run_path.read_text(encoding="utf-8"))
-    assert run["gpu_id"] == "3"
-
-
-def test_runner_names_all_layer_state_control_from_runtime_depth(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, object] = {}
-    tracker = _Tracker()
-
-    def start_tracker(**kwargs: object) -> _Tracker:
-        captured.update(kwargs)
-        return tracker
-
-    monkeypatch.setattr(runner_module, "start_wandb_training_tracker", start_tracker)
-    run_adapter_training(
-        _run_config(
-            tmp_path,
-            _global_state_config(tmp_path),
-            tmp_path / "global-state-series",
-            resume=False,
-            tracking=True,
-            condition="global-state-alignment",
-        ),
-        runtime=_Runtime(),
-        data_bundle=_bundle(tmp_path),
-    )
-
-    presentation = captured["presentation"]
-    assert presentation.name == (
-        "Historical control · Global relative-MSE state alignment · "
-        "L0–3 · Gemma-3-4B-IT · 3 steps · seed 42"
-    )

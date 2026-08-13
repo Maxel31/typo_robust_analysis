@@ -11,6 +11,7 @@ from typo_robust_training.training.losses import (
     answer_cross_entropy,
     next_token_cross_entropy,
     normalized_component_state_loss,
+    residual_window_cosine_loss,
 )
 
 
@@ -76,3 +77,39 @@ def test_answer_and_noisy_lm_losses_use_only_declared_causal_targets() -> None:
 
     with pytest.raises(ValueError, match="answer targets"):
         answer_cross_entropy(logits, targets=())
+
+
+def test_residual_window_cosine_is_bounded_position_local_and_stops_teacher_gradient() -> None:
+    teacher = tuple(
+        torch.randn(1, 4, 3, requires_grad=True) for _ in range(4)
+    )
+    student = tuple(value.detach().clone().requires_grad_(True) for value in teacher)
+    identity = residual_window_cosine_loss(
+        teacher,
+        student,
+        layer_indices=(0, 1),
+        clean_positions=(2,),
+        typo_positions=(2,),
+        decoder_layers=3,
+        epsilon=1e-8,
+    )
+    assert identity.item() == pytest.approx(0.0, abs=1e-6)
+
+    changed = [value.detach().clone().requires_grad_(True) for value in teacher]
+    changed[1].data[0, 2, :] *= -1.0
+    loss = residual_window_cosine_loss(
+        teacher,
+        changed,
+        layer_indices=(0, 1),
+        clean_positions=(2,),
+        typo_positions=(2,),
+        decoder_layers=3,
+        epsilon=1e-8,
+    )
+    assert 0.0 <= loss.item() <= 2.0
+    assert loss.item() == pytest.approx(1.0, abs=1e-6)
+    loss.backward()
+    assert all(value.grad is None for value in teacher)
+    assert changed[1].grad is not None
+    assert torch.count_nonzero(changed[1].grad[0, :2, :]) == 0
+    assert changed[3].grad is None

@@ -14,7 +14,6 @@ class _WordTokenizer:
         self.vocabulary: dict[str, int] = {"<bos>": 1}
 
     def __call__(self, text: str, **kwargs: object) -> dict[str, list[object]]:
-        del kwargs
         pieces = [
             (match.group(), match.span()) for match in re.finditer(r"[A-Za-z]+|\d+|[^\w\s]", text)
         ]
@@ -23,6 +22,10 @@ class _WordTokenizer:
         for piece, span in pieces:
             ids.append(self.vocabulary.setdefault(piece, len(self.vocabulary) + 1))
             offsets.append(span)
+        if kwargs.get("truncation"):
+            maximum = int(kwargs["max_length"])
+            ids = ids[:maximum]
+            offsets = offsets[:maximum]
         return {
             "input_ids": ids,
             "attention_mask": [1] * len(ids),
@@ -73,8 +76,8 @@ def test_rendered_reasoning_pair_shifts_edits_and_marks_only_answer_suffix() -> 
     assert rendered.typo_text.startswith("Question:\nThe arport works.\nAnswer:")
     assert rendered.clean_text[slice(*rendered.clean_edit_spans[0])] == "airport"
     assert rendered.typo_text[slice(*rendered.typo_edit_spans[0])] == "arport"
-    assert rendered.clean_text[slice(*rendered.clean_answer_span)] == " 72\n"
-    assert rendered.typo_text[slice(*rendered.typo_answer_span)] == " 72\n"
+    assert rendered.clean_text[slice(*rendered.clean_answer_span)] == " 72"
+    assert rendered.typo_text[slice(*rendered.typo_answer_span)] == " 72"
 
 
 def test_encoding_excludes_edited_targets_and_exposes_word_final_state_positions() -> None:
@@ -116,6 +119,40 @@ def test_noop_pair_has_zero_edit_positions_but_keeps_all_exact_alignment() -> No
     assert encoding.output_logit_pairs == tuple(
         (index, index) for index in range(len(encoding.clean_input_ids) - 1)
     )
+    assert encoding.answer_targets == ()
+
+
+def test_encoding_ignores_only_edits_truncated_from_either_side() -> None:
+    pair = TrainingPair(
+        record_id="c" * 64,
+        clean_text="airport works terminal",
+        typo_text="arport works termnal",
+        task=None,
+        answer=None,
+        metadata={},
+        edits=(
+            TypoEdit("deletion", "airport", "arport", (0, 7), (0, 6)),
+            TypoEdit("deletion", "terminal", "termnal", (14, 22), (13, 20)),
+        ),
+        is_noop=False,
+        epoch=0,
+    )
+
+    encoding = encode_training_pair(pair, tokenizer=_WordTokenizer(), max_length=3)
+
+    assert len(encoding.clean_edit_positions) == len(encoding.typo_edit_positions) == 1
+    assert encoding.clean_input_ids != encoding.typo_input_ids
+
+
+def test_encoding_skips_answer_ce_when_the_answer_suffix_is_truncated() -> None:
+    encoding = encode_training_pair(
+        _pair(task="gsm8k", answer="72"),
+        tokenizer=_WordTokenizer(),
+        max_length=6,
+    )
+
+    assert encoding.clean_edit_positions
+    assert encoding.typo_edit_positions
     assert encoding.answer_targets == ()
 
 

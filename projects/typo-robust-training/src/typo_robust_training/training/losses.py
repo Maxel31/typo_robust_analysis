@@ -197,10 +197,68 @@ def normalized_global_state_loss(
     return torch.stack(losses).mean()
 
 
+def residual_window_cosine_loss(
+    teacher_hidden_states: Sequence[Any],
+    student_hidden_states: Sequence[Any],
+    *,
+    layer_indices: Sequence[int],
+    clean_positions: Sequence[int],
+    typo_positions: Sequence[int],
+    decoder_layers: int,
+    epsilon: float,
+) -> Any:
+    """Bounded cosine distance at edited-word residual coordinates only."""
+
+    import torch
+    from torch.nn import functional as F
+
+    teacher = tuple(teacher_hidden_states)
+    student = tuple(student_hidden_states)
+    layers = tuple(layer_indices)
+    clean = tuple(clean_positions)
+    typo = tuple(typo_positions)
+    if (
+        isinstance(decoder_layers, bool)
+        or not isinstance(decoder_layers, int)
+        or decoder_layers <= 0
+        or len(teacher) != decoder_layers + 1
+        or len(student) != decoder_layers + 1
+    ):
+        raise ValueError("residual state hidden-state inventory differs from decoder layers")
+    if not layers or tuple(sorted(set(layers))) != layers or layers[-1] >= decoder_layers:
+        raise ValueError("residual state layers must be non-empty, ordered, and in range")
+    if not clean or len(clean) != len(typo) or len(set(clean)) != len(clean):
+        raise ValueError("residual state edited positions must align one-to-one")
+    if not math.isfinite(float(epsilon)) or float(epsilon) <= 0.0:
+        raise ValueError("residual state epsilon must be positive")
+    losses: list[Any] = []
+    for layer in layers:
+        target_raw = teacher[layer + 1]
+        prediction_raw = student[layer + 1]
+        if (
+            not isinstance(target_raw, torch.Tensor)
+            or not isinstance(prediction_raw, torch.Tensor)
+            or target_raw.ndim != 3
+            or prediction_raw.ndim != 3
+            or int(target_raw.shape[0]) != 1
+            or int(prediction_raw.shape[0]) != 1
+            or int(target_raw.shape[2]) != int(prediction_raw.shape[2])
+            or max(clean) >= int(target_raw.shape[1])
+            or max(typo) >= int(prediction_raw.shape[1])
+        ):
+            raise ValueError("residual state tensors or edited positions differ")
+        target = target_raw[0, clean, :].detach().float().to(prediction_raw.device)
+        prediction = prediction_raw[0, typo, :].float()
+        similarity = F.cosine_similarity(target, prediction, dim=-1, eps=float(epsilon))
+        losses.append((1.0 - similarity).clamp(0.0, 2.0).mean())
+    return torch.stack(losses).mean()
+
+
 __all__ = [
     "aligned_output_kl",
     "answer_cross_entropy",
     "next_token_cross_entropy",
     "normalized_component_state_loss",
     "normalized_global_state_loss",
+    "residual_window_cosine_loss",
 ]

@@ -14,17 +14,20 @@ from typo_robust_training.training.data import load_training_data_bundle
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CONFIG = PROJECT_ROOT / "configs/ablations/gemma4b-component-state-cycle1.yaml"
+CONFIG = PROJECT_ROOT / "configs/gemma4b-targeted-lora.yaml"
 
 
 def _write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _fixture(tmp_path: Path) -> Path:
+def _fixture(
+    tmp_path: Path,
+    *,
+    text: str = "Educational airport context remains useful.",
+) -> Path:
     root = tmp_path / "data"
     root.mkdir()
-    text = "Educational airport context remains useful."
     source = {
         "schema_version": "robustness-clean-record/v1",
         "kind": "clean",
@@ -117,6 +120,18 @@ def test_training_data_bundle_revalidates_hashes_and_builds_seeded_generator(
     assert bundle.generator.seed == 43
     assert bundle.generator.explicit_clean_pair_probability == pytest.approx(0.10)
     assert "adjacent-transposition" not in bundle.generator.operation_weights
+
+
+def test_training_data_bundle_preserves_unicode_line_separators(tmp_path: Path) -> None:
+    text = "Educational\u0085airport\u2028context\u2029remains useful."
+
+    bundle = load_training_data_bundle(
+        _fixture(tmp_path, text=text),
+        protocol=load_adapter_training_config(CONFIG),
+        seed=42,
+    )
+
+    assert bundle.sources[0].clean_text == text
 
 
 def test_training_data_bundle_rejects_artifact_tampering(tmp_path: Path) -> None:

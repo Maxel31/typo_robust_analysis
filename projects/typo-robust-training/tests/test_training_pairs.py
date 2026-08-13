@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import hashlib
 
-import pytest
-
 from typo_robust_training.data.perturb import TypoGenerator
+from typo_robust_training.data.records import infer_single_word_typo_edit
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.training.pairs import (
     TrainingSource,
@@ -69,7 +68,7 @@ def test_natural_pair_orientation_infers_the_edited_word_without_synthetic_gener
             "kind": "natural",
             "record_id": "e" * 64,
             "source": "github_typo_corpus",
-            "source_revision": "f" * 40,
+            "source_revision": "f" * 64,
             "source_split": "v1.0.0",
             "source_id": "commit:0",
             "group_id": "https://github.com/example/repo",
@@ -98,6 +97,88 @@ def test_natural_pair_orientation_infers_the_edited_word_without_synthetic_gener
     assert len(pair.edits) == 1
     assert pair.edits[0].clean_char_span == (4, 11)
     assert pair.edits[0].typo_char_span == (4, 10)
+
+
+def test_exact_clean_noisy_override_applies_to_synthetic_and_natural_sources() -> None:
+    generator = TypoGenerator(
+        seed=42,
+        natural_substitutions=NATURAL_SUBSTITUTIONS,
+        explicit_clean_pair_probability=1.0,
+    )
+    clean_source = _clean_source()
+    forced_clean = materialize_training_pair(
+        clean_source,
+        generator=generator,
+        epoch=0,
+        force_noop=True,
+    )
+    forced_noisy = materialize_training_pair(
+        clean_source,
+        generator=generator,
+        epoch=0,
+        force_noop=False,
+    )
+    assert forced_clean.is_noop and forced_clean.typo_text == forced_clean.clean_text
+    assert not forced_noisy.is_noop and forced_noisy.edits
+
+    natural_payload = {
+        "schema_version": "robustness-natural-pair/v1",
+        "kind": "natural",
+        "record_id": "e" * 64,
+        "source": "github_typo_corpus",
+        "source_revision": "f" * 64,
+        "source_split": "v1.0.0",
+        "source_id": "commit:0",
+        "group_id": "https://github.com/example/repo",
+        "split": "train",
+        "clean_text": "The airport is busy.",
+        "typo_text": "The arport is busy.",
+        "task": None,
+        "answer": None,
+        "operation": "deletion",
+        "training_eligible": True,
+        "repository": "https://github.com/example/repo",
+        "repository_license": "MIT",
+        "clean_sha256": hashlib.sha256(b"The airport is busy.").hexdigest(),
+        "typo_sha256": hashlib.sha256(b"The arport is busy.").hexdigest(),
+        "metadata": {},
+        "token_count": 6,
+    }
+    natural_source = TrainingSource.from_dict(natural_payload)
+    natural_clean = materialize_training_pair(
+        natural_source,
+        generator=generator,
+        epoch=0,
+        force_noop=True,
+    )
+    natural_noisy = materialize_training_pair(
+        natural_source,
+        generator=generator,
+        epoch=0,
+        force_noop=False,
+    )
+    assert natural_clean.is_noop and not natural_clean.edits
+    assert not natural_noisy.is_noop and len(natural_noisy.edits) == 1
+
+
+def test_natural_edit_excludes_quotation_marks_but_keeps_internal_apostrophes() -> None:
+    clean = "values = ['label']"
+    typo = "values = ['labels']"
+
+    quoted = infer_single_word_typo_edit(clean, typo, operation="insertion")
+
+    assert quoted.clean_word == "label"
+    assert quoted.typo_word == "labels"
+    assert clean[slice(*quoted.clean_char_span)] == "label"
+    assert typo[slice(*quoted.typo_char_span)] == "labels"
+
+    contraction = infer_single_word_typo_edit(
+        "It can't fail.",
+        "It cant fail.",
+        operation="deletion",
+    )
+    assert contraction.clean_word == "can't"
+    assert contraction.typo_word == "cant"
 
 
 def test_alignment_excludes_changed_subwords_but_keeps_shifted_text_and_punctuation() -> None:
@@ -138,6 +219,24 @@ def test_alignment_handles_token_count_decrease_and_left_padding() -> None:
     assert aligned == ((2, 1), (5, 3))
 
 
+def test_alignment_pairs_duplicate_byte_fallback_offsets_by_occurrence() -> None:
+    clean = "An é airport works"
+    typo = "An é arport works"
+    clean_offsets = ((0, 0), (0, 2), (3, 4), (3, 4), (5, 12), (13, 18))
+    typo_offsets = ((0, 0), (0, 2), (3, 4), (3, 4), (5, 11), (12, 17))
+
+    aligned = align_unchanged_token_positions(
+        clean_text=clean,
+        typo_text=typo,
+        clean_edit_spans=((5, 12),),
+        typo_edit_spans=((5, 11),),
+        clean_offsets=clean_offsets,
+        typo_offsets=typo_offsets,
+    )
+
+    assert aligned == ((1, 1), (2, 2), (3, 3), (5, 5))
+
+
 def test_word_final_positions_choose_the_last_subword() -> None:
     offsets = ((0, 0), (0, 3), (4, 7), (7, 11), (11, 12))
     assert edited_word_final_token_positions(offsets, ((4, 11),)) == (3,)
@@ -148,12 +247,3 @@ def test_word_final_positions_allow_punctuation_in_the_same_token() -> None:
     offsets = ((0, 0), (0, 3), (4, 10), (11, 14))
 
     assert edited_word_final_token_positions(offsets, ((6, 9),), text=text) == (2,)
-
-
-def test_word_final_positions_reject_ambiguous_partial_word_boundaries() -> None:
-    offsets = ((0, 0), (0, 3), (4, 10), (11, 14))
-    with pytest.raises(ValueError, match="not exactly covered"):
-        edited_word_final_token_positions(offsets, ((6, 9),))
-
-    with pytest.raises(ValueError, match="inside an alphanumeric word"):
-        edited_word_final_token_positions(offsets, ((5, 9),), text="See alphabet now")

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from typo_robust_training.data.config import strict_loads
+from typo_robust_training.data.jsonl import read_lf_jsonl_lines
 from typo_robust_training.data.perturb import TypoGenerator
 from typo_robust_training.data.typo_stats import substitutions_from_statistics
 from typo_robust_training.training.config import AdapterTrainingProtocol
@@ -76,9 +77,7 @@ def _probabilities(value: object, *, field: str) -> dict[str, float]:
 
 def _sources(path: Path) -> tuple[TrainingSource, ...]:
     rows: list[TrainingSource] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip():
-            raise ValueError(f"training source line {line_number} is blank")
+    for line_number, line in read_lf_jsonl_lines(path, context="training sources"):
         payload = strict_loads(line, context=f"{path}:{line_number}")
         rows.append(TrainingSource.from_dict(payload))
     if not rows:
