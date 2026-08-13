@@ -17,7 +17,10 @@ from typo_robust_training.data.splits import NearDuplicateTextIndex
 from typo_robust_training.evaluation.freeze import (
     FreezeEvaluationRunConfig,
     _Exclusions,
+    _could_retain_smallest,
     _natural_edit,
+    _retain_smallest,
+    _select_corpus,
     _select_natural,
     run_freeze_robustness_evaluation,
 )
@@ -277,7 +280,28 @@ def test_natural_dictionary_excludes_case_only_corrections() -> None:
         metadata={},
     )
 
-    assert _natural_edit(record) is None
+    assert _natural_edit(record, minimum_word_letters=3) is None
+
+
+def test_bottom_k_prefilter_skips_noncompetitive_near_duplicate_queries() -> None:
+    heap: list[tuple[int, str, CleanRecord]] = []
+    records = tuple(_task_record("gsm8k", "a" * 40, "test", index) for index in range(3))
+    _retain_smallest(heap, records[0], key=10, limit=2)
+    _retain_smallest(heap, records[1], key=20, limit=2)
+
+    assert not _could_retain_smallest(
+        heap,
+        record_id=records[2].record_id,
+        key=30,
+        limit=2,
+    )
+    assert _could_retain_smallest(
+        heap,
+        record_id=records[2].record_id,
+        key=5,
+        limit=2,
+    )
+    assert not _could_retain_smallest([], record_id="unused", key=0, limit=0)
 
 
 def _rows(path: Path) -> tuple[dict[str, object], ...]:
@@ -346,6 +370,64 @@ def test_natural_lm_pairs_are_repository_held_out_while_injection_words_are_disj
     assert "shared" not in dictionaries["tune"]
     assert len(selected["pre_pr_gate"]) == 2
     assert len(selected["final_test"]) == 3
+
+
+def test_sealed_corpus_excludes_near_duplicates_of_prior_tune_text() -> None:
+    protocol = replace(
+        load_evaluation_study_protocol(STUDY),
+        corpus_counts=MappingProxyType(
+            {
+                "tune": {"fineweb_edu": 0, "dolma": 0, "natural_pairs": 0},
+                "pre_pr_gate": {"fineweb_edu": 1, "dolma": 1, "natural_pairs": 0},
+                "final_test": {"fineweb_edu": 1, "dolma": 1, "natural_pairs": 0},
+            }
+        ),
+    )
+
+    def corpus_record(source: str, index: int, text: str) -> CleanRecord:
+        return CleanRecord(
+            source=source,
+            source_revision="a" * 40,
+            source_split="train",
+            source_id=f"{source}-{index}",
+            group_id=f"{source}-group-{index}",
+            text=text,
+            task=None,
+            answer=None,
+            metadata={"fixture": True},
+        )
+
+    prior_text = " ".join(f"token{index:04d}" for index in range(1000))
+    near_prior = f"{prior_text[:-1]}8"
+    collected = {
+        source: (
+            corpus_record(source, 0, near_prior),
+            corpus_record(source, 1, f"Unique {source} document alpha with sufficient prose."),
+            corpus_record(source, 2, f"Unique {source} document beta with different prose."),
+        )
+        for source in ("fineweb_edu", "dolma")
+    }
+    exclusions = _Exclusions(
+        hard_source_ids=frozenset(),
+        hard_groups=frozenset(),
+        prior_tune_source_ids=frozenset(),
+        prior_tune_groups=frozenset(),
+        hard_near_duplicates=NearDuplicateTextIndex(()),
+        prior_tune_near_duplicates=NearDuplicateTextIndex(
+            (prior_text,), shingle_size=5, threshold=0.99
+        ),
+        training_repositories=frozenset(),
+        tune_repositories=frozenset(),
+        artifact_sha256={},
+    )
+    selected = _select_corpus(collected, protocol=protocol, exclusions=exclusions)
+
+    assert all(
+        record.text != near_prior
+        for role in ("pre_pr_gate", "final_test")
+        for source in ("fineweb_edu", "dolma")
+        for record in selected[role][source]
+    )
 
 
 def test_freeze_writes_fixed_disjoint_primary_secondary_and_corpus_artifacts(

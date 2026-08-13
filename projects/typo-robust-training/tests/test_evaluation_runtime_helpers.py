@@ -20,6 +20,7 @@ from typo_robust_training.evaluation.runtime import (
     HuggingFaceRobustnessEvaluationRuntimeFactory,
     aligned_forward_kl_sum,
     causal_nll_and_forward_kl,
+    causal_nll_sum,
     evaluation_teacher_targets,
     prompt_tokenization_profile,
     teacher_forced_kl_readout,
@@ -117,6 +118,31 @@ def test_monitor_reductions_use_causal_and_aligned_forward_kl() -> None:
     )
     assert aligned_tokens == 2
     assert aligned_sum > 0.0
+
+
+def test_monitor_reductions_chunk_long_sequences_without_changing_values() -> None:
+    torch.manual_seed(42)
+    base = torch.randn(1, 11, 17, dtype=torch.bfloat16)
+    candidate = torch.randn(1, 11, 17, dtype=torch.bfloat16)
+    ids = torch.randint(0, 17, (1, 11))
+
+    nll, count, kl_sum, kl_count = causal_nll_and_forward_kl(
+        candidate,
+        ids,
+        base_logits=base,
+    )
+    candidate_log_probs = candidate[:, :-1].float().log_softmax(dim=-1)
+    base_log_probs = base[:, :-1].float().log_softmax(dim=-1)
+    expected_nll = -candidate_log_probs.gather(-1, ids[:, 1:].unsqueeze(-1)).sum()
+    expected_kl = (base_log_probs.exp() * (base_log_probs - candidate_log_probs)).sum()
+
+    assert count == kl_count == 10
+    assert nll == pytest.approx(float(expected_nll), rel=1e-6)
+    assert kl_sum == pytest.approx(float(expected_kl), rel=1e-6)
+    teacher_nll, teacher_count = causal_nll_sum(base, ids)
+    expected_teacher = -base_log_probs.gather(-1, ids[:, 1:].unsqueeze(-1)).sum()
+    assert teacher_count == 10
+    assert teacher_nll == pytest.approx(float(expected_teacher), rel=1e-6)
 
 
 def test_evaluation_teacher_targets_drop_partial_prefix_when_readout_is_invalid() -> None:

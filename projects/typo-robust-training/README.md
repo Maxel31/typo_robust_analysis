@@ -314,8 +314,9 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 
 Run the two controls serially when only one GPU is available. Add `--resume`
 only when the same output directory already contains an exact compatible
-checkpoint. W&B uses descriptive names: `Control · Random-window state
-distillation` and `Control · All-layer state distillation`.
+checkpoint. W&B uses descriptive names beginning with `Random-window control`
+and `All-layer control`; each name also includes the operation, layer range,
+model, token budget, and seed.
 
 ## 5. Freeze the independent evaluation study
 
@@ -350,11 +351,13 @@ gate definitions are described in
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot evaluate-typo-robustness \
   --config "${TRAIN_PROJECT}/configs/gemma4b-evaluation.yaml" \
-  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --evaluation-data "${EVALUATION_DATA}" \
   --evaluation-role tune \
   --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
   --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
-  --checkpoint "${TRAIN_ROOT}/training/localized-state-distillation/seed-42/adapter" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-42/adapter" \
   --splits same-task unseen-task unseen-content unseen-typo \
   --gpu-id "${GPU_ID}" \
   --output-dir "${TRAIN_ROOT}/evaluation/tune/targeted-seed-42"

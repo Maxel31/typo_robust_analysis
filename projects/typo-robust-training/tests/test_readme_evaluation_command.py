@@ -18,5 +18,8 @@ def test_initial_evaluation_command_does_not_request_resume(readme_name: str) ->
     )[0]
 
     assert "--resume" not in command
+    assert "--evaluation-protocol" in command
+    assert "--evaluation-data" in command
+    assert "gemma4b-cycle3-64m" in command
     assert "--window-validation" in command
     assert "--resume" in readme.split(command, maxsplit=1)[1]
