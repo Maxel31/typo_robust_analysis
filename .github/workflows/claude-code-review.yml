@@ -67,13 +67,22 @@ jobs:
               `review-falsify typo-cot TEST_FILE`, or
               `review-falsify typo-robust-training TEST_FILE`.
             - Never invoke pytest, uv, Python, or another test runner directly.
-            - Interpret helper exit status 1 as the only evidence that a
-              counterexample reproduced a product defect. Status 0 means the
-              attempted falsification did not reproduce a defect. Every other
-              status is inconclusive or a review-harness failure and must not
-              be reported as an actionable product defect.
-            - Only report an issue as actionable when status 1 was observed for
-              the claimed reason and the expected behavior is well-defined.
+            - Helper exit status 1 is necessary but not sufficient evidence
+              that a counterexample reproduced a product defect. Status 0 means
+              the attempted falsification did not reproduce a defect. Every
+              other status is inconclusive or a review-harness failure and must
+              not be reported as an actionable product defect.
+            - Only report an issue as actionable when status 1 was observed,
+              the failed assertion or exception was caused by product behavior
+              under its intended production preconditions, and the expected
+              behavior is well-defined.
+            - Treat a status-1 result as inconclusive when its failure depends
+              on a review-sandbox constraint rather than the product. Known
+              constraints include hidden `/workspace/.git`, no network,
+              read-only `/workspace`, and reviewer/canary files overlaid at
+              `/workspace/**/.review-tests`. Do not use this sandbox to verify
+              Git tracked-file/layout contracts or the contents of those
+              overlaid review-test directories.
             - Include the exact review test, helper command, exit status, and
               observed failure in every actionable review comment.
             - If you cannot produce such a counterexample after a reasonable
