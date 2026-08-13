@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import sys
 from collections.abc import Sequence
@@ -213,6 +214,17 @@ def _inclusive_token_range(value: str) -> tuple[int, int]:
     if start <= 0 or stop < start:
         raise argparse.ArgumentTypeError("must be a positive inclusive START:STOP range")
     return start, stop
+
+
+def _register_command_plugins(
+    commands: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    """Load optional command packages installed in the active environment."""
+
+    entry_points = importlib.metadata.entry_points(group="typo_cot.commands")
+    for entry_point in sorted(entry_points, key=lambda candidate: candidate.name):
+        registrar = entry_point.load()
+        registrar(commands)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -727,6 +739,7 @@ def _parser() -> argparse.ArgumentParser:
     patch_text.add_argument("--limit", type=_positive_int)
     patch_text.add_argument("--output-dir", required=True, type=Path)
     patch_text.add_argument("--resume", action="store_true")
+    _register_command_plugins(commands)
     return parser
 
 
@@ -772,6 +785,9 @@ def _print_spec(spec: ExperimentSpec, output_format: str) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the public CLI and return a process exit code."""
     args = _parser().parse_args(argv)
+    plugin_handler = getattr(args, "_typo_cot_plugin_handler", None)
+    if plugin_handler is not None:
+        return int(plugin_handler(args))
     if args.command == "experiments" and args.catalog_action == "list":
         _print_list(args.format)
         return 0

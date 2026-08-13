@@ -1,0 +1,102 @@
+"""Leakage-resistant content and natural-repository split contracts."""
+
+from __future__ import annotations
+
+from collections import defaultdict
+
+import pytest
+
+from typo_robust_training.data.records import CleanRecord
+from typo_robust_training.data.splits import (
+    assign_content_splits,
+    assign_repository_split,
+    cluster_near_duplicates,
+    normalized_content_sha256,
+    validate_group_disjointness,
+)
+
+
+def _record(index: int, text: str, *, group: str | None = None) -> CleanRecord:
+    return CleanRecord(
+        source="fixture",
+        source_revision="a" * 40,
+        source_split="train",
+        source_id=f"row-{index}",
+        group_id=group or f"document-{index}",
+        text=text,
+        task=None,
+        answer=None,
+        metadata={"fixture": True},
+    )
+
+
+def test_content_hash_normalizes_only_for_duplicate_detection() -> None:
+    assert normalized_content_sha256("  Alpha\n beta  ") == normalized_content_sha256("alpha beta")
+    assert normalized_content_sha256("alpha beta") != normalized_content_sha256("alpha gamma")
+
+
+def test_near_duplicate_clusters_are_order_independent_and_split_atomically() -> None:
+    records = (
+        _record(0, "The airport is located in Chicago and serves many passengers."),
+        _record(1, "The airport is located in Chicago and serves many passenger."),
+        _record(2, "Photosynthesis converts light energy into chemical energy."),
+        _record(3, "A completely unrelated discussion of medieval history."),
+    )
+    forward = cluster_near_duplicates(records, shingle_size=3, threshold=0.80)
+    reverse = cluster_near_duplicates(tuple(reversed(records)), shingle_size=3, threshold=0.80)
+    assert forward == reverse
+    assert forward["row-0"] == forward["row-1"]
+    assert forward["row-0"] != forward["row-2"]
+
+    assignments = assign_content_splits(
+        records,
+        clusters=forward,
+        seed=42,
+        weights={"train": 0.8, "tune": 0.1, "pre_pr_gate": 0.05, "final_test": 0.05},
+    )
+    assert assignments["row-0"] == assignments["row-1"]
+    validate_group_disjointness(records, assignments, clusters=forward)
+
+    leaked = dict(assignments)
+    leaked["row-1"] = "final_test" if leaked["row-0"] != "final_test" else "train"
+    with pytest.raises(ValueError, match="near-duplicate cluster"):
+        validate_group_disjointness(records, leaked, clusters=forward)
+
+
+def test_content_assignment_does_not_depend_on_input_order() -> None:
+    records = tuple(
+        _record(index, f"Document number {index} contains enough prose.") for index in range(40)
+    )
+    clusters = cluster_near_duplicates(records, shingle_size=3, threshold=0.95)
+    expected = assign_content_splits(
+        records,
+        clusters=clusters,
+        seed=42,
+        weights={"train": 0.8, "tune": 0.1, "pre_pr_gate": 0.05, "final_test": 0.05},
+    )
+    observed = assign_content_splits(
+        tuple(reversed(records)),
+        clusters=clusters,
+        seed=42,
+        weights={"train": 0.8, "tune": 0.1, "pre_pr_gate": 0.05, "final_test": 0.05},
+    )
+    assert observed == expected
+
+
+def test_natural_typo_repository_split_is_stable_and_repository_disjoint() -> None:
+    repositories = tuple(f"https://github.com/example/repository-{index}" for index in range(500))
+    assignments = {
+        repository: assign_repository_split(repository, seed=42) for repository in repositories
+    }
+    assert assignments == {
+        repository: assign_repository_split(repository, seed=42)
+        for repository in reversed(repositories)
+    }
+    assert set(assignments.values()) == {"train", "tune", "held_out"}
+
+    counts: dict[str, int] = defaultdict(int)
+    for split in assignments.values():
+        counts[split] += 1
+    assert 0.60 <= counts["train"] / len(repositories) <= 0.80
+    assert 0.04 <= counts["tune"] / len(repositories) <= 0.16
+    assert 0.12 <= counts["held_out"] / len(repositories) <= 0.28
