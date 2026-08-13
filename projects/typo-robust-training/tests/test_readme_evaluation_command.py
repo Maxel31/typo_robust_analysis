@@ -18,4 +18,5 @@ def test_initial_evaluation_command_does_not_request_resume(readme_name: str) ->
     )[0]
 
     assert "--resume" not in command
+    assert "--window-validation" in command
     assert "--resume" in readme.split(command, maxsplit=1)[1]

@@ -143,6 +143,7 @@ def _config(root: Path, output: Path, *, resume: bool) -> RobustnessEvaluationRu
         training_data_dir=root,
         evaluation_role="tune",
         layer_selection_path=root / "layers.json",
+        window_validation_path=None,
         checkpoint_paths=tuple(descriptor.path for descriptor in _descriptors(root)),
         splits=("same-task",),
         gpu_id="3",
