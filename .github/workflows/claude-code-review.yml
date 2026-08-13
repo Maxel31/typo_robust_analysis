@@ -18,12 +18,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # Never trust the helper from the pull-request checkout. Install the
-      # exact version from the immutable base commit into a root-owned path.
+      # Never trust the helper from the pull-request checkout or its target
+      # branch. Install the version from the repository default branch into a
+      # root-owned path so reviews targeting long-lived branches remain safe.
       - name: Checkout trusted review helper
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.repository.default_branch }}
           path: .trusted-review-helper
           sparse-checkout: .github/review/run-falsification-test.sh
           sparse-checkout-cone-mode: false
