@@ -91,6 +91,14 @@ def test_observed_public_dataset_schemas_format_without_losing_answers() -> None
         )
         assert record.answer == expected_answers[source_name]
         assert record.source_revision == protocol.sources[source_name].revision
+        if source_name in {"mmlu", "arc", "mmlu_pro", "commonsense_qa"}:
+            expected_choice_text = {
+                "mmlu": "two",
+                "arc": "second",
+                "mmlu_pro": "one",
+                "commonsense_qa": "here",
+            }[source_name]
+            assert record.metadata["answer_choice_text"] == expected_choice_text
     gsm8k = _format_huggingface_record(
         "gsm8k",
         protocol.sources["gsm8k"],
