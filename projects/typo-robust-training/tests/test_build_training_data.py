@@ -13,6 +13,7 @@ import pytest
 from typo_robust_training.data.builder import (
     BuildTrainingDataConfig,
     DataSourceProvider,
+    _diagnostic_rows,
     _pair_payload,
     run_build_training_data,
 )
@@ -218,7 +219,7 @@ def test_builder_writes_hash_bound_disjoint_replayable_artifacts(tmp_path: Path)
     assert all(
         row["metadata"]["evaluation_condition"]
         in {"random-1", "random-2", "random-4", "transposition-2", "natural-lm-pair"}
-        for row in (*training, *diagnostic, *tune, *gate, *final)
+        for row in (*tune, *gate, *final)
         if row["kind"] != "clean"
     )
     allowed_training_splits = {"gsm8k": "train", "mmlu": "dev", "arc": "train"}
@@ -273,6 +274,31 @@ def test_builder_writes_hash_bound_disjoint_replayable_artifacts(tmp_path: Path)
     for filename, metadata in run["outputs"].items():
         path = output / filename
         assert metadata["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("config_path", (DEFAULT_CONFIG, CYCLE3_CONFIG))
+def test_diagnostic_manifest_accepts_three_edit_bucket(config_path: Path) -> None:
+    protocol = load_training_data_config(config_path)
+    records = tuple(
+        _clean(
+            "gsm8k",
+            protocol.sources["gsm8k"].revision,
+            index,
+            task="gsm8k",
+            source_split="train",
+        )
+        for index in range(protocol.diagnostic_per_task)
+    )
+    substitutions = {letter: {"x": 1} for letter in "abcdefghijklmnopqrstuvwxyz" if letter != "x"}
+
+    rows = _diagnostic_rows(
+        records,
+        protocol=protocol,
+        natural_substitutions=substitutions,
+    )
+
+    assert len(rows) == protocol.diagnostic_per_task
+    assert any(row["edit_count"] == 3 for row in rows)
 
 
 def test_builder_is_byte_deterministic_except_for_run_provenance(tmp_path: Path) -> None:
