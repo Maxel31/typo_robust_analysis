@@ -256,9 +256,9 @@ only through `WANDB_API_KEY`; `WANDB_ENTITY` is optional. At each completed
 optimizer step the run uploads aggregate total/component losses, learning
 rate, gradient norm, token throughput, and GPU-memory telemetry. Raw corpus
 text, prompts, record IDs, the API key, and checkpoint contents are never sent.
-`wandb_run.json` stores only the run ID, project/entity, URL, and resume
-boundary so `--resume` continues the same W&B run without duplicating the
-loss curve.
+`wandb_run.json` stores only non-secret run identity, scientific
+bindings/presentation, URL, status, and the resume boundary so `--resume`
+continues the same W&B run without duplicating the loss curve.
 
 W&B names expose the scientific role directly; opaque arm abbreviations are
 not used:
@@ -267,8 +267,8 @@ not used:
 |---|---|---|
 | `Kojima baseline` | `Output-distribution matching` | Clean-teacher/noisy-student output matching without state loss |
 | `Proposed method` | `Causal-window localized state distillation` | State signal at the Activation-Patching-selected residual window |
-| `Specificity control` | `Random-window state distillation` | Same-width non-overlapping random-window control |
 | `Scope control` | `All-layer state distillation` | State signal at every decoder layer |
+| `Auxiliary baseline` | `Noisy-language-model training` | Ordinary causal-language-model training on noisy text |
 
 The suffix records state layers, model, optimizer-step budget, and seed. Runs
 from the failed Cycle 1 design are placed in a separate `Historical Cycle 1`

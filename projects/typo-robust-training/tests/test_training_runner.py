@@ -247,7 +247,7 @@ def test_runner_starts_wandb_with_a_self_explanatory_series_name(
         return tracker
 
     monkeypatch.setattr(runner_module, "start_wandb_training_tracker", start_tracker)
-    run_adapter_training(
+    result = run_adapter_training(
         _run_config(
             tmp_path,
             _config(tmp_path),
@@ -264,3 +264,6 @@ def test_runner_starts_wandb_with_a_self_explanatory_series_name(
         "Historical baseline · Noisy-language-model training · Gemma-3-4B-IT · 3 steps · seed 42"
     )
     assert presentation.group == "Historical Cycle 1 · Gemma-3-4B-IT · 3 steps"
+    assert "gpu_id" not in captured["bindings"]
+    run = json.loads(result.run_path.read_text(encoding="utf-8"))
+    assert run["gpu_id"] == "3"

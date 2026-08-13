@@ -47,6 +47,19 @@ class _Wandb:
         return run
 
 
+class _DefineFailureRun(_Run):
+    def define_metric(self, name: str, **kwargs: object) -> None:
+        raise RuntimeError("injected define failure")
+
+
+class _DefineFailureWandb(_Wandb):
+    def init(self, **kwargs: object) -> _Run:
+        self.calls.append(dict(kwargs))
+        run = _DefineFailureRun(str(kwargs["id"]))
+        self.runs.append(run)
+        return run
+
+
 def _bindings() -> dict[str, object]:
     return {
         "condition": "localized-state-distillation",
@@ -103,6 +116,16 @@ def test_wandb_presentation_uses_self_explanatory_scientific_names() -> None:
     assert historical.group.startswith("Historical Cycle 1 ·")
     assert "not the confirmatory method" in historical.notes
 
+    with pytest.raises(ValueError, match="no mapping"):
+        build_wandb_run_presentation(
+            condition="random-window-state-distillation",
+            schema_version="robustness-adapter-training-config/v2",
+            model="google/gemma-3-4b-it",
+            seed=42,
+            max_optimizer_steps=100,
+            state_layers=tuple(range(20, 26)),
+        )
+
 
 def test_wandb_requires_environment_credential_without_persisting_it(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="WANDB_API_KEY"):
@@ -119,6 +142,29 @@ def test_wandb_requires_environment_credential_without_persisting_it(tmp_path: P
         )
 
     assert not (tmp_path / "wandb_run.json").exists()
+
+
+def test_wandb_finishes_and_records_run_when_post_init_setup_fails(tmp_path: Path) -> None:
+    module = _DefineFailureWandb()
+
+    with pytest.raises(RuntimeError, match="injected define failure"):
+        start_wandb_training_tracker(
+            output_dir=tmp_path,
+            project="typo-robustness-training",
+            entity=None,
+            bindings=_bindings(),
+            resume=False,
+            resume_optimizer_step=0,
+            environment={"WANDB_API_KEY": "secret"},
+            wandb_module=module,
+            run_id_factory=lambda: "failed-setup-run",
+        )
+
+    assert module.runs[0].finished == [1]
+    metadata = json.loads((tmp_path / "wandb_run.json").read_text(encoding="utf-8"))
+    assert metadata["run_id"] == "failed-setup-run"
+    assert metadata["url"].endswith("/failed-setup-run")
+    assert metadata["status"] == "failed"
 
 
 def test_wandb_logs_scalars_and_resumes_same_hash_bound_run(tmp_path: Path) -> None:

@@ -63,13 +63,6 @@ _CONFIRMATORY_PRESENTATION = {
         "Output matching plus residual-state cosine alignment at the edited-word-final "
         "coordinates selected by Activation Patching.",
     ),
-    "random-window-state-distillation": (
-        "Specificity control",
-        "Random-window state distillation",
-        "random-window-state-control",
-        "specificity-control",
-        "Same-width non-overlapping random-window control for the causal layer selection.",
-    ),
     "global-state-alignment": (
         "Scope control",
         "All-layer state distillation",
@@ -461,19 +454,38 @@ def start_wandb_training_tracker(
         reinit="create_new",
         **init_resume,
     )
-    if run is None or getattr(run, "id", None) != run_id:
-        raise RuntimeError("W&B initialized a different or missing run ID")
-    run.define_metric("train/optimizer_step")
-    run.define_metric("train/*", step_metric="train/optimizer_step")
-    run.define_metric("system/*", step_metric="train/optimizer_step")
-    metadata.update(
-        {
-            "url": getattr(run, "url", None),
-            "last_logged_optimizer_step": resume_optimizer_step,
-            "status": "running",
-        }
-    )
-    write_json_atomic(metadata_path, metadata)
+    valid_run = run is not None and getattr(run, "id", None) == run_id
+    try:
+        if not valid_run:
+            raise RuntimeError("W&B initialized a different or missing run ID")
+        metadata.update(
+            {
+                "url": getattr(run, "url", None),
+                "last_logged_optimizer_step": resume_optimizer_step,
+                "status": "initializing",
+            }
+        )
+        # Persist the remote identity before any fallible post-init setup so a
+        # partially initialized run remains attributable in local artifacts.
+        write_json_atomic(metadata_path, metadata)
+        run.define_metric("train/optimizer_step")
+        run.define_metric("train/*", step_metric="train/optimizer_step")
+        run.define_metric("system/*", step_metric="train/optimizer_step")
+        metadata["status"] = "running"
+        write_json_atomic(metadata_path, metadata)
+    except Exception:
+        if run is not None:
+            try:
+                run.finish(exit_code=1)
+            except Exception:
+                pass
+        if valid_run:
+            metadata["status"] = "failed"
+            try:
+                write_json_atomic(metadata_path, metadata)
+            except Exception:
+                pass
+        raise
     sdk_version = getattr(module, "__version__", None)
     return WandbTrainingTracker(
         run=run,

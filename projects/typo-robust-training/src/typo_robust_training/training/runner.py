@@ -339,7 +339,6 @@ def run_adapter_training(
                 bindings={
                     **bindings,
                     "condition": protocol.condition,
-                    "gpu_id": config.gpu_id,
                 },
                 presentation=build_wandb_run_presentation(
                     condition=protocol.condition,
