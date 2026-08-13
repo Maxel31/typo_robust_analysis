@@ -212,6 +212,18 @@ def test_builder_writes_hash_bound_disjoint_replayable_artifacts(tmp_path: Path)
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["status"] == "completed"
     assert run["source_provider"] == {"provider": "offline-fixture/v1"}
+    category_sources = {
+        "fineweb_edu": {"fineweb_edu"},
+        "reasoning": {"gsm8k", "mmlu", "arc"},
+        "natural_typo": {"github_typo_corpus"},
+    }
+    for category, sources in category_sources.items():
+        expected: dict[str, int] = {}
+        for row in training:
+            source = str(row["source"])
+            if source in sources:
+                expected[source] = expected.get(source, 0) + int(row["token_count"])
+        assert run["mixture_source_tokens"][category] == expected
     for filename, metadata in run["outputs"].items():
         path = output / filename
         assert metadata["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()

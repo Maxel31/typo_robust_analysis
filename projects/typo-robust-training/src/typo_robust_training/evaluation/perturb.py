@@ -48,6 +48,63 @@ class FrozenEvaluationTypo:
     metadata: Mapping[str, object]
 
 
+class NoNaturalInjectionTargetError(ValueError):
+    """The validated dictionary has no eligible target in one record."""
+
+
+@dataclass(frozen=True, slots=True)
+class NaturalInjectionDictionary:
+    """One validated, immutable natural-typo dictionary reusable across records."""
+
+    replacements: Mapping[str, tuple[str, ...]]
+    minimum_word_letters: int
+
+
+def freeze_natural_injection_dictionary(
+    replacements: Mapping[str, Sequence[str]],
+    *,
+    minimum_word_letters: int = 3,
+) -> NaturalInjectionDictionary:
+    """Validate and normalize a natural-typo dictionary exactly once."""
+
+    if (
+        isinstance(minimum_word_letters, bool)
+        or not isinstance(minimum_word_letters, int)
+        or minimum_word_letters <= 0
+    ):
+        raise ValueError("minimum_word_letters must be a positive integer")
+    if not isinstance(replacements, Mapping):
+        raise TypeError("natural injection dictionary must be a mapping")
+    normalized: dict[str, tuple[str, ...]] = {}
+    for clean, typos in replacements.items():
+        if not isinstance(typos, Sequence) or isinstance(typos, (str, bytes)):
+            raise ValueError("natural injection dictionary contains an invalid entry")
+        values = tuple(sorted(set(typos)))
+        if (
+            not isinstance(clean, str)
+            or not clean.isascii()
+            or not clean.isalpha()
+            or len(clean) < minimum_word_letters
+            or not values
+            or any(
+                not isinstance(typo, str)
+                or not typo.isascii()
+                or not typo.isalpha()
+                or typo.casefold() == clean.casefold()
+                for typo in values
+            )
+        ):
+            raise ValueError("natural injection dictionary contains an invalid entry")
+        key = clean.casefold()
+        if key in normalized:
+            raise ValueError("natural injection dictionary contains duplicate corrected words")
+        normalized[key] = values
+    return NaturalInjectionDictionary(
+        replacements=MappingProxyType(normalized),
+        minimum_word_letters=minimum_word_letters,
+    )
+
+
 def _question_stop(record: CleanRecord) -> int:
     if record.task in _MULTIPLE_CHOICE_TASKS:
         separator = record.text.find("\n")
@@ -237,7 +294,7 @@ def generate_evaluation_typo(
 def generate_natural_injection(
     record: CleanRecord,
     *,
-    replacements: Mapping[str, Sequence[str]],
+    replacements: Mapping[str, Sequence[str]] | NaturalInjectionDictionary,
     seed: int,
     role: str,
     variant: int,
@@ -245,28 +302,17 @@ def generate_natural_injection(
 ) -> FrozenEvaluationTypo:
     """Inject one held-out real misspelling into an eligible question word."""
 
-    normalized: dict[str, tuple[str, ...]] = {}
-    for clean, typos in replacements.items():
-        values = tuple(sorted(set(typos)))
-        if (
-            not isinstance(clean, str)
-            or not clean.isascii()
-            or not clean.isalpha()
-            or len(clean) < minimum_word_letters
-            or not values
-            or any(
-                not isinstance(typo, str)
-                or not typo.isascii()
-                or not typo.isalpha()
-                or typo.casefold() == clean.casefold()
-                for typo in values
-            )
-        ):
-            raise ValueError("natural injection dictionary contains an invalid entry")
-        key = clean.casefold()
-        if key in normalized:
-            raise ValueError("natural injection dictionary contains duplicate corrected words")
-        normalized[key] = values
+    dictionary = (
+        replacements
+        if isinstance(replacements, NaturalInjectionDictionary)
+        else freeze_natural_injection_dictionary(
+            replacements,
+            minimum_word_letters=minimum_word_letters,
+        )
+    )
+    if dictionary.minimum_word_letters != minimum_word_letters:
+        raise ValueError("natural injection dictionary eligibility threshold differs")
+    normalized = dictionary.replacements
     candidates = [
         span
         for span in evaluation_eligible_word_spans(
@@ -276,7 +322,9 @@ def generate_natural_injection(
         if record.text[slice(*span)].casefold() in normalized
     ]
     if not candidates:
-        raise ValueError("evaluation record has no held-out natural dictionary target")
+        raise NoNaturalInjectionTargetError(
+            "evaluation record has no held-out natural dictionary target"
+        )
     rng = _rng(
         record,
         condition="natural-injection",
@@ -319,7 +367,10 @@ def generate_natural_injection(
 
 __all__ = [
     "FrozenEvaluationTypo",
+    "NaturalInjectionDictionary",
+    "NoNaturalInjectionTargetError",
     "evaluation_eligible_word_spans",
+    "freeze_natural_injection_dictionary",
     "generate_evaluation_typo",
     "generate_natural_injection",
 ]

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
+
 from typo_robust_training.data.records import CleanRecord
 from typo_robust_training.evaluation.perturb import (
+    NoNaturalInjectionTargetError,
     evaluation_eligible_word_spans,
+    freeze_natural_injection_dictionary,
     generate_evaluation_typo,
     generate_natural_injection,
 )
@@ -176,3 +180,29 @@ def test_natural_injection_uses_eval_dictionary_and_keeps_options_unchanged() ->
         == record.text[record.text.index("\n") :]
     )
     assert injected.metadata["evaluation_condition"] == "natural-injection"
+
+
+def test_natural_injection_dictionary_is_validated_once_and_no_target_is_distinct() -> None:
+    dictionary = freeze_natural_injection_dictionary(
+        {"airport": ("arport", "arport")},
+        minimum_word_letters=3,
+    )
+    injected = generate_natural_injection(
+        _record(),
+        replacements=dictionary,
+        seed=42,
+        role="final_test",
+        variant=0,
+    )
+    assert injected.edits[0].clean_word.casefold() == "airport"
+
+    with pytest.raises(ValueError, match="invalid entry"):
+        freeze_natural_injection_dictionary({"airport": ("airport",)})
+    with pytest.raises(NoNaturalInjectionTargetError, match="no held-out"):
+        generate_natural_injection(
+            _record(),
+            replacements=freeze_natural_injection_dictionary({"unseenword": ("unseenwrd",)}),
+            seed=42,
+            role="final_test",
+            variant=0,
+        )
