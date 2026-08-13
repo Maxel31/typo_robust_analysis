@@ -8,6 +8,7 @@ import pytest
 
 from typo_robust_training.data.records import CleanRecord
 from typo_robust_training.data.splits import (
+    assign_balanced_group_roles,
     assign_content_splits,
     assign_repository_split,
     cluster_near_duplicates,
@@ -100,3 +101,30 @@ def test_natural_typo_repository_split_is_stable_and_repository_disjoint() -> No
     assert 0.60 <= counts["train"] / len(repositories) <= 0.80
     assert 0.04 <= counts["tune"] / len(repositories) <= 0.16
     assert 0.12 <= counts["held_out"] / len(repositories) <= 0.28
+
+
+def test_balanced_group_roles_are_order_independent_and_keep_groups_atomic() -> None:
+    sizes = {
+        "repository-a": 51,
+        "repository-b": 23,
+        "repository-c": 17,
+        "repository-d": 9,
+        "repository-e": 5,
+    }
+    weights = {"train": 0.6, "tune": 0.1, "held_out": 0.3}
+    expected = assign_balanced_group_roles(
+        sizes,
+        seed=42,
+        namespace="fixture",
+        weights=weights,
+    )
+    observed = assign_balanced_group_roles(
+        dict(reversed(tuple(sizes.items()))),
+        seed=42,
+        namespace="fixture",
+        weights=weights,
+    )
+
+    assert observed == expected
+    assert set(observed) == set(sizes)
+    assert set(observed.values()) == set(weights)
