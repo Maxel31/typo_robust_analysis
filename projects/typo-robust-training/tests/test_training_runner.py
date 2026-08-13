@@ -211,6 +211,7 @@ def test_runner_resume_matches_uninterrupted_sample_sequence(tmp_path: Path) -> 
     assert (resumed.adapter_path / "adapter.txt").read_text(encoding="utf-8") == "3"
     completed = json.loads(resumed.run_path.read_text(encoding="utf-8"))
     assert completed["status"] == "completed"
+    assert len(completed["outputs"]["adapter"]["sha256"]) == 64
 
 
 def test_runner_uploads_only_aggregate_optimizer_step_telemetry(tmp_path: Path) -> None:

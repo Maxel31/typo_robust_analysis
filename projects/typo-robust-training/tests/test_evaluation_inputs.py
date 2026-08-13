@@ -19,6 +19,20 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROTOCOL = load_robustness_evaluation_config(PROJECT_ROOT / "configs/gemma4b-evaluation.yaml")
 
 
+def _tree_sha256(root: Path) -> str:
+    inventory = [
+        {
+            "path": path.relative_to(root).as_posix(),
+            "bytes": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+        for path in sorted(candidate for candidate in root.rglob("*") if candidate.is_file())
+    ]
+    return hashlib.sha256(
+        json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
 def _adapter(
     root: Path,
     *,
@@ -63,9 +77,11 @@ def _adapter(
                 "seed": seed,
                 "config_sha256": "a" * 64,
                 "training_data_sha256": "b" * 64,
+                "data_identity_sha256": "e" * 64,
                 "localization_sha256": "c" * 64
                 if condition == "localized-state-distillation"
                 else None,
+                "outputs": {"adapter": {"sha256": _tree_sha256(adapter)}},
             }
         ),
         encoding="utf-8",
@@ -139,11 +155,22 @@ def test_explicit_adapters_and_layer_window_are_validated_and_content_hashed(
     ]
     assert all(len(descriptor.adapter_sha256) == 64 for descriptor in descriptors)
     assert all(descriptor.training_data_sha256 == "b" * 64 for descriptor in descriptors)
+    assert all(descriptor.data_identity_sha256 == "e" * 64 for descriptor in descriptors)
     assert all(descriptor.localization_sha256 == "c" * 64 for descriptor in descriptors)
 
     window = load_patch_window(_layers(tmp_path / "layers.json"), protocol=PROTOCOL)
     assert window.layers == tuple(range(6))
     assert len(window.artifact_sha256) == 64
+    expected_localization = hashlib.sha256(
+        (
+            "residual-state-evidence/v1\0"
+            f"{hashlib.sha256(selection.read_bytes()).hexdigest()}\0"
+            f"{hashlib.sha256(validation.read_bytes()).hexdigest()}\0"
+            "frozen-causal-window/v1\0"
+            + ",".join(map(str, range(6)))
+        ).encode()
+    ).hexdigest()
+    assert window.localization_sha256 == expected_localization
 
 
 def test_adapter_loader_rejects_duplicate_identity_incomplete_run_or_runtime_drift(
@@ -172,6 +199,36 @@ def test_adapter_loader_rejects_duplicate_identity_incomplete_run_or_runtime_dri
     runtime_path.write_text(json.dumps(runtime), encoding="utf-8")
     with pytest.raises(ValueError, match="runtime identity"):
         load_adapter_descriptors((adapter,), protocol=PROTOCOL)
+
+
+def test_adapter_loader_rejects_post_completion_mutation_or_mixed_seed_configs(
+    tmp_path: Path,
+) -> None:
+    seed_42 = _adapter(
+        tmp_path,
+        condition="localized-state-distillation",
+        seed=42,
+    )
+    (seed_42 / "adapter_model.safetensors").write_bytes(b"substituted-weights")
+    with pytest.raises(ValueError, match="content hash"):
+        load_adapter_descriptors((seed_42,), protocol=PROTOCOL)
+
+    seed_43 = _adapter(
+        tmp_path,
+        condition="output-matching",
+        seed=43,
+    )
+    seed_44 = _adapter(
+        tmp_path,
+        condition="output-matching",
+        seed=44,
+    )
+    run_path = seed_44.parent / "run.json"
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    run["config_sha256"] = "f" * 64
+    run_path.write_text(json.dumps(run), encoding="utf-8")
+    with pytest.raises(ValueError, match="configuration differs across seeds"):
+        load_adapter_descriptors((seed_43, seed_44), protocol=PROTOCOL)
 
 
 def test_patch_window_rejects_model_or_revision_drift(tmp_path: Path) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
 
@@ -72,6 +73,7 @@ def _descriptors(root: Path) -> tuple[AdapterDescriptor, ...]:
             seed=seed,
             config_sha256="d" * 64,
             training_data_sha256="e" * 64,
+            data_identity_sha256="c" * 64,
             localization_sha256="f" * 64,
             adapter_sha256=f"{seed:064x}",
         )
@@ -156,7 +158,12 @@ def _config(root: Path, output: Path, *, resume: bool) -> RobustnessEvaluationRu
 def test_runner_resume_is_byte_identical_to_uninterrupted_evaluation(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path)
     descriptors = _descriptors(tmp_path)
-    window = PatchWindow(start=0, stop=6, artifact_sha256="9" * 64)
+    window = PatchWindow(
+        start=0,
+        stop=6,
+        artifact_sha256="9" * 64,
+        localization_sha256="f" * 64,
+    )
 
     uninterrupted_factory = _RuntimeFactory()
     uninterrupted = run_robustness_evaluation(
@@ -198,6 +205,12 @@ def test_runner_resume_is_byte_identical_to_uninterrupted_evaluation(tmp_path: P
     completed = json.loads(resumed.run_path.read_text(encoding="utf-8"))
     assert completed["status"] == "completed"
     assert completed["access_binding_sha256"]
+    assert set(completed["runtime"]) == {
+        "base",
+        "localized-state-distillation:seed-42",
+        "localized-state-distillation:seed-43",
+        "localized-state-distillation:seed-44",
+    }
 
 
 def test_runner_refuses_nonempty_output_without_resume(tmp_path: Path) -> None:
@@ -211,5 +224,33 @@ def test_runner_refuses_nonempty_output_without_resume(tmp_path: Path) -> None:
             runtime_factory=_RuntimeFactory(),
             data_bundle=_bundle(tmp_path),
             descriptors=_descriptors(tmp_path),
-            patch_window=PatchWindow(0, 6, "9" * 64),
+            patch_window=PatchWindow(0, 6, "9" * 64, "f" * 64),
+        )
+
+
+def test_runner_rejects_evaluation_data_or_patch_evidence_drift(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path)
+    descriptors = _descriptors(tmp_path)
+    config = _config(tmp_path, tmp_path / "evaluation", resume=False)
+
+    wrong_data = tuple(
+        replace(descriptor, data_identity_sha256="0" * 64)
+        for descriptor in descriptors
+    )
+    with pytest.raises(ValueError, match="evaluation data identity"):
+        run_robustness_evaluation(
+            config,
+            runtime_factory=_RuntimeFactory(),
+            data_bundle=bundle,
+            descriptors=wrong_data,
+            patch_window=PatchWindow(0, 6, "9" * 64, "f" * 64),
+        )
+
+    with pytest.raises(ValueError, match="localization evidence"):
+        run_robustness_evaluation(
+            config,
+            runtime_factory=_RuntimeFactory(),
+            data_bundle=bundle,
+            descriptors=descriptors,
+            patch_window=PatchWindow(0, 6, "9" * 64, "0" * 64),
         )

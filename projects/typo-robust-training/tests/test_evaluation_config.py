@@ -70,6 +70,14 @@ def test_evaluation_config_rejects_unknown_fields_or_moving_revision(tmp_path: P
     with pytest.raises(ValueError, match="revision"):
         load_robustness_evaluation_config(moving)
 
+    payload = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    payload["sequence"]["teacher_forced_tokens"] = 8
+    payload["sequence"]["readout_token_range"] = [2, 8]
+    partial = tmp_path / "partial-readout.yaml"
+    partial.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="exactly sixteen"):
+        load_robustness_evaluation_config(partial)
+
 
 def test_evaluation_command_requires_explicit_role_checkpoints_and_resume() -> None:
     parser = argparse.ArgumentParser()

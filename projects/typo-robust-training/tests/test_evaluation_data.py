@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
+import typo_robust_training.evaluation.data as evaluation_data_module
 from typo_robust_training.evaluation.data import (
     complete_evaluation_role,
     load_evaluation_bundle,
@@ -292,3 +296,40 @@ def test_loader_rejects_role_hash_tampering(tmp_path: Path) -> None:
             confirm_sealed_role=False,
             resume=False,
         )
+
+
+def test_sealed_role_claim_is_serialized_across_concurrent_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = tmp_path / "data"
+    _write_data(data)
+    barrier = threading.Barrier(2)
+    original_registry = evaluation_data_module._access_registry
+
+    def delayed_registry(path: Path) -> dict[str, object]:
+        time.sleep(0.05)
+        return original_registry(path)
+
+    monkeypatch.setattr(evaluation_data_module, "_access_registry", delayed_registry)
+
+    def claim(index: int) -> str:
+        barrier.wait()
+        try:
+            evaluation_data_module._claim_evaluation_role(
+                data,
+                role="pre-pr-gate",
+                binding=f"{index + 1:064x}",
+                output_dir=tmp_path / f"output-{index}",
+                confirm=True,
+                resume=False,
+            )
+        except ValueError as exc:
+            return str(exc)
+        return "opened"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = tuple(pool.map(claim, range(2)))
+
+    assert outcomes.count("opened") == 1
+    assert sum("already opened" in outcome for outcome in outcomes) == 1
