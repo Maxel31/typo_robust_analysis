@@ -18,6 +18,17 @@ _CONDITIONS = frozenset(
         "output-matching",
         "global-state-alignment",
         "localized-state-distillation",
+        "random-window-state-distillation",
+    }
+)
+_EVALUATION_CONDITIONS = frozenset(
+    {
+        "random-1",
+        "random-2",
+        "random-4",
+        "transposition-2",
+        "natural-injection",
+        "natural-lm-pair",
     }
 )
 _TASKS = frozenset({"gsm8k", "mmlu", "arc", "mmlu_pro", "math_500", "commonsense_qa"})
@@ -35,6 +46,7 @@ _FIELDS = {
     "record_id",
     "condition",
     "seed",
+    "evaluation_condition",
     "source",
     "task",
     "operation",
@@ -80,6 +92,7 @@ class EvaluationObservation:
     record_id: str
     condition: str
     seed: int | None
+    evaluation_condition: str
     source: str
     task: str | None
     operation: str
@@ -111,6 +124,8 @@ class EvaluationObservation:
                 raise ValueError("base evaluation observation must not have a seed")
         elif isinstance(self.seed, bool) or not isinstance(self.seed, int) or self.seed < 0:
             raise ValueError("adapter evaluation observation must have a non-negative seed")
+        if self.evaluation_condition not in _EVALUATION_CONDITIONS:
+            raise ValueError("evaluation observation typo condition is unsupported")
         if not isinstance(self.source, str) or not self.source:
             raise ValueError("evaluation observation source must be non-empty")
         if self.task is not None and self.task not in _TASKS:
@@ -210,10 +225,11 @@ class EvaluationObservation:
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "schema_version": "robustness-evaluation-observation/v2",
+            "schema_version": "robustness-evaluation-observation/v3",
             "record_id": self.record_id,
             "condition": self.condition,
             "seed": self.seed,
+            "evaluation_condition": self.evaluation_condition,
             "source": self.source,
             "task": self.task,
             "operation": self.operation,
@@ -241,7 +257,7 @@ class EvaluationObservation:
         if (
             not isinstance(value, Mapping)
             or set(value) != _FIELDS
-            or value.get("schema_version") != "robustness-evaluation-observation/v2"
+            or value.get("schema_version") != "robustness-evaluation-observation/v3"
         ):
             raise ValueError("evaluation observation fields or schema differ")
         list_fields = (
@@ -258,6 +274,7 @@ class EvaluationObservation:
             record_id=value["record_id"],  # type: ignore[arg-type]
             condition=value["condition"],  # type: ignore[arg-type]
             seed=value["seed"],  # type: ignore[arg-type]
+            evaluation_condition=value["evaluation_condition"],  # type: ignore[arg-type]
             source=value["source"],  # type: ignore[arg-type]
             task=value["task"],  # type: ignore[arg-type]
             operation=value["operation"],  # type: ignore[arg-type]

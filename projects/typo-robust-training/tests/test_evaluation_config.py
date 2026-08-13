@@ -10,10 +10,12 @@ import pytest
 
 from typo_robust_training.cli import register_commands
 from typo_robust_training.evaluation.config import load_robustness_evaluation_config
+from typo_robust_training.evaluation.study import load_evaluation_study_protocol
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = PROJECT_ROOT / "configs/gemma4b-evaluation.yaml"
+STUDY_CONFIG = PROJECT_ROOT / "configs/robustness-evaluation-v1.yaml"
 
 
 def test_default_evaluation_protocol_freezes_model_generation_metrics_and_gate() -> None:
@@ -46,13 +48,30 @@ def test_default_evaluation_protocol_freezes_model_generation_metrics_and_gate()
     assert protocol.patch_window_source == "frozen-layer-selection"
     assert protocol.seed_inventory == (42, 43, 44)
     assert protocol.gate == {
-        "minimum_typo_accuracy_gain_points": 3.0,
+        "minimum_typo_accuracy_gain_points": 2.0,
         "maximum_clean_accuracy_drop_points": 1.0,
         "require_wrong_to_right_above_right_to_wrong": True,
         "require_positive_unseen_task_gain": True,
         "minimum_directional_seeds": 2,
-        "minimum_patch_gain_reduction_fraction": 0.30,
+        "minimum_patch_gain_reduction_fraction": 0.0,
     }
+
+
+def test_runtime_gate_matches_frozen_study_and_keeps_patch_audit_nonblocking() -> None:
+    protocol = load_robustness_evaluation_config(DEFAULT_CONFIG)
+    study = load_evaluation_study_protocol(STUDY_CONFIG)
+
+    assert (
+        protocol.gate["minimum_typo_accuracy_gain_points"]
+        == study.gates["minimum_typo_gain_points"]
+    )
+    assert (
+        protocol.gate["maximum_clean_accuracy_drop_points"]
+        == study.gates["clean_noninferiority_margin_points"]
+    )
+    assert protocol.gate["minimum_directional_seeds"] == study.gates["minimum_directional_seeds"]
+    assert study.gates["patch_audit_is_blocking"] is False
+    assert protocol.gate["minimum_patch_gain_reduction_fraction"] == 0.0
 
 
 def test_evaluation_config_rejects_unknown_fields_or_moving_revision(tmp_path: Path) -> None:

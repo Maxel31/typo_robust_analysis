@@ -31,6 +31,16 @@ _SPLITS = ("same-task", "unseen-task", "unseen-content", "unseen-typo")
 _SAME_TASKS = frozenset({"gsm8k", "mmlu", "arc"})
 _UNSEEN_TASKS = frozenset({"mmlu_pro", "math_500", "commonsense_qa"})
 _UNSEEN_CONTENT_SOURCES = frozenset({"fineweb_edu", "dolma"})
+_EVALUATION_CONDITIONS = frozenset(
+    {
+        "random-1",
+        "random-2",
+        "random-4",
+        "transposition-2",
+        "natural-injection",
+        "natural-lm-pair",
+    }
+)
 _SYNTHETIC_FIELDS = {
     "schema_version",
     "kind",
@@ -301,6 +311,9 @@ class EvaluationPair:
         metadata = value.get("metadata")
         if not isinstance(metadata, Mapping):
             raise ValueError("evaluation pair metadata must be an object")
+        evaluation_condition = metadata.get("evaluation_condition")
+        if evaluation_condition not in _EVALUATION_CONDITIONS:
+            raise ValueError("evaluation pair typo condition is unsupported")
         try:
             json.dumps(metadata, sort_keys=True, allow_nan=False)
         except (TypeError, ValueError) as exc:
@@ -361,7 +374,6 @@ class EvaluationPair:
             strata.append("unseen-task")
         if source in _UNSEEN_CONTENT_SOURCES:
             strata.append("unseen-content")
-        evaluation_condition = metadata.get("evaluation_condition")
         if (
             kind == "natural"
             or evaluation_condition in {"natural-injection", "transposition-2"}

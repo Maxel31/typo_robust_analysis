@@ -25,12 +25,14 @@ def _observation(
     typo_correct: bool,
     patch_gain: float,
     edit_count: int = 1,
+    evaluation_condition: str = "random-2",
 ) -> EvaluationObservation:
     unseen = index >= 10
     return EvaluationObservation(
         record_id=f"{index:064x}",
         condition=condition,
         seed=seed,
+        evaluation_condition=evaluation_condition,
         source="mmlu_pro" if unseen else "gsm8k",
         task="mmlu_pro" if unseen else "gsm8k",
         operation=(
@@ -190,7 +192,20 @@ def test_observation_round_trip_rejects_nonfinite_or_misaligned_kl() -> None:
         EvaluationObservation.from_dict(payload)
 
 
-def test_gate_rejects_incomplete_patch_readout_coverage() -> None:
+def test_random_window_control_is_a_valid_observation_condition() -> None:
+    observation = _observation(
+        1,
+        condition="random-window-state-distillation",
+        seed=42,
+        clean_correct=True,
+        typo_correct=False,
+        patch_gain=0.5,
+    )
+
+    assert EvaluationObservation.from_dict(observation.as_dict()) == observation
+
+
+def test_patch_readout_coverage_is_diagnostic_and_does_not_block_gate() -> None:
     observations = list(_passing_observations())
     for index, observation in enumerate(observations):
         if (
@@ -209,9 +224,12 @@ def test_gate_rejects_incomplete_patch_readout_coverage() -> None:
             break
     report = build_evaluation_report(observations, protocol=PROTOCOL)
     seed = report["gate"]["seed_checks"]["42"]
-    assert seed["checks"]["patch_readout_coverage"] is False
-    assert seed["passed"] is False
-    assert report["gate"]["passed"] is False
+    overall = report["comparisons"]["localized-state-distillation:seed-42"]["overall"]
+    assert overall["patch_readout_coverage_fraction"] < 1.0
+    assert "patch_readout_coverage" not in seed["checks"]
+    assert "patch_reliance_reduction" not in seed["checks"]
+    assert seed["passed"] is True
+    assert report["gate"]["passed"] is True
 
 
 def test_near_zero_untreated_kl_is_logged_without_failing_readout_coverage() -> None:
@@ -239,5 +257,65 @@ def test_near_zero_untreated_kl_is_logged_without_failing_readout_coverage() -> 
         "adapter:near-zero-untreated-kl": 1,
         "base:near-zero-untreated-kl": 1,
     }
-    assert seed["checks"]["patch_readout_coverage"] is True
     assert seed["passed"] is True
+
+
+def test_confirmatory_endpoint_excludes_secondary_typo_conditions() -> None:
+    observations: list[EvaluationObservation] = []
+    for index in range(10):
+        observations.extend(
+            (
+                _observation(
+                    index,
+                    condition="base",
+                    seed=None,
+                    clean_correct=True,
+                    typo_correct=True,
+                    patch_gain=0.5,
+                ),
+                _observation(
+                    index,
+                    condition="localized-state-distillation",
+                    seed=42,
+                    clean_correct=True,
+                    typo_correct=index != 0,
+                    patch_gain=0.25,
+                ),
+            )
+        )
+    for index in range(100, 120):
+        observations.extend(
+            (
+                _observation(
+                    index,
+                    condition="base",
+                    seed=None,
+                    clean_correct=True,
+                    typo_correct=False,
+                    patch_gain=0.5,
+                    evaluation_condition="random-4",
+                    edit_count=4,
+                ),
+                _observation(
+                    index,
+                    condition="localized-state-distillation",
+                    seed=42,
+                    clean_correct=True,
+                    typo_correct=True,
+                    patch_gain=0.25,
+                    evaluation_condition="random-4",
+                    edit_count=4,
+                ),
+            )
+        )
+
+    report = build_evaluation_report(observations, protocol=PROTOCOL)
+    comparison = report["comparisons"]["localized-state-distillation:seed-42"]
+
+    assert comparison["primary_condition"] == "random-2"
+    assert comparison["overall"]["n_records"] == 10
+    assert comparison["overall"]["typo_accuracy_gain_points"] == pytest.approx(-10.0)
+    assert comparison["all_conditions"]["typo_accuracy_gain_points"] == pytest.approx(1900.0 / 30.0)
+    assert comparison["evaluation_conditions"]["random-4"][
+        "typo_accuracy_gain_points"
+    ] == pytest.approx(100.0)
