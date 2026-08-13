@@ -51,6 +51,7 @@ _FIELDS = {
     "task",
     "operation",
     "edit_count",
+    "mechanistic_audit",
     "strata",
     "clean_answer",
     "typo_answer",
@@ -113,6 +114,7 @@ class EvaluationObservation:
     task: str | None
     operation: str
     edit_count: int
+    mechanistic_audit: bool
     strata: tuple[str, ...]
     clean_answer: str | None
     typo_answer: str | None
@@ -154,6 +156,17 @@ class EvaluationObservation:
             or self.edit_count <= 0
         ):
             raise ValueError("evaluation observation edit_count must be a positive integer")
+        if type(self.mechanistic_audit) is not bool:
+            raise ValueError("evaluation observation mechanistic_audit must be boolean")
+        if self.mechanistic_audit and self.evaluation_condition != "random-2":
+            raise ValueError("mechanistic audit observations must use random-2")
+        if not self.mechanistic_audit and (
+            self.patched_answer is not None
+            or self.patched_correct is not None
+            or self.patched_kl_2_16
+            or self.patch_invalid_reason != "not-mechanistic-audit"
+        ):
+            raise ValueError("non-audit observations cannot contain patch outputs")
         if tuple(item for item in _STRATA if item in self.strata) != self.strata or not self.strata:
             raise ValueError("evaluation observation strata must be unique and canonically ordered")
         if self.task is None:
@@ -241,7 +254,7 @@ class EvaluationObservation:
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "schema_version": "robustness-evaluation-observation/v3",
+            "schema_version": "robustness-evaluation-observation/v4",
             "record_id": self.record_id,
             "condition": self.condition,
             "seed": self.seed,
@@ -250,6 +263,7 @@ class EvaluationObservation:
             "task": self.task,
             "operation": self.operation,
             "edit_count": self.edit_count,
+            "mechanistic_audit": self.mechanistic_audit,
             "strata": list(self.strata),
             "clean_answer": self.clean_answer,
             "typo_answer": self.typo_answer,
@@ -273,7 +287,7 @@ class EvaluationObservation:
         if (
             not isinstance(value, Mapping)
             or set(value) != _FIELDS
-            or value.get("schema_version") != "robustness-evaluation-observation/v3"
+            or value.get("schema_version") != "robustness-evaluation-observation/v4"
         ):
             raise ValueError("evaluation observation fields or schema differ")
         list_fields = (
@@ -295,6 +309,7 @@ class EvaluationObservation:
             task=value["task"],  # type: ignore[arg-type]
             operation=value["operation"],  # type: ignore[arg-type]
             edit_count=value["edit_count"],  # type: ignore[arg-type]
+            mechanistic_audit=value["mechanistic_audit"],  # type: ignore[arg-type]
             strata=tuple(value["strata"]),  # type: ignore[arg-type]
             clean_answer=_optional_string(value["clean_answer"], field_name="clean_answer"),
             typo_answer=_optional_string(value["typo_answer"], field_name="typo_answer"),

@@ -58,6 +58,7 @@ def _pair(index: int) -> EvaluationPair:
                 typo_char_span=(4, 10),
             ),
         ),
+        mechanistic_audit=True,
         metadata=MappingProxyType({"evaluation_condition": "random-2"}),
         strata=("same-task",),
     )
@@ -164,6 +165,7 @@ class _Runtime:
             task=pair.task,
             operation=pair.operation,
             edit_count=len(pair.edits),
+            mechanistic_audit=pair.mechanistic_audit,
             strata=pair.strata,
             clean_answer="12",
             typo_answer="12" if typo_correct else "11",
@@ -179,7 +181,7 @@ class _Runtime:
             clean_subtoken_counts=(1,),
             typo_subtoken_counts=(2,),
             tokenization_stratum="fragmentation-increased",
-            audit={},
+            audit={"mechanistic_audit": pair.mechanistic_audit},
         )
 
     def provenance(self) -> dict[str, object]:

@@ -237,11 +237,14 @@ def _paired_metrics(
     task_typo_gains = {
         task: 100.0 * fmean(values) for task, values in typo_differences_by_task.items()
     }
+    if any(left.mechanistic_audit != right.mechanistic_audit for left, right in pairs):
+        raise ValueError("base and adapter mechanistic-audit cohorts differ")
+    audit_pairs = tuple((left, right) for left, right in pairs if left.mechanistic_audit)
     base_gains: list[float] = []
     adapter_gains: list[float] = []
     readout_valid = 0
     exclusion_pairs: dict[str, int] = defaultdict(int)
-    for left, right in pairs:
+    for left, right in audit_pairs:
         left_reason = _patch_gain_exclusion_reason(left)
         right_reason = _patch_gain_exclusion_reason(right)
         if left_reason not in {
@@ -339,10 +342,15 @@ def _paired_metrics(
             clean_wrong_to_right,
             clean_right_to_wrong,
         ),
+        "n_patch_audit_records": len(audit_pairs),
         "n_patch_readout_valid": readout_valid,
-        "patch_readout_coverage_fraction": (readout_valid / len(pairs) if pairs else None),
+        "patch_readout_coverage_fraction": (
+            readout_valid / len(audit_pairs) if audit_pairs else None
+        ),
         "n_paired_patch_gain": len(base_gains),
-        "patch_gain_coverage_fraction": (len(base_gains) / len(pairs) if pairs else None),
+        "patch_gain_coverage_fraction": (
+            len(base_gains) / len(audit_pairs) if audit_pairs else None
+        ),
         "patch_gain_exclusions": dict(sorted(exclusion_pairs.items())),
         "base_mean_patch_gain": base_patch_gain,
         "adapter_mean_patch_gain": adapter_patch_gain,
@@ -1006,14 +1014,14 @@ def build_evaluation_report(
         "clean_perplexity": (
             isinstance(corpus_method, Mapping)
             and _finite_at_most(
-                corpus_method.get("clean_perplexity_ratio_mean"),
+                corpus_method.get("clean_perplexity_ratio_max"),
                 float(gate["maximum_clean_ppl_ratio"]),
             )
         ),
         "clean_forward_kl": (
             isinstance(corpus_method, Mapping)
             and _finite_at_most(
-                corpus_method.get("clean_base_forward_kl_median_mean"),
+                corpus_method.get("clean_base_forward_kl_median_max"),
                 float(gate["maximum_clean_kl_nats_per_token"]),
             )
         ),

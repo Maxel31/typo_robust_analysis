@@ -43,6 +43,7 @@ def _pair(
                 typo_char_span=(4, 10),
             ),
         ),
+        mechanistic_audit=False,
         metadata=MappingProxyType(metadata or {"category": "business"}),
         strata=("unseen-task",) if task else ("unseen-content",),
     )

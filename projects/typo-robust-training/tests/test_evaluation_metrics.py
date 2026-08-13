@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 from pathlib import Path
 
@@ -32,8 +33,12 @@ def _observation(
     edit_count: int = 1,
     evaluation_condition: str = "random-2",
     task: str | None = None,
+    mechanistic_audit: bool | None = None,
 ) -> EvaluationObservation:
     task_name = task or ("mmlu_pro" if index >= 10 else "gsm8k")
+    audit_selected = (
+        evaluation_condition == "random-2" if mechanistic_audit is None else mechanistic_audit
+    )
     unseen = task_name in {"mmlu_pro", "math_500", "commonsense_qa"}
     strata = ["unseen-task"] if unseen else ["same-task"]
     if evaluation_condition in {"transposition-2", "natural-injection"}:
@@ -49,18 +54,21 @@ def _observation(
             "multiple" if edit_count > 1 else "adjacent-transposition" if unseen else "deletion"
         ),
         edit_count=edit_count,
+        mechanistic_audit=audit_selected,
         strata=tuple(strata),
         clean_answer="A" if clean_correct else "B",
         typo_answer="A" if typo_correct else "B",
-        patched_answer="A" if typo_correct or patch_gain > 0.0 else "B",
+        patched_answer=("A" if typo_correct or patch_gain > 0.0 else "B")
+        if audit_selected
+        else None,
         clean_correct=clean_correct,
         typo_correct=typo_correct,
-        patched_correct=typo_correct or patch_gain > 0.0,
+        patched_correct=(typo_correct or patch_gain > 0.0) if audit_selected else None,
         target_token_ids=tuple(range(16)),
         untreated_kl_2_16=(1.0,) * 15,
-        patched_kl_2_16=(1.0 - patch_gain,) * 15,
+        patched_kl_2_16=(1.0 - patch_gain,) * 15 if audit_selected else (),
         kl_invalid_reason=None,
-        patch_invalid_reason=None,
+        patch_invalid_reason=None if audit_selected else "not-mechanistic-audit",
         clean_subtoken_counts=(1,) * edit_count,
         typo_subtoken_counts=(2,) * edit_count,
         tokenization_stratum="fragmentation-increased",
@@ -616,6 +624,81 @@ def test_corpus_harm_is_blocking(mutation, failed_check: str) -> None:
 
     assert report["gate"]["checks"][failed_check] is False
     assert report["gate"]["passed"] is False
+
+
+def test_one_harmful_seed_cannot_hide_behind_mean_corpus_preservation() -> None:
+    corpus = tuple(
+        replace(
+            row,
+            clean_nll_sum=10.0 * (1.0 + math.log(1.059)),
+            base_clean_kl_sum=0.89,
+        )
+        if row.condition == "localized-state-distillation"
+        and row.seed == 44
+        and row.kind == "clean-corpus"
+        else replace(row, base_clean_kl_sum=0.0)
+        if row.condition == "localized-state-distillation" and row.kind == "clean-corpus"
+        else row
+        for row in _passing_corpus_observations()
+    )
+
+    report = _report(_passing_observations(), corpus_observations=corpus)
+    method = report["corpus_method_comparisons"]["localized-state-distillation"]
+
+    assert method["clean_perplexity_ratio_mean"] < 1.02
+    assert method["clean_perplexity_ratio_max"] == pytest.approx(1.059)
+    assert method["clean_base_forward_kl_median_mean"] < 0.03
+    assert method["clean_base_forward_kl_median_max"] == pytest.approx(0.089)
+    assert report["gate"]["checks"]["clean_perplexity"] is False
+    assert report["gate"]["checks"]["clean_forward_kl"] is False
+    assert report["gate"]["passed"] is False
+
+
+def test_patch_diagnostics_only_use_the_frozen_mechanistic_audit_cohort() -> None:
+    excluded_id = f"{0:064x}"
+    observations = tuple(
+        replace(
+            row,
+            mechanistic_audit=False,
+            patched_answer=None,
+            patched_correct=None,
+            patched_kl_2_16=(),
+            patch_invalid_reason="not-mechanistic-audit",
+        )
+        if row.record_id == excluded_id and row.evaluation_condition == "random-2"
+        else row
+        for row in _passing_observations()
+    )
+
+    report = _report(observations)
+    overall = report["comparisons"]["localized-state-distillation:seed-42"]["overall"]
+
+    assert overall["n_records"] == 20
+    assert overall["n_patch_audit_records"] == 19
+    assert overall["n_patch_readout_valid"] == 19
+    assert overall["n_paired_patch_gain"] == 19
+    assert overall["patch_readout_coverage_fraction"] == 1.0
+    assert overall["patch_gain_coverage_fraction"] == 1.0
+    assert overall["patch_gain_exclusions"] == {}
+
+
+def test_non_audit_observation_rejects_accidental_patch_outputs() -> None:
+    with pytest.raises(ValueError, match="non-audit observations cannot contain patch outputs"):
+        replace(
+            _observation(
+                0,
+                condition="base",
+                seed=None,
+                clean_correct=True,
+                typo_correct=False,
+                patch_gain=0.0,
+                mechanistic_audit=False,
+            ),
+            patched_answer="A",
+            patched_correct=True,
+            patched_kl_2_16=(0.5,) * 15,
+            patch_invalid_reason=None,
+        )
 
 
 def test_natural_typo_harm_is_blocking() -> None:
