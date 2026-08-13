@@ -451,6 +451,11 @@ def run_robustness_evaluation(
         raise ValueError("sealed evaluation roles cannot use injected data bundles")
     if (data_bundle is None) != (corpus_bundle is None):
         raise ValueError("injected task and corpus evaluation bundles must be provided together")
+    if (
+        data_bundle is None
+        and not (config.evaluation_data_dir.resolve() / "registry.json").is_file()
+    ):
+        raise ValueError("production robustness evaluation requires a frozen evaluation registry")
     (
         resolved_descriptors,
         resolved_window,
