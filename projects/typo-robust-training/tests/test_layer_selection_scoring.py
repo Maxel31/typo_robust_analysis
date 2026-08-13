@@ -111,6 +111,29 @@ def test_ineligible_kl_stays_in_answer_terms_but_never_gets_normalized() -> None
     assert result.layer_summaries[1].tasks["gsm8k"].answer_restoration == 1.0
 
 
+def test_bootstrap_skips_runtime_invalid_kl_trajectories() -> None:
+    rows = list(_cohort())
+    rows.append(
+        LayerScan(
+            record_id="gsm8k-runtime-invalid",
+            task="gsm8k",
+            target_token_ids=(),
+            untreated_kl_2_16=(),
+            patched_kl_2_16_by_layer=((), (), (), ()),
+            clean_correct=True,
+            typo_correct=False,
+            patched_correct_by_layer=(False, True, True, False),
+            kl_invalid_reason="fewer-than-16-generated-tokens",
+        )
+    )
+
+    result = compute_layer_selection(rows, protocol=_protocol())
+
+    assert result.task_counts["gsm8k"].total == 61
+    assert result.task_counts["gsm8k"].kl_eligible == 60
+    assert result.bootstrap["replicates"] == 100
+
+
 def test_selection_fails_closed_for_low_kl_or_answer_denominators() -> None:
     rows = _cohort()
     with pytest.raises(ValueError, match="KL-eligible"):

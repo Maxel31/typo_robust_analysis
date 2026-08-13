@@ -170,8 +170,8 @@ class HuggingFaceConfirmatoryJointWindowRuntime:
         return selected
 
     def _kl_2_16(self, reference: Any, comparison: Any) -> tuple[float, ...]:
-        reference_log = self._torch.log_softmax(reference.float(), dim=-1)
-        comparison_log = self._torch.log_softmax(comparison.float(), dim=-1)
+        reference_log = self._torch.log_softmax(reference.double(), dim=-1)
+        comparison_log = self._torch.log_softmax(comparison.double(), dim=-1)
         values = (reference_log.exp() * (reference_log - comparison_log)).sum(dim=-1).clamp_min(0.0)
         return tuple(float(value) for value in values[1:16].detach().cpu().tolist())
 

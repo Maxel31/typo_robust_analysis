@@ -199,6 +199,74 @@ def _task_layer_scores(
     return tuple(scores)
 
 
+@dataclass(frozen=True, slots=True)
+class _BootstrapStratum:
+    count: int
+    untreated: np.ndarray | None
+    patched: np.ndarray | None
+    repair_correct: np.ndarray | None
+    harm_wrong: np.ndarray | None
+
+
+def _bootstrap_strata(
+    grouped: Mapping[str, tuple[LayerScan, ...]],
+    *,
+    protocol: LayerSelectionProtocol,
+) -> dict[str, tuple[_BootstrapStratum, ...]]:
+    prepared: dict[str, tuple[_BootstrapStratum, ...]] = {}
+    for task in protocol.tasks:
+        raw: dict[tuple[bool, str], list[LayerScan]] = defaultdict(list)
+        for scan in grouped[task]:
+            raw[
+                (
+                    _eligible(
+                        scan,
+                        threshold=protocol.untreated_mean_kl_min_exclusive,
+                    ),
+                    _cohort(scan),
+                )
+            ].append(scan)
+        task_strata: list[_BootstrapStratum] = []
+        for (is_eligible, cohort), scans in sorted(raw.items()):
+            untreated = None
+            patched = None
+            if is_eligible:
+                untreated = np.asarray(
+                    [scan.untreated_mean_kl for scan in scans],
+                    dtype=np.float64,
+                )
+                patched = np.asarray(
+                    [
+                        [sum(values) / len(values) for values in scan.patched_kl_2_16_by_layer]
+                        for scan in scans
+                    ],
+                    dtype=np.float64,
+                )
+            repair_correct = None
+            if cohort == "repair":
+                repair_correct = np.asarray(
+                    [[value is True for value in scan.patched_correct_by_layer] for scan in scans],
+                    dtype=np.float64,
+                )
+            harm_wrong = None
+            if cohort == "harm":
+                harm_wrong = np.asarray(
+                    [[value is False for value in scan.patched_correct_by_layer] for scan in scans],
+                    dtype=np.float64,
+                )
+            task_strata.append(
+                _BootstrapStratum(
+                    count=len(scans),
+                    untreated=untreated,
+                    patched=patched,
+                    repair_correct=repair_correct,
+                    harm_wrong=harm_wrong,
+                )
+            )
+        prepared[task] = tuple(task_strata)
+    return prepared
+
+
 def _bootstrap(
     grouped: Mapping[str, tuple[LayerScan, ...]],
     *,
@@ -209,24 +277,13 @@ def _bootstrap(
     width = protocol.window_width
     num_windows = num_layers - width + 1
     window_scores = np.empty((protocol.bootstrap_replicates, num_windows), dtype=np.float64)
+    prepared = _bootstrap_strata(grouped, protocol=protocol)
     batch_size = min(256, protocol.bootstrap_replicates)
     for batch_start in range(0, protocol.bootstrap_replicates, batch_size):
         batch_stop = min(batch_start + batch_size, protocol.bootstrap_replicates)
         batch = batch_stop - batch_start
         task_composites = np.zeros((batch, num_layers), dtype=np.float64)
         for task in protocol.tasks:
-            rows = grouped[task]
-            strata: dict[tuple[bool, str], list[int]] = defaultdict(list)
-            for index, scan in enumerate(rows):
-                strata[
-                    (
-                        _eligible(
-                            scan,
-                            threshold=protocol.untreated_mean_kl_min_exclusive,
-                        ),
-                        _cohort(scan),
-                    )
-                ].append(index)
             kl_untreated = np.zeros(batch, dtype=np.float64)
             kl_patched = np.zeros((batch, num_layers), dtype=np.float64)
             kl_count = 0
@@ -234,47 +291,22 @@ def _bootstrap(
             repair_count = 0
             harm_wrong = np.zeros((batch, num_layers), dtype=np.float64)
             harm_count = 0
-            for (is_eligible, cohort), indices_list in sorted(strata.items()):
-                indices = np.asarray(indices_list, dtype=np.int64)
-                sampled = indices[rng.integers(0, len(indices), size=(batch, len(indices)))]
-                if is_eligible:
-                    untreated = np.asarray(
-                        [rows[index].untreated_mean_kl for index in range(len(rows))],
-                        dtype=np.float64,
-                    )
-                    patched = np.asarray(
-                        [
-                            [
-                                sum(values) / len(values)
-                                for values in rows[index].patched_kl_2_16_by_layer
-                            ]
-                            for index in range(len(rows))
-                        ],
-                        dtype=np.float64,
-                    )
-                    kl_untreated += untreated[sampled].sum(axis=1)
-                    kl_patched += patched[sampled].sum(axis=1)
-                    kl_count += len(indices)
-                if cohort == "repair":
-                    correctness = np.asarray(
-                        [
-                            [value is True for value in rows[index].patched_correct_by_layer]
-                            for index in range(len(rows))
-                        ],
-                        dtype=np.float64,
-                    )
-                    repair_correct += correctness[sampled].sum(axis=1)
-                    repair_count += len(indices)
-                elif cohort == "harm":
-                    wrong = np.asarray(
-                        [
-                            [value is False for value in rows[index].patched_correct_by_layer]
-                            for index in range(len(rows))
-                        ],
-                        dtype=np.float64,
-                    )
-                    harm_wrong += wrong[sampled].sum(axis=1)
-                    harm_count += len(indices)
+            for stratum in prepared[task]:
+                sampled = rng.integers(
+                    0,
+                    stratum.count,
+                    size=(batch, stratum.count),
+                )
+                if stratum.untreated is not None and stratum.patched is not None:
+                    kl_untreated += stratum.untreated[sampled].sum(axis=1)
+                    kl_patched += stratum.patched[sampled].sum(axis=1)
+                    kl_count += stratum.count
+                if stratum.repair_correct is not None:
+                    repair_correct += stratum.repair_correct[sampled].sum(axis=1)
+                    repair_count += stratum.count
+                if stratum.harm_wrong is not None:
+                    harm_wrong += stratum.harm_wrong[sampled].sum(axis=1)
+                    harm_count += stratum.count
             task_composites += (
                 1.0
                 - (kl_patched / kl_count) / (kl_untreated[:, None] / kl_count)

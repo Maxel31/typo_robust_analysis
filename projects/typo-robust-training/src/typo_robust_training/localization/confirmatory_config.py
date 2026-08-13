@@ -239,6 +239,14 @@ def load_confirmatory_localization_config(path: Path) -> ConfirmatoryLocalizatio
         field="statistics",
         keys={"bootstrap_replicates", "bootstrap_seed", "confidence_level"},
     )
+    minimum_following_tokens = _positive_int(
+        data["minimum_following_tokens"], field="minimum following tokens"
+    )
+    if minimum_following_tokens != teacher_tokens:
+        raise ValueError("minimum following tokens must equal teacher tokens")
+    confidence_level = _probability(statistics["confidence_level"], field="confidence level")
+    if confidence_level != 0.95:
+        raise ValueError("confidence level must equal 0.95 for the frozen validation rule")
     return ConfirmatoryLocalizationProtocol(
         schema_version=str(root["schema_version"]),
         model=str(model["id"]),
@@ -257,9 +265,7 @@ def load_confirmatory_localization_config(path: Path) -> ConfirmatoryLocalizatio
         max_sequence_length=_positive_int(
             data["max_sequence_length"], field="maximum sequence length"
         ),
-        minimum_following_tokens=_positive_int(
-            data["minimum_following_tokens"], field="minimum following tokens"
-        ),
+        minimum_following_tokens=minimum_following_tokens,
         typo_operations=_OPERATIONS,
         minimum_word_letters=_positive_int(
             typos["minimum_word_letters"], field="minimum word letters"
@@ -285,7 +291,7 @@ def load_confirmatory_localization_config(path: Path) -> ConfirmatoryLocalizatio
             statistics["bootstrap_replicates"], field="bootstrap replicates"
         ),
         bootstrap_seed=_nonnegative_int(statistics["bootstrap_seed"], field="bootstrap seed"),
-        confidence_level=_probability(statistics["confidence_level"], field="confidence level"),
+        confidence_level=confidence_level,
         config_path=resolved,
         config_sha256=hashlib.sha256(raw).hexdigest(),
     )

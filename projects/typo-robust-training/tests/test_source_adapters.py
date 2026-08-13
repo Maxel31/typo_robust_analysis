@@ -199,7 +199,7 @@ def test_dolma_default_streams_selected_shards_from_pinned_inventory(
 
 
 def test_long_document_window_is_content_stable_and_records_boundaries() -> None:
-    segment_document = getattr(sources_module, "_segment_document", None)
+    segment_document = getattr(sources_module, "segment_document", None)
     assert callable(segment_document)
     text = " ".join(f"educational-{index}" for index in range(2_000))
 

@@ -147,7 +147,7 @@ CUDA_VISIBLE_DEVICES="${GPU_VALIDATE}" uv run --project "${TRAIN_PROJECT}" --loc
 Pair identities, exclusions, realized typos, source/model revisions, per-pair
 KL denominators, scans, and output hashes are bound into run manifests. A model
 whose independent validation fails is not eligible for localized-state
-training.
+training. Failed validation retains its audit artifacts and exits nonzero.
 
 ### Exploratory reasoning-task selector
 

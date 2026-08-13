@@ -137,7 +137,7 @@ def _run_validate_generic_joint_window(args: argparse.Namespace) -> int:
     print(f"independent generic-text validation passed={result.passed}: {result.validation_path}")
     print(f"per-record scans: {result.scans_path}")
     print(f"run manifest: {result.run_path}")
-    return 0
+    return 0 if result.passed else 1
 
 
 def register_commands(

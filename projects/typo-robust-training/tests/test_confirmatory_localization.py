@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
 
 from typo_robust_training.cli import register_commands
+from typo_robust_training import cli
 from typo_robust_training.localization.confirmatory_config import (
     load_confirmatory_localization_config,
     window_width_for_decoder_layers,
@@ -250,3 +252,50 @@ def test_config_rejects_behavior_dependent_selection_fields(tmp_path: Path) -> N
 
     with pytest.raises(ValueError, match="selection fields differ"):
         load_confirmatory_localization_config(path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("confidence_level", 0.90, "confidence level must equal 0.95"),
+        ("minimum_following_tokens", 15, "minimum following tokens must equal teacher tokens"),
+    ),
+)
+def test_config_enforces_frozen_validation_contract(
+    tmp_path: Path, field: str, value: float | int, message: str
+) -> None:
+    payload = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    if field == "confidence_level":
+        payload["statistics"][field] = value
+    else:
+        payload["data"][field] = value
+    path = tmp_path / "invalid.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        load_confirmatory_localization_config(path)
+
+
+def test_validation_cli_returns_nonzero_when_frozen_window_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "typo_robust_training.localization.confirmatory_runner."
+        "run_validate_generic_joint_patch_window",
+        lambda _config: SimpleNamespace(
+            passed=False,
+            validation_path=tmp_path / "window_validation.json",
+            scans_path=tmp_path / "scans.jsonl",
+            run_path=tmp_path / "run.json",
+        ),
+    )
+    args = SimpleNamespace(
+        config=tmp_path / "config.json",
+        validation_manifest=tmp_path / "validation.jsonl",
+        window_selection=tmp_path / "selection.json",
+        gpu_id="6",
+        output_dir=tmp_path / "output",
+        resume=False,
+    )
+
+    assert cli._run_validate_generic_joint_window(args) == 1

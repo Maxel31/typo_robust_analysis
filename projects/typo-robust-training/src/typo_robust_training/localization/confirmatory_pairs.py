@@ -4,13 +4,9 @@ from __future__ import annotations
 
 import gzip
 import hashlib
-import json
-import os
 import platform
-import tempfile
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -18,7 +14,14 @@ from typo_robust_training.data.config import strict_loads
 from typo_robust_training.data.jsonl import read_lf_jsonl_lines
 from typo_robust_training.data.perturb import TypoGenerator
 from typo_robust_training.data.records import CleanRecord
-from typo_robust_training.data.sources import _segment_document
+from typo_robust_training.data.sources import segment_document
+from typo_robust_training.localization.artifacts import (
+    FIXED_TYPO_PAIR_FIELDS as _PAIR_FIELDS,
+    sha256_file as _sha256_file,
+    utc_now as _now,
+    write_json as _write_json,
+    write_jsonl as _write_jsonl,
+)
 from typo_robust_training.localization.confirmatory_config import (
     ConfirmatoryLocalizationProtocol,
     load_confirmatory_localization_config,
@@ -27,76 +30,12 @@ from typo_robust_training.localization.corpus_targets import clean_corpus_target
 from typo_robust_training.localization.prompting import word_final_token_positions
 
 
-_PAIR_FIELDS = {
-    "schema_version",
-    "kind",
-    "record_id",
-    "source",
-    "source_revision",
-    "source_split",
-    "source_id",
-    "group_id",
-    "split",
-    "clean_text",
-    "typo_text",
-    "task",
-    "answer",
-    "metadata",
-    "operation",
-    "operations",
-    "edit_count",
-    "generator_seed",
-    "generator_variant",
-    "edits",
-}
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _canonical_bytes(value: object) -> bytes:
-    return (
-        json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n"
-    ).encode("utf-8")
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 def _sha256_values(values: Iterable[str]) -> str:
     digest = hashlib.sha256()
     for value in sorted(values):
         digest.update(value.encode("utf-8"))
         digest.update(b"\n")
     return digest.hexdigest()
-
-
-def _write_atomic(path: Path, value: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    temporary_path = Path(temporary)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(value)
-            handle.flush()
-            os.fsync(handle.fileno())
-        temporary_path.replace(path)
-    finally:
-        temporary_path.unlink(missing_ok=True)
-
-
-def _write_json(path: Path, value: object) -> None:
-    _write_atomic(path, _canonical_bytes(value))
-
-
-def _write_jsonl(path: Path, rows: Iterable[Mapping[str, object]]) -> None:
-    _write_atomic(path, b"".join(_canonical_bytes(dict(row)) for row in rows))
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,7 +160,7 @@ class HuggingFaceGenericLocalizationPairProvider:
                 answer=None,
                 metadata=metadata,
             )
-            yield _segment_document(record, character_limit=protocol.character_window)
+            yield segment_document(record, character_limit=protocol.character_window)
 
     def _token_ids(self, text: str) -> tuple[int, ...]:
         encoded = self.tokenizer(text, add_special_tokens=True)

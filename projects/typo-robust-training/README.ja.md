@@ -132,6 +132,7 @@ CUDA_VISIBLE_DEVICES="${GPU_VALIDATE}" uv run --project "${TRAIN_PROJECT}" --loc
 
 pair identity、除外集合、実現typo、source/model revision、pair別KL分母、scan、出力hashを
 run manifestへ結合します。独立validationを通過しないmodelではlocalized-state学習を行いません。
+validation不合格時も監査artifactは保存しますが、commandは非0で終了します。
 
 ### reasoning taskを使った旧探索selector
 

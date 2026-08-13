@@ -177,3 +177,19 @@ def test_runner_rejects_non_diagnostic_or_duplicate_manifest_rows(tmp_path: Path
     )
     with pytest.raises(ValueError, match="diagnostic split"):
         run_select_distillation_layers(config, runtime=_Runtime())
+
+
+def test_runner_treats_only_lf_as_jsonl_record_separator(tmp_path: Path) -> None:
+    config = _run_config(tmp_path, resume=False)
+    rows = [
+        json.loads(line) for line in config.diagnostic_manifest_path.read_text().split("\n") if line
+    ]
+    rows[0]["clean_text"] = "Line one\u2028line two"
+    config.diagnostic_manifest_path.write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+    result = run_select_distillation_layers(config, runtime=_Runtime())
+
+    assert result.records == 6

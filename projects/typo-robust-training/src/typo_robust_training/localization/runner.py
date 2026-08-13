@@ -3,87 +3,29 @@
 from __future__ import annotations
 
 import hashlib
-import json
-import os
 import platform
-import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
 from typo_robust_training.data.config import strict_loads
+from typo_robust_training.data.jsonl import read_lf_jsonl_lines
+from typo_robust_training.localization.artifacts import (
+    FIXED_TYPO_PAIR_FIELDS as _PAIR_FIELDS,
+    canonical_json_bytes as _canonical_bytes,
+    sha256_bytes as _sha256_bytes,
+    sha256_file as _sha256_file,
+    utc_now as _now,
+    write_atomic as _write_atomic,
+    write_json as _write_json,
+)
 from typo_robust_training.localization.config import (
     LayerSelectionProtocol,
     load_layer_selection_config,
 )
 from typo_robust_training.localization.records import LayerScan
 from typo_robust_training.localization.scoring import compute_layer_selection
-
-
-_PAIR_FIELDS = {
-    "schema_version",
-    "kind",
-    "record_id",
-    "source",
-    "source_revision",
-    "source_split",
-    "source_id",
-    "group_id",
-    "split",
-    "clean_text",
-    "typo_text",
-    "task",
-    "answer",
-    "metadata",
-    "operation",
-    "operations",
-    "edit_count",
-    "generator_seed",
-    "generator_variant",
-    "edits",
-}
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _sha256_bytes(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def _canonical_bytes(value: object) -> bytes:
-    return (
-        json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n"
-    ).encode("utf-8")
-
-
-def _write_atomic(path: Path, value: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    temporary_path = Path(temporary)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(value)
-            handle.flush()
-            os.fsync(handle.fileno())
-        temporary_path.replace(path)
-    finally:
-        temporary_path.unlink(missing_ok=True)
-
-
-def _write_json(path: Path, value: object) -> None:
-    _write_atomic(path, _canonical_bytes(value))
 
 
 def _load_json(path: Path) -> Mapping[str, object]:
@@ -131,14 +73,8 @@ def _load_manifest(
     if not resolved.is_file():
         raise ValueError(f"diagnostic manifest is not a file: {resolved}")
     raw = resolved.read_bytes()
-    try:
-        lines = raw.decode("utf-8").splitlines()
-    except UnicodeDecodeError as exc:
-        raise ValueError("diagnostic manifest is not UTF-8") from exc
     records: list[dict[str, object]] = []
-    for line_number, line in enumerate(lines, 1):
-        if not line.strip():
-            continue
+    for line_number, line in read_lf_jsonl_lines(resolved, context="diagnostic manifest"):
         payload = strict_loads(line, context=f"{resolved}:{line_number}")
         if not isinstance(payload, Mapping) or set(payload) != _PAIR_FIELDS:
             raise ValueError(f"diagnostic manifest fields differ at line {line_number}")
