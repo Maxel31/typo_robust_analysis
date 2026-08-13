@@ -14,7 +14,12 @@ from typo_robust_training.evaluation.prompting import (
 )
 
 
-def _pair(*, task: str | None, answer: str | None) -> EvaluationPair:
+def _pair(
+    *,
+    task: str | None,
+    answer: str | None,
+    metadata: dict[str, object] | None = None,
+) -> EvaluationPair:
     return EvaluationPair(
         record_id="a" * 64,
         kind="synthetic",
@@ -38,7 +43,7 @@ def _pair(*, task: str | None, answer: str | None) -> EvaluationPair:
                 typo_char_span=(4, 10),
             ),
         ),
-        metadata=MappingProxyType({"category": "business"}),
+        metadata=MappingProxyType(metadata or {"category": "business"}),
         strata=("unseen-task",) if task else ("unseen-content",),
     )
 
@@ -63,6 +68,19 @@ def test_general_text_pair_has_no_task_wrapper_or_coordinate_shift() -> None:
     assert prompts.typo.spans == ((4, 10),)
     assert prompts.task_for_prompt is None
     assert prompts.task_for_extractor is None
+
+
+def test_empty_subject_is_not_replaced_by_category() -> None:
+    prompts = build_evaluation_prompts(
+        _pair(
+            task="mmlu_pro",
+            answer="B",
+            metadata={"subject": "", "category": "business"},
+        )
+    )
+
+    assert "questions about general knowledge." in prompts.clean.text
+    assert "questions about business." not in prompts.clean.text
 
 
 @pytest.mark.parametrize(

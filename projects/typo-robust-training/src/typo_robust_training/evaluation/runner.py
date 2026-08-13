@@ -31,6 +31,7 @@ from typo_robust_training.evaluation.data import (
 )
 from typo_robust_training.evaluation.metrics import build_evaluation_report
 from typo_robust_training.evaluation.records import EvaluationObservation
+from typo_robust_training.integrity import sha256_file as _sha256_file
 
 
 class RobustnessEvaluationRuntime(Protocol):
@@ -90,14 +91,6 @@ class RobustnessEvaluationRunResult:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _canonical_sha256(value: object) -> str:
@@ -294,6 +287,13 @@ def _validate_injected_inputs(
     localized = tuple(
         item for item in resolved_descriptors if item.condition == "localized-state-distillation"
     )
+    if config.evaluation_role != "tune" and {item.seed for item in localized} != set(
+        protocol.seed_inventory
+    ):
+        raise ValueError(
+            "sealed evaluation requires localized-state-distillation checkpoints "
+            "for the complete seed inventory"
+        )
     if localized and (
         resolved_window.localization_sha256 is None
         or any(
@@ -380,19 +380,6 @@ def run_robustness_evaluation(
     adapter_data_identities = {item.data_identity_sha256 for item in resolved_descriptors}
     if adapter_data_identities != {bundle.data_identity_sha256}:
         raise ValueError("evaluation adapters differ from the evaluation data identity")
-    if runtime_factory is None:
-        from typo_robust_training.evaluation.runtime import (
-            HuggingFaceRobustnessEvaluationRuntime,
-        )
-
-        def runtime_factory(descriptor: AdapterDescriptor | None):
-            return HuggingFaceRobustnessEvaluationRuntime(
-                protocol=protocol,
-                gpu_id=config.gpu_id,
-                descriptor=descriptor,
-                patch_window=resolved_window,
-            )
-
     run_base = {
         "schema_version": "robustness-evaluation-run/v1",
         "operation": "evaluate-typo-robustness",
@@ -440,7 +427,20 @@ def run_robustness_evaluation(
     _write_json(run_path, {**run_base, "status": "running", "started_at": started_at})
     observations: list[EvaluationObservation] = []
     runtime_provenance: dict[str, object] = prior_runtime
+    owned_runtime_factory = None
     try:
+        active_runtime_factory = runtime_factory
+        if active_runtime_factory is None:
+            from typo_robust_training.evaluation.runtime import (
+                HuggingFaceRobustnessEvaluationRuntimeFactory,
+            )
+
+            owned_runtime_factory = HuggingFaceRobustnessEvaluationRuntimeFactory(
+                protocol=protocol,
+                gpu_id=config.gpu_id,
+                patch_window=resolved_window,
+            )
+            active_runtime_factory = owned_runtime_factory
         for descriptor in _condition_inventory(resolved_descriptors):
             condition_id = _condition_id(descriptor)
             pending = [
@@ -452,7 +452,7 @@ def run_robustness_evaluation(
                     record_id=pair.record_id,
                 ).is_file()
             ]
-            runtime = runtime_factory(descriptor) if pending else None
+            runtime = active_runtime_factory(descriptor) if pending else None
             try:
                 if runtime is not None:
                     runtime_provenance[condition_id] = dict(runtime.provenance())
@@ -545,6 +545,9 @@ def run_robustness_evaluation(
             },
         )
         raise
+    finally:
+        if owned_runtime_factory is not None:
+            owned_runtime_factory.close()
     return RobustnessEvaluationRunResult(
         records=len(observations),
         records_path=records_path,

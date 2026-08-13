@@ -15,6 +15,7 @@ from typing import Iterator
 
 from typo_robust_training.data.config import strict_loads
 from typo_robust_training.data.records import TypoEdit, infer_single_word_typo_edit
+from typo_robust_training.integrity import sha256_file as _sha256_file
 
 
 _SHA40 = re.compile(r"[0-9a-f]{40}")
@@ -92,14 +93,6 @@ _EVALUATION_MANIFEST_FIELDS = {
     "artifact_sha256",
     "data_identity_sha256",
 }
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _object(path: Path) -> Mapping[str, object]:
@@ -380,6 +373,8 @@ def _claim_evaluation_role(
                 or any(existing.get(field) != value for field, value in expected_identity.items())
             ):
                 raise ValueError(f"sealed evaluation role {role} was already opened")
+            if existing.get("status") != "opened":
+                raise ValueError(f"sealed evaluation role {role} was already completed")
             return
         if resume:
             raise ValueError("sealed evaluation --resume has no matching access record")
@@ -420,7 +415,7 @@ def complete_evaluation_role(
         if (
             not isinstance(entry, Mapping)
             or entry.get("access_binding_sha256") != access_binding_sha256
-            or entry.get("status") not in {"opened", "completed"}
+            or entry.get("status") != "opened"
         ):
             raise ValueError("evaluation completion does not match the opened role")
         roles[key] = {
@@ -446,11 +441,11 @@ def _declared_hash(
     output = outputs.get(name)
     if not isinstance(output, Mapping):
         raise ValueError(f"evaluation data run does not declare {name}")
-    digest = _sha256_file(path) if path.is_file() else None
+    digest = _sha256_file(path)
     manifest_digest = digest if name == "evaluation_manifest.json" else artifacts.get(name)
     if output.get("sha256") != digest or manifest_digest != digest:
         raise ValueError(f"evaluation data {name} hash differs")
-    return str(digest)
+    return digest
 
 
 def _rows(path: Path) -> tuple[object, ...]:

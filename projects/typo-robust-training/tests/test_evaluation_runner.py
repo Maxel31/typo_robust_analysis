@@ -11,10 +11,12 @@ import pytest
 
 from typo_robust_training.data.records import TypoEdit
 from typo_robust_training.evaluation.checkpoints import AdapterDescriptor, PatchWindow
+from typo_robust_training.evaluation.config import load_robustness_evaluation_config
 from typo_robust_training.evaluation.data import EvaluationDataBundle, EvaluationPair
 from typo_robust_training.evaluation.records import EvaluationObservation
 from typo_robust_training.evaluation.runner import (
     RobustnessEvaluationRunConfig,
+    _validate_injected_inputs,
     run_robustness_evaluation,
 )
 
@@ -256,4 +258,26 @@ def test_runner_rejects_evaluation_data_or_patch_evidence_drift(tmp_path: Path) 
             data_bundle=bundle,
             descriptors=descriptors,
             patch_window=PatchWindow(0, 6, "9" * 64, "0" * 64),
+        )
+
+
+def test_sealed_evaluation_requires_localized_checkpoint_for_every_seed(
+    tmp_path: Path,
+) -> None:
+    descriptors = _descriptors(tmp_path)
+    config = replace(
+        _config(tmp_path, tmp_path / "sealed", resume=False),
+        evaluation_role="pre-pr-gate",
+        checkpoint_paths=(descriptors[0].path,),
+        splits=("same-task", "unseen-task", "unseen-content", "unseen-typo"),
+        confirm_sealed_role=True,
+    )
+
+    with pytest.raises(ValueError, match="complete seed inventory"):
+        _validate_injected_inputs(
+            config,
+            protocol=load_robustness_evaluation_config(CONFIG),
+            data_bundle=None,
+            descriptors=(descriptors[0],),
+            patch_window=PatchWindow(0, 6, "9" * 64, "f" * 64),
         )

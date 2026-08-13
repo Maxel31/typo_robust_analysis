@@ -12,6 +12,9 @@ from typo_robust_training.evaluation.config import RobustnessEvaluationProtocol
 from typo_robust_training.evaluation.records import EvaluationObservation
 
 
+_PATCH_GAIN_DENOMINATOR_EPSILON = 1e-6
+
+
 def _mean(values: Iterable[float]) -> float | None:
     rows = tuple(values)
     return fmean(rows) if rows else None
@@ -21,14 +24,29 @@ def _patch_gain(observation: EvaluationObservation) -> float | None:
     if not observation.untreated_kl_2_16 or not observation.patched_kl_2_16:
         return None
     untreated = fmean(observation.untreated_kl_2_16)
-    if untreated <= 1e-6:
+    if untreated <= _PATCH_GAIN_DENOMINATOR_EPSILON:
         return None
     return 1.0 - fmean(observation.patched_kl_2_16) / untreated
+
+
+def _patch_gain_exclusion_reason(observation: EvaluationObservation) -> str | None:
+    if not observation.untreated_kl_2_16:
+        return "untreated-readout-unavailable"
+    if not observation.patched_kl_2_16:
+        return "patched-readout-unavailable"
+    if fmean(observation.untreated_kl_2_16) <= _PATCH_GAIN_DENOMINATOR_EPSILON:
+        return "near-zero-untreated-kl"
+    return None
 
 
 def _condition_summary(rows: Sequence[EvaluationObservation]) -> dict[str, object]:
     answer_rows = tuple(row for row in rows if row.clean_correct is not None)
     gains = tuple(gain for row in rows if (gain := _patch_gain(row)) is not None)
+    exclusions: dict[str, int] = defaultdict(int)
+    for row in rows:
+        reason = _patch_gain_exclusion_reason(row)
+        if reason is not None:
+            exclusions[reason] += 1
     return {
         "n_records": len(rows),
         "n_answer": len(answer_rows),
@@ -38,6 +56,7 @@ def _condition_summary(rows: Sequence[EvaluationObservation]) -> dict[str, objec
             float(row.patched_correct) for row in answer_rows if row.patched_correct is not None
         ),
         "n_patch_gain": len(gains),
+        "patch_gain_exclusions": dict(sorted(exclusions.items())),
         "mean_patch_gain": _mean(gains),
         "mean_clean_typo_kl": _mean(
             fmean(row.untreated_kl_2_16) for row in rows if row.untreated_kl_2_16
@@ -109,8 +128,25 @@ def _paired_metrics(
     )
     base_gains: list[float] = []
     adapter_gains: list[float] = []
+    readout_valid = 0
+    exclusion_pairs: dict[str, int] = defaultdict(int)
     for left, right in pairs:
-        left_gain, right_gain = _patch_gain(left), _patch_gain(right)
+        left_reason = _patch_gain_exclusion_reason(left)
+        right_reason = _patch_gain_exclusion_reason(right)
+        if left_reason not in {
+            "untreated-readout-unavailable",
+            "patched-readout-unavailable",
+        } and right_reason not in {
+            "untreated-readout-unavailable",
+            "patched-readout-unavailable",
+        }:
+            readout_valid += 1
+        if left_reason is not None:
+            exclusion_pairs[f"base:{left_reason}"] += 1
+        if right_reason is not None:
+            exclusion_pairs[f"adapter:{right_reason}"] += 1
+        left_gain = None if left_reason is not None else _patch_gain(left)
+        right_gain = None if right_reason is not None else _patch_gain(right)
         if left_gain is not None and right_gain is not None:
             base_gains.append(left_gain)
             adapter_gains.append(right_gain)
@@ -148,8 +184,11 @@ def _paired_metrics(
             left.clean_correct is True and right.clean_correct is False
             for left, right in answer_pairs
         ),
+        "n_patch_readout_valid": readout_valid,
+        "patch_readout_coverage_fraction": (readout_valid / len(pairs) if pairs else None),
         "n_paired_patch_gain": len(base_gains),
         "patch_gain_coverage_fraction": (len(base_gains) / len(pairs) if pairs else None),
+        "patch_gain_exclusions": dict(sorted(exclusion_pairs.items())),
         "base_mean_patch_gain": base_patch_gain,
         "adapter_mean_patch_gain": adapter_patch_gain,
         "patch_gain_reduction_fraction": reduction,
@@ -400,7 +439,7 @@ def build_evaluation_report(
                 overall["patch_gain_reduction_fraction"],
                 float(gate["minimum_patch_gain_reduction_fraction"]),
             ),
-            "patch_readout_coverage": (overall["n_paired_patch_gain"] == overall["n_records"]),
+            "patch_readout_coverage": (overall["n_patch_readout_valid"] == overall["n_records"]),
         }
         passed = all(checks.values())
         gate_seed_checks[str(seed)] = {"checks": checks, "passed": passed}

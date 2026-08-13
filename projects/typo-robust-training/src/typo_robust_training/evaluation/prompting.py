@@ -46,7 +46,9 @@ def build_evaluation_prompts(pair: EvaluationPair) -> EvaluationPrompts:
         from typo_cot.models.prompts import create_prompt_template
 
         task = _TASK_MAP.get(pair.task, pair.task)
-        subject = pair.metadata.get("subject") or pair.metadata.get("category")
+        subject = pair.metadata.get("subject")
+        if subject is None:
+            subject = pair.metadata.get("category")
         if subject is not None and not isinstance(subject, str):
             raise ValueError("evaluation prompt subject/category metadata must be a string")
         template = create_prompt_template(task)

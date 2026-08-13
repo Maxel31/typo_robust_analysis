@@ -247,23 +247,20 @@ def window_patched_forward(
         return forward()
 
 
-class HuggingFaceRobustnessEvaluationRuntime:
-    """Evaluate one base or adapter condition on one requested physical GPU."""
+class HuggingFaceRobustnessEvaluationRuntimeFactory:
+    """Load one base model and switch explicit PEFT adapters between conditions."""
 
     def __init__(
         self,
         *,
         protocol: RobustnessEvaluationProtocol,
         gpu_id: str,
-        descriptor: AdapterDescriptor | None,
         patch_window: PatchWindow,
     ) -> None:
         if not isinstance(protocol, RobustnessEvaluationProtocol):
-            raise TypeError("evaluation runtime protocol must be validated")
-        if descriptor is not None and not isinstance(descriptor, AdapterDescriptor):
-            raise TypeError("evaluation runtime adapter descriptor is invalid")
+            raise TypeError("evaluation runtime factory protocol must be validated")
         if not isinstance(patch_window, PatchWindow):
-            raise TypeError("evaluation runtime patch window is invalid")
+            raise TypeError("evaluation runtime factory patch window is invalid")
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None and visible != gpu_id:
             raise ValueError(
@@ -282,10 +279,7 @@ class HuggingFaceRobustnessEvaluationRuntime:
 
         self.protocol = protocol
         self.gpu_id = gpu_id
-        self.descriptor = descriptor
         self.patch_window = patch_window
-        self.condition = "base" if descriptor is None else descriptor.condition
-        self.seed = None if descriptor is None else descriptor.seed
         self._torch = torch
         self.wrapper = create_model_wrapper(
             model_name=protocol.model,
@@ -301,16 +295,8 @@ class HuggingFaceRobustnessEvaluationRuntime:
         self.layers = find_decoder_layers(base_model)
         if not patch_window.layers or patch_window.stop > len(self.layers):
             raise ValueError("evaluation patch window is outside the model")
-        if descriptor is None:
-            self.model = base_model
-        else:
-            from peft import PeftModel
-
-            self.model = PeftModel.from_pretrained(
-                base_model,
-                descriptor.path,
-                is_trainable=False,
-            )
+        self.base_model = base_model
+        self.model = base_model
         self.model.eval()
         self.model.requires_grad_(False)
         self.tokenizer = self.wrapper.tokenizer
@@ -323,6 +309,104 @@ class HuggingFaceRobustnessEvaluationRuntime:
             tokenizer=self.tokenizer,
             operation="evaluate-typo-robustness",
         )
+        self._adapter_names: dict[str, str] = {}
+        self._active_runtime: HuggingFaceRobustnessEvaluationRuntime | None = None
+        self._closed = False
+
+    def _activate(self, descriptor: AdapterDescriptor | None) -> None:
+        if self._closed:
+            raise RuntimeError("evaluation runtime factory is closed")
+        if self._active_runtime is not None:
+            raise RuntimeError("evaluation runtime conditions cannot overlap")
+        if descriptor is None:
+            if self.model is not self.base_model:
+                raise RuntimeError("base evaluation must precede adapter conditions")
+            return
+        if not isinstance(descriptor, AdapterDescriptor):
+            raise TypeError("evaluation runtime adapter descriptor is invalid")
+        from peft import PeftModel
+
+        adapter_name = self._adapter_names.get(descriptor.condition_id)
+        if adapter_name is None:
+            adapter_name = (
+                f"evaluation_{descriptor.condition.replace('-', '_')}_seed_{descriptor.seed}"
+            )
+            if self.model is self.base_model:
+                self.model = PeftModel.from_pretrained(
+                    self.base_model,
+                    descriptor.path,
+                    adapter_name=adapter_name,
+                    is_trainable=False,
+                )
+            else:
+                if not isinstance(self.model, PeftModel):
+                    raise RuntimeError("evaluation shared model changed type")
+                self.model.load_adapter(
+                    descriptor.path,
+                    adapter_name=adapter_name,
+                    is_trainable=False,
+                )
+            self._adapter_names[descriptor.condition_id] = adapter_name
+        if not isinstance(self.model, PeftModel):
+            raise RuntimeError("evaluation adapter model was not initialized")
+        self.model.set_adapter(adapter_name, inference_mode=True)
+        self.model.eval()
+        self.model.requires_grad_(False)
+
+    def __call__(
+        self,
+        descriptor: AdapterDescriptor | None,
+    ) -> HuggingFaceRobustnessEvaluationRuntime:
+        self._activate(descriptor)
+        runtime = HuggingFaceRobustnessEvaluationRuntime(factory=self, descriptor=descriptor)
+        self._active_runtime = runtime
+        return runtime
+
+    def _release(self, runtime: HuggingFaceRobustnessEvaluationRuntime) -> None:
+        if self._active_runtime is not runtime:
+            raise RuntimeError("evaluation runtime release differs from the active condition")
+        self._active_runtime = None
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        if self._active_runtime is not None:
+            raise RuntimeError("evaluation runtime factory closed with an active condition")
+        self._closed = True
+        model = self.model
+        base_model = self.base_model
+        wrapper = self.wrapper
+        del self.model, self.base_model, self.layers, self.wrapper
+        del model, base_model, wrapper
+        gc.collect()
+        self._torch.cuda.empty_cache()
+
+
+class HuggingFaceRobustnessEvaluationRuntime:
+    """Evaluate one condition through a shared base-model runtime factory."""
+
+    def __init__(
+        self,
+        *,
+        factory: HuggingFaceRobustnessEvaluationRuntimeFactory,
+        descriptor: AdapterDescriptor | None,
+    ) -> None:
+        if not isinstance(factory, HuggingFaceRobustnessEvaluationRuntimeFactory):
+            raise TypeError("evaluation runtime requires its canonical shared factory")
+        self._factory = factory
+        self.protocol = factory.protocol
+        self.gpu_id = factory.gpu_id
+        self.descriptor = descriptor
+        self.patch_window = factory.patch_window
+        self.condition = "base" if descriptor is None else descriptor.condition
+        self.seed = None if descriptor is None else descriptor.seed
+        self._torch = factory._torch
+        self.model = factory.model
+        self.layers = factory.layers
+        self.tokenizer = factory.tokenizer
+        self.device = factory.device
+        self.effective_eos_token_ids = factory.effective_eos_token_ids
+        self.eos_source = factory.eos_source
         self._closed = False
 
     def _tensor(self, values: tuple[int, ...]) -> Any:
@@ -428,27 +512,28 @@ class HuggingFaceRobustnessEvaluationRuntime:
             raise ValueError("evaluation output omits teacher-forced target positions")
         return selected.detach().float().cpu()
 
-    def _capture_donors(
+    def _capture_donors_and_forward(
         self,
         *,
         input_ids: Any,
         attention_mask: Any,
         positions: tuple[int, ...],
-    ) -> tuple[Any, ...]:
-        from typo_cot.experiments.layerwise_kl_patching.patching import capture_block_outputs
+    ) -> tuple[tuple[Any, ...], Any]:
+        from typo_cot.experiments.layerwise_kl_patching.patching import (
+            capture_block_outputs_with_forward,
+        )
 
         selected_layers = [self.layers[index] for index in self.patch_window.layers]
-        return tuple(
-            capture_block_outputs(
-                selected_layers,
-                positions=positions,
-                forward=lambda: self.model(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    use_cache=False,
-                ),
-            )
+        donors, output = capture_block_outputs_with_forward(
+            selected_layers,
+            positions=positions,
+            forward=lambda: self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                use_cache=False,
+            ),
         )
+        return tuple(donors), output
 
     def scan_pair(self, pair: EvaluationPair) -> EvaluationObservation:
         """Generate paired answers and one clean-target KL/patch audit."""
@@ -503,8 +588,10 @@ class HuggingFaceRobustnessEvaluationRuntime:
             if invalid_reason is None:
                 clean_full = self._append_targets(clean_ids, clean_mask, targets)
                 typo_full = self._append_targets(typo_ids, typo_mask, targets)
-                clean_output = self.model(
-                    input_ids=clean_full[0], attention_mask=clean_full[1], use_cache=False
+                donors, clean_output = self._capture_donors_and_forward(
+                    input_ids=clean_full[0],
+                    attention_mask=clean_full[1],
+                    positions=profile.clean_positions,
                 )
                 typo_output = self.model(
                     input_ids=typo_full[0], attention_mask=typo_full[1], use_cache=False
@@ -521,11 +608,6 @@ class HuggingFaceRobustnessEvaluationRuntime:
                     clean_logits,
                     typo_logits,
                     teacher_forced_tokens=self.protocol.teacher_forced_tokens,
-                )
-                donors = self._capture_donors(
-                    input_ids=clean_ids,
-                    attention_mask=clean_mask,
-                    positions=profile.clean_positions,
                 )
                 patched_output = window_patched_forward(
                     self.layers,
@@ -632,22 +714,19 @@ class HuggingFaceRobustnessEvaluationRuntime:
             "gpu_name": self._torch.cuda.get_device_name(0),
             "effective_eos_token_ids": list(self.effective_eos_token_ids),
             "effective_eos_token_ids_source": self.eos_source,
+            "model_reuse": "single-base-multiple-adapters/v1",
         }
 
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
-        model = self.model
-        wrapper = self.wrapper
-        del self.model, self.layers, self.wrapper
-        del model, wrapper
-        gc.collect()
-        self._torch.cuda.empty_cache()
+        self._factory._release(self)
 
 
 __all__ = [
     "HuggingFaceRobustnessEvaluationRuntime",
+    "HuggingFaceRobustnessEvaluationRuntimeFactory",
     "PromptTokenizationProfile",
     "evaluation_teacher_targets",
     "prompt_tokenization_profile",

@@ -212,3 +212,32 @@ def test_gate_rejects_incomplete_patch_readout_coverage() -> None:
     assert seed["checks"]["patch_readout_coverage"] is False
     assert seed["passed"] is False
     assert report["gate"]["passed"] is False
+
+
+def test_near_zero_untreated_kl_is_logged_without_failing_readout_coverage() -> None:
+    observations = list(_passing_observations())
+    record_id = f"{0:064x}"
+    for index, observation in enumerate(observations):
+        if observation.record_id == record_id and (
+            observation.condition == "base"
+            or (observation.condition == "localized-state-distillation" and observation.seed == 42)
+        ):
+            observations[index] = replace(
+                observation,
+                untreated_kl_2_16=(1e-8,) * 15,
+                patched_kl_2_16=(1e-8,) * 15,
+                audit=dict(observation.audit),
+            )
+
+    report = build_evaluation_report(observations, protocol=PROTOCOL)
+    overall = report["comparisons"]["localized-state-distillation:seed-42"]["overall"]
+    seed = report["gate"]["seed_checks"]["42"]
+
+    assert overall["n_patch_readout_valid"] == overall["n_records"]
+    assert overall["n_paired_patch_gain"] == overall["n_records"] - 1
+    assert overall["patch_gain_exclusions"] == {
+        "adapter:near-zero-untreated-kl": 1,
+        "base:near-zero-untreated-kl": 1,
+    }
+    assert seed["checks"]["patch_readout_coverage"] is True
+    assert seed["passed"] is True

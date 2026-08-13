@@ -306,6 +306,21 @@ def test_sealed_roles_require_confirmation_exact_resume_and_passing_pre_pr_gate(
         report_sha256="f" * 64,
         gate_passed=False,
     )
+    with pytest.raises(ValueError, match="already completed"):
+        load_evaluation_bundle(
+            data,
+            **arguments,
+            confirm_sealed_role=True,
+            resume=True,
+        )
+    with pytest.raises(ValueError, match="opened role"):
+        complete_evaluation_role(
+            data,
+            evaluation_role="pre-pr-gate",
+            access_binding_sha256="e" * 64,
+            report_sha256="1" * 64,
+            gate_passed=True,
+        )
     with pytest.raises(ValueError, match="passing pre-PR"):
         load_evaluation_bundle(
             data,
@@ -320,8 +335,20 @@ def test_sealed_roles_require_confirmation_exact_resume_and_passing_pre_pr_gate(
             resume=False,
         )
 
+    passing_data = tmp_path / "passing-data"
+    _write_data(passing_data)
+    passing_arguments = {
+        **arguments,
+        "output_dir": tmp_path / "passing-gate",
+    }
+    load_evaluation_bundle(
+        passing_data,
+        **passing_arguments,
+        confirm_sealed_role=True,
+        resume=False,
+    )
     complete_evaluation_role(
-        data,
+        passing_data,
         evaluation_role="pre-pr-gate",
         access_binding_sha256="e" * 64,
         report_sha256="f" * 64,
@@ -329,7 +356,7 @@ def test_sealed_roles_require_confirmation_exact_resume_and_passing_pre_pr_gate(
     )
     with pytest.raises(ValueError, match="candidate differs"):
         load_evaluation_bundle(
-            data,
+            passing_data,
             evaluation_role="final-test",
             splits=("same-task", "unseen-task", "unseen-content", "unseen-typo"),
             model=MODEL,
@@ -341,7 +368,7 @@ def test_sealed_roles_require_confirmation_exact_resume_and_passing_pre_pr_gate(
             resume=False,
         )
     final = load_evaluation_bundle(
-        data,
+        passing_data,
         evaluation_role="final-test",
         splits=("same-task", "unseen-task", "unseen-content", "unseen-typo"),
         model=MODEL,
@@ -362,6 +389,36 @@ def test_loader_rejects_role_hash_tampering(tmp_path: Path) -> None:
         handle.write("{}\n")
 
     with pytest.raises(ValueError, match="hash differs"):
+        load_evaluation_bundle(
+            data,
+            evaluation_role="tune",
+            splits=("same-task",),
+            model=MODEL,
+            model_revision=REVISION,
+            access_binding_sha256="e" * 64,
+            experiment_binding_sha256="9" * 64,
+            output_dir=tmp_path / "tune",
+            confirm_sealed_role=False,
+            resume=False,
+        )
+
+
+def test_loader_fails_closed_when_artifact_and_declared_hash_are_missing(
+    tmp_path: Path,
+) -> None:
+    data = tmp_path / "data"
+    _write_data(data)
+    (data / "tune_manifest.jsonl").unlink()
+    run_path = data / "run.json"
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    run["outputs"]["tune_manifest.jsonl"]["sha256"] = None
+    run_path.write_text(json.dumps(run), encoding="utf-8")
+    evaluation_path = data / "evaluation_manifest.json"
+    evaluation = json.loads(evaluation_path.read_text(encoding="utf-8"))
+    evaluation["artifact_sha256"]["tune_manifest.jsonl"] = None
+    evaluation_path.write_text(json.dumps(evaluation), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="hash input must be one regular file"):
         load_evaluation_bundle(
             data,
             evaluation_role="tune",
