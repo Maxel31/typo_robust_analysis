@@ -153,7 +153,10 @@ CUDA_VISIBLE_DEVICES="${GPU_SELECT}" uv run --project "${TRAIN_PROJECT}" --locke
 このcommandはreasoning診断dataの複合scoreを用いた過去のwindowを記録します。answer/harm項は、
 上記の確証用generic-text selectorでは使用しません。
 
-## 3. neuronとattention headを因果的に局所化する
+## 3. 探索的なneuron/head因果分析を再現する
+
+このcommandは、現在のresidual-window手法より前に行ったcomponent-level studyを再現します。
+これはablation兼negative-result auditであり、出力を確証用の学習targetの選択・変更には使いません。
 
 ```bash
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
@@ -164,12 +167,14 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --components mlp-neuron attention-head \
   --causal-readouts answer multitoken-kl \
   --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/localization/components"
+  --output-dir "${TRAIN_ROOT}/localization/components" \
+  --resume
 ```
 
 activation差とgradient attributionは候補のshortlistにだけ使います。
 `component_selection.json`に入るのは、clean-to-typo causal patchが少なくとも2 taskで
-有益な方向を示し、固定したclean-harm規則を通過した候補だけです。
+有益な方向を示し、固定したclean-harm規則を通過した候補だけです。この過去のselection artifactは
+分析用に保持し、提案adapterはSection 2で独立検証したgeneric-text residual windowを使用します。
 
 ## 4. baselineと提案adapterを別々に学習する
 

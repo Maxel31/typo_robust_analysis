@@ -140,6 +140,38 @@ def _run_validate_generic_joint_window(args: argparse.Namespace) -> int:
     return 0 if result.passed else 1
 
 
+def _run_localize_components(args: argparse.Namespace) -> int:
+    from typo_robust_training.localization.component_runner import (
+        ComponentLocalizationRunConfig,
+        run_localize_robustness_components,
+    )
+
+    try:
+        result = run_localize_robustness_components(
+            ComponentLocalizationRunConfig(
+                config_path=args.config,
+                diagnostic_manifest_path=args.diagnostic_manifest,
+                layer_selection_path=args.layer_selection,
+                components=tuple(args.components),
+                causal_readouts=tuple(args.causal_readouts),
+                gpu_id=args.gpu_id,
+                output_dir=args.output_dir,
+                resume=args.resume,
+            )
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"localize-robustness-components: error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"selected {result.selected_components} causally validated component(s): "
+        f"{result.selection_path}"
+    )
+    print(f"screening universe: {result.screen_path}")
+    print(f"causal observations: {result.causal_records_path}")
+    print(f"run manifest: {result.run_path}")
+    return 0
+
+
 def register_commands(
     commands: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
@@ -196,6 +228,30 @@ def register_commands(
     selection.add_argument("--output-dir", required=True, type=Path)
     selection.add_argument("--resume", action="store_true")
     selection.set_defaults(_typo_cot_plugin_handler=_run_select_layers)
+
+    components = commands.add_parser(
+        "localize-robustness-components",
+        help="Reproduce exploratory neuron/head causal validation inside selected layers.",
+    )
+    components.add_argument("--config", required=True, type=Path)
+    components.add_argument("--diagnostic-manifest", required=True, type=Path)
+    components.add_argument("--layer-selection", required=True, type=Path)
+    components.add_argument(
+        "--components",
+        required=True,
+        nargs="+",
+        choices=("mlp-neuron", "attention-head"),
+    )
+    components.add_argument(
+        "--causal-readouts",
+        required=True,
+        nargs="+",
+        choices=("answer", "multitoken-kl"),
+    )
+    components.add_argument("--gpu-id", required=True)
+    components.add_argument("--output-dir", required=True, type=Path)
+    components.add_argument("--resume", action="store_true")
+    components.set_defaults(_typo_cot_plugin_handler=_run_localize_components)
 
 
 __all__ = ["register_commands"]

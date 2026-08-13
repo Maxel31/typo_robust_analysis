@@ -169,7 +169,11 @@ This command records the historical composite-score window using diagnostic
 reasoning data. Its answer and harm terms are not used by the confirmatory
 generic-text selector above.
 
-## 3. Causally localize neurons and attention heads
+## 3. Reproduce the exploratory neuron/head causal analysis
+
+This command reproduces the component-level study that preceded the current
+residual-window method. It is an ablation and negative-result audit: its output
+must not choose or modify the confirmatory training target.
 
 ```bash
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
@@ -180,13 +184,16 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --components mlp-neuron attention-head \
   --causal-readouts answer multitoken-kl \
   --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/localization/components"
+  --output-dir "${TRAIN_ROOT}/localization/components" \
+  --resume
 ```
 
 Activation difference and gradient attribution only shortlist components.
 `component_selection.json` contains only candidates whose clean-to-typo causal
 patch has a beneficial direction on at least two tasks and passes the frozen
-clean-harm rule.
+clean-harm rule. This historical selection artifact is retained for analysis;
+the proposed adapter uses the independently validated generic-text residual
+window from Section 2.
 
 ## 4. Train separate baselines and the proposed adapter
 
