@@ -7,7 +7,6 @@ import platform
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -26,18 +25,15 @@ from typo_robust_training.localization.component_screening import (
     rank_component_screen,
 )
 from typo_robust_training.localization.components import ComponentRef
-from typo_robust_training.localization.records import LayerScan
-from typo_robust_training.localization.runner import (
-    _canonical_bytes,
-    _load_manifest,
-    _sha256_file,
-    _write_atomic,
-    _write_json,
+from typo_robust_training.localization.artifacts import (
+    sha256_file,
+    sha256_value,
+    utc_now,
+    write_json,
+    write_jsonl,
 )
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
+from typo_robust_training.localization.records import LayerScan
+from typo_robust_training.localization.runner import _load_manifest
 
 
 def _load_object(path: Path) -> Mapping[str, object]:
@@ -45,10 +41,6 @@ def _load_object(path: Path) -> Mapping[str, object]:
     if not isinstance(payload, Mapping):
         raise ValueError(f"JSON artifact must contain an object: {path}")
     return payload
-
-
-def _sha256_value(value: object) -> str:
-    return hashlib.sha256(_canonical_bytes(value)).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,7 +140,7 @@ def _load_layer_evidence(
     ):
         raise ValueError("layer selection window is outside the decoder")
     scans_path = resolved.with_name("layer_scans.jsonl")
-    if not scans_path.is_file() or _sha256_file(scans_path) != selection["layer_scans_sha256"]:
+    if not scans_path.is_file() or sha256_file(scans_path) != selection["layer_scans_sha256"]:
         raise ValueError("layer scan artifact is missing or fails its committed hash")
     scans: dict[str, LayerScan] = {}
     for line_number, line in enumerate(scans_path.read_text(encoding="utf-8").splitlines(), 1):
@@ -164,8 +156,8 @@ def _load_layer_evidence(
     if len(scans) != selection["records"]:
         raise ValueError("layer scan count differs from layer selection")
     return _LayerEvidence(
-        selection_sha256=_sha256_file(resolved),
-        scans_sha256=_sha256_file(scans_path),
+        selection_sha256=sha256_file(resolved),
+        scans_sha256=sha256_file(scans_path),
         selected_layers=tuple(range(start, stop)),
         scans=scans,
     )
@@ -190,7 +182,7 @@ def _checkpoint_common(
         "schema_version": "robustness-component-checkpoint/v1",
         "phase": phase,
         "record_id": record["record_id"],
-        "record_sha256": _sha256_value(record),
+        "record_sha256": sha256_value(record),
         "config_sha256": protocol.config_sha256,
         "diagnostic_manifest_sha256": manifest_sha256,
         "layer_selection_sha256": evidence.selection_sha256,
@@ -212,7 +204,7 @@ def _checkpoint(
     candidates_sha256: str | None,
     rows: list[dict[str, object]],
 ) -> None:
-    _write_json(
+    write_json(
         path,
         {
             **_checkpoint_common(
@@ -372,7 +364,7 @@ def _causal_rows(
     manifest_sha256: str,
     runtime_sha256: str,
 ) -> tuple[list[dict[str, object]], tuple[ComponentCausalObservation, ...]]:
-    candidates_sha256 = _sha256_value([component.as_dict() for component in candidates])
+    candidates_sha256 = sha256_value([component.as_dict() for component in candidates])
     artifact_rows: list[dict[str, object]] = []
     observations: list[ComponentCausalObservation] = []
     for record in records:
@@ -470,7 +462,7 @@ def run_localize_robustness_components(
 
         runtime = HuggingFaceComponentLocalizationRuntime(protocol=protocol, gpu_id=config.gpu_id)
     provenance = dict(runtime.provenance())
-    runtime_sha256 = _sha256_value(provenance)
+    runtime_sha256 = sha256_value(provenance)
     run_path = output_dir / "run.json"
     run_base = {
         "schema_version": "robustness-component-localization-run/v1",
@@ -485,7 +477,7 @@ def run_localize_robustness_components(
         "python": platform.python_version(),
         "runtime": provenance,
     }
-    _write_json(run_path, {**run_base, "status": "running", "started_at": _now()})
+    write_json(run_path, {**run_base, "status": "running", "started_at": utc_now()})
     work_dir = output_dir / ".localize-robustness-components-work"
     work_dir.mkdir(exist_ok=True)
     try:
@@ -507,18 +499,15 @@ def run_localize_robustness_components(
         )
         candidates = tuple(candidate.component for candidate in screen.causal_candidates)
         screen_records_path = output_dir / "component_screen_records.jsonl"
-        _write_atomic(
-            screen_records_path,
-            b"".join(_canonical_bytes(row) for row in screen_record_rows),
-        )
+        write_jsonl(screen_records_path, screen_record_rows)
         screen_path = output_dir / "component_screen.json"
-        _write_json(
+        write_json(
             screen_path,
             {
                 "schema_version": "robustness-component-screen/v1",
                 "selected_layers": list(evidence.selected_layers),
                 "screening_ids": list(partition.screening),
-                "screening_records_sha256": _sha256_file(screen_records_path),
+                "screening_records_sha256": sha256_file(screen_records_path),
                 "universe": [candidate.as_dict() for candidate in screen.universe],
                 "causal_candidates": [
                     candidate.as_dict() for candidate in screen.causal_candidates
@@ -538,10 +527,7 @@ def run_localize_robustness_components(
             runtime_sha256=runtime_sha256,
         )
         causal_records_path = output_dir / "component_causal_records.jsonl"
-        _write_atomic(
-            causal_records_path,
-            b"".join(_canonical_bytes(row) for row in causal_record_rows),
-        )
+        write_jsonl(causal_records_path, causal_record_rows)
         selection = select_training_components(
             observations,
             candidates=candidates,
@@ -554,7 +540,7 @@ def run_localize_robustness_components(
             "screening_ids": list(partition.screening),
             "causal_validation_ids": list(partition.causal_validation),
         }
-        _write_json(
+        write_json(
             selection_path,
             {
                 **selection.as_dict(),
@@ -565,8 +551,8 @@ def run_localize_robustness_components(
                 "diagnostic_manifest_sha256": manifest_sha256,
                 "layer_selection_sha256": evidence.selection_sha256,
                 "layer_scans_sha256": evidence.scans_sha256,
-                "component_screen_sha256": _sha256_file(screen_path),
-                "component_causal_records_sha256": _sha256_file(causal_records_path),
+                "component_screen_sha256": sha256_file(screen_path),
+                "component_causal_records_sha256": sha256_file(causal_records_path),
                 "diagnostic_partition": partition_payload,
                 "selected": [
                     {**item.as_dict(), "causally_validated": True} for item in selection.selected
@@ -574,7 +560,7 @@ def run_localize_robustness_components(
             },
         )
         outputs = {
-            path.name: {"sha256": _sha256_file(path), "bytes": path.stat().st_size}
+            path.name: {"sha256": sha256_file(path), "bytes": path.stat().st_size}
             for path in (
                 screen_records_path,
                 screen_path,
@@ -582,23 +568,23 @@ def run_localize_robustness_components(
                 selection_path,
             )
         }
-        _write_json(
+        write_json(
             run_path,
             {
                 **run_base,
                 "status": "completed",
-                "completed_at": _now(),
+                "completed_at": utc_now(),
                 "selected_components": len(selection.selected),
                 "outputs": outputs,
             },
         )
     except BaseException as exc:
-        _write_json(
+        write_json(
             run_path,
             {
                 **run_base,
                 "status": "failed",
-                "failed_at": _now(),
+                "failed_at": utc_now(),
                 "error": {"type": type(exc).__name__, "message": str(exc)},
             },
         )

@@ -231,7 +231,7 @@ def register_commands(
 
     components = commands.add_parser(
         "localize-robustness-components",
-        help="Screen and causally validate neurons and attention heads in selected layers.",
+        help="Reproduce exploratory neuron/head causal validation inside selected layers.",
     )
     components.add_argument("--config", required=True, type=Path)
     components.add_argument("--diagnostic-manifest", required=True, type=Path)

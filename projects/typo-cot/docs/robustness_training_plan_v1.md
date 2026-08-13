@@ -239,6 +239,12 @@ default for other models.
 
 ## Component localization
 
+This section records the archived Cycle 1 component-level design. The current
+confirmatory method does not use component selection: it supervises the full
+residual stream in the independently validated generic-text layer window. The
+command and artifacts below remain public so the negative component result can
+be reproduced and audited.
+
 `localize-robustness-components` examines only the selected layers and edited-
 word positions. It first screens candidates by clean/typo activation difference
 and gradient-based attribution, then causally patches the shortlisted MLP
@@ -246,11 +252,11 @@ neuron activations and attention head outputs. Screening alone never labels a
 component causal.
 
 Candidates receive answer-restoration and multi-token-KL restoration scores on
-each diagnostic task. A component is eligible for training only if it has the
-same beneficial direction on at least two tasks and no prespecified clean-harm
-violation. The output records the complete candidate universe, shortlist rule,
-causal validation denominator, task scores, selected set, and normalized
-non-negative component weights.
+each diagnostic task. A component survives the archived selection gate only if
+it has the same beneficial direction on at least two tasks and no prespecified
+clean-harm violation. The output records the complete candidate universe,
+shortlist rule, causal validation denominator, task scores, selected set, and
+normalized non-negative component weights.
 
 The diagnostic IDs are split before screening by SHA-256 order within each
 task: one half screens and ranks components, and the disjoint half performs
@@ -273,12 +279,12 @@ least two tasks and no task may exceed a 5% right-to-wrong harm rate. Selected
 component weights are the normalized non-negative macro causal scores; an empty
 selected set fails closed instead of silently reverting to layer-level loss.
 
-The selected component set controls where state loss is measured. LoRA remains
-on the containing selected layers because one SwiGLU MLP channel spans
-`gate_proj`, `up_proj`, and `down_proj`, and direct row-only updates would
-confound localization with a more fragile optimizer. Direct component-weight
-updates and sparse-feature/SAE supervision are separately labelled later
-ablations, used only if neuron/head selection proves unstable.
+In the archived Cycle 1 design, the selected component set controlled where
+state loss was measured. LoRA remained on the containing selected layers
+because one SwiGLU MLP channel spans `gate_proj`, `up_proj`, and `down_proj`,
+and direct row-only updates would have confounded localization with a more
+fragile optimizer. The confirmatory method no longer uses this component-level
+training path.
 
 ## Teacher, student, and trainable scope
 
