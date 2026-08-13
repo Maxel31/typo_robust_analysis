@@ -25,9 +25,15 @@ jobs:
           persist-credentials: false
 
       - name: Prepare credential-free test sandbox
+        id: review-sandbox
         env:
           REVIEW_SANDBOX_SENTINEL: must-not-enter-review-tests
         run: |
+          if [[ ! -f .trusted-review/.github/review/run-falsification-test.sh ]]; then
+            echo "available=false" >> "${GITHUB_OUTPUT}"
+            echo "Trusted sandbox is not on the default branch yet; bootstrap review is skipped."
+            exit 0
+          fi
           sudo install -o root -g root -m 0755 \
             .trusted-review/.github/review/run-falsification-test.sh \
             /usr/local/bin/review-falsify
@@ -36,8 +42,10 @@ jobs:
             "${GITHUB_WORKSPACE}" \
             "${{ github.event.pull_request.base.sha }}"
           review-falsify --self-test
+          echo "available=true" >> "${GITHUB_OUTPUT}"
 
       - uses: anthropics/claude-code-action@v1
+        if: steps.review-sandbox.outputs.available == 'true'
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
