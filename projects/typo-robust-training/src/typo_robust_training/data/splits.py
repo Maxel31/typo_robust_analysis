@@ -82,6 +82,57 @@ class _UnionFind:
         self.parent[larger] = smaller
 
 
+class NearDuplicateTextIndex:
+    """Query text against a fixed corpus using the clustering LSH/Jaccard rule."""
+
+    def __init__(
+        self,
+        texts: Sequence[str],
+        *,
+        shingle_size: int = 5,
+        threshold: float = 0.99,
+    ) -> None:
+        if isinstance(shingle_size, bool) or not isinstance(shingle_size, int) or shingle_size <= 0:
+            raise ValueError("shingle_size must be a positive integer")
+        if not isinstance(threshold, (int, float)) or not 0.0 < float(threshold) <= 1.0:
+            raise ValueError("threshold must be in (0, 1]")
+        self._texts = tuple(texts)
+        if any(not isinstance(text, str) for text in self._texts):
+            raise TypeError("near-duplicate index texts must be strings")
+        self._shingle_size = shingle_size
+        self._threshold = float(threshold)
+        self._exact = {normalized_content_sha256(text) for text in self._texts}
+        self._buckets: dict[tuple[int, tuple[int, ...]], list[int]] = defaultdict(list)
+        for index, text in enumerate(self._texts):
+            signature = _minhash_signature(_shingles(text, shingle_size))
+            for band_index in range(8):
+                start = band_index * 4
+                self._buckets[(band_index, signature[start : start + 4])].append(index)
+        self._cached_shingles: dict[int, frozenset[int]] = {}
+
+    def contains_near_duplicate(self, text: str) -> bool:
+        """Return whether ``text`` is exact/near-duplicate to the indexed corpus."""
+
+        if not isinstance(text, str):
+            raise TypeError("near-duplicate query text must be a string")
+        if normalized_content_sha256(text) in self._exact:
+            return True
+        query_shingles = _shingles(text, self._shingle_size)
+        signature = _minhash_signature(query_shingles)
+        candidates: set[int] = set()
+        for band_index in range(8):
+            start = band_index * 4
+            candidates.update(self._buckets.get((band_index, signature[start : start + 4]), ()))
+        for index in candidates:
+            indexed = self._cached_shingles.get(index)
+            if indexed is None:
+                indexed = _shingles(self._texts[index], self._shingle_size)
+                self._cached_shingles[index] = indexed
+            if _jaccard(query_shingles, indexed) >= self._threshold:
+                return True
+        return False
+
+
 def _minhash_signature(shingles: frozenset[int], *, components: int = 32) -> tuple[int, ...]:
     if not shingles:
         return (0,) * components
@@ -192,7 +243,12 @@ def assign_balanced_group_roles(
     namespace: str,
     weights: Mapping[str, float],
 ) -> dict[str, str]:
-    """Assign whole groups while minimizing deterministic record-count imbalance."""
+    """Assign whole groups in hash-random order while limiting count imbalance.
+
+    The seeded hash order deliberately does not depend on group size.  This avoids
+    making the largest repositories systematically inherit the largest role while
+    retaining deterministic greedy balancing of the final record counts.
+    """
 
     if not group_sizes:
         return {}
@@ -201,11 +257,12 @@ def assign_balanced_group_roles(
     ):
         raise ValueError("group sizes require non-empty names and positive integer counts")
     ordered_weights = _validate_weights(weights)
-    if any(weight <= 0.0 for _role, weight in ordered_weights):
-        raise ValueError("balanced group-role weights must be positive")
-    roles = tuple(role for role, _weight in ordered_weights)
+    positive_weights = tuple((role, weight) for role, weight in ordered_weights if weight > 0.0)
+    if not positive_weights:
+        raise ValueError("balanced group-role weights require a positive role")
+    roles = tuple(role for role, _weight in positive_weights)
     record_total = sum(group_sizes.values())
-    targets = {role: record_total * dict(ordered_weights)[role] for role in roles}
+    targets = {role: record_total * dict(positive_weights)[role] for role in roles}
     counts = {role: 0 for role in roles}
     assignments: dict[str, str] = {}
 
@@ -214,8 +271,10 @@ def assign_balanced_group_roles(
 
     ordered_groups = sorted(
         group_sizes.items(),
-        key=lambda item: (-item[1], digest(item[0], purpose="group-order"), item[0]),
+        key=lambda item: (digest(item[0], purpose="group-order"), item[0]),
     )
+    if len(ordered_groups) < len(roles):
+        raise ValueError("balanced group roles require at least one group per positive role")
     for group, size in ordered_groups:
 
         def candidate_key(candidate: str) -> tuple[float, str, str]:
@@ -229,7 +288,8 @@ def assign_balanced_group_roles(
                 candidate,
             )
 
-        role = min(roles, key=candidate_key)
+        unused_roles = tuple(role for role in roles if counts[role] == 0)
+        role = min(unused_roles or roles, key=candidate_key)
         assignments[group] = role
         counts[role] += size
     return assignments
@@ -309,6 +369,7 @@ def assign_repository_split(
 
 
 __all__ = [
+    "NearDuplicateTextIndex",
     "assign_content_splits",
     "assign_repository_split",
     "cluster_near_duplicates",

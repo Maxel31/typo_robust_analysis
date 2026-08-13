@@ -23,17 +23,23 @@ from typo_robust_training.data.config import (
     strict_loads,
 )
 from typo_robust_training.data.jsonl import read_lf_jsonl_lines
-from typo_robust_training.data.natural_words import natural_dictionary_word_role
+from typo_robust_training.data.natural_words import natural_dictionary_role_for_word
 from typo_robust_training.data.records import (
     CleanRecord,
     NaturalTypoRecord,
     TypoEdit,
     infer_single_word_typo_edit,
 )
-from typo_robust_training.data.splits import assign_balanced_group_roles
+from typo_robust_training.data.splits import NearDuplicateTextIndex, assign_balanced_group_roles
+from typo_robust_training.data.task_splits import (
+    FROZEN_TASK_EVALUATION_SPLITS,
+    REASONING_TRAINING_SPLITS,
+)
 from typo_robust_training.evaluation.perturb import (
     FrozenEvaluationTypo,
+    NoNaturalInjectionTargetError,
     evaluation_eligible_word_spans,
+    freeze_natural_injection_dictionary,
     generate_evaluation_typo,
     generate_natural_injection,
 )
@@ -44,19 +50,8 @@ from typo_robust_training.evaluation.study import (
 from typo_robust_training.integrity import sha256_file as _sha256_file
 
 
-_TASK_TUNE_SPLITS = {
-    "gsm8k": frozenset({"train"}),
-    "mmlu": frozenset({"auxiliary_train"}),
-    "arc": frozenset({"train"}),
-}
-_TASK_EVALUATION_SPLITS = {
-    "gsm8k": frozenset({"test"}),
-    "mmlu": frozenset({"test"}),
-    "arc": frozenset({"test"}),
-    "mmlu_pro": frozenset({"test"}),
-    "math_500": frozenset({"test"}),
-    "commonsense_qa": frozenset({"validation"}),
-}
+_TASK_TUNE_SPLITS = REASONING_TRAINING_SPLITS
+_TASK_EVALUATION_SPLITS = FROZEN_TASK_EVALUATION_SPLITS
 _ARTIFACTS = (
     "tune_manifest.jsonl",
     "pre_pr_gate_manifest.jsonl",
@@ -96,6 +91,8 @@ class _Exclusions:
     hard_groups: frozenset[tuple[str, str]]
     prior_tune_source_ids: frozenset[str]
     prior_tune_groups: frozenset[tuple[str, str]]
+    hard_near_duplicates: NearDuplicateTextIndex
+    prior_tune_near_duplicates: NearDuplicateTextIndex
     training_repositories: frozenset[str]
     tune_repositories: frozenset[str]
     artifact_sha256: Mapping[str, str]
@@ -200,11 +197,16 @@ def _exclusions(root: Path) -> _Exclusions:
         }
         return frozenset(values)
 
+    def clean_texts(rows: Sequence[Mapping[str, object]]) -> tuple[str, ...]:
+        return tuple(str(row["text"]) for row in rows if isinstance(row.get("text"), str))
+
     return _Exclusions(
         hard_source_ids=frozenset(source_id(row) for row in (*training, *diagnostic)),
         hard_groups=frozenset(group(row) for row in (*training, *diagnostic)),
         prior_tune_source_ids=frozenset(source_id(row) for row in tune),
         prior_tune_groups=frozenset(group(row) for row in tune),
+        hard_near_duplicates=NearDuplicateTextIndex(clean_texts((*training, *diagnostic))),
+        prior_tune_near_duplicates=NearDuplicateTextIndex(clean_texts(tune)),
         training_repositories=repositories(training),
         tune_repositories=repositories(tune),
         artifact_sha256={
@@ -361,11 +363,16 @@ def _eligible_clean(
     sealed: bool,
 ) -> bool:
     identity = (record.source, record.group_id)
-    if record.source_id in exclusions.hard_source_ids or identity in exclusions.hard_groups:
+    if (
+        record.source_id in exclusions.hard_source_ids
+        or identity in exclusions.hard_groups
+        or exclusions.hard_near_duplicates.contains_near_duplicate(record.text)
+    ):
         return False
     if sealed and (
         record.source_id in exclusions.prior_tune_source_ids
         or identity in exclusions.prior_tune_groups
+        or exclusions.prior_tune_near_duplicates.contains_near_duplicate(record.text)
     ):
         return False
     return True
@@ -405,27 +412,35 @@ def _select_task_items(
         "pre_pr_gate": {},
         "final_test": {},
     }
-    tune_candidates: list[CleanRecord] = []
-    for source, splits in _TASK_TUNE_SPLITS.items():
-        tune_candidates.extend(
+    tune_tasks = tuple(sorted(_TASK_TUNE_SPLITS))
+    tune_base, tune_remainder = divmod(protocol.tune_task_records_total, len(tune_tasks))
+    for task_index, source in enumerate(tune_tasks):
+        splits = _TASK_TUNE_SPLITS[source]
+        candidates = [
             record
             for record in collected[source]
             if isinstance(record, CleanRecord)
             and record.source_split in splits
             and _eligible_clean(record, exclusions=exclusions, sealed=False)
             and _supports_frozen_typo_grid(record, protocol=protocol)
+        ]
+        candidates.sort(
+            key=lambda record: (
+                record.source_id not in exclusions.prior_tune_source_ids,
+                _order_key(
+                    record,
+                    namespace=f"evaluation-tune-task-{source}/v1",
+                    seed=protocol.seed,
+                ),
+            )
         )
-    tune_candidates.sort(
-        key=lambda record: (
-            record.source_id not in exclusions.prior_tune_source_ids,
-            _order_key(record, namespace="evaluation-tune-task/v1", seed=protocol.seed),
-        )
-    )
-    tune_records = tuple(tune_candidates[: protocol.tune_task_records_total])
-    if len(tune_records) != protocol.tune_task_records_total:
-        raise ValueError("evaluation tune task pool is too small")
-    for task in sorted(_TASK_TUNE_SPLITS):
-        selected["tune"][task] = tuple(record for record in tune_records if record.source == task)
+        count = tune_base + (1 if task_index < tune_remainder else 0)
+        rows = tuple(candidates[:count])
+        if len(rows) != count:
+            raise ValueError(
+                f"evaluation tune task {source} has {len(rows)} records but requires {count}"
+            )
+        selected["tune"][source] = rows
 
     sealed_by_task: dict[str, tuple[CleanRecord, ...]] = {}
     for task, splits in _TASK_EVALUATION_SPLITS.items():
@@ -577,6 +592,19 @@ def _select_natural(
     valid = tuple(
         (record, edit) for record in natural if (edit := _natural_edit(record)) is not None
     )
+    edits_by_record_id = {record.record_id: edit for record, edit in valid}
+    dictionary_roles_by_record_id = (
+        {
+            record.record_id: natural_dictionary_role_for_word(
+                edit.clean_word.casefold(),
+                seed=dictionary_word_seed,
+                weights=dictionary_word_split,
+            )
+            for record, edit in valid
+        }
+        if dictionary_word_split is not None
+        else {}
+    )
     training_words = (
         {
             edit.clean_word.casefold()
@@ -602,24 +630,16 @@ def _select_natural(
     )
     if len(tune) != protocol.corpus_counts["tune"]["natural_pairs"]:
         raise ValueError("evaluation natural tune pool is too small")
-    if dictionary_word_split is None:
-        tune_words = {
+    tune_words = (
+        {
             edit.clean_word.casefold()
             for record, edit in valid
             if record.repository in exclusions.tune_repositories
             and edit.clean_word.casefold() not in training_words
         }
-    else:
-        tune_words = {
-            edit.clean_word.casefold()
-            for record, edit in valid
-            if natural_dictionary_word_role(
-                record,
-                seed=dictionary_word_seed,
-                weights=dictionary_word_split,
-            )
-            == "tune"
-        }
+        if dictionary_word_split is None
+        else set()
+    )
     candidates = tuple(
         record
         for record, _ in valid
@@ -650,12 +670,7 @@ def _select_natural(
                     and edit.clean_word.casefold() not in training_words
                 )
                 if dictionary_word_split is None
-                else natural_dictionary_word_role(
-                    record,
-                    seed=dictionary_word_seed,
-                    weights=dictionary_word_split,
-                )
-                == "tune"
+                else dictionary_roles_by_record_id[record.record_id] == "tune"
             )
         )
     }
@@ -683,12 +698,7 @@ def _select_natural(
                     and edit.clean_word.casefold() not in tune_words
                 )
                 if dictionary_word_split is None
-                else natural_dictionary_word_role(
-                    record,
-                    seed=dictionary_word_seed,
-                    weights=dictionary_word_split,
-                )
-                == role
+                else dictionary_roles_by_record_id[record.record_id] == role
             )
         )
 
@@ -696,9 +706,8 @@ def _select_natural(
     for role, rows in dictionary_records.items():
         variants: dict[str, set[str]] = defaultdict(set)
         for record in rows:
-            edit = _natural_edit(record)
-            if edit is not None:
-                variants[edit.clean_word.casefold()].add(edit.typo_word.casefold())
+            edit = edits_by_record_id[record.record_id]
+            variants[edit.clean_word.casefold()].add(edit.typo_word.casefold())
         dictionaries[role] = {
             word: tuple(sorted(typos)) for word, typos in sorted(variants.items())
         }
@@ -822,6 +831,10 @@ def _task_rows(
     for role in ("tune", "pre_pr_gate", "final_test"):
         by_task = selected[role]
         primary_items = _flat_task_items(by_task)
+        natural_dictionary = freeze_natural_injection_dictionary(
+            natural_dictionaries[role],
+            minimum_word_letters=protocol.minimum_word_letters,
+        )
         audit_ids = {
             record.record_id
             for record in _balanced_subset(
@@ -907,13 +920,13 @@ def _task_rows(
             try:
                 typo = generate_natural_injection(
                     record,
-                    replacements=natural_dictionaries[role],
+                    replacements=natural_dictionary,
                     seed=protocol.seed,
                     role=role,
                     variant=variant,
                     minimum_word_letters=protocol.minimum_word_letters,
                 )
-            except ValueError:
+            except NoNaturalInjectionTargetError:
                 continue
             natural_rows.append(_pair_payload(record, typo, role=role, primary=False))
             if len(natural_rows) == natural_required:

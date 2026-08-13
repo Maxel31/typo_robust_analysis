@@ -495,6 +495,7 @@ def load_evaluation_corpus_bundle(
     _claim_evaluation_role(
         resolved,
         role=evaluation_role,
+        artifact_kind="corpus",
         binding=access_binding_sha256,
         experiment_binding=experiment_binding_sha256,
         output_dir=Path(output_dir),
@@ -564,7 +565,10 @@ def _claim_evaluation_role(
     output_dir: Path,
     confirm: bool,
     resume: bool,
+    artifact_kind: str = "task",
 ) -> None:
+    if artifact_kind not in {"task", "corpus"}:
+        raise ValueError("evaluation artifact kind is unsupported")
     if role == "tune":
         if confirm:
             raise ValueError("tune evaluation does not accept sealed-role confirmation")
@@ -595,14 +599,28 @@ def _claim_evaluation_role(
             "output_dir": str(output_dir.resolve()),
         }
         if existing is not None:
-            if (
-                not resume
-                or not isinstance(existing, Mapping)
-                or any(existing.get(field) != value for field, value in expected_identity.items())
+            if not isinstance(existing, Mapping) or any(
+                existing.get(field) != value for field, value in expected_identity.items()
             ):
                 raise ValueError(f"sealed evaluation role {role} was already opened")
             if existing.get("status") != "opened":
                 raise ValueError(f"sealed evaluation role {role} was already completed")
+            raw_claimed = existing.get("claimed_artifacts", ["task"])
+            if (
+                not isinstance(raw_claimed, list)
+                or any(item not in {"task", "corpus"} for item in raw_claimed)
+                or len(set(raw_claimed)) != len(raw_claimed)
+            ):
+                raise ValueError("sealed evaluation artifact claims differ")
+            if artifact_kind in raw_claimed:
+                if not resume:
+                    raise ValueError(f"sealed evaluation role {role} was already opened")
+                return
+            roles[key] = {
+                **dict(existing),
+                "claimed_artifacts": sorted((*raw_claimed, artifact_kind)),
+            }
+            _atomic_json(access_path, registry)
             return
         if resume:
             raise ValueError("sealed evaluation --resume has no matching access record")
@@ -611,6 +629,7 @@ def _claim_evaluation_role(
             "status": "opened",
             "report_sha256": None,
             "gate_passed": None,
+            "claimed_artifacts": [artifact_kind],
         }
         _atomic_json(access_path, registry)
 
@@ -731,6 +750,7 @@ def _load_frozen_evaluation_bundle(
     _claim_evaluation_role(
         root,
         role=evaluation_role,
+        artifact_kind="task",
         binding=access_binding_sha256,
         experiment_binding=experiment_binding_sha256,
         output_dir=output_dir,
@@ -750,7 +770,8 @@ def _load_frozen_evaluation_bundle(
         raise ValueError("evaluation role contains duplicate record IDs")
     if evaluation_role != "tune":
         observed_strata = {stratum for row in parsed for stratum in row.strata}
-        if any(not row.strata for row in parsed) or observed_strata != set(_SPLITS):
+        expected_task_strata = set(_SPLITS) - {"unseen-content"}
+        if any(not row.strata for row in parsed) or observed_strata != expected_task_strata:
             raise ValueError("sealed evaluation manifest lacks the complete frozen strata")
     selected = tuple(
         sorted(
@@ -859,6 +880,7 @@ def load_evaluation_bundle(
     _claim_evaluation_role(
         resolved,
         role=evaluation_role,
+        artifact_kind="task",
         binding=access_binding_sha256,
         experiment_binding=experiment_binding_sha256,
         output_dir=Path(output_dir),
