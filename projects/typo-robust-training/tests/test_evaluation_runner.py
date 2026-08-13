@@ -50,7 +50,7 @@ def _pair(index: int) -> EvaluationPair:
                 typo_char_span=(4, 10),
             ),
         ),
-        metadata=MappingProxyType({}),
+        metadata=MappingProxyType({"evaluation_condition": "random-2"}),
         strata=("same-task",),
     )
 
@@ -104,6 +104,7 @@ class _Runtime:
             record_id=pair.record_id,
             condition=self.condition,
             seed=self.seed,
+            evaluation_condition=str(pair.metadata["evaluation_condition"]),
             source=pair.source,
             task=pair.task,
             operation=pair.operation,
@@ -230,6 +231,26 @@ def test_runner_refuses_nonempty_output_without_resume(tmp_path: Path) -> None:
     with pytest.raises(FileExistsError, match="not empty"):
         run_robustness_evaluation(
             _config(tmp_path, output, resume=False),
+            runtime_factory=_RuntimeFactory(),
+            data_bundle=_bundle(tmp_path),
+            descriptors=_descriptors(tmp_path),
+            patch_window=PatchWindow(0, 6, "9" * 64, "f" * 64),
+        )
+
+
+def test_runner_rejects_gate_drift_from_frozen_study(tmp_path: Path) -> None:
+    payload = json.loads(CONFIG.read_text(encoding="utf-8"))
+    payload["gate"]["minimum_typo_accuracy_gain_points"] = 3.0
+    drifted = tmp_path / "drifted-evaluation.json"
+    drifted.write_text(json.dumps(payload), encoding="utf-8")
+    config = replace(
+        _config(tmp_path, tmp_path / "drifted-output", resume=False),
+        config_path=drifted,
+    )
+
+    with pytest.raises(ValueError, match="runtime and study protocols differ"):
+        run_robustness_evaluation(
+            config,
             runtime_factory=_RuntimeFactory(),
             data_bundle=_bundle(tmp_path),
             descriptors=_descriptors(tmp_path),

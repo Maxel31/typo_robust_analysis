@@ -759,10 +759,14 @@ class HuggingFaceRobustnessEvaluationRuntime:
                 del clean_output, typo_output, patched_output
 
         task = pair.task
+        evaluation_condition = pair.metadata.get("evaluation_condition")
+        if not isinstance(evaluation_condition, str):
+            raise RuntimeError("validated evaluation pair lost its typo condition")
         return EvaluationObservation(
             record_id=pair.record_id,
             condition=self.condition,
             seed=self.seed,
+            evaluation_condition=evaluation_condition,
             source=pair.source,
             task=task,
             operation=pair.operation,

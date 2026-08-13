@@ -13,6 +13,7 @@ from typo_robust_training.evaluation.records import EvaluationObservation
 
 
 _PATCH_GAIN_DENOMINATOR_EPSILON = 1e-6
+_PRIMARY_EVALUATION_CONDITION = "random-2"
 
 
 def _mean(values: Iterable[float]) -> float | None:
@@ -112,6 +113,8 @@ def _paired_metrics(
     if set(base_by_id) != set(adapter_by_id):
         raise ValueError("base and adapter paired record IDs differ")
     pairs = tuple((base_by_id[record_id], adapter_by_id[record_id]) for record_id in base_by_id)
+    if any(left.evaluation_condition != right.evaluation_condition for left, right in pairs):
+        raise ValueError("base and adapter typo conditions differ")
     answer_pairs = tuple(
         (left, right)
         for left, right in pairs
@@ -336,25 +339,40 @@ def build_evaluation_report(
     if "base" not in grouped:
         raise ValueError("evaluation report requires the base condition")
     base = tuple(grouped["base"])
+    primary_base = tuple(
+        row for row in base if row.evaluation_condition == _PRIMARY_EVALUATION_CONDITION
+    )
+    if not primary_base:
+        raise ValueError("evaluation report requires confirmatory random-2 observations")
     condition_report: dict[str, object] = {}
     for condition_id, condition_rows_list in sorted(grouped.items()):
         condition_rows = tuple(condition_rows_list)
+        primary_rows = tuple(
+            row
+            for row in condition_rows
+            if row.evaluation_condition == _PRIMARY_EVALUATION_CONDITION
+        )
         condition_report[condition_id] = {
-            "overall": _condition_summary(condition_rows),
+            "primary_condition": _PRIMARY_EVALUATION_CONDITION,
+            "overall": _condition_summary(primary_rows),
+            "all_conditions": _condition_summary(condition_rows),
+            "evaluation_conditions": _breakdown(
+                condition_rows, key=lambda row: row.evaluation_condition
+            ),
             "strata": {
                 stratum: _condition_summary(
-                    tuple(row for row in condition_rows if stratum in row.strata)
+                    tuple(row for row in primary_rows if stratum in row.strata)
                 )
                 for stratum in ("same-task", "unseen-task", "unseen-content", "unseen-typo")
             },
             "tasks": _breakdown(
-                condition_rows, key=lambda row: row.task if row.task is not None else "none"
+                primary_rows, key=lambda row: row.task if row.task is not None else "none"
             ),
-            "sources": _breakdown(condition_rows, key=lambda row: row.source),
-            "operations": _breakdown(condition_rows, key=lambda row: row.operation),
-            "edit_counts": _breakdown(condition_rows, key=lambda row: str(row.edit_count)),
+            "sources": _breakdown(primary_rows, key=lambda row: row.source),
+            "operations": _breakdown(primary_rows, key=lambda row: row.operation),
+            "edit_counts": _breakdown(primary_rows, key=lambda row: str(row.edit_count)),
             "tokenization_strata": _breakdown(
-                condition_rows, key=lambda row: row.tokenization_stratum
+                primary_rows, key=lambda row: row.tokenization_stratum
             ),
         }
 
@@ -363,17 +381,46 @@ def build_evaluation_report(
         if condition_id == "base":
             continue
         adapter = tuple(adapter_rows_list)
+        primary_adapter = tuple(
+            row for row in adapter if row.evaluation_condition == _PRIMARY_EVALUATION_CONDITION
+        )
         overall = _paired_metrics(
-            base,
-            adapter,
+            primary_base,
+            primary_adapter,
             label=condition_id,
             protocol=protocol,
             bootstrap=True,
         )
+        all_conditions = _paired_metrics(
+            base,
+            adapter,
+            label=f"{condition_id}:all-conditions",
+            protocol=protocol,
+            bootstrap=False,
+        )
+        evaluation_conditions = {}
+        condition_inventory = sorted(
+            {row.evaluation_condition for row in base}
+            | {row.evaluation_condition for row in adapter}
+        )
+        for evaluation_condition in condition_inventory:
+            base_subset = tuple(
+                row for row in base if row.evaluation_condition == evaluation_condition
+            )
+            adapter_subset = tuple(
+                row for row in adapter if row.evaluation_condition == evaluation_condition
+            )
+            evaluation_conditions[evaluation_condition] = _paired_metrics(
+                base_subset,
+                adapter_subset,
+                label=f"{condition_id}:{evaluation_condition}",
+                protocol=protocol,
+                bootstrap=False,
+            )
         strata = {}
         for stratum in ("same-task", "unseen-task", "unseen-content", "unseen-typo"):
-            base_subset = tuple(row for row in base if stratum in row.strata)
-            adapter_subset = tuple(row for row in adapter if stratum in row.strata)
+            base_subset = tuple(row for row in primary_base if stratum in row.strata)
+            adapter_subset = tuple(row for row in primary_adapter if stratum in row.strata)
             strata[stratum] = _paired_metrics(
                 base_subset,
                 adapter_subset,
@@ -381,7 +428,13 @@ def build_evaluation_report(
                 protocol=protocol,
                 bootstrap=False,
             )
-        comparisons[condition_id] = {"overall": overall, "strata": strata}
+        comparisons[condition_id] = {
+            "primary_condition": _PRIMARY_EVALUATION_CONDITION,
+            "overall": overall,
+            "all_conditions": all_conditions,
+            "evaluation_conditions": evaluation_conditions,
+            "strata": strata,
+        }
 
     method_rows: dict[str, dict[int, list[EvaluationObservation]]] = defaultdict(
         lambda: defaultdict(list)
@@ -393,8 +446,15 @@ def build_evaluation_report(
             method_rows[row.condition][row.seed].append(row)
     method_comparisons = {
         condition: _method_paired_metrics(
-            base,
-            {seed: tuple(seed_rows) for seed, seed_rows in by_seed.items()},
+            primary_base,
+            {
+                seed: tuple(
+                    row
+                    for row in seed_rows
+                    if row.evaluation_condition == _PRIMARY_EVALUATION_CONDITION
+                )
+                for seed, seed_rows in by_seed.items()
+            },
             condition=condition,
             protocol=protocol,
         )
@@ -435,11 +495,6 @@ def build_evaluation_report(
                 if gate["require_positive_unseen_task_gain"]
                 else True
             ),
-            "patch_reliance_reduction": _finite_at_least(
-                overall["patch_gain_reduction_fraction"],
-                float(gate["minimum_patch_gain_reduction_fraction"]),
-            ),
-            "patch_readout_coverage": (overall["n_patch_readout_valid"] == overall["n_records"]),
         }
         passed = all(checks.values())
         gate_seed_checks[str(seed)] = {"checks": checks, "passed": passed}
@@ -450,7 +505,7 @@ def build_evaluation_report(
         gate["minimum_directional_seeds"]
     )
     return {
-        "schema_version": "robustness-evaluation-report/v1",
+        "schema_version": "robustness-evaluation-report/v2",
         "conditions": condition_report,
         "comparisons": comparisons,
         "method_comparisons": method_comparisons,

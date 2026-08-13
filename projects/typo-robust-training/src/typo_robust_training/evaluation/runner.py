@@ -339,6 +339,14 @@ def run_robustness_evaluation(
         or study.bootstrap_seed != protocol.bootstrap_seed
         or study.confidence_level != protocol.confidence_level
         or study.max_new_tokens != protocol.max_new_tokens
+        or float(study.gates["minimum_typo_gain_points"])
+        != float(protocol.gate["minimum_typo_accuracy_gain_points"])
+        or float(study.gates["clean_noninferiority_margin_points"])
+        != float(protocol.gate["maximum_clean_accuracy_drop_points"])
+        or int(study.gates["minimum_directional_seeds"])
+        != int(protocol.gate["minimum_directional_seeds"])
+        or study.gates["patch_audit_is_blocking"] is not False
+        or float(protocol.gate["minimum_patch_gain_reduction_fraction"]) != 0.0
     ):
         raise ValueError("evaluation runtime and study protocols differ")
     if data_bundle is not None and config.evaluation_role != "tune":
