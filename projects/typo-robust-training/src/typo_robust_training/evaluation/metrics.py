@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 import math
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
-from statistics import fmean
+from collections.abc import Iterable, Mapping, Sequence
+from statistics import fmean, stdev
 
 from typo_robust_training.evaluation.config import RobustnessEvaluationProtocol
 from typo_robust_training.evaluation.records import EvaluationObservation
@@ -149,6 +149,7 @@ def _paired_metrics(
             for left, right in answer_pairs
         ),
         "n_paired_patch_gain": len(base_gains),
+        "patch_gain_coverage_fraction": (len(base_gains) / len(pairs) if pairs else None),
         "base_mean_patch_gain": base_patch_gain,
         "adapter_mean_patch_gain": adapter_patch_gain,
         "patch_gain_reduction_fraction": reduction,
@@ -160,6 +161,113 @@ def _paired_metrics(
             protocol=protocol,
         )
     return result
+
+
+def _bootstrap_method_accuracy_difference(
+    differences_by_seed: Mapping[int, Sequence[float]],
+    *,
+    label: str,
+    protocol: RobustnessEvaluationProtocol,
+) -> list[float] | None:
+    """Hierarchically resample training seeds, then paired items within each seed."""
+
+    if not differences_by_seed:
+        return None
+    import numpy as np
+
+    seeds = tuple(sorted(differences_by_seed))
+    lengths = {len(differences_by_seed[seed]) for seed in seeds}
+    if len(lengths) != 1 or not lengths or next(iter(lengths)) == 0:
+        raise ValueError("method-level bootstrap requires one shared non-empty paired cohort")
+    values = np.asarray([differences_by_seed[seed] for seed in seeds], dtype=np.float64)
+    seed_count, item_count = values.shape
+    label_seed = int.from_bytes(hashlib.sha256(label.encode()).digest()[:8], "big")
+    rng = np.random.default_rng(protocol.bootstrap_seed ^ label_seed)
+    means = np.empty(protocol.bootstrap_replicates, dtype=np.float64)
+    for replicate in range(protocol.bootstrap_replicates):
+        sampled_seeds = rng.integers(0, seed_count, size=seed_count)
+        seed_means = []
+        for seed_index in sampled_seeds:
+            sampled_items = rng.integers(0, item_count, size=item_count)
+            seed_means.append(values[seed_index, sampled_items].mean())
+        means[replicate] = fmean(seed_means) * 100.0
+    alpha = (1.0 - protocol.confidence_level) / 2.0
+    lower, upper = np.quantile(means, [alpha, 1.0 - alpha]).tolist()
+    return [float(lower), float(upper)]
+
+
+def _method_paired_metrics(
+    base: Sequence[EvaluationObservation],
+    adapter_by_seed: Mapping[int, Sequence[EvaluationObservation]],
+    *,
+    condition: str,
+    protocol: RobustnessEvaluationProtocol,
+) -> dict[str, object]:
+    seed_metrics: dict[int, dict[str, object]] = {}
+    typo_differences: dict[int, tuple[float, ...]] = {}
+    clean_drop_differences: dict[int, tuple[float, ...]] = {}
+    base_by_id = {row.record_id: row for row in base}
+    for seed, adapter in sorted(adapter_by_seed.items()):
+        seed_metrics[seed] = _paired_metrics(
+            base,
+            adapter,
+            label=f"{condition}:seed-{seed}",
+            protocol=protocol,
+            bootstrap=False,
+        )
+        adapter_by_id = {row.record_id: row for row in adapter}
+        answer_pairs = tuple(
+            (base_by_id[record_id], adapter_by_id[record_id])
+            for record_id in base_by_id
+            if base_by_id[record_id].clean_correct is not None
+        )
+        typo_differences[seed] = tuple(
+            float(right.typo_correct) - float(left.typo_correct) for left, right in answer_pairs
+        )
+        clean_drop_differences[seed] = tuple(
+            float(left.clean_correct) - float(right.clean_correct) for left, right in answer_pairs
+        )
+
+    def values(name: str) -> tuple[float, ...]:
+        result = tuple(
+            float(metrics[name])
+            for metrics in seed_metrics.values()
+            if isinstance(metrics.get(name), (int, float))
+        )
+        if len(result) != len(seed_metrics):
+            raise ValueError(f"method-level {name} is unavailable for one or more seeds")
+        return result
+
+    typo_gains = values("typo_accuracy_gain_points")
+    clean_drops = values("clean_accuracy_drop_points")
+    patch_reductions = tuple(
+        float(metrics["patch_gain_reduction_fraction"])
+        for metrics in seed_metrics.values()
+        if isinstance(metrics.get("patch_gain_reduction_fraction"), (int, float))
+    )
+    return {
+        "n_seeds": len(seed_metrics),
+        "seed_inventory": sorted(seed_metrics),
+        "seed_inventory_complete": set(seed_metrics) == set(protocol.seed_inventory),
+        "typo_accuracy_gain_points_mean": fmean(typo_gains),
+        "typo_accuracy_gain_points_sd": stdev(typo_gains) if len(typo_gains) > 1 else 0.0,
+        "typo_accuracy_gain_ci95_points": _bootstrap_method_accuracy_difference(
+            typo_differences,
+            label=f"{condition}:typo",
+            protocol=protocol,
+        ),
+        "clean_accuracy_drop_points_mean": fmean(clean_drops),
+        "clean_accuracy_drop_points_sd": stdev(clean_drops) if len(clean_drops) > 1 else 0.0,
+        "clean_accuracy_drop_ci95_points": _bootstrap_method_accuracy_difference(
+            clean_drop_differences,
+            label=f"{condition}:clean-drop",
+            protocol=protocol,
+        ),
+        "patch_gain_reduction_fraction_mean": (
+            fmean(patch_reductions) if len(patch_reductions) == len(seed_metrics) else None
+        ),
+        "per_seed": {str(seed): metrics for seed, metrics in seed_metrics.items()},
+    }
 
 
 def _finite_at_least(value: object, threshold: float) -> bool:
@@ -205,6 +313,7 @@ def build_evaluation_report(
             ),
             "sources": _breakdown(condition_rows, key=lambda row: row.source),
             "operations": _breakdown(condition_rows, key=lambda row: row.operation),
+            "edit_counts": _breakdown(condition_rows, key=lambda row: str(row.edit_count)),
             "tokenization_strata": _breakdown(
                 condition_rows, key=lambda row: row.tokenization_stratum
             ),
@@ -234,6 +343,24 @@ def build_evaluation_report(
                 bootstrap=False,
             )
         comparisons[condition_id] = {"overall": overall, "strata": strata}
+
+    method_rows: dict[str, dict[int, list[EvaluationObservation]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for row in rows:
+        if row.condition != "base":
+            if row.seed is None:
+                raise RuntimeError("validated adapter observation lost its training seed")
+            method_rows[row.condition][row.seed].append(row)
+    method_comparisons = {
+        condition: _method_paired_metrics(
+            base,
+            {seed: tuple(seed_rows) for seed, seed_rows in by_seed.items()},
+            condition=condition,
+            protocol=protocol,
+        )
+        for condition, by_seed in sorted(method_rows.items())
+    }
 
     gate_seed_checks: dict[str, object] = {}
     directional_seeds: list[int] = []
@@ -273,6 +400,7 @@ def build_evaluation_report(
                 overall["patch_gain_reduction_fraction"],
                 float(gate["minimum_patch_gain_reduction_fraction"]),
             ),
+            "patch_readout_coverage": (overall["n_paired_patch_gain"] == overall["n_records"]),
         }
         passed = all(checks.values())
         gate_seed_checks[str(seed)] = {"checks": checks, "passed": passed}
@@ -286,6 +414,7 @@ def build_evaluation_report(
         "schema_version": "robustness-evaluation-report/v1",
         "conditions": condition_report,
         "comparisons": comparisons,
+        "method_comparisons": method_comparisons,
         "gate": {
             "condition": "localized-state-distillation",
             "seed_inventory_complete": inventory_complete,

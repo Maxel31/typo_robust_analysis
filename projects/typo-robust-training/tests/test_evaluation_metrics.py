@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,7 @@ def _observation(
     clean_correct: bool,
     typo_correct: bool,
     patch_gain: float,
+    edit_count: int = 1,
 ) -> EvaluationObservation:
     unseen = index >= 10
     return EvaluationObservation(
@@ -31,7 +33,10 @@ def _observation(
         seed=seed,
         source="mmlu_pro" if unseen else "gsm8k",
         task="mmlu_pro" if unseen else "gsm8k",
-        operation="adjacent-transposition" if unseen else "deletion",
+        operation=(
+            "multiple" if edit_count > 1 else "adjacent-transposition" if unseen else "deletion"
+        ),
+        edit_count=edit_count,
         strata=("unseen-task", "unseen-typo") if unseen else ("same-task",),
         clean_answer="A" if clean_correct else "B",
         typo_answer="A" if typo_correct else "B",
@@ -44,8 +49,8 @@ def _observation(
         patched_kl_2_16=(1.0 - patch_gain,) * 15,
         kl_invalid_reason=None,
         patch_invalid_reason=None,
-        clean_subtoken_counts=(1,),
-        typo_subtoken_counts=(2,),
+        clean_subtoken_counts=(1,) * edit_count,
+        typo_subtoken_counts=(2,) * edit_count,
         tokenization_stratum="fragmentation-increased",
         audit={},
     )
@@ -63,6 +68,7 @@ def _passing_observations() -> tuple[EvaluationObservation, ...]:
                 clean_correct=True,
                 typo_correct=base_correct,
                 patch_gain=0.50,
+                edit_count=2 if index == 19 else 1,
             )
         )
         for seed in (42, 43):
@@ -74,6 +80,7 @@ def _passing_observations() -> tuple[EvaluationObservation, ...]:
                     clean_correct=True,
                     typo_correct=base_correct or 10 <= index < 14,
                     patch_gain=0.25,
+                    edit_count=2 if index == 19 else 1,
                 )
             )
         observations.append(
@@ -84,6 +91,7 @@ def _passing_observations() -> tuple[EvaluationObservation, ...]:
                 clean_correct=True,
                 typo_correct=base_correct,
                 patch_gain=0.50,
+                edit_count=2 if index == 19 else 1,
             )
         )
     return tuple(observations)
@@ -113,6 +121,15 @@ def test_report_computes_paired_transitions_strata_patch_reliance_and_gate() -> 
     assert all(seed_checks[str(seed)]["passed"] for seed in (42, 43))
     assert seed_checks["44"]["passed"] is False
     assert "fragmentation-increased" in report["conditions"]["base"]["tokenization_strata"]
+    assert report["conditions"]["base"]["edit_counts"]["1"]["n_records"] == 19
+    assert report["conditions"]["base"]["edit_counts"]["2"]["n_records"] == 1
+    method = report["method_comparisons"]["localized-state-distillation"]
+    assert method["n_seeds"] == 3
+    assert method["seed_inventory_complete"] is True
+    assert method["typo_accuracy_gain_points_mean"] == pytest.approx(40.0 / 3.0)
+    assert method["typo_accuracy_gain_points_sd"] > 0.0
+    assert method["typo_accuracy_gain_ci95_points"][0] <= 40.0 / 3.0
+    assert method["typo_accuracy_gain_ci95_points"][1] >= 40.0 / 3.0
 
 
 def test_report_rejects_unpaired_conditions_and_detects_clean_harm() -> None:
@@ -171,3 +188,27 @@ def test_observation_round_trip_rejects_nonfinite_or_misaligned_kl() -> None:
     payload["patched_kl_2_16"][0] = float("nan")
     with pytest.raises(ValueError, match="finite"):
         EvaluationObservation.from_dict(payload)
+
+
+def test_gate_rejects_incomplete_patch_readout_coverage() -> None:
+    observations = list(_passing_observations())
+    for index, observation in enumerate(observations):
+        if (
+            observation.condition == "localized-state-distillation"
+            and observation.seed == 42
+            and observation.record_id == f"{0:064x}"
+        ):
+            observations[index] = replace(
+                observation,
+                patched_answer=None,
+                patched_correct=None,
+                patched_kl_2_16=(),
+                patch_invalid_reason="insufficient-readout",
+                audit=dict(observation.audit),
+            )
+            break
+    report = build_evaluation_report(observations, protocol=PROTOCOL)
+    seed = report["gate"]["seed_checks"]["42"]
+    assert seed["checks"]["patch_readout_coverage"] is False
+    assert seed["passed"] is False
+    assert report["gate"]["passed"] is False

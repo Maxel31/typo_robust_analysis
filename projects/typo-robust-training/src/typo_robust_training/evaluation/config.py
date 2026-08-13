@@ -167,8 +167,8 @@ def load_robustness_evaluation_config(path: Path) -> RobustnessEvaluationProtoco
     replicates = _integer(metrics["bootstrap_replicates"], field="bootstrap_replicates", minimum=1)
     bootstrap_seed = _integer(metrics["bootstrap_seed"], field="bootstrap_seed")
     confidence = _number(metrics["confidence_level"], field="confidence_level")
-    if not 0.0 < confidence < 1.0:
-        raise ValueError("evaluation confidence_level must be between zero and one")
+    if confidence != 0.95:
+        raise ValueError("evaluation confidence_level must equal the frozen value 0.95")
     seeds = metrics["seed_inventory"]
     if (
         not isinstance(seeds, list)

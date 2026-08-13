@@ -38,6 +38,7 @@ _FIELDS = {
     "source",
     "task",
     "operation",
+    "edit_count",
     "strata",
     "clean_answer",
     "typo_answer",
@@ -82,6 +83,7 @@ class EvaluationObservation:
     source: str
     task: str | None
     operation: str
+    edit_count: int
     strata: tuple[str, ...]
     clean_answer: str | None
     typo_answer: str | None
@@ -115,6 +117,12 @@ class EvaluationObservation:
             raise ValueError("evaluation observation task is unsupported")
         if not isinstance(self.operation, str) or not self.operation:
             raise ValueError("evaluation observation operation must be non-empty")
+        if (
+            isinstance(self.edit_count, bool)
+            or not isinstance(self.edit_count, int)
+            or self.edit_count <= 0
+        ):
+            raise ValueError("evaluation observation edit_count must be a positive integer")
         if tuple(item for item in _STRATA if item in self.strata) != self.strata or not self.strata:
             raise ValueError("evaluation observation strata must be unique and canonically ordered")
         if self.task is None:
@@ -181,17 +189,20 @@ class EvaluationObservation:
                 raise ValueError(f"evaluation {field_name} must contain positive integers")
         if len(self.clean_subtoken_counts) != len(self.typo_subtoken_counts):
             raise ValueError("evaluation clean and typo subtoken counts must align by edit")
+        if len(self.clean_subtoken_counts) != self.edit_count:
+            raise ValueError("evaluation edit_count must match the aligned edit inventory")
         if self.tokenization_stratum not in _TOKENIZATION_STRATA:
             raise ValueError("evaluation tokenization stratum is unsupported")
         if not isinstance(self.audit, Mapping):
             raise ValueError("evaluation observation audit must be an object")
+        audit = dict(self.audit)
         try:
-            json.dumps(self.audit, sort_keys=True, allow_nan=False)
+            json.dumps(audit, sort_keys=True, allow_nan=False)
         except (TypeError, ValueError) as exc:
             raise ValueError("evaluation observation audit must be canonical JSON") from exc
         object.__setattr__(self, "untreated_kl_2_16", untreated)
         object.__setattr__(self, "patched_kl_2_16", patched)
-        object.__setattr__(self, "audit", MappingProxyType(dict(self.audit)))
+        object.__setattr__(self, "audit", MappingProxyType(audit))
 
     @property
     def condition_id(self) -> str:
@@ -199,13 +210,14 @@ class EvaluationObservation:
 
     def as_dict(self) -> dict[str, object]:
         return {
-            "schema_version": "robustness-evaluation-observation/v1",
+            "schema_version": "robustness-evaluation-observation/v2",
             "record_id": self.record_id,
             "condition": self.condition,
             "seed": self.seed,
             "source": self.source,
             "task": self.task,
             "operation": self.operation,
+            "edit_count": self.edit_count,
             "strata": list(self.strata),
             "clean_answer": self.clean_answer,
             "typo_answer": self.typo_answer,
@@ -229,7 +241,7 @@ class EvaluationObservation:
         if (
             not isinstance(value, Mapping)
             or set(value) != _FIELDS
-            or value.get("schema_version") != "robustness-evaluation-observation/v1"
+            or value.get("schema_version") != "robustness-evaluation-observation/v2"
         ):
             raise ValueError("evaluation observation fields or schema differ")
         list_fields = (
@@ -249,6 +261,7 @@ class EvaluationObservation:
             source=value["source"],  # type: ignore[arg-type]
             task=value["task"],  # type: ignore[arg-type]
             operation=value["operation"],  # type: ignore[arg-type]
+            edit_count=value["edit_count"],  # type: ignore[arg-type]
             strata=tuple(value["strata"]),  # type: ignore[arg-type]
             clean_answer=_optional_string(value["clean_answer"], field_name="clean_answer"),
             typo_answer=_optional_string(value["typo_answer"], field_name="typo_answer"),

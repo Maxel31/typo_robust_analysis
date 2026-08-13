@@ -339,6 +339,7 @@ def _claim_evaluation_role(
     *,
     role: str,
     binding: str,
+    experiment_binding: str,
     output_dir: Path,
     confirm: bool,
     resume: bool,
@@ -364,9 +365,12 @@ def _claim_evaluation_role(
                 or gate.get("gate_passed") is not True
             ):
                 raise ValueError("final-test requires a completed passing pre-PR gate")
+            if gate.get("experiment_binding_sha256") != experiment_binding:
+                raise ValueError("final-test candidate differs from the passing pre-PR gate")
         existing = roles.get(key)
         expected_identity = {
             "access_binding_sha256": binding,
+            "experiment_binding_sha256": experiment_binding,
             "output_dir": str(output_dir.resolve()),
         }
         if existing is not None:
@@ -469,6 +473,7 @@ def load_evaluation_bundle(
     model: str,
     model_revision: str,
     access_binding_sha256: str,
+    experiment_binding_sha256: str,
     output_dir: Path,
     confirm_sealed_role: bool,
     resume: bool,
@@ -485,8 +490,14 @@ def load_evaluation_bundle(
         or any(split not in _SPLITS for split in requested)
     ):
         raise ValueError("evaluation splits must be unique members of the frozen inventory")
-    if _SHA40.fullmatch(model_revision) is None or _SHA64.fullmatch(access_binding_sha256) is None:
+    if (
+        _SHA40.fullmatch(model_revision) is None
+        or _SHA64.fullmatch(access_binding_sha256) is None
+        or _SHA64.fullmatch(experiment_binding_sha256) is None
+    ):
         raise ValueError("evaluation model or access identity differs")
+    if evaluation_role != "tune" and requested != _SPLITS:
+        raise ValueError("sealed evaluation roles require the complete frozen split inventory")
     resolved = Path(root).resolve()
     run = _object(resolved / "run.json")
     if (
@@ -526,6 +537,7 @@ def load_evaluation_bundle(
         resolved,
         role=evaluation_role,
         binding=access_binding_sha256,
+        experiment_binding=experiment_binding_sha256,
         output_dir=Path(output_dir),
         confirm=confirm_sealed_role,
         resume=resume,
@@ -540,6 +552,10 @@ def load_evaluation_bundle(
     )
     if len({row.record_id for row in parsed}) != len(parsed):
         raise ValueError("evaluation role contains duplicate record IDs")
+    if evaluation_role != "tune":
+        observed_strata = {stratum for row in parsed for stratum in row.strata}
+        if any(not row.strata for row in parsed) or observed_strata != set(_SPLITS):
+            raise ValueError("sealed evaluation manifest lacks the complete frozen strata")
     selected = tuple(
         sorted(
             (row for row in parsed if set(row.strata) & set(requested)),

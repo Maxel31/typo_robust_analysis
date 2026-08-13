@@ -130,6 +130,14 @@ def _write_data(root: Path) -> None:
                 split="pre_pr_gate",
             ),
             _natural(4, split="pre_pr_gate"),
+            _synthetic(
+                6,
+                source="fineweb_edu",
+                task=None,
+                answer=None,
+                operation="deletion",
+                split="pre_pr_gate",
+            ),
         ],
         "final_test_manifest.jsonl": [
             _synthetic(
@@ -139,7 +147,24 @@ def _write_data(root: Path) -> None:
                 answer="C",
                 operation="adjacent-transposition",
                 split="final_test",
-            )
+            ),
+            _synthetic(
+                7,
+                source="gsm8k",
+                task="gsm8k",
+                answer="12",
+                operation="deletion",
+                split="final_test",
+            ),
+            _synthetic(
+                8,
+                source="fineweb_edu",
+                task=None,
+                answer=None,
+                operation="deletion",
+                split="final_test",
+            ),
+            _natural(9, split="final_test"),
         ],
     }
     hashes: dict[str, str] = {}
@@ -194,19 +219,21 @@ def test_loader_filters_union_of_requested_strata_and_infers_natural_edit(tmp_pa
         model=MODEL,
         model_revision=REVISION,
         access_binding_sha256="e" * 64,
+        experiment_binding_sha256="9" * 64,
         output_dir=output,
         confirm_sealed_role=True,
         resume=False,
     )
 
     assert [record.record_id for record in bundle.records] == [
-        f"{index:064x}" for index in (2, 3, 4)
+        f"{index:064x}" for index in (2, 3, 4, 6)
     ]
     assert bundle.records[0].strata == ("same-task",)
     assert bundle.records[1].strata == ("unseen-task", "unseen-typo")
     assert bundle.records[2].strata == ("unseen-typo",)
     assert bundle.records[2].edits[0].clean_word == "airport"
     assert bundle.records[2].edits[0].typo_word == "arport"
+    assert bundle.records[3].strata == ("unseen-content",)
     assert (
         bundle.manifest_sha256
         == hashlib.sha256((data / "pre_pr_gate_manifest.jsonl").read_bytes()).hexdigest()
@@ -214,6 +241,7 @@ def test_loader_filters_union_of_requested_strata_and_infers_natural_edit(tmp_pa
     access = json.loads((data / "evaluation_access.json").read_text(encoding="utf-8"))
     assert access["roles"]["pre_pr_gate"]["status"] == "opened"
     assert access["roles"]["pre_pr_gate"]["output_dir"] == str(output.resolve())
+    assert access["roles"]["pre_pr_gate"]["experiment_binding_sha256"] == "9" * 64
 
 
 def test_sealed_roles_require_confirmation_exact_resume_and_passing_pre_pr_gate(
@@ -221,12 +249,26 @@ def test_sealed_roles_require_confirmation_exact_resume_and_passing_pre_pr_gate(
 ) -> None:
     data = tmp_path / "data"
     _write_data(data)
+    with pytest.raises(ValueError, match="complete frozen split inventory"):
+        load_evaluation_bundle(
+            data,
+            evaluation_role="pre-pr-gate",
+            splits=("same-task",),
+            model=MODEL,
+            model_revision=REVISION,
+            access_binding_sha256="e" * 64,
+            experiment_binding_sha256="9" * 64,
+            output_dir=tmp_path / "partial-gate",
+            confirm_sealed_role=True,
+            resume=False,
+        )
     arguments = {
         "evaluation_role": "pre-pr-gate",
-        "splits": ("same-task",),
+        "splits": ("same-task", "unseen-task", "unseen-content", "unseen-typo"),
         "model": MODEL,
         "model_revision": REVISION,
         "access_binding_sha256": "e" * 64,
+        "experiment_binding_sha256": "9" * 64,
         "output_dir": tmp_path / "gate",
     }
     with pytest.raises(ValueError, match="confirmation"):
@@ -268,14 +310,49 @@ def test_sealed_roles_require_confirmation_exact_resume_and_passing_pre_pr_gate(
         load_evaluation_bundle(
             data,
             evaluation_role="final-test",
-            splits=("unseen-task",),
+            splits=("same-task", "unseen-task", "unseen-content", "unseen-typo"),
             model=MODEL,
             model_revision=REVISION,
             access_binding_sha256="1" * 64,
+            experiment_binding_sha256="9" * 64,
             output_dir=tmp_path / "final",
             confirm_sealed_role=True,
             resume=False,
         )
+
+    complete_evaluation_role(
+        data,
+        evaluation_role="pre-pr-gate",
+        access_binding_sha256="e" * 64,
+        report_sha256="f" * 64,
+        gate_passed=True,
+    )
+    with pytest.raises(ValueError, match="candidate differs"):
+        load_evaluation_bundle(
+            data,
+            evaluation_role="final-test",
+            splits=("same-task", "unseen-task", "unseen-content", "unseen-typo"),
+            model=MODEL,
+            model_revision=REVISION,
+            access_binding_sha256="1" * 64,
+            experiment_binding_sha256="8" * 64,
+            output_dir=tmp_path / "wrong-final",
+            confirm_sealed_role=True,
+            resume=False,
+        )
+    final = load_evaluation_bundle(
+        data,
+        evaluation_role="final-test",
+        splits=("same-task", "unseen-task", "unseen-content", "unseen-typo"),
+        model=MODEL,
+        model_revision=REVISION,
+        access_binding_sha256="1" * 64,
+        experiment_binding_sha256="9" * 64,
+        output_dir=tmp_path / "final",
+        confirm_sealed_role=True,
+        resume=False,
+    )
+    assert len(final.records) == 4
 
 
 def test_loader_rejects_role_hash_tampering(tmp_path: Path) -> None:
@@ -292,6 +369,7 @@ def test_loader_rejects_role_hash_tampering(tmp_path: Path) -> None:
             model=MODEL,
             model_revision=REVISION,
             access_binding_sha256="e" * 64,
+            experiment_binding_sha256="9" * 64,
             output_dir=tmp_path / "tune",
             confirm_sealed_role=False,
             resume=False,
@@ -320,6 +398,7 @@ def test_sealed_role_claim_is_serialized_across_concurrent_commands(
                 data,
                 role="pre-pr-gate",
                 binding=f"{index + 1:064x}",
+                experiment_binding="9" * 64,
                 output_dir=tmp_path / f"output-{index}",
                 confirm=True,
                 resume=False,

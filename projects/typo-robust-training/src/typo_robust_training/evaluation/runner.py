@@ -128,30 +128,44 @@ def _condition_id(descriptor: AdapterDescriptor | None) -> str:
     return "base" if descriptor is None else descriptor.condition_id
 
 
-def _access_binding(
+def _experiment_binding(
     *,
     protocol: RobustnessEvaluationProtocol,
-    config: RobustnessEvaluationRunConfig,
     descriptors: Sequence[AdapterDescriptor],
     patch_window: PatchWindow,
 ) -> str:
     return _canonical_sha256(
         {
-            "schema_version": "robustness-evaluation-access-binding/v1",
+            "schema_version": "robustness-evaluation-experiment-binding/v1",
             "config_sha256": protocol.config_sha256,
-            "evaluation_role": config.evaluation_role,
-            "splits": list(config.splits),
             "patch_window_sha256": patch_window.artifact_sha256,
+            "patch_layers": list(patch_window.layers),
             "adapters": [
                 {
                     "condition_id": descriptor.condition_id,
                     "adapter_sha256": descriptor.adapter_sha256,
+                    "config_sha256": descriptor.config_sha256,
                     "training_data_sha256": descriptor.training_data_sha256,
                     "data_identity_sha256": descriptor.data_identity_sha256,
                     "localization_sha256": descriptor.localization_sha256,
                 }
-                for descriptor in descriptors
+                for descriptor in sorted(descriptors, key=lambda item: item.condition_id)
             ],
+        }
+    )
+
+
+def _access_binding(
+    *,
+    experiment_binding: str,
+    config: RobustnessEvaluationRunConfig,
+) -> str:
+    return _canonical_sha256(
+        {
+            "schema_version": "robustness-evaluation-access-binding/v2",
+            "experiment_binding_sha256": experiment_binding,
+            "evaluation_role": config.evaluation_role,
+            "splits": list(config.splits),
         }
     )
 
@@ -314,6 +328,8 @@ def run_robustness_evaluation(
     if not config.gpu_id or "," in config.gpu_id:
         raise ValueError("--gpu-id must name one physical GPU")
     protocol = load_robustness_evaluation_config(config.config_path)
+    if data_bundle is not None and config.evaluation_role != "tune":
+        raise ValueError("sealed evaluation roles cannot use injected data bundles")
     resolved_descriptors, resolved_window, injected_bundle = _validate_injected_inputs(
         config,
         protocol=protocol,
@@ -321,12 +337,12 @@ def run_robustness_evaluation(
         descriptors=descriptors,
         patch_window=patch_window,
     )
-    binding = _access_binding(
+    experiment_binding = _experiment_binding(
         protocol=protocol,
-        config=config,
         descriptors=resolved_descriptors,
         patch_window=resolved_window,
     )
+    binding = _access_binding(experiment_binding=experiment_binding, config=config)
     output_dir = config.output_dir.resolve()
     if output_dir.exists() and any(output_dir.iterdir()) and not config.resume:
         raise FileExistsError(f"evaluation output directory is not empty: {output_dir}")
@@ -351,6 +367,7 @@ def run_robustness_evaluation(
         model=protocol.model,
         model_revision=protocol.model_revision,
         access_binding_sha256=binding,
+        experiment_binding_sha256=experiment_binding,
         output_dir=output_dir,
         confirm_sealed_role=config.confirm_sealed_role,
         resume=config.resume,
@@ -387,6 +404,7 @@ def run_robustness_evaluation(
         "evaluation_manifest_sha256": bundle.evaluation_manifest_sha256,
         "patch_window_sha256": resolved_window.artifact_sha256,
         "patch_layers": list(resolved_window.layers),
+        "experiment_binding_sha256": experiment_binding,
         "access_binding_sha256": binding,
         "adapters": [
             {
@@ -484,6 +502,7 @@ def run_robustness_evaluation(
             "data_identity_sha256": bundle.data_identity_sha256,
             "role_manifest_sha256": bundle.manifest_sha256,
             "patch_window_sha256": resolved_window.artifact_sha256,
+            "experiment_binding_sha256": experiment_binding,
             "access_binding_sha256": binding,
         }
         _write_json(report_path, report)
@@ -501,6 +520,7 @@ def run_robustness_evaluation(
             {
                 **run_base,
                 "status": "completed",
+                "started_at": started_at,
                 "completed_at": _now(),
                 "records": len(observations),
                 "runtime": runtime_provenance,
@@ -517,6 +537,7 @@ def run_robustness_evaluation(
             {
                 **run_base,
                 "status": "failed",
+                "started_at": started_at,
                 "failed_at": _now(),
                 "completed_records": len(observations),
                 "runtime": runtime_provenance,

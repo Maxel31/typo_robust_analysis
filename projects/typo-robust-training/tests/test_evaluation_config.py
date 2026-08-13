@@ -78,6 +78,13 @@ def test_evaluation_config_rejects_unknown_fields_or_moving_revision(tmp_path: P
     with pytest.raises(ValueError, match="exactly sixteen"):
         load_robustness_evaluation_config(partial)
 
+    payload = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    payload["metrics"]["confidence_level"] = 0.90
+    mislabeled_interval = tmp_path / "mislabeled-interval.yaml"
+    mislabeled_interval.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="frozen value 0.95"):
+        load_robustness_evaluation_config(mislabeled_interval)
+
 
 def test_evaluation_command_requires_explicit_role_checkpoints_and_resume() -> None:
     parser = argparse.ArgumentParser()

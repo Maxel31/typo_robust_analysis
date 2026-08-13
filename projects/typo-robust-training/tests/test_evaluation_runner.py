@@ -104,6 +104,7 @@ class _Runtime:
             source=pair.source,
             task=pair.task,
             operation=pair.operation,
+            edit_count=len(pair.edits),
             strata=pair.strata,
             clean_answer="12",
             typo_answer="12" if typo_correct else "11",
@@ -188,6 +189,7 @@ def test_runner_resume_is_byte_identical_to_uninterrupted_evaluation(tmp_path: P
         )
     failed = json.loads((output / "run.json").read_text(encoding="utf-8"))
     assert failed["status"] == "failed"
+    assert failed["started_at"]
 
     resumed_factory = _RuntimeFactory()
     resumed = run_robustness_evaluation(
@@ -204,7 +206,9 @@ def test_runner_resume_is_byte_identical_to_uninterrupted_evaluation(tmp_path: P
     assert len(resumed_factory.closed) == 3
     completed = json.loads(resumed.run_path.read_text(encoding="utf-8"))
     assert completed["status"] == "completed"
+    assert completed["started_at"] == failed["started_at"]
     assert completed["access_binding_sha256"]
+    assert completed["experiment_binding_sha256"]
     assert set(completed["runtime"]) == {
         "base",
         "localized-state-distillation:seed-42",

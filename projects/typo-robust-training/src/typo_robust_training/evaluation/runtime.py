@@ -581,6 +581,7 @@ class HuggingFaceRobustnessEvaluationRuntime:
             source=pair.source,
             task=task,
             operation=pair.operation,
+            edit_count=len(pair.edits),
             strata=pair.strata,
             clean_answer=None if clean_answer is None else str(clean_answer["value"]),
             typo_answer=None if typo_answer is None else str(typo_answer["value"]),
