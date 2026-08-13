@@ -94,6 +94,9 @@ printf '%s\\n' "$*" >>"${FAKE_DOCKER_LOG}"
 if [[ "${1:-}" == pull ]]; then
   exit 0
 fi
+if [[ " $* " == *test_review_integrity_canary_* ]]; then
+  exit 1
+fi
 if [[ " $* " == *" --entrypoint /bin/bash "* ]]; then
   mkdir -p "${FAKE_REVIEW_ENV_ROOT}/shared/bin"
   printf 'home = /container-only\n' >"${FAKE_REVIEW_ENV_ROOT}/shared/pyvenv.cfg"
@@ -101,6 +104,16 @@ if [[ " $* " == *" --entrypoint /bin/bash "* ]]; then
   exit "${FAKE_PREPARE_STATUS:-0}"
 fi
 exit 0
+""",
+    )
+    _write_executable(
+        fake_bin / "chmod",
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${FAKE_CHMOD_FAIL:-}" == 1 && " $* " == *test_unreadable.py* ]]; then
+  exit 1
+fi
+exec /usr/bin/chmod "$@"
 """,
     )
     environment = os.environ.copy()
@@ -173,16 +186,19 @@ def _make_real_docker_helper(
     )
     (shared / "bin" / "python").symlink_to("/usr/local/bin/python3.12")
     pytest_package = shared / "lib" / "python3.12" / "site-packages" / "pytest"
-    (pytest_package / "__init__.py").write_text("", encoding="utf-8")
-    (pytest_package / "__main__.py").write_text(
+    (pytest_package / "__init__.py").write_text(
         "from pathlib import Path\n"
-        "import sys\n"
-        "test_path = next(Path(arg) for arg in sys.argv[1:] if arg.endswith('.py'))\n"
-        "namespace = {}\n"
-        "exec(compile(test_path.read_text(), str(test_path), 'exec'), namespace)\n"
-        "for name, value in sorted(namespace.items()):\n"
-        "    if name.startswith('test_') and callable(value):\n"
-        "        value()\n",
+        "def main(arguments):\n"
+        "    test_path = next(Path(arg) for arg in arguments if arg.endswith('.py'))\n"
+        "    namespace = {}\n"
+        "    exec(compile(test_path.read_text(), str(test_path), 'exec'), namespace)\n"
+        "    try:\n"
+        "        for name, value in sorted(namespace.items()):\n"
+        "            if name.startswith('test_') and callable(value):\n"
+        "                value()\n"
+        "    except AssertionError:\n"
+        "        return 1\n"
+        "    return 0\n",
         encoding="utf-8",
     )
     review_tests.mkdir(mode=0o755)
@@ -396,6 +412,16 @@ def test_harness_refusal_does_not_overlap_pytest_statuses() -> None:
     assert "exit 64" in source
 
 
+def test_pytest_integrity_controls_are_part_of_every_sandbox_run() -> None:
+    source = HELPER.read_text(encoding="utf-8")
+
+    assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1" in source
+    assert '-c /dev/null' in source
+    assert '--confcutdir "${test_mount}"' in source
+    assert "test_review_integrity_canary_must_fail" in source
+    assert "((canary_status == 1))" in source
+
+
 def test_missing_test_path_is_a_usage_error(tmp_path: Path) -> None:
     helper, _, review_tests, environment = _make_helper(tmp_path)
     prepared = _prepare(helper, environment)
@@ -405,6 +431,20 @@ def test_missing_test_path_is_a_usage_error(tmp_path: Path) -> None:
 
     assert result.returncode == 64
     assert result.stderr.startswith("review-falsify:")
+
+
+def test_chmod_setup_failure_is_a_harness_refusal(tmp_path: Path) -> None:
+    helper, _, review_tests, environment = _make_helper(tmp_path)
+    prepared = _prepare(helper, environment)
+    assert prepared.returncode == 0, prepared.stderr
+    probe = review_tests / "test_unreadable.py"
+    probe.write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    environment["FAKE_CHMOD_FAIL"] = "1"
+
+    result = _run(helper, environment, "root", str(probe))
+
+    assert result.returncode == 64
+    assert "could not be made sandbox-readable" in result.stderr
 
 
 def test_nested_review_test_is_rejected_before_the_sandbox(tmp_path: Path) -> None:

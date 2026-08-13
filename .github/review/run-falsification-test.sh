@@ -82,7 +82,9 @@ prepare_sandbox() {
 
   docker pull --quiet "${REVIEW_IMAGE}" >/dev/null
   local -a selected_projects=(root)
-  if grep -Eq '^(pyproject\.toml|uv\.lock|projects/typo-cot/)' <<<"${changed_paths}"; then
+  if [[ -f "${workspace}/projects/typo-cot/pyproject.toml" ]] \
+    && grep -Eq '^(pyproject\.toml|uv\.lock|projects/typo-cot/)' \
+      <<<"${changed_paths}"; then
     selected_projects+=(typo-cot)
   fi
   if [[ -f "${workspace}/projects/typo-robust-training/pyproject.toml" ]] \
@@ -140,6 +142,58 @@ prepare_sandbox() {
   sudo chmod 0444 "${REVIEW_WORKSPACE_FILE}"
 }
 
+execute_sandboxed_pytest() {
+  [[ $# -eq 7 ]] || die "internal error: incomplete pytest invocation"
+  local workspace="$1"
+  local python_path="$2"
+  local project_path="$3"
+  local test_mount="$4"
+  local workdir="$5"
+  local test_file="$6"
+  local test_relative="$7"
+
+  chmod 0644 -- "${test_file}" \
+    || die "TEST_FILE could not be made sandbox-readable"
+  local test_container_name
+  test_container_name="review-falsify-test-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$$-${RANDOM}"
+  run_docker_with_timeout \
+    "${REVIEW_TEST_TIMEOUT_SECONDS}" \
+    "${REVIEW_TEST_KILL_AFTER_SECONDS}" \
+    "${test_container_name}" \
+    --rm --pull never \
+    --network none \
+    --read-only \
+    --cap-drop ALL \
+    --security-opt no-new-privileges \
+    --pids-limit 256 \
+    --memory 8g \
+    --cpus 4 \
+    --user 65534:65534 \
+    --tmpfs /tmp:rw,nosuid,nodev,size=1g \
+    --mount "type=bind,src=${workspace},dst=/workspace,readonly" \
+    --mount "type=bind,src=${REVIEW_GIT_MASK},dst=/workspace/.git,readonly" \
+    --mount "type=bind,src=${REVIEW_ENV_ROOT},dst=/review-envs,readonly" \
+    --mount "type=bind,src=${REVIEW_TEST_ROOT},dst=${test_mount},readonly" \
+    --workdir "${workdir}" \
+    --env HOME=/tmp \
+    --env PYTHONDONTWRITEBYTECODE=1 \
+    --env PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+    --entrypoint "${python_path}" \
+    "${REVIEW_IMAGE}" \
+    -I -c '
+import sys
+import pytest
+project_path = sys.argv[1]
+pytest_args = sys.argv[2:]
+sys.path.append(project_path)
+raise SystemExit(pytest.main(pytest_args))
+' "${project_path}" \
+    -c /dev/null \
+    --confcutdir "${test_mount}" \
+    "${test_mount}/${test_relative}" \
+    -q --disable-warnings --maxfail=1
+}
+
 run_test() {
   [[ $# -eq 2 ]] || die "usage: review-falsify {root|typo-cot|typo-robust-training} TEST_FILE"
   local project="$1"
@@ -192,36 +246,29 @@ run_test() {
     || { [[ ! -L "${host_python}" ]] && [[ ! -f "${host_python}" ]]; }; then
     die "the ${project} review environment is not installed"
   fi
-  # Tests are authored by the runner but executed by the unprivileged sandbox.
-  chmod 0644 -- "${test_file}"
+  # Before trusting pytest's status, verify that PR-controlled hooks cannot
+  # rewrite a guaranteed failure into a pass.
+  local canary_file canary_relative canary_status=0
+  canary_relative="test_review_integrity_canary_$$_${RANDOM}.py"
+  canary_file="${REVIEW_TEST_ROOT}/${canary_relative}"
+  if ! printf '%s\n' \
+    'def test_review_integrity_canary_must_fail():' \
+    '    assert False, "review integrity canary"' \
+    >"${canary_file}"; then
+    die "review integrity canary could not be created"
+  fi
+  execute_sandboxed_pytest \
+    "${workspace}" "${python_path}" "${pythonpath}" "${test_mount}" \
+    "${workdir}" "${canary_file}" "${canary_relative}" \
+    || canary_status=$?
+  rm -f -- "${canary_file}" \
+    || die "review integrity canary could not be removed"
+  ((canary_status == 1)) \
+    || die "pytest integrity canary returned unexpected status ${canary_status}"
 
-  local test_container_name
-  test_container_name="review-falsify-test-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$$-${RANDOM}"
-  run_docker_with_timeout \
-    "${REVIEW_TEST_TIMEOUT_SECONDS}" \
-    "${REVIEW_TEST_KILL_AFTER_SECONDS}" \
-    "${test_container_name}" \
-    --rm --pull never \
-    --network none \
-    --read-only \
-    --cap-drop ALL \
-    --security-opt no-new-privileges \
-    --pids-limit 256 \
-    --memory 8g \
-    --cpus 4 \
-    --user 65534:65534 \
-    --tmpfs /tmp:rw,nosuid,nodev,size=1g \
-    --mount "type=bind,src=${workspace},dst=/workspace,readonly" \
-    --mount "type=bind,src=${REVIEW_GIT_MASK},dst=/workspace/.git,readonly" \
-    --mount "type=bind,src=${REVIEW_ENV_ROOT},dst=/review-envs,readonly" \
-    --mount "type=bind,src=${REVIEW_TEST_ROOT},dst=${test_mount},readonly" \
-    --workdir "${workdir}" \
-    --env HOME=/tmp \
-    --env "PYTHONPATH=${pythonpath}" \
-    --env PYTHONDONTWRITEBYTECODE=1 \
-    --entrypoint "${python_path}" \
-    "${REVIEW_IMAGE}" \
-    -m pytest "${test_mount}/${test_relative}" -q --disable-warnings --maxfail=1
+  execute_sandboxed_pytest \
+    "${workspace}" "${python_path}" "${pythonpath}" "${test_mount}" \
+    "${workdir}" "${test_file}" "${test_relative}"
 }
 
 self_test() {
