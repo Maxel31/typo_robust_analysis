@@ -35,6 +35,7 @@ from typo_robust_training.training.evidence import (
 from typo_robust_training.training.pairs import TrainingPair, materialize_training_pair
 from typo_robust_training.training.tracking import (
     TrainingTracker,
+    build_wandb_run_presentation,
     start_wandb_training_tracker,
 )
 
@@ -190,14 +191,12 @@ def _optimizer_step_telemetry(
         "train/micro_steps": micro_steps,
         "train/student_tokens": cumulative_student_tokens,
         "train/student_tokens_this_step": step_tokens,
-        "train/total_loss": sum(float(row["total_loss"]) for row in micro_rows)
-        / len(micro_rows),
+        "train/total_loss": sum(float(row["total_loss"]) for row in micro_rows) / len(micro_rows),
         "train/gradient_norm": float(gradient_norm),
         "train/learning_rate": float(learning_rate),
         "train/mean_edit_count": sum(int(row["edit_count"]) for row in micro_rows)
         / len(micro_rows),
-        "train/noop_fraction": sum(bool(row["is_noop"]) for row in micro_rows)
-        / len(micro_rows),
+        "train/noop_fraction": sum(bool(row["is_noop"]) for row in micro_rows) / len(micro_rows),
         "train/step_seconds": elapsed,
         "train/student_tokens_per_second": step_tokens / elapsed,
     }
@@ -209,10 +208,7 @@ def _optimizer_step_telemetry(
         for name, value in values.items():
             losses.setdefault(str(name), []).append(float(value))
     metrics.update(
-        {
-            f"train/loss/{name}": sum(values) / len(values)
-            for name, values in sorted(losses.items())
-        }
+        {f"train/loss/{name}": sum(values) / len(values) for name, values in sorted(losses.items())}
     )
     telemetry = getattr(runtime, "telemetry", None)
     if callable(telemetry):
@@ -333,6 +329,21 @@ def run_adapter_training(
     tracking_finished = False
     try:
         if tracker is None and config.wandb_project is not None:
+            if protocol.loss_weights["state"] <= 0.0:
+                state_layers: tuple[int, ...] = ()
+            elif evidence is not None:
+                state_layers = evidence.adapter_layers
+            else:
+                decoder_layers = provenance.get("decoder_layers")
+                if (
+                    isinstance(decoder_layers, bool)
+                    or not isinstance(decoder_layers, int)
+                    or decoder_layers <= 0
+                ):
+                    raise ValueError(
+                        "state-training W&B presentation requires the decoder-layer count"
+                    )
+                state_layers = tuple(range(decoder_layers))
             tracker = start_wandb_training_tracker(
                 output_dir=output_dir,
                 project=config.wandb_project,
@@ -342,6 +353,14 @@ def run_adapter_training(
                     "condition": protocol.condition,
                     "gpu_id": config.gpu_id,
                 },
+                presentation=build_wandb_run_presentation(
+                    condition=protocol.condition,
+                    schema_version=protocol.schema_version,
+                    model=protocol.model,
+                    seed=config.seed,
+                    max_optimizer_steps=protocol.max_optimizer_steps,
+                    state_layers=state_layers,
+                ),
                 resume=config.resume,
                 resume_optimizer_step=cursor.optimizer_steps,
             )

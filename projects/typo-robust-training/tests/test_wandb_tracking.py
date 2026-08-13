@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from typo_robust_training.training.tracking import start_wandb_training_tracker
+from typo_robust_training.training.tracking import (
+    WandbRunPresentation,
+    build_wandb_run_presentation,
+    start_wandb_training_tracker,
+)
 
 
 class _Run:
@@ -37,11 +41,7 @@ class _Wandb:
     def init(self, **kwargs: object) -> _Run:
         self.calls.append(dict(kwargs))
         resume_from = kwargs.get("resume_from")
-        run_id = (
-            str(resume_from).split("?", 1)[0]
-            if resume_from is not None
-            else str(kwargs["id"])
-        )
+        run_id = str(resume_from).split("?", 1)[0] if resume_from is not None else str(kwargs["id"])
         run = _Run(run_id)
         self.runs.append(run)
         return run
@@ -56,6 +56,52 @@ def _bindings() -> dict[str, object]:
         "seed": 42,
         "gpu_id": "3",
     }
+
+
+def test_wandb_presentation_uses_self_explanatory_scientific_names() -> None:
+    proposed = build_wandb_run_presentation(
+        condition="localized-state-distillation",
+        schema_version="robustness-adapter-training-config/v2",
+        model="google/gemma-3-4b-it",
+        seed=42,
+        max_optimizer_steps=100,
+        state_layers=tuple(range(6)),
+    )
+    assert proposed.name == (
+        "Proposed method · Causal-window localized state distillation · "
+        "L0–5 · Gemma-3-4B-IT · 100 steps · seed 42"
+    )
+    assert proposed.group == "Confirmatory comparison · Gemma-3-4B-IT · 100 steps"
+    assert proposed.job_type == "proposed-causal-window-state-distillation"
+    assert "role:proposed-method" in proposed.tags
+    assert all(tag not in {"arm:B1", "arm:T1", "arm:C1", "arm:C2"} for tag in proposed.tags)
+
+    baseline = build_wandb_run_presentation(
+        condition="output-matching",
+        schema_version="robustness-adapter-training-config/v2",
+        model="google/gemma-3-4b-it",
+        seed=44,
+        max_optimizer_steps=300,
+        state_layers=(),
+    )
+    assert baseline.name == (
+        "Kojima baseline · Output-distribution matching · Gemma-3-4B-IT · 300 steps · seed 44"
+    )
+    assert baseline.job_type == "kojima-output-distribution-matching"
+
+    historical = build_wandb_run_presentation(
+        condition="localized-state-distillation",
+        schema_version="robustness-adapter-training-config/v1",
+        model="google/gemma-3-4b-it",
+        seed=42,
+        max_optimizer_steps=100,
+        state_layers=(2, 3, 4, 5, 6),
+    )
+    assert historical.name.startswith(
+        "Historical ablation · Component-level relative-MSE state distillation · L2–6"
+    )
+    assert historical.group.startswith("Historical Cycle 1 ·")
+    assert "not the confirmatory method" in historical.notes
 
 
 def test_wandb_requires_environment_credential_without_persisting_it(tmp_path: Path) -> None:
@@ -78,11 +124,20 @@ def test_wandb_requires_environment_credential_without_persisting_it(tmp_path: P
 def test_wandb_logs_scalars_and_resumes_same_hash_bound_run(tmp_path: Path) -> None:
     module = _Wandb()
     secret = "fixture-secret-that-must-never-be-written"
+    presentation = build_wandb_run_presentation(
+        condition="localized-state-distillation",
+        schema_version="robustness-adapter-training-config/v1",
+        model="google/gemma-3-4b-it",
+        seed=42,
+        max_optimizer_steps=100,
+        state_layers=(2, 3, 4, 5, 6),
+    )
     tracker = start_wandb_training_tracker(
         output_dir=tmp_path,
         project="typo-robustness-training",
         entity="fixture-entity",
         bindings=_bindings(),
+        presentation=presentation,
         resume=False,
         resume_optimizer_step=0,
         environment={"WANDB_API_KEY": secret},
@@ -99,23 +154,53 @@ def test_wandb_logs_scalars_and_resumes_same_hash_bound_run(tmp_path: Path) -> N
     assert module.calls[0]["resume"] == "never"
     assert module.calls[0]["project"] == "typo-robustness-training"
     assert module.calls[0]["entity"] == "fixture-entity"
+    assert module.calls[0]["name"] == presentation.name
+    assert module.calls[0]["group"] == presentation.group
+    assert module.calls[0]["job_type"] == presentation.job_type
+    assert module.calls[0]["tags"] == list(presentation.tags)
+    assert module.calls[0]["notes"] == presentation.notes
     assert secret not in json.dumps(module.calls[0], sort_keys=True)
-    assert module.runs[0].logged == [
-        (1, {"train/optimizer_step": 1, "train/total_loss": 0.75})
-    ]
+    assert module.runs[0].logged == [(1, {"train/optimizer_step": 1, "train/total_loss": 0.75})]
     assert module.runs[0].finished == [0]
 
     metadata_path = tmp_path / "wandb_run.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     assert metadata["run_id"] == "fixed-run-id"
     assert metadata["last_logged_optimizer_step"] == 1
+    assert metadata["presentation"] == {
+        "group": presentation.group,
+        "job_type": presentation.job_type,
+        "name": presentation.name,
+        "notes": presentation.notes,
+        "tags": list(presentation.tags),
+    }
     assert secret not in metadata_path.read_text(encoding="utf-8")
+
+    with pytest.raises(ValueError, match="presentation differs"):
+        start_wandb_training_tracker(
+            output_dir=tmp_path,
+            project="typo-robustness-training",
+            entity="fixture-entity",
+            bindings=_bindings(),
+            presentation=WandbRunPresentation(
+                name="Changed name",
+                group=presentation.group,
+                job_type=presentation.job_type,
+                tags=presentation.tags,
+                notes=presentation.notes,
+            ),
+            resume=True,
+            resume_optimizer_step=1,
+            environment={"WANDB_API_KEY": secret},
+            wandb_module=module,
+        )
 
     resumed = start_wandb_training_tracker(
         output_dir=tmp_path,
         project="typo-robustness-training",
         entity="fixture-entity",
         bindings=_bindings(),
+        presentation=presentation,
         resume=True,
         resume_optimizer_step=1,
         environment={"WANDB_API_KEY": secret},

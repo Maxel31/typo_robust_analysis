@@ -260,6 +260,21 @@ text, prompts, record IDs, the API key, and checkpoint contents are never sent.
 boundary so `--resume` continues the same W&B run without duplicating the
 loss curve.
 
+W&B names expose the scientific role directly; opaque arm abbreviations are
+not used:
+
+| Role shown in W&B | Operation | Meaning |
+|---|---|---|
+| `Kojima baseline` | `Output-distribution matching` | Clean-teacher/noisy-student output matching without state loss |
+| `Proposed method` | `Causal-window localized state distillation` | State signal at the Activation-Patching-selected residual window |
+| `Specificity control` | `Random-window state distillation` | Same-width non-overlapping random-window control |
+| `Scope control` | `All-layer state distillation` | State signal at every decoder layer |
+
+The suffix records state layers, model, optimizer-step budget, and seed. Runs
+from the failed Cycle 1 design are placed in a separate `Historical Cycle 1`
+group and labelled `Historical pilot`, `Historical control`, or `Historical
+ablation`, so they cannot be mistaken for confirmatory comparisons.
+
 ## 5. Evaluate held-out robustness
 
 ```bash

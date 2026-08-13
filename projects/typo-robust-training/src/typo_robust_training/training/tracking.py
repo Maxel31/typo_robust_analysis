@@ -6,8 +6,10 @@ import importlib
 import json
 import math
 import os
+import re
 import secrets
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -21,10 +23,199 @@ _METADATA_FIELDS = {
     "run_id",
     "url",
     "bindings",
+    "presentation",
     "last_logged_optimizer_step",
     "status",
 }
 _FORBIDDEN_METRIC_FRAGMENTS = ("record_id", "text", "prompt", "api_key", "secret")
+
+
+@dataclass(frozen=True, slots=True)
+class WandbRunPresentation:
+    """Human-readable W&B identity kept outside the scientific bindings."""
+
+    name: str
+    group: str
+    job_type: str
+    tags: tuple[str, ...]
+    notes: str
+
+
+_CONFIRMATORY_PRESENTATION = {
+    "output-matching": (
+        "Kojima baseline",
+        "Output-distribution matching",
+        "kojima-output-distribution-matching",
+        "baseline",
+        "Kojima-style clean-teacher/noisy-student output distribution matching; "
+        "no state-alignment loss.",
+    ),
+    "localized-state-distillation": (
+        "Proposed method",
+        "Causal-window localized state distillation",
+        "proposed-causal-window-state-distillation",
+        "proposed-method",
+        "Output matching plus residual-state cosine alignment at the edited-word-final "
+        "coordinates selected by Activation Patching.",
+    ),
+    "random-window-state-distillation": (
+        "Specificity control",
+        "Random-window state distillation",
+        "random-window-state-control",
+        "specificity-control",
+        "Same-width non-overlapping random-window control for the causal layer selection.",
+    ),
+    "global-state-alignment": (
+        "Scope control",
+        "All-layer state distillation",
+        "all-layer-state-control",
+        "scope-control",
+        "Residual-state alignment at every decoder layer.",
+    ),
+    "noisy-language-model": (
+        "Auxiliary baseline",
+        "Noisy-language-model training",
+        "noisy-language-model-baseline",
+        "auxiliary-baseline",
+        "Ordinary causal-language-model training on noisy text.",
+    ),
+}
+_HISTORICAL_PRESENTATION = {
+    "noisy-language-model": (
+        "Historical baseline",
+        "Noisy-language-model training",
+        "historical-noisy-language-model",
+        "historical-baseline",
+        "Historical Cycle 1 noisy-language-model baseline.",
+    ),
+    "output-matching": (
+        "Historical pilot",
+        "Output/answer/clean-loss training",
+        "historical-output-matching-pilot",
+        "historical-pilot",
+        "Historical Cycle 1 output-matching pilot with answer CE and a separate clean-KL loss.",
+    ),
+    "global-state-alignment": (
+        "Historical control",
+        "Global relative-MSE state alignment",
+        "historical-global-state-control",
+        "historical-control",
+        "Historical Cycle 1 all-layer/all-token relative-MSE state alignment.",
+    ),
+    "localized-state-distillation": (
+        "Historical ablation",
+        "Component-level relative-MSE state distillation",
+        "historical-component-state-ablation",
+        "historical-ablation",
+        "Historical Cycle 1 neuron/head component experiment; this is not the confirmatory method.",
+    ),
+}
+
+
+def _display_model_name(model: str) -> str:
+    if not isinstance(model, str) or not model.strip():
+        raise ValueError("W&B presentation model must be non-empty")
+    names = {
+        "gemma": "Gemma",
+        "llama": "Llama",
+        "mistral": "Mistral",
+        "qwen": "Qwen",
+        "it": "IT",
+        "instruct": "Instruct",
+    }
+    words = model.rsplit("/", 1)[-1].split("-")
+    return "-".join(
+        names.get(word.lower(), word[:-1] + "B")
+        if re.fullmatch(r"\d+(?:\.\d+)?b", word.lower())
+        else names.get(word.lower(), word)
+        for word in words
+    )
+
+
+def _layer_label(layers: tuple[int, ...]) -> str | None:
+    if not layers:
+        return None
+    if (
+        any(isinstance(layer, bool) or not isinstance(layer, int) or layer < 0 for layer in layers)
+        or tuple(sorted(set(layers))) != layers
+    ):
+        raise ValueError("W&B presentation state layers must be unique sorted integers")
+    if layers == tuple(range(layers[0], layers[-1] + 1)):
+        return f"L{layers[0]}–{layers[-1]}"
+    return "L{" + ",".join(map(str, layers)) + "}"
+
+
+def build_wandb_run_presentation(
+    *,
+    condition: str,
+    schema_version: str,
+    model: str,
+    seed: int,
+    max_optimizer_steps: int,
+    state_layers: tuple[int, ...],
+) -> WandbRunPresentation:
+    """Name a W&B series by its scientific role without opaque arm abbreviations."""
+
+    if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+        raise ValueError("W&B presentation seed must be a non-negative integer")
+    if (
+        isinstance(max_optimizer_steps, bool)
+        or not isinstance(max_optimizer_steps, int)
+        or max_optimizer_steps <= 0
+    ):
+        raise ValueError("W&B presentation optimizer steps must be positive")
+    cycle_match = re.fullmatch(r"robustness-adapter-training-config/v(\d+)", schema_version)
+    if cycle_match is None:
+        raise ValueError("W&B presentation training schema is invalid")
+    cycle = int(cycle_match.group(1))
+    presentation_map = _HISTORICAL_PRESENTATION if cycle == 1 else _CONFIRMATORY_PRESENTATION
+    if condition not in presentation_map:
+        raise ValueError(f"W&B presentation has no mapping for {condition!r}")
+    role_label, operation, job_type, role_tag, notes = presentation_map[condition]
+    model_name = _display_model_name(model)
+    layer_label = _layer_label(state_layers)
+    parts = [role_label, operation]
+    if layer_label is not None:
+        parts.append(layer_label)
+        notes = f"{notes} State layers: {layer_label}."
+    parts.extend((model_name, f"{max_optimizer_steps} steps", f"seed {seed}"))
+    group_prefix = "Historical Cycle 1" if cycle == 1 else "Confirmatory comparison"
+    return WandbRunPresentation(
+        name=" · ".join(parts),
+        group=f"{group_prefix} · {model_name} · {max_optimizer_steps} steps",
+        job_type=job_type,
+        tags=(
+            "typo-robustness",
+            f"protocol-version:{cycle}",
+            f"role:{role_tag}",
+            f"condition:{condition}",
+            f"model:{model.rsplit('/', 1)[-1].lower()}",
+            f"budget:{max_optimizer_steps}-steps",
+        ),
+        notes=notes,
+    )
+
+
+def _presentation_payload(presentation: WandbRunPresentation) -> dict[str, object]:
+    fields = {
+        "name": presentation.name,
+        "group": presentation.group,
+        "job_type": presentation.job_type,
+        "tags": list(presentation.tags),
+        "notes": presentation.notes,
+    }
+    if any(
+        not isinstance(fields[name], str) or not str(fields[name]).strip()
+        for name in ("name", "group", "job_type", "notes")
+    ):
+        raise ValueError("W&B presentation text fields must be non-empty")
+    if not presentation.tags or any(
+        not isinstance(tag, str) or not tag.strip() for tag in presentation.tags
+    ):
+        raise ValueError("W&B presentation tags must be non-empty strings")
+    if len(set(presentation.tags)) != len(presentation.tags):
+        raise ValueError("W&B presentation tags must be unique")
+    return fields
 
 
 class TrainingTracker(Protocol):
@@ -145,9 +336,7 @@ class WandbTrainingTracker:
         if payload.get("train/optimizer_step") != optimizer_step:
             raise ValueError("W&B metrics must contain the matching optimizer step")
         self._run.log(payload, step=optimizer_step)
-        self._metadata.update(
-            {"last_logged_optimizer_step": optimizer_step, "status": "running"}
-        )
+        self._metadata.update({"last_logged_optimizer_step": optimizer_step, "status": "running"})
         _write_json(self._metadata_path, self._metadata)
 
     def finish(self, *, status: str, summary: Mapping[str, int | float]) -> None:
@@ -182,6 +371,7 @@ def start_wandb_training_tracker(
     project: str,
     entity: str | None,
     bindings: Mapping[str, object],
+    presentation: WandbRunPresentation | None = None,
     resume: bool,
     resume_optimizer_step: int,
     environment: Mapping[str, str] | None = None,
@@ -208,6 +398,19 @@ def start_wandb_training_tracker(
     if resolved_entity is not None and not resolved_entity:
         resolved_entity = None
     frozen_bindings = _canonical_bindings(bindings)
+    condition = str(frozen_bindings.get("condition", "adapter-training"))
+    seed = frozen_bindings.get("seed")
+    if presentation is None:
+        presentation = WandbRunPresentation(
+            name=f"{condition} · seed {seed}",
+            group=condition,
+            job_type="adapter-training",
+            tags=("typo-robustness", f"condition:{condition}"),
+            notes="Compatibility presentation without an explicit scientific role.",
+        )
+    elif not isinstance(presentation, WandbRunPresentation):
+        raise TypeError("W&B presentation must be WandbRunPresentation")
+    presentation_payload = _presentation_payload(presentation)
     root = Path(output_dir).resolve()
     metadata_path = root / "wandb_run.json"
     factory = run_id_factory or (lambda: secrets.token_hex(8))
@@ -220,6 +423,8 @@ def start_wandb_training_tracker(
             or metadata["bindings"] != frozen_bindings
         ):
             raise ValueError("W&B resume bindings differ")
+        if metadata["presentation"] != presentation_payload:
+            raise ValueError("W&B resume presentation differs")
         prior_step = metadata["last_logged_optimizer_step"]
         if not isinstance(prior_step, int) or prior_step < resume_optimizer_step:
             raise ValueError("W&B history is behind the local checkpoint")
@@ -241,6 +446,7 @@ def start_wandb_training_tracker(
             "run_id": run_id,
             "url": None,
             "bindings": frozen_bindings,
+            "presentation": presentation_payload,
             "last_logged_optimizer_step": 0,
             "status": "initializing",
         }
@@ -249,15 +455,14 @@ def start_wandb_training_tracker(
     module = wandb_module or importlib.import_module("wandb")
     local_dir = root / ".wandb"
     local_dir.mkdir(parents=True, exist_ok=True)
-    condition = str(frozen_bindings.get("condition", "adapter-training"))
-    seed = frozen_bindings.get("seed")
     run = module.init(
         project=project,
         entity=resolved_entity,
-        name=f"{condition}-seed-{seed}",
-        group=condition,
-        job_type="adapter-training",
-        tags=["typo-robustness", condition],
+        name=presentation.name,
+        group=presentation.group,
+        job_type=presentation.job_type,
+        tags=list(presentation.tags),
+        notes=presentation.notes,
         config=frozen_bindings,
         dir=str(local_dir),
         mode="online",
@@ -289,5 +494,7 @@ def start_wandb_training_tracker(
 __all__ = [
     "TrainingTracker",
     "WandbTrainingTracker",
+    "WandbRunPresentation",
+    "build_wandb_run_presentation",
     "start_wandb_training_tracker",
 ]

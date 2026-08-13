@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import typo_robust_training.training.runner as runner_module
 from typo_robust_training.data.perturb import TypoGenerator
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.training.data import TrainingDataBundle
@@ -232,3 +233,34 @@ def test_runner_uploads_only_aggregate_optimizer_step_telemetry(tmp_path: Path) 
     ]
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["tracking"] == tracker.provenance()
+
+
+def test_runner_starts_wandb_with_a_self_explanatory_series_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    tracker = _Tracker()
+
+    def start_tracker(**kwargs: object) -> _Tracker:
+        captured.update(kwargs)
+        return tracker
+
+    monkeypatch.setattr(runner_module, "start_wandb_training_tracker", start_tracker)
+    run_adapter_training(
+        _run_config(
+            tmp_path,
+            _config(tmp_path),
+            tmp_path / "descriptive-series",
+            resume=False,
+            tracking=True,
+        ),
+        runtime=_Runtime(),
+        data_bundle=_bundle(tmp_path),
+    )
+
+    presentation = captured["presentation"]
+    assert presentation.name == (
+        "Historical baseline · Noisy-language-model training · Gemma-3-4B-IT · 3 steps · seed 42"
+    )
+    assert presentation.group == "Historical Cycle 1 · Gemma-3-4B-IT · 3 steps"

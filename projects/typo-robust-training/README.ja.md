@@ -237,6 +237,19 @@ uploadします。corpus text、prompt、record ID、API key、checkpoint内容�
 `wandb_run.json`にはrun ID、project/entity、URL、resume境界だけを保存し、`--resume`時は
 同一W&B runへ継続してloss curveを重複させません。
 
+W&B名には、略称ではなく科学的な役割を直接表示します。
+
+| W&Bに表示する役割 | 操作 | 意味 |
+|---|---|---|
+| `Kojima baseline` | `Output-distribution matching` | state lossを使わないclean-teacher/noisy-student出力整合 |
+| `Proposed method` | `Causal-window localized state distillation` | Activation Patchingで選んだresidual windowへのstate信号 |
+| `Specificity control` | `Random-window state distillation` | 同幅・非重複random window対照 |
+| `Scope control` | `All-layer state distillation` | 全decoder layerへのstate信号 |
+
+後半にはstate対象層、model、optimizer-step予算、seedを記録します。失敗したCycle 1設計は
+`Historical Cycle 1`という別groupに分け、`Historical pilot`、`Historical control`、
+`Historical ablation`と表示するため、確証用比較と取り違えません。
+
 ## 5. held-out頑健性を評価する
 
 ```bash
