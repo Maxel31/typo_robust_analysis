@@ -1,7 +1,9 @@
-# Typo-robustness evaluation protocol v1.3
+# Typo-robustness evaluation protocol v1.4
 
-Status: **endpoints frozen before training cycle 2; v1.3 is a pre-opening
-correctness amendment with no model-output access**.
+Status: **endpoints frozen before training cycle 2; v1.4 is a pre-opening
+executable-scope amendment with no model-output access**. It removes declarations
+that had no implementation in the frozen evaluator; the confirmatory endpoints
+and all implemented secondary endpoints are unchanged.
 
 This document is the evaluation contract for typo-robustness training. Training
 losses, data mixtures, adapter placement, and stopping rules may change between
@@ -36,7 +38,7 @@ clean-correct/typo-wrong cohort. Such a flip cohort is secondary only.
 
 | Tier | Purpose | Access |
 |---|---|---|
-| monitor | clean/output KL and numerical safety during training | every 10 optimizer steps; no task accuracy |
+| monitor | training-side clean/output KL and numerical safety | schedule is owned by the training run; this evaluation contract only forbids task accuracy |
 | tune | cycle and ablation selection | repeatable; all accesses logged; known to be optimizable |
 | pre-PR gate | one confirmatory check of a frozen candidate | opened once after arm, three seeds, config, and checkpoint hashes are committed |
 | final test | paper headline result | opened exactly once after every model, arm, seed, and analysis decision is frozen and the pre-PR gate passed |
@@ -81,12 +83,12 @@ Secondary conditions are:
 - `transposition-2`, on 500 items, as an edit-operation held out from training;
 - `natural-injection`, one real misspelling on 500 task items, using an evaluation-only dictionary
   derived from held-out licensed GitHub repositories;
-- held-out natural clean/typo language-model pairs (1,000 in final test);
-- model-specific Attribution-4 stress pairs (200 GSM8K and 200 MMLU), whose
-  locations are computed once with the unadapted Base and reused by every arm.
+- held-out natural clean/typo language-model pairs (1,000 in final test).
 
 Secondary conditions cannot replace or be pooled into the confirmatory
-`random-2` endpoint. Attribution-4 is a stress test, not a population sample.
+`random-2` endpoint. Model-specific Attribution-4 remains a possible separately
+preregistered stress diagnostic, but it is not declared by this model-independent
+frozen battery and cannot affect its gates.
 
 Only the question is edited; few-shot demonstrations remain clean. Eligible
 targets are alphabetic words of at least three letters. URL, email, identifier,

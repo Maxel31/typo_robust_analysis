@@ -1,13 +1,10 @@
 {
   "schema_version": "robustness-evaluation-study/v1",
-  "protocol_id": "typo-robustness-evaluation-v1.3",
+  "protocol_id": "typo-robustness-evaluation-v1.4",
   "seed": 42,
   "tiers": {
     "monitor": {
-      "task_accuracy_allowed": false,
-      "clean_documents": 200,
-      "paired_documents": 100,
-      "interval_optimizer_steps": 10
+      "task_accuracy_allowed": false
     },
     "tune": {
       "repeatable": true,
@@ -53,10 +50,7 @@
       "held_out_condition": "transposition-2",
       "held_out_records_total": 500,
       "natural_injection_records_total": 500,
-      "natural_injection_edit_count": 1,
-      "natural_lm_pairs": 1000,
-      "attribution4_records_per_task": 200,
-      "attribution4_tasks": ["gsm8k", "mmlu"]
+      "natural_injection_edit_count": 1
     },
     "eligibility": {
       "minimum_word_letters": 3,

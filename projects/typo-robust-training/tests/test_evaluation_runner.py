@@ -17,6 +17,7 @@ from typo_robust_training.evaluation.data import (
     EvaluationCorpusRecord,
     EvaluationDataBundle,
     EvaluationPair,
+    FrozenEvaluationProvenance,
 )
 from typo_robust_training.evaluation.records import (
     CorpusEvaluationObservation,
@@ -450,8 +451,19 @@ def test_runner_keeps_training_and_frozen_evaluation_identities_separate(
             {
                 "training_data_sha256": "e" * 64,
                 "data_identity_sha256": "c" * 64,
+                "artifact_sha256": {"training_sources.jsonl": "1" * 64},
             },
         )(),
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.evaluation.runner.load_frozen_evaluation_provenance",
+        lambda root, **_kwargs: FrozenEvaluationProvenance(
+            root=Path(root),
+            data_identity_sha256="7" * 64,
+            exclusion_artifact_sha256=MappingProxyType(
+                {"training_sources.jsonl": "1" * 64}
+            ),
+        ),
     )
 
     def load_frozen(root: Path, **kwargs: object) -> EvaluationDataBundle:
@@ -483,6 +495,53 @@ def test_runner_keeps_training_and_frozen_evaluation_identities_separate(
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["training_data_identity_sha256"] == "c" * 64
     assert run["evaluation_data_identity_sha256"] == "7" * 64
+    assert run["training_sources_sha256"] == "1" * 64
+
+
+def test_runner_rejects_frozen_population_excluding_different_training_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evaluation_root = tmp_path / "frozen-evaluation"
+    evaluation_root.mkdir()
+    (evaluation_root / "registry.json").write_text("{}\n", encoding="utf-8")
+    config = replace(
+        _config(tmp_path, tmp_path / "evaluation-output", resume=False),
+        evaluation_data_dir=evaluation_root,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.training.data.load_training_data_provenance",
+        lambda root: type(
+            "TrainingBundle",
+            (),
+            {
+                "training_data_sha256": "e" * 64,
+                "data_identity_sha256": "c" * 64,
+                "artifact_sha256": {"training_sources.jsonl": "1" * 64},
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.evaluation.runner.load_frozen_evaluation_provenance",
+        lambda root, **_kwargs: FrozenEvaluationProvenance(
+            root=Path(root),
+            data_identity_sha256="7" * 64,
+            exclusion_artifact_sha256=MappingProxyType(
+                {"training_sources.jsonl": "2" * 64}
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="frozen evaluation exclusions were built from different training sources",
+    ):
+        run_robustness_evaluation(
+            config,
+            runtime_factory=_RuntimeFactory(),
+            descriptors=_descriptors(tmp_path),
+            patch_window=PatchWindow(0, 6, "9" * 64, "f" * 64),
+        )
 
 
 def test_runner_rejects_evaluation_data_or_patch_evidence_drift(tmp_path: Path) -> None:

@@ -31,6 +31,7 @@ from typo_robust_training.evaluation.data import (
     complete_evaluation_role,
     load_evaluation_corpus_bundle,
     load_evaluation_bundle,
+    load_frozen_evaluation_provenance,
 )
 from typo_robust_training.evaluation.metrics import build_evaluation_report
 from typo_robust_training.evaluation.records import (
@@ -146,14 +147,16 @@ def _experiment_binding(
     study_protocol_sha256: str,
     descriptors: Sequence[AdapterDescriptor],
     patch_window: PatchWindow,
+    training_sources_sha256: str | None,
 ) -> str:
     return _canonical_sha256(
         {
-            "schema_version": "robustness-evaluation-experiment-binding/v1",
+            "schema_version": "robustness-evaluation-experiment-binding/v2",
             "config_sha256": protocol.config_sha256,
             "study_protocol_sha256": study_protocol_sha256,
             "patch_window_sha256": patch_window.artifact_sha256,
             "patch_layers": list(patch_window.layers),
+            "training_sources_sha256": training_sources_sha256,
             "adapters": [
                 {
                     "condition_id": descriptor.condition_id,
@@ -469,11 +472,35 @@ def run_robustness_evaluation(
         descriptors=descriptors,
         patch_window=patch_window,
     )
+    training_sources_sha256: str | None = None
+    if injected_bundle is None:
+        from typo_robust_training.training.data import load_training_data_provenance
+
+        training_bundle = load_training_data_provenance(config.training_data_dir)
+        if {item.training_data_sha256 for item in resolved_descriptors} != {
+            training_bundle.training_data_sha256
+        } or {item.data_identity_sha256 for item in resolved_descriptors} != {
+            training_bundle.data_identity_sha256
+        }:
+            raise ValueError("evaluation adapter training-data provenance differs")
+        frozen_provenance = load_frozen_evaluation_provenance(
+            config.evaluation_data_dir,
+            study_protocol_sha256=study.config_sha256,
+        )
+        training_sources_sha256 = training_bundle.artifact_sha256["training_sources.jsonl"]
+        if (
+            frozen_provenance.exclusion_artifact_sha256["training_sources.jsonl"]
+            != training_sources_sha256
+        ):
+            raise ValueError(
+                "frozen evaluation exclusions were built from different training sources"
+            )
     experiment_binding = _experiment_binding(
         protocol=protocol,
         study_protocol_sha256=study.config_sha256,
         descriptors=resolved_descriptors,
         patch_window=resolved_window,
+        training_sources_sha256=training_sources_sha256,
     )
     binding = _access_binding(experiment_binding=experiment_binding, config=config)
     output_dir = config.output_dir.resolve()
@@ -496,16 +523,6 @@ def run_robustness_evaluation(
     records_path = output_dir / "records.jsonl"
     corpus_records_path = output_dir / "corpus_records.jsonl"
     report_path = output_dir / "report.json"
-    if injected_bundle is None:
-        from typo_robust_training.training.data import load_training_data_provenance
-
-        training_bundle = load_training_data_provenance(config.training_data_dir)
-        if {item.training_data_sha256 for item in resolved_descriptors} != {
-            training_bundle.training_data_sha256
-        } or {item.data_identity_sha256 for item in resolved_descriptors} != {
-            training_bundle.data_identity_sha256
-        }:
-            raise ValueError("evaluation adapter training-data provenance differs")
     bundle = injected_bundle or load_evaluation_bundle(
         config.evaluation_data_dir,
         evaluation_role=config.evaluation_role,
@@ -541,6 +558,7 @@ def run_robustness_evaluation(
         "training_data_identity_sha256": next(
             iter(item.data_identity_sha256 for item in resolved_descriptors)
         ),
+        "training_sources_sha256": training_sources_sha256,
         "study_protocol_sha256": study.config_sha256,
         "role_manifest_sha256": bundle.manifest_sha256,
         "corpus_manifest_sha256": resolved_corpus_bundle.manifest_sha256,
