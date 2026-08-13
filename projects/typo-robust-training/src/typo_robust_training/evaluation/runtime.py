@@ -252,7 +252,12 @@ def causal_nll_and_forward_kl(
             -1,
             targets[:, start:stop].unsqueeze(-1),
         ).sum()
-        forward_kl = (base_log_probs.exp() * (base_log_probs - candidate_log_probs)).sum()
+        forward_kl = (
+            (base_log_probs.exp() * (base_log_probs - candidate_log_probs))
+            .sum(dim=-1)
+            .clamp_min(0.0)
+            .sum()
+        )
         nll_total += float(nll.detach().cpu())
         kl_total += float(forward_kl.detach().cpu())
     count = int(targets.numel())
@@ -295,7 +300,12 @@ def aligned_forward_kl_sum(
         typo_selected = typo_logits[0, [typo for _clean, typo in chunk], :].float()
         clean_log_probs = clean_selected.log_softmax(dim=-1)
         typo_log_probs = typo_selected.log_softmax(dim=-1)
-        values = (clean_log_probs.exp() * (clean_log_probs - typo_log_probs)).sum()
+        values = (
+            (clean_log_probs.exp() * (clean_log_probs - typo_log_probs))
+            .sum(dim=-1)
+            .clamp_min(0.0)
+            .sum()
+        )
         total += float(values.detach().cpu())
     return total, len(causal_pairs)
 
