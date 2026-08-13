@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import platform
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -30,7 +32,13 @@ from typo_robust_training.training.evidence import (
     LocalizationEvidence,
     load_localization_evidence,
 )
+from typo_robust_training.training.json_io import write_json_atomic
 from typo_robust_training.training.pairs import TrainingPair, materialize_training_pair
+from typo_robust_training.training.tracking import (
+    TrainingTracker,
+    build_wandb_run_presentation,
+    start_wandb_training_tracker,
+)
 
 
 def _now() -> str:
@@ -45,19 +53,6 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _write_json(path: Path, payload: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    try:
-        temporary.write_text(
-            json.dumps(payload, sort_keys=True, indent=2, allow_nan=False) + "\n",
-            encoding="utf-8",
-        )
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
 @dataclass(frozen=True, slots=True)
 class AdapterTrainingRunConfig:
     condition: str
@@ -67,6 +62,8 @@ class AdapterTrainingRunConfig:
     component_selection_path: Path | None
     seed: int
     gpu_id: str
+    wandb_project: str | None
+    wandb_entity: str | None
     output_dir: Path
     resume: bool = False
 
@@ -162,12 +159,71 @@ def _assemble_metrics(path: Path, *, work_dir: Path, optimizer_steps: int) -> No
         temporary.unlink(missing_ok=True)
 
 
+def _optimizer_step_telemetry(
+    micro_rows: list[dict[str, object]],
+    *,
+    optimizer_step: int,
+    micro_steps: int,
+    cumulative_student_tokens: int,
+    gradient_norm: float,
+    learning_rate: float,
+    elapsed_seconds: float,
+    runtime: AdapterTrainingRuntime,
+) -> dict[str, int | float]:
+    if not micro_rows:
+        raise ValueError("optimizer telemetry requires micro-batches")
+    elapsed = max(float(elapsed_seconds), 1e-12)
+    step_tokens = sum(int(row["student_tokens"]) for row in micro_rows)
+    metrics: dict[str, int | float] = {
+        "train/optimizer_step": optimizer_step,
+        "train/micro_steps": micro_steps,
+        "train/student_tokens": cumulative_student_tokens,
+        "train/student_tokens_this_step": step_tokens,
+        "train/total_loss": sum(float(row["total_loss"]) for row in micro_rows) / len(micro_rows),
+        "train/gradient_norm": float(gradient_norm),
+        "train/learning_rate": float(learning_rate),
+        "train/mean_edit_count": sum(int(row["edit_count"]) for row in micro_rows)
+        / len(micro_rows),
+        "train/noop_fraction": sum(bool(row["is_noop"]) for row in micro_rows) / len(micro_rows),
+        "train/step_seconds": elapsed,
+        "train/student_tokens_per_second": step_tokens / elapsed,
+    }
+    losses: dict[str, list[float]] = {}
+    for row in micro_rows:
+        values = row["losses"]
+        if not isinstance(values, Mapping):
+            raise TypeError("micro-batch loss telemetry must be an object")
+        for name, value in values.items():
+            losses.setdefault(str(name), []).append(float(value))
+    metrics.update(
+        {f"train/loss/{name}": sum(values) / len(values) for name, values in sorted(losses.items())}
+    )
+    telemetry = getattr(runtime, "telemetry", None)
+    if callable(telemetry):
+        values = telemetry()
+        if not isinstance(values, Mapping):
+            raise TypeError("training runtime telemetry must be an object")
+        for name, value in values.items():
+            if (
+                not isinstance(name, str)
+                or not name
+                or isinstance(value, bool)
+                or not isinstance(value, (int, float))
+            ):
+                raise ValueError("training runtime telemetry must contain numeric scalars")
+            metrics[f"system/{name}"] = value
+    if any(not math.isfinite(float(value)) for value in metrics.values()):
+        raise FloatingPointError("optimizer telemetry contains a non-finite scalar")
+    return metrics
+
+
 def run_adapter_training(
     config: AdapterTrainingRunConfig,
     *,
     runtime: AdapterTrainingRuntime | None = None,
     data_bundle: TrainingDataBundle | None = None,
     evidence: LocalizationEvidence | None = None,
+    tracker: TrainingTracker | None = None,
 ) -> AdapterTrainingRunResult:
     """Train one explicit condition and checkpoint only completed optimizer steps."""
 
@@ -180,6 +236,8 @@ def run_adapter_training(
         raise ValueError("training seed is outside the frozen seed inventory")
     if not config.gpu_id or "," in config.gpu_id:
         raise ValueError("--gpu-id must name one physical GPU")
+    if config.wandb_project is None and config.wandb_entity is not None:
+        raise ValueError("W&B entity requires a W&B project")
     bundle = data_bundle or load_training_data_bundle(
         config.training_data_dir,
         protocol=protocol,
@@ -231,7 +289,8 @@ def run_adapter_training(
     if cursor.optimizer_steps > protocol.max_optimizer_steps:
         raise ValueError("training checkpoint exceeds the configured optimizer steps")
     runtime.zero_grad()
-    run_base = {
+    started_at = _now()
+    run_base: dict[str, object] = {
         "schema_version": "robustness-adapter-training-run/v1",
         "operation": f"train-{protocol.condition}",
         "condition": protocol.condition,
@@ -244,10 +303,62 @@ def run_adapter_training(
         "resume": config.resume,
         "python": platform.python_version(),
         "runtime": provenance,
+        "tracking": (
+            dict(tracker.provenance())
+            if tracker is not None
+            else {
+                "provider": "wandb" if config.wandb_project is not None else "disabled",
+                "project": config.wandb_project,
+                "entity": config.wandb_entity,
+            }
+        ),
     }
-    _write_json(run_path, {**run_base, "status": "running", "started_at": _now()})
+    write_json_atomic(run_path, {**run_base, "status": "running", "started_at": started_at})
+    tracking_finished = False
     try:
+        if tracker is None and config.wandb_project is not None:
+            if protocol.loss_weights["state"] <= 0.0:
+                state_layers: tuple[int, ...] = ()
+            elif evidence is not None:
+                state_layers = evidence.adapter_layers
+            else:
+                decoder_layers = provenance.get("decoder_layers")
+                if (
+                    isinstance(decoder_layers, bool)
+                    or not isinstance(decoder_layers, int)
+                    or decoder_layers <= 0
+                ):
+                    raise ValueError(
+                        "state-training W&B presentation requires the decoder-layer count"
+                    )
+                state_layers = tuple(range(decoder_layers))
+            tracker = start_wandb_training_tracker(
+                output_dir=output_dir,
+                project=config.wandb_project,
+                entity=config.wandb_entity,
+                bindings={
+                    **bindings,
+                    "condition": protocol.condition,
+                },
+                presentation=build_wandb_run_presentation(
+                    condition=protocol.condition,
+                    schema_version=protocol.schema_version,
+                    model=protocol.model,
+                    seed=config.seed,
+                    max_optimizer_steps=protocol.max_optimizer_steps,
+                    state_layers=state_layers,
+                ),
+                resume=config.resume,
+                resume_optimizer_step=cursor.optimizer_steps,
+            )
+        if tracker is not None:
+            run_base["tracking"] = dict(tracker.provenance())
+            write_json_atomic(
+                run_path,
+                {**run_base, "status": "running", "started_at": started_at},
+            )
         while cursor.optimizer_steps < protocol.max_optimizer_steps:
+            step_started = time.perf_counter()
             micro_rows: list[dict[str, object]] = []
             for accumulation_index in range(protocol.gradient_accumulation_steps):
                 source, epoch, next_cursor = next_training_source(
@@ -294,7 +405,23 @@ def run_adapter_training(
                 "learning_rate": learning_rate,
                 "micro_batches": micro_rows,
             }
-            _write_json(_metrics_step_path(work_dir, cursor.optimizer_steps), step_payload)
+            telemetry = _optimizer_step_telemetry(
+                micro_rows,
+                optimizer_step=cursor.optimizer_steps,
+                micro_steps=cursor.micro_steps,
+                cumulative_student_tokens=cursor.student_tokens,
+                gradient_norm=grad_norm,
+                learning_rate=learning_rate,
+                elapsed_seconds=time.perf_counter() - step_started,
+                runtime=runtime,
+            )
+            step_payload["aggregates"] = telemetry
+            write_json_atomic(_metrics_step_path(work_dir, cursor.optimizer_steps), step_payload)
+            if tracker is not None:
+                tracker.log_optimizer_step(
+                    telemetry,
+                    optimizer_step=cursor.optimizer_steps,
+                )
             if (
                 cursor.optimizer_steps % protocol.checkpoint_every_optimizer_steps == 0
                 or cursor.optimizer_steps == protocol.max_optimizer_steps
@@ -313,7 +440,17 @@ def run_adapter_training(
             optimizer_steps=cursor.optimizer_steps,
         )
         runtime.save_adapter(adapter_path)
-        _write_json(
+        if tracker is not None:
+            tracker.finish(
+                status="completed",
+                summary={
+                    "optimizer_steps": cursor.optimizer_steps,
+                    "micro_steps": cursor.micro_steps,
+                    "student_tokens": cursor.student_tokens,
+                },
+            )
+            tracking_finished = True
+        write_json_atomic(
             run_path,
             {
                 **run_base,
@@ -329,7 +466,23 @@ def run_adapter_training(
             },
         )
     except Exception as exc:
-        _write_json(
+        tracking_error: dict[str, str] | None = None
+        if tracker is not None and not tracking_finished:
+            try:
+                tracker.finish(
+                    status="failed",
+                    summary={
+                        "optimizer_steps": cursor.optimizer_steps,
+                        "micro_steps": cursor.micro_steps,
+                        "student_tokens": cursor.student_tokens,
+                    },
+                )
+            except Exception as finish_exc:
+                tracking_error = {
+                    "type": type(finish_exc).__name__,
+                    "message": str(finish_exc),
+                }
+        write_json_atomic(
             run_path,
             {
                 **run_base,
@@ -337,6 +490,7 @@ def run_adapter_training(
                 "failed_at": _now(),
                 "cursor": cursor.as_dict(),
                 "error": {"type": type(exc).__name__, "message": str(exc)},
+                **({"tracking_error": tracking_error} if tracking_error is not None else {}),
             },
         )
         raise

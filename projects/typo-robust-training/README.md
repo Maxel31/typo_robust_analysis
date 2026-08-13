@@ -31,6 +31,9 @@ TRAIN_ROOT=projects/typo-robust-training/results
 GPU_SELECT=5
 GPU_VALIDATE=6
 GPU_ID=5  # exploratory commands below
+WANDB_PROJECT=typo-robustness-training
+# Before training, provide WANDB_API_KEY through a secret manager or the environment.
+# Optional: export WANDB_ENTITY=<team-or-user-entity>
 
 uv sync --project "${TRAIN_PROJECT}" --locked
 ```
@@ -203,6 +206,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --config "${TRAIN_PROJECT}/configs/baselines/noisy-language-model.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
   --output-dir "${TRAIN_ROOT}/training/noisy-language-model/seed-42" \
   --resume
 
@@ -211,6 +215,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --config "${TRAIN_PROJECT}/configs/baselines/output-matching.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
   --output-dir "${TRAIN_ROOT}/training/output-matching/seed-42" \
   --resume
 
@@ -219,6 +224,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --config "${TRAIN_PROJECT}/configs/baselines/global-state-alignment.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
   --output-dir "${TRAIN_ROOT}/training/global-state-alignment/seed-42" \
   --resume
 
@@ -229,6 +235,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --layer-selection "${TRAIN_ROOT}/localization/layers/layer_selection.json" \
   --component-selection "${TRAIN_ROOT}/localization/components/component_selection.json" \
   --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
   --output-dir "${TRAIN_ROOT}/training/localized-state-distillation/seed-42" \
   --resume
 ```
@@ -239,10 +246,38 @@ not the confirmatory method. The bounded residual-window objective that
 consumes the Section 2 artifacts is published as a separate feature-scoped
 change, so the historical failure cannot silently select the active target.
 
-Repeat confirmatory conditions with seeds 42, 43, and 44. The teacher receives
-clean input, stays frozen, and is never activation-patched. The student
-receives typo input; only declared LoRA parameters may change. All conditions
-share token accounting and exact checkpoint/resume behavior.
+The commands above reproduce the version-1 pilot and must not be reported as
+the confirmatory comparison. The later bounded residual-window training
+feature supplies its matched output-only baseline and controls for seeds 42,
+43, and 44. In every teacher/student condition, the teacher receives clean
+input, stays frozen, and is never activation-patched; only declared student
+LoRA parameters may change.
+
+Every public training command requires online W&B tracking. Supply the API key
+only through `WANDB_API_KEY`; `WANDB_ENTITY` is optional. At each completed
+optimizer step the run uploads aggregate total/component losses, learning
+rate, gradient norm, token throughput, current GPU memory, and GPU-memory peak
+since training start. Raw corpus text, prompts, record IDs, the API key, and
+checkpoint contents are never sent.
+`wandb_run.json` stores only non-secret run identity, scientific
+bindings/presentation, URL, status, and the resume boundary so `--resume`
+continues the same W&B run without duplicating the loss curve.
+
+W&B names expose the scientific role directly; opaque arm abbreviations are
+not used. The adapter configs published in this feature are the version-1
+Cycle 1 reproduction suite, so their historical status is explicit:
+
+| Role shown in W&B | Operation | Meaning |
+|---|---|---|
+| `Historical baseline` | `Noisy-language-model training` | Cycle 1 ordinary causal-language-model baseline on noisy text |
+| `Historical pilot` | `Output/answer/clean-loss training` | Cycle 1 multi-loss output-matching pilot |
+| `Historical control` | `Global relative-MSE state alignment` | Cycle 1 all-layer/all-token state control |
+| `Historical ablation` | `Component-level relative-MSE state distillation` | Failed Cycle 1 neuron/head experiment; not the confirmatory method |
+
+The suffix records state layers, model, optimizer-step budget, and seed. All
+of these version-1 runs are placed in the separate `Historical Cycle 1` group,
+so they cannot be mistaken for the bounded residual-window comparison, whose
+config and W&B mapping are introduced with that later training feature.
 
 ## 5. Evaluate held-out robustness
 

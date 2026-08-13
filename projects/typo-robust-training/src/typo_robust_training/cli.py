@@ -188,6 +188,8 @@ def _run_adapter_training(args: argparse.Namespace) -> int:
                 component_selection_path=getattr(args, "component_selection", None),
                 seed=args.seed,
                 gpu_id=args.gpu_id,
+                wandb_project=args.wandb_project,
+                wandb_entity=args.wandb_entity,
                 output_dir=args.output_dir,
                 resume=args.resume,
             )
@@ -218,6 +220,8 @@ def _add_training_arguments(
         parser.add_argument("--component-selection", required=True, type=Path)
     parser.add_argument("--seed", required=True, type=int)
     parser.add_argument("--gpu-id", required=True)
+    parser.add_argument("--wandb-project", required=True)
+    parser.add_argument("--wandb-entity")
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--resume", action="store_true")
     parser.set_defaults(

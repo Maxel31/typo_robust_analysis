@@ -124,12 +124,15 @@ def test_training_commands_expose_condition_specific_evidence_and_shared_resume(
                 "42",
                 "--gpu-id",
                 "3",
+                "--wandb-project",
+                "typo-robustness-training",
                 "--output-dir",
                 "output",
                 "--resume",
             ]
         )
         assert args.resume is True
+        assert args.wandb_project == "typo-robustness-training"
         assert not hasattr(args, "layer_selection")
         assert not hasattr(args, "component_selection")
 
@@ -148,11 +151,14 @@ def test_training_commands_expose_condition_specific_evidence_and_shared_resume(
             "44",
             "--gpu-id",
             "3",
+            "--wandb-project",
+            "typo-robustness-training",
             "--output-dir",
             "output",
             "--resume",
         ]
     )
     assert component_ablation.resume is True
+    assert component_ablation.wandb_project == "typo-robustness-training"
     assert component_ablation.layer_selection == Path("layers.json")
     assert component_ablation.component_selection == Path("components.json")
