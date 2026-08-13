@@ -172,6 +172,61 @@ def _run_localize_components(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_adapter_training(args: argparse.Namespace) -> int:
+    from typo_robust_training.training.runner import (
+        AdapterTrainingRunConfig,
+        run_adapter_training,
+    )
+
+    try:
+        result = run_adapter_training(
+            AdapterTrainingRunConfig(
+                condition=args._training_condition,
+                config_path=args.config,
+                training_data_dir=args.training_data,
+                layer_selection_path=getattr(args, "layer_selection", None),
+                component_selection_path=getattr(args, "component_selection", None),
+                seed=args.seed,
+                gpu_id=args.gpu_id,
+                output_dir=args.output_dir,
+                resume=args.resume,
+            )
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"{args._training_command}: error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"completed {result.optimizer_steps} optimizer step(s), "
+        f"{result.student_tokens} student token(s): {result.checkpoint_path}"
+    )
+    print(f"training log: {result.metrics_path}")
+    print(f"run manifest: {result.run_path}")
+    return 0
+
+
+def _add_training_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    command: str,
+    condition: str,
+    requires_localization: bool,
+) -> None:
+    parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument("--training-data", required=True, type=Path)
+    if requires_localization:
+        parser.add_argument("--layer-selection", required=True, type=Path)
+        parser.add_argument("--component-selection", required=True, type=Path)
+    parser.add_argument("--seed", required=True, type=int)
+    parser.add_argument("--gpu-id", required=True)
+    parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--resume", action="store_true")
+    parser.set_defaults(
+        _typo_cot_plugin_handler=_run_adapter_training,
+        _training_command=command,
+        _training_condition=condition,
+    )
+
+
 def register_commands(
     commands: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
@@ -252,6 +307,23 @@ def register_commands(
     components.add_argument("--output-dir", required=True, type=Path)
     components.add_argument("--resume", action="store_true")
     components.set_defaults(_typo_cot_plugin_handler=_run_localize_components)
+
+    for command, condition in (
+        ("train-noisy-language-model", "noisy-language-model"),
+        ("train-output-matching", "output-matching"),
+        ("train-global-state-alignment", "global-state-alignment"),
+        ("train-localized-state-distillation", "localized-state-distillation"),
+    ):
+        training = commands.add_parser(
+            command,
+            help=f"Train the frozen {condition} condition with exact resume.",
+        )
+        _add_training_arguments(
+            training,
+            command=command,
+            condition=condition,
+            requires_localization=condition == "localized-state-distillation",
+        )
 
 
 __all__ = ["register_commands"]
