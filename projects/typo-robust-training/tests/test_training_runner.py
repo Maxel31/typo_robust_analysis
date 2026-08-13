@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,6 +17,7 @@ from typo_robust_training.training.runner import (
     AdapterTrainingRunConfig,
     TrainingMicroStepResult,
     TrainingMicroStepScales,
+    _monitor_violation_streak,
     _optimizer_step_telemetry,
     normalized_accumulation_scales,
     run_adapter_training,
@@ -180,6 +182,7 @@ class _Cycle2Runtime(_Runtime):
         self.noop_sequence: list[bool] = []
         self.gradient_checks: list[bool] = []
         self.scales: list[tuple[float, float]] = []
+        self.monitor_calls = 0
 
     def prepare_accumulation(
         self,
@@ -215,6 +218,14 @@ class _Cycle2Runtime(_Runtime):
             total_loss=1.0,
             student_tokens=7,
         )
+
+    def monitor(self, records: tuple[object, ...]) -> dict[str, float]:
+        assert records
+        self.monitor_calls += 1
+        return {
+            "clean_kl_nats_per_token": 0.001,
+            "fineweb_edu_ppl_ratio": 1.0,
+        }
 
 
 def test_runner_resume_matches_uninterrupted_sample_sequence(tmp_path: Path) -> None:
@@ -308,7 +319,7 @@ def test_cycle2_runner_enforces_exact_clean_noisy_pairs_per_optimizer_step(
         data_bundle=_bundle(tmp_path),
     )
     assert runtime.noop_sequence == [True, False, True, False] * 2
-    assert runtime.gradient_checks == [False, True, False, False] * 2
+    assert runtime.gradient_checks == [False] * 8
     assert runtime.scales == [(0.25, 0.0)] * 8
 
 
@@ -347,6 +358,81 @@ def test_long_run_stops_at_first_optimizer_boundary_past_student_token_budget(
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["requested_student_tokens"] == 50
     assert run["student_token_overshoot"] == 6
+
+
+def test_cycle2_runner_loads_and_executes_the_frozen_tune_monitor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = json.loads(CYCLE2_OUTPUT_CONFIG.read_text(encoding="utf-8"))
+    payload["optimization"]["gradient_accumulation_steps"] = 4
+    payload["optimization"]["max_optimizer_steps"] = 1
+    payload["optimization"]["checkpoint_every_optimizer_steps"] = 1
+    config_path = tmp_path / "cycle2-output.yaml"
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    protocol_sha = "d" * 64
+    loader_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        "typo_robust_training.evaluation.study.load_evaluation_study_protocol",
+        lambda _path: SimpleNamespace(
+            config_sha256=protocol_sha,
+            monitor_clean_documents=1,
+            monitor_paired_documents=1,
+            monitor_interval_optimizer_steps=1,
+            gates={
+                "maximum_clean_kl_nats_per_token": 0.03,
+                "maximum_clean_ppl_ratio": 1.02,
+            },
+        ),
+    )
+
+    def load_monitor(_root: Path, **kwargs: object) -> SimpleNamespace:
+        loader_calls.append(dict(kwargs))
+        return SimpleNamespace(
+            records=(
+                SimpleNamespace(source="fineweb_edu", kind="clean-corpus"),
+                SimpleNamespace(source="github_typo_corpus", kind="natural"),
+            ),
+            manifest_sha256="e" * 64,
+        )
+
+    monkeypatch.setattr(
+        "typo_robust_training.evaluation.data.load_evaluation_corpus_bundle",
+        load_monitor,
+    )
+    runtime = _Cycle2Runtime()
+    run_adapter_training(
+        AdapterTrainingRunConfig(
+            condition="output-matching",
+            config_path=config_path,
+            training_data_dir=tmp_path,
+            layer_selection_path=None,
+            component_selection_path=None,
+            seed=42,
+            gpu_id="1",
+            wandb_project=None,
+            wandb_entity=None,
+            output_dir=tmp_path / "monitored-run",
+            evaluation_protocol_path=tmp_path / "study.yaml",
+            monitor_data_dir=tmp_path / "monitor-data",
+        ),
+        runtime=runtime,
+        data_bundle=_bundle(tmp_path),
+    )
+
+    assert runtime.monitor_calls == 1
+    assert loader_calls == [
+        {
+            "evaluation_role": "tune",
+            "study_protocol_sha256": protocol_sha,
+            "access_binding_sha256": protocol_sha,
+            "experiment_binding_sha256": protocol_sha,
+            "output_dir": tmp_path / "monitored-run",
+            "confirm_sealed_role": False,
+            "resume": False,
+        }
+    ]
 
 
 def test_accumulation_scales_use_total_token_and_edited_coordinate_denominators() -> None:
@@ -406,6 +492,37 @@ def test_cycle2_telemetry_reports_the_exact_accumulation_objective() -> None:
     assert metrics["train/objective/output"] == pytest.approx(5.6)
     assert metrics["train/objective/state"] == pytest.approx(1.0)
     assert metrics["train/objective/weighted_state"] == pytest.approx(0.5)
+
+
+def test_monitor_violation_streak_is_reconstructed_from_completed_metrics(
+    tmp_path: Path,
+) -> None:
+    work = tmp_path / "work"
+    for step, clean_kl in ((10, 0.01), (20, 0.04), (30, 0.05)):
+        path = work / "metrics" / f"optimizer-step-{step:06d}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "aggregates": {
+                        "monitor/clean_kl_nats_per_token": clean_kl,
+                        "monitor/fineweb_edu_ppl_ratio": 1.0,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    assert (
+        _monitor_violation_streak(
+            work_dir=work,
+            optimizer_steps=30,
+            monitor_interval=10,
+            clean_kl_limit=0.03,
+            ppl_limit=1.02,
+        )
+        == 2
+    )
 
 
 def test_runner_uploads_only_aggregate_optimizer_step_telemetry(tmp_path: Path) -> None:

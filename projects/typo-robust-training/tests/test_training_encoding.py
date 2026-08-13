@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from typo_robust_training.data.records import TypoEdit
 from typo_robust_training.training.encoding import encode_training_pair, render_training_pair
 from typo_robust_training.training.pairs import TrainingPair
@@ -143,6 +145,14 @@ def test_encoding_ignores_only_edits_truncated_from_either_side() -> None:
     assert len(encoding.clean_edit_positions) == len(encoding.typo_edit_positions) == 1
     assert encoding.clean_input_ids != encoding.typo_input_ids
 
+    with pytest.raises(ValueError, match="outside the retained token window"):
+        encode_training_pair(
+            pair,
+            tokenizer=_WordTokenizer(),
+            max_length=3,
+            require_all_edits_visible=True,
+        )
+
 
 def test_encoding_skips_answer_ce_when_the_answer_suffix_is_truncated() -> None:
     encoding = encode_training_pair(
@@ -154,6 +164,14 @@ def test_encoding_skips_answer_ce_when_the_answer_suffix_is_truncated() -> None:
     assert encoding.clean_edit_positions
     assert encoding.typo_edit_positions
     assert encoding.answer_targets == ()
+
+    with pytest.raises(ValueError, match="answer suffix was truncated"):
+        encode_training_pair(
+            _pair(task="gsm8k", answer="72"),
+            tokenizer=_WordTokenizer(),
+            max_length=6,
+            require_answer_targets=True,
+        )
 
 
 def test_encoding_maps_an_edited_word_inside_a_punctuation_token() -> None:

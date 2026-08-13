@@ -20,7 +20,11 @@ from typo_robust_training.training.adapters import (
     trainable_parameter_report,
 )
 from typo_robust_training.training.config import AdapterTrainingProtocol
-from typo_robust_training.training.encoding import PairedEncoding, encode_training_pair
+from typo_robust_training.training.encoding import (
+    PairedEncoding,
+    encode_training_pair,
+    retained_clean_character_extent,
+)
 from typo_robust_training.training.evidence import (
     LocalizationEvidence,
     ResidualStateEvidence,
@@ -241,7 +245,37 @@ class HuggingFaceAdapterTrainingRuntime:
         self._gradient_ratio_violations = 0
         self._optimizer_steps = 0
         self._prepared_encodings: deque[tuple[TrainingPair, PairedEncoding]] = deque()
+        self._monitor_base_natural: tuple[float, int] | None = None
         torch.cuda.reset_peak_memory_stats()
+
+    def _encode_pair(self, pair: TrainingPair) -> PairedEncoding:
+        return encode_training_pair(
+            pair,
+            tokenizer=self.tokenizer,
+            max_length=self.protocol.max_sequence_length,
+            require_answer_targets=self.protocol.loss_weights["answer"] > 0.0,
+            require_all_edits_visible=not self.protocol.schema_version.endswith("/v1"),
+        )
+
+    def pair_is_usable(self, pair: TrainingPair) -> bool:
+        """Return whether every noisy edit survives the frozen token truncation."""
+
+        try:
+            self._encode_pair(pair)
+        except ValueError as exc:
+            if str(exc) == "training typo edit falls outside the retained token window":
+                return False
+            raise
+        return True
+
+    def retained_clean_character_extent(self, pair: TrainingPair) -> int:
+        """Expose the tokenizer-exact raw prefix available for typo selection."""
+
+        return retained_clean_character_extent(
+            pair,
+            tokenizer=self.tokenizer,
+            max_length=self.protocol.max_sequence_length,
+        )
 
     def _trainable_parameters(self) -> tuple[object, ...]:
         return tuple(
@@ -272,11 +306,7 @@ class HuggingFaceAdapterTrainingRuntime:
                 self._prepared_encodings.clear()
                 raise RuntimeError("prepared accumulation order differs from training order")
         else:
-            encoding = encode_training_pair(
-                pair,
-                tokenizer=self.tokenizer,
-                max_length=self.protocol.max_sequence_length,
-            )
+            encoding = self._encode_pair(pair)
         return compute_training_step(
             teacher=self.teacher,
             student=self.student,
@@ -299,14 +329,7 @@ class HuggingFaceAdapterTrainingRuntime:
         rows = tuple(pairs)
         if len(rows) != self.protocol.gradient_accumulation_steps:
             raise ValueError("prepared accumulation size differs from the config")
-        encodings = tuple(
-            encode_training_pair(
-                pair,
-                tokenizer=self.tokenizer,
-                max_length=self.protocol.max_sequence_length,
-            )
-            for pair in rows
-        )
+        encodings = tuple(self._encode_pair(pair) for pair in rows)
         state_active = self.protocol.loss_weights["state"] > 0.0
         scales = normalized_accumulation_scales(
             output_token_counts=tuple(len(encoding.output_logit_pairs) for encoding in encodings),
@@ -433,7 +456,7 @@ class HuggingFaceAdapterTrainingRuntime:
                 self._gradient_ratio_violations,
                 ratio=ratio,
                 optimizer_steps=self._optimizer_steps,
-                guard_steps=self.protocol.checkpoint_every_optimizer_steps,
+                guard_steps=self.protocol.gradient_ratio_guard_optimizer_steps,
             )
             if self._gradient_ratio_violations >= 3:
                 raise RuntimeError("state gradient ratio exceeded 0.5 for three startup checks")
@@ -443,8 +466,9 @@ class HuggingFaceAdapterTrainingRuntime:
         }
         losses["state_weight"] = float(self.state_weight)
         losses["weighted_state"] = losses.get("state", 0.0) * float(self.state_weight)
-        losses["output_accumulation_scale"] = float(output_loss_scale or 0.0)
-        losses["state_accumulation_scale"] = float(state_loss_scale or 0.0)
+        if normalized_objective:
+            losses["output_accumulation_scale"] = float(output_loss_scale or 0.0)
+            losses["state_accumulation_scale"] = float(state_loss_scale or 0.0)
         losses["backward_contribution"] = float(backward_loss.detach().float().cpu())
         total = float(output.loss.detach().float().cpu())
         if not math.isfinite(total) or any(not math.isfinite(value) for value in losses.values()):
@@ -539,24 +563,28 @@ class HuggingFaceAdapterTrainingRuntime:
         clean_tokens = 0
         clean_kl = 0.0
         clean_kl_tokens = 0
-        base_natural_kl = student_natural_kl = 0.0
-        natural_tokens = 0
+        if self._monitor_base_natural is None:
+            base_natural_kl, natural_tokens = 0.0, 0
+        else:
+            base_natural_kl, natural_tokens = self._monitor_base_natural
+        student_natural_kl = 0.0
+        student_natural_tokens = 0
         was_training = self.student.training
         self.student.eval()
         with self._torch.inference_mode():
             for record in rows:
                 clean_ids, clean_mask, clean_offsets = self._monitor_tokenize(record.clean_text)
-                teacher_clean = self.teacher(
-                    input_ids=clean_ids,
-                    attention_mask=clean_mask,
-                    use_cache=False,
-                )
                 student_clean = self.student(
                     input_ids=clean_ids,
                     attention_mask=clean_mask,
                     use_cache=False,
                 )
                 if record.source == "fineweb_edu":
+                    teacher_clean = self.teacher(
+                        input_ids=clean_ids,
+                        attention_mask=clean_mask,
+                        use_cache=False,
+                    )
                     teacher_nll, count, _zero_kl, _zero_count = causal_nll_and_forward_kl(
                         teacher_clean.logits,
                         clean_ids,
@@ -578,11 +606,6 @@ class HuggingFaceAdapterTrainingRuntime:
                     if record.typo_text is None or len(record.edits) != 1:
                         raise ValueError("training monitor natural pair lost its edit")
                     typo_ids, typo_mask, typo_offsets = self._monitor_tokenize(record.typo_text)
-                    teacher_typo = self.teacher(
-                        input_ids=typo_ids,
-                        attention_mask=typo_mask,
-                        use_cache=False,
-                    )
                     student_typo = self.student(
                         input_ids=typo_ids,
                         attention_mask=typo_mask,
@@ -597,25 +620,46 @@ class HuggingFaceAdapterTrainingRuntime:
                         clean_offsets=clean_offsets,
                         typo_offsets=typo_offsets,
                     )
-                    teacher_gap, teacher_count = aligned_forward_kl_sum(
-                        teacher_clean.logits,
-                        teacher_typo.logits,
-                        token_pairs=aligned,
-                    )
                     student_gap, student_count = aligned_forward_kl_sum(
                         student_clean.logits,
                         student_typo.logits,
                         token_pairs=aligned,
                     )
-                    if student_count != teacher_count:
+                    if self._monitor_base_natural is None:
+                        teacher_clean = self.teacher(
+                            input_ids=clean_ids,
+                            attention_mask=clean_mask,
+                            use_cache=False,
+                        )
+                        teacher_typo = self.teacher(
+                            input_ids=typo_ids,
+                            attention_mask=typo_mask,
+                            use_cache=False,
+                        )
+                        teacher_gap, teacher_count = aligned_forward_kl_sum(
+                            teacher_clean.logits,
+                            teacher_typo.logits,
+                            token_pairs=aligned,
+                        )
+                        if student_count != teacher_count:
+                            raise RuntimeError("training monitor natural token counts differ")
+                        base_natural_kl += teacher_gap
+                        natural_tokens += teacher_count
+                    elif student_count <= 0:
                         raise RuntimeError("training monitor natural token counts differ")
-                    base_natural_kl += teacher_gap
                     student_natural_kl += student_gap
-                    natural_tokens += teacher_count
+                    student_natural_tokens += student_count
         if was_training:
             self.student.train()
-        if clean_tokens <= 0 or clean_kl_tokens <= 0 or natural_tokens <= 0:
+        if (
+            clean_tokens <= 0
+            or clean_kl_tokens <= 0
+            or natural_tokens <= 0
+            or student_natural_tokens != natural_tokens
+        ):
             raise ValueError("training monitor has no valid frozen tokens")
+        if self._monitor_base_natural is None:
+            self._monitor_base_natural = (base_natural_kl, natural_tokens)
         base_gap = base_natural_kl / natural_tokens
         student_gap = student_natural_kl / natural_tokens
         return {

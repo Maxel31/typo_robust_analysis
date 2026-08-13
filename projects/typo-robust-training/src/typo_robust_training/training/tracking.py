@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from typo_robust_training.training.json_io import write_json_atomic
+
 
 _SCHEMA = "robustness-wandb-training-run/v1"
 _METADATA_FIELDS = {
@@ -23,6 +25,7 @@ _METADATA_FIELDS = {
     "run_id",
     "url",
     "bindings",
+    "presentation",
     "last_logged_optimizer_step",
     "status",
 }
@@ -242,17 +245,26 @@ class TrainingTracker(Protocol):
     def provenance(self) -> Mapping[str, object]: ...
 
 
-def _write_json(path: Path, payload: Mapping[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    try:
-        temporary.write_text(
-            json.dumps(payload, sort_keys=True, indent=2, allow_nan=False) + "\n",
-            encoding="utf-8",
-        )
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+def _presentation_payload(presentation: WandbRunPresentation) -> dict[str, object]:
+    fields = {
+        "name": presentation.name,
+        "group": presentation.group,
+        "job_type": presentation.job_type,
+        "tags": list(presentation.tags),
+        "notes": presentation.notes,
+    }
+    if any(
+        not isinstance(fields[name], str) or not str(fields[name]).strip()
+        for name in ("name", "group", "job_type", "notes")
+    ):
+        raise ValueError("W&B presentation text fields must be non-empty")
+    if not presentation.tags or any(
+        not isinstance(tag, str) or not tag.strip() for tag in presentation.tags
+    ):
+        raise ValueError("W&B presentation tags must be non-empty strings")
+    if len(set(presentation.tags)) != len(presentation.tags):
+        raise ValueError("W&B presentation tags must be unique")
+    return fields
 
 
 def _canonical_bindings(bindings: Mapping[str, object]) -> dict[str, object]:
@@ -353,7 +365,7 @@ class WandbTrainingTracker:
             raise ValueError("W&B optimizer steps must catch up before appending")
         self._run.log(payload, step=optimizer_step)
         self._metadata.update({"last_logged_optimizer_step": optimizer_step, "status": "running"})
-        _write_json(self._metadata_path, self._metadata)
+        write_json_atomic(self._metadata_path, self._metadata)
 
     def finish(self, *, status: str, summary: Mapping[str, int | float]) -> None:
         if self._finished:
@@ -365,7 +377,7 @@ class WandbTrainingTracker:
         self._run.summary["run/status"] = status
         self._run.finish(exit_code=0 if status == "completed" else 1)
         self._metadata["status"] = status
-        _write_json(self._metadata_path, self._metadata)
+        write_json_atomic(self._metadata_path, self._metadata)
         self._finished = True
 
     def provenance(self) -> Mapping[str, object]:
@@ -414,6 +426,19 @@ def start_wandb_training_tracker(
     if resolved_entity is not None and not resolved_entity:
         resolved_entity = None
     frozen_bindings = _canonical_bindings(bindings)
+    condition = str(frozen_bindings.get("condition", "adapter-training"))
+    seed = frozen_bindings.get("seed")
+    if presentation is None:
+        presentation = WandbRunPresentation(
+            name=f"{condition}-seed-{seed}",
+            group=condition,
+            job_type="adapter-training",
+            tags=("typo-robustness", condition),
+            notes="Legacy W&B presentation without an explicit scientific arm label.",
+        )
+    elif not isinstance(presentation, WandbRunPresentation):
+        raise TypeError("W&B presentation must be WandbRunPresentation")
+    presentation_payload = _presentation_payload(presentation)
     root = Path(output_dir).resolve()
     metadata_path = root / "wandb_run.json"
     factory = run_id_factory or (lambda: secrets.token_hex(8))
@@ -426,6 +451,8 @@ def start_wandb_training_tracker(
             or metadata["bindings"] != frozen_bindings
         ):
             raise ValueError("W&B resume bindings differ")
+        if metadata["presentation"] != presentation_payload:
+            raise ValueError("W&B resume presentation differs")
         prior_step = metadata["last_logged_optimizer_step"]
         if not isinstance(prior_step, int) or prior_step < resume_optimizer_step:
             raise ValueError("W&B history is behind the local checkpoint")
@@ -448,6 +475,7 @@ def start_wandb_training_tracker(
             "run_id": run_id,
             "url": None,
             "bindings": frozen_bindings,
+            "presentation": presentation_payload,
             "last_logged_optimizer_step": 0,
             "status": "initializing",
         }
@@ -457,18 +485,6 @@ def start_wandb_training_tracker(
     module = wandb_module or importlib.import_module("wandb")
     local_dir = root / ".wandb"
     local_dir.mkdir(parents=True, exist_ok=True)
-    condition = str(frozen_bindings.get("condition", "adapter-training"))
-    seed = frozen_bindings.get("seed")
-    if presentation is None:
-        presentation = WandbRunPresentation(
-            name=f"{condition}-seed-{seed}",
-            group=condition,
-            job_type="adapter-training",
-            tags=("typo-robustness", condition),
-            notes="Legacy W&B presentation without an explicit scientific arm label.",
-        )
-    elif not isinstance(presentation, WandbRunPresentation):
-        raise TypeError("W&B presentation must be WandbRunPresentation")
     run = module.init(
         project=project,
         entity=resolved_entity,
@@ -483,19 +499,38 @@ def start_wandb_training_tracker(
         reinit="create_new",
         **init_resume,
     )
-    if run is None or getattr(run, "id", None) != run_id:
-        raise RuntimeError("W&B initialized a different or missing run ID")
-    run.define_metric("train/optimizer_step")
-    run.define_metric("train/*", step_metric="train/optimizer_step")
-    run.define_metric("system/*", step_metric="train/optimizer_step")
-    metadata.update(
-        {
-            "url": getattr(run, "url", None),
-            "last_logged_optimizer_step": last_logged_optimizer_step,
-            "status": "running",
-        }
-    )
-    _write_json(metadata_path, metadata)
+    valid_run = run is not None and getattr(run, "id", None) == run_id
+    try:
+        if not valid_run:
+            raise RuntimeError("W&B initialized a different or missing run ID")
+        metadata.update(
+            {
+                "url": getattr(run, "url", None),
+                "last_logged_optimizer_step": last_logged_optimizer_step,
+                "status": "initializing",
+            }
+        )
+        # Persist the remote identity before fallible metric registration so
+        # partial initialization remains attributable and resumable.
+        write_json_atomic(metadata_path, metadata)
+        run.define_metric("train/optimizer_step")
+        run.define_metric("train/*", step_metric="train/optimizer_step")
+        run.define_metric("system/*", step_metric="train/optimizer_step")
+        metadata["status"] = "running"
+        write_json_atomic(metadata_path, metadata)
+    except Exception:
+        if run is not None:
+            try:
+                run.finish(exit_code=1)
+            except Exception:
+                pass
+        if valid_run:
+            metadata["status"] = "failed"
+            try:
+                write_json_atomic(metadata_path, metadata)
+            except Exception:
+                pass
+        raise
     sdk_version = getattr(module, "__version__", None)
     return WandbTrainingTracker(
         run=run,

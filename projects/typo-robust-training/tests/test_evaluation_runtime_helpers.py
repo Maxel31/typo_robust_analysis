@@ -18,6 +18,8 @@ from typo_robust_training.evaluation.config import load_robustness_evaluation_co
 from typo_robust_training.evaluation.prompting import EvaluationPrompts
 from typo_robust_training.evaluation.runtime import (
     HuggingFaceRobustnessEvaluationRuntimeFactory,
+    aligned_forward_kl_sum,
+    causal_nll_and_forward_kl,
     evaluation_teacher_targets,
     prompt_tokenization_profile,
     teacher_forced_kl_readout,
@@ -91,6 +93,30 @@ def test_teacher_forced_kl_is_clean_to_candidate_and_excludes_first_token() -> N
         (0.0,) * 15,
         abs=1e-7,
     )
+
+
+def test_monitor_reductions_use_causal_and_aligned_forward_kl() -> None:
+    base = torch.zeros(1, 4, 3)
+    candidate = base.clone()
+    candidate[0, 0, 1] = 2.0
+    ids = torch.tensor([[0, 1, 2, 0]])
+
+    nll, tokens, kl_sum, kl_tokens = causal_nll_and_forward_kl(
+        candidate,
+        ids,
+        base_logits=base,
+    )
+    assert nll > 0.0
+    assert tokens == kl_tokens == 3
+    assert kl_sum > 0.0
+
+    aligned_sum, aligned_tokens = aligned_forward_kl_sum(
+        base,
+        candidate,
+        token_pairs=((0, 0), (1, 1), (2, 2)),
+    )
+    assert aligned_tokens == 2
+    assert aligned_sum > 0.0
 
 
 def test_evaluation_teacher_targets_drop_partial_prefix_when_readout_is_invalid() -> None:

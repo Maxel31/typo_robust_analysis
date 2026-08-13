@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
+from typo_robust_training.data.perturb import TypoGenerator
 from typo_robust_training.integrity import sha256_tree
 from typo_robust_training.training.checkpoint import (
     TrainingCursor,
@@ -35,7 +36,12 @@ from typo_robust_training.training.evidence import (
     load_localization_evidence,
     load_residual_state_evidence,
 )
-from typo_robust_training.training.pairs import TrainingPair, materialize_training_pair
+from typo_robust_training.training.json_io import write_json_atomic as _write_json
+from typo_robust_training.training.pairs import (
+    TrainingPair,
+    TrainingSource,
+    materialize_training_pair,
+)
 from typo_robust_training.training.tracking import (
     TrainingTracker,
     build_wandb_run_presentation,
@@ -53,19 +59,6 @@ def _sha256_file(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
-
-
-def _write_json(path: Path, payload: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    try:
-        temporary.write_text(
-            json.dumps(payload, sort_keys=True, indent=2, allow_nan=False) + "\n",
-            encoding="utf-8",
-        )
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,6 +245,7 @@ def _state_calibration_pairs(
     bundle: TrainingDataBundle,
     protocol: AdapterTrainingProtocol,
     seed: int,
+    runtime: AdapterTrainingRuntime,
 ) -> tuple[TrainingPair, ...]:
     """Replay the initial stream and retain the configured number of noisy pairs."""
 
@@ -266,16 +260,97 @@ def _state_calibration_pairs(
             cursor=cursor,
             seed=seed,
         )
-        pair = materialize_training_pair(
-            source,
+        pair = _materialize_usable_pair(
+            source=source,
             generator=bundle.generator,
             epoch=epoch,
             force_noop=_forced_noop(protocol, micro_step=cursor.micro_steps),
+            protocol=protocol,
+            runtime=runtime,
         )
         cursor = next_cursor
         if not pair.is_noop:
             pairs.append(pair)
     return tuple(pairs)
+
+
+def _materialize_usable_pair(
+    *,
+    source: TrainingSource,
+    generator: TypoGenerator,
+    epoch: int,
+    force_noop: bool | None,
+    protocol: AdapterTrainingProtocol,
+    runtime: AdapterTrainingRuntime,
+) -> TrainingPair:
+    """Keep every cycle-2/3 typo target inside the tokenizer-retained prefix."""
+
+    pair = materialize_training_pair(
+        source,
+        generator=generator,
+        epoch=epoch,
+        force_noop=force_noop,
+    )
+    if protocol.schema_version.endswith("/v1") or pair.is_noop:
+        return pair
+    validator = getattr(runtime, "pair_is_usable", None)
+    if not callable(validator) or validator(pair):
+        return pair
+    if source.kind == "natural":
+        raise ValueError("fixed natural typo target falls outside the retained token window")
+    extent_reader = getattr(runtime, "retained_clean_character_extent", None)
+    if not callable(extent_reader):
+        raise TypeError("cycle-2 runtime cannot constrain typo targets to retained tokens")
+    maximum_target_stop = extent_reader(pair)
+    if (
+        isinstance(maximum_target_stop, bool)
+        or not isinstance(maximum_target_stop, int)
+        or maximum_target_stop <= 0
+    ):
+        raise ValueError("retained token window contains no eligible typo target")
+    constrained = materialize_training_pair(
+        source,
+        generator=generator,
+        epoch=epoch,
+        force_noop=force_noop,
+        maximum_target_stop=maximum_target_stop,
+    )
+    if not validator(constrained):
+        raise RuntimeError("constrained typo generation did not retain every edited coordinate")
+    return constrained
+
+
+def _monitor_violation_streak(
+    *,
+    work_dir: Path,
+    optimizer_steps: int,
+    monitor_interval: int,
+    clean_kl_limit: float,
+    ppl_limit: float,
+) -> int:
+    """Reconstruct the consecutive completed unsafe-monitor count on resume."""
+
+    if optimizer_steps <= 0 or monitor_interval <= 0:
+        return 0
+    streak = 0
+    step = optimizer_steps - (optimizer_steps % monitor_interval)
+    while step > 0:
+        path = _metrics_step_path(work_dir, step)
+        if not path.is_file():
+            break
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        aggregates = payload.get("aggregates")
+        if not isinstance(aggregates, Mapping):
+            break
+        clean_kl = aggregates.get("monitor/clean_kl_nats_per_token")
+        ppl_ratio = aggregates.get("monitor/fineweb_edu_ppl_ratio")
+        if not isinstance(clean_kl, (int, float)) or not isinstance(ppl_ratio, (int, float)):
+            break
+        if float(clean_kl) <= clean_kl_limit and float(ppl_ratio) <= ppl_limit:
+            break
+        streak += 1
+        step -= monitor_interval
+    return streak
 
 
 def _metrics_step_path(work_dir: Path, optimizer_step: int) -> Path:
@@ -427,6 +502,11 @@ def run_adapter_training(
             config.monitor_data_dir,
             evaluation_role="tune",
             study_protocol_sha256=study.config_sha256,
+            access_binding_sha256=study.config_sha256,
+            experiment_binding_sha256=study.config_sha256,
+            output_dir=config.output_dir,
+            confirm_sealed_role=False,
+            resume=config.resume,
         )
         monitor_records = tuple(monitor_bundle.records)
         clean_count = sum(record.source == "fineweb_edu" for record in monitor_records)
@@ -513,6 +593,7 @@ def run_adapter_training(
                 bundle=bundle,
                 protocol=protocol,
                 seed=config.seed,
+                runtime=runtime,
             )
         )
     provenance = dict(runtime.provenance())
@@ -571,7 +652,6 @@ def run_adapter_training(
                 bindings={
                     **bindings,
                     "condition": protocol.condition,
-                    "gpu_id": config.gpu_id,
                 },
                 presentation=build_wandb_run_presentation(
                     condition=protocol.condition,
@@ -592,7 +672,17 @@ def run_adapter_training(
                 run_path,
                 {**run_base, "status": "running", "started_at": started_at},
             )
-        consecutive_monitor_violations = 0
+        consecutive_monitor_violations = (
+            _monitor_violation_streak(
+                work_dir=work_dir,
+                optimizer_steps=cursor.optimizer_steps,
+                monitor_interval=monitor_interval,
+                clean_kl_limit=monitor_clean_kl_limit,
+                ppl_limit=monitor_ppl_limit,
+            )
+            if config.resume and monitor_records
+            else 0
+        )
         while cursor.optimizer_steps < protocol.max_optimizer_steps and (
             protocol.max_student_tokens is None
             or cursor.student_tokens < protocol.max_student_tokens
@@ -606,14 +696,16 @@ def run_adapter_training(
                     cursor=cursor,
                     seed=config.seed,
                 )
-                pair = materialize_training_pair(
-                    source,
+                pair = _materialize_usable_pair(
+                    source=source,
                     generator=bundle.generator,
                     epoch=epoch,
                     force_noop=_forced_noop(
                         protocol,
                         micro_step=cursor.micro_steps,
                     ),
+                    protocol=protocol,
+                    runtime=runtime,
                 )
                 pending.append((accumulation_index, epoch, pair))
                 cursor = next_cursor
@@ -642,6 +734,10 @@ def run_adapter_training(
                     )
                     for _ in pending
                 )
+            gradient_probe_index = next(
+                (index for index, _epoch, candidate in pending if not candidate.is_noop),
+                None,
+            )
             for (accumulation_index, epoch, pair), scales_for_pair in zip(
                 pending, scales, strict=True
             ):
@@ -649,7 +745,9 @@ def run_adapter_training(
                     pair,
                     loss_scale=1.0 / protocol.gradient_accumulation_steps,
                     measure_gradient_ratio=(
-                        not protocol.schema_version.endswith("/v1") and accumulation_index == 1
+                        not protocol.schema_version.endswith("/v1")
+                        and protocol.loss_weights["state"] > 0.0
+                        and accumulation_index == gradient_probe_index
                     ),
                     output_loss_scale=(
                         scales_for_pair.output

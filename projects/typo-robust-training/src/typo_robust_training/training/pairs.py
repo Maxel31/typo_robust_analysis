@@ -190,6 +190,7 @@ class TrainingPair:
     edits: tuple[TypoEdit, ...]
     is_noop: bool
     epoch: int
+    variant: int = 0
 
 
 def stable_epoch_sources(
@@ -231,16 +232,23 @@ def materialize_training_pair(
     *,
     generator: TypoGenerator,
     epoch: int,
+    variant: int = 0,
     force_noop: bool | None = None,
+    maximum_target_stop: int | None = None,
 ) -> TrainingPair:
     """Use fixed natural text or a record-local synthetic typo for this epoch."""
 
     if not isinstance(source, TrainingSource) or not isinstance(generator, TypoGenerator):
         raise TypeError("materialization requires a TrainingSource and TypoGenerator")
-    if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 0:
-        raise ValueError("training pair epoch must be non-negative")
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in (epoch, variant)
+    ):
+        raise ValueError("training pair epoch and variant must be non-negative")
     if force_noop is not None and type(force_noop) is not bool:
         raise TypeError("force_noop must be boolean or None")
+    if source.kind == "natural" and maximum_target_stop is not None:
+        raise ValueError("fixed natural pairs cannot move their typo target")
     if force_noop is True:
         typo_text, edits, is_noop = source.clean_text, (), True
     elif source.kind == "natural":
@@ -253,7 +261,9 @@ def materialize_training_pair(
         pair = generator.generate(
             source.clean_record(),
             epoch=epoch,
+            variant=variant,
             force_noop=force_noop,
+            maximum_target_stop=maximum_target_stop,
         )
         typo_text, edits, is_noop = pair.typo_text, pair.edits, pair.is_noop
     return TrainingPair(
@@ -266,6 +276,7 @@ def materialize_training_pair(
         edits=edits,
         is_noop=is_noop,
         epoch=epoch,
+        variant=variant,
     )
 
 
@@ -383,7 +394,13 @@ def edited_word_final_token_positions(
     *,
     text: str | None = None,
 ) -> tuple[int, ...]:
-    """Return the last token covering each edited word's final character."""
+    """Return the token containing each edited word's final character.
+
+    A tokenizer unit may extend beyond the word span (for example, punctuation
+    can be fused with the preceding word).  Such a unit is still the unique
+    word-final coordinate because it contains the final character.  We require
+    gap-free coverage of the complete word and reject duplicate coordinates.
+    """
 
     text_was_provided = text is not None
     if text is None:

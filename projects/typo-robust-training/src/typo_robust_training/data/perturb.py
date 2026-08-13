@@ -320,6 +320,7 @@ class TypoGenerator:
         force_operations: Sequence[str] | None = None,
         force_edit_count: int | None = None,
         force_noop: bool | None = None,
+        maximum_target_stop: int | None = None,
     ) -> TypoPair:
         if not isinstance(record, CleanRecord):
             raise TypeError("record must be a CleanRecord")
@@ -330,6 +331,12 @@ class TypoGenerator:
             raise ValueError("epoch and variant must be non-negative integers")
         if force_noop is not None and type(force_noop) is not bool:
             raise TypeError("force_noop must be boolean or None")
+        if maximum_target_stop is not None and (
+            isinstance(maximum_target_stop, bool)
+            or not isinstance(maximum_target_stop, int)
+            or maximum_target_stop <= 0
+        ):
+            raise ValueError("maximum_target_stop must be a positive integer")
         if force_noop is True and (force_operations is not None or force_edit_count is not None):
             raise ValueError("forced clean pairs cannot also force typo edits")
         if force_operations is not None:
@@ -361,6 +368,8 @@ class TypoGenerator:
                 is_noop=True,
             )
         spans = eligible_word_spans(record.text, minimum_letters=self.minimum_word_letters)
+        if maximum_target_stop is not None:
+            spans = tuple(span for span in spans if span[1] <= maximum_target_stop)
         if not spans:
             raise ValueError(f"record contains no eligible typo target: {record.source_id}")
         if force_edit_count is not None:

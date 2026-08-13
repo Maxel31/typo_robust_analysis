@@ -90,6 +90,7 @@ _OBJECTIVE_V2 = _OBJECTIVE | {
     "calibration_micro_batches",
     "state_window_policy",
 }
+_GRADIENT_RATIO_GUARD_OPTIMIZER_STEPS = 50
 
 
 def _mapping(value: object, *, field: str, fields: set[str]) -> Mapping[str, object]:
@@ -169,6 +170,7 @@ class AdapterTrainingProtocol:
     temperature: float
     epsilon: float
     state_gradient_ratio: float | None
+    gradient_ratio_guard_optimizer_steps: int
     calibration_micro_batches: int
     state_window_policy: str
     config_sha256: str
@@ -498,6 +500,9 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         temperature=_number(objective["temperature"], field="objective.temperature", minimum=1e-12),
         epsilon=_number(objective["epsilon"], field="objective.epsilon", minimum=1e-12),
         state_gradient_ratio=gradient_ratio,
+        gradient_ratio_guard_optimizer_steps=(
+            0 if schema_version.endswith("/v1") else _GRADIENT_RATIO_GUARD_OPTIMIZER_STEPS
+        ),
         calibration_micro_batches=calibration,
         state_window_policy=state_window_policy,
         config_sha256=hashlib.sha256(raw).hexdigest(),

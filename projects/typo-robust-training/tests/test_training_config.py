@@ -209,6 +209,7 @@ def test_cycle3_configs_match_every_axis_except_budget_and_localized_state_signa
         else:
             assert protocol.loss_weights["state"] == 1.0
             assert protocol.state_gradient_ratio == pytest.approx(0.05)
+        assert protocol.gradient_ratio_guard_optimizer_steps == 50
 
 
 def test_training_commands_expose_condition_specific_evidence_and_shared_resume() -> None:

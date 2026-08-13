@@ -46,6 +46,20 @@ class _Wandb:
         return run
 
 
+class _FailingMetricRun(_Run):
+    def define_metric(self, name: str, **kwargs: object) -> None:
+        del name, kwargs
+        raise RuntimeError("injected metric registration failure")
+
+
+class _FailingWandb(_Wandb):
+    def init(self, **kwargs: object) -> _Run:
+        self.calls.append(dict(kwargs))
+        run = _FailingMetricRun(str(kwargs["id"]))
+        self.runs.append(run)
+        return run
+
+
 def _bindings() -> dict[str, object]:
     return {
         "condition": "localized-state-distillation",
@@ -149,6 +163,28 @@ def test_wandb_requires_environment_credential_without_persisting_it(tmp_path: P
         )
 
     assert not (tmp_path / "wandb_run.json").exists()
+
+
+def test_wandb_post_init_failure_finishes_and_records_the_remote_run(tmp_path: Path) -> None:
+    module = _FailingWandb()
+
+    with pytest.raises(RuntimeError, match="metric registration failure"):
+        start_wandb_training_tracker(
+            output_dir=tmp_path,
+            project="typo-robustness-training",
+            entity=None,
+            bindings=_bindings(),
+            resume=False,
+            resume_optimizer_step=0,
+            environment={"WANDB_API_KEY": "secret"},
+            wandb_module=module,
+            run_id_factory=lambda: "failed-run-id",
+        )
+
+    assert module.runs[0].finished == [1]
+    metadata = json.loads((tmp_path / "wandb_run.json").read_text(encoding="utf-8"))
+    assert metadata["run_id"] == "failed-run-id"
+    assert metadata["status"] == "failed"
 
 
 def test_wandb_logs_scalars_and_resumes_same_hash_bound_run(tmp_path: Path) -> None:

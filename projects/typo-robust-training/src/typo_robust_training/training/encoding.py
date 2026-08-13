@@ -13,6 +13,10 @@ from typo_robust_training.training.pairs import (
 )
 
 
+_QUESTION_PREFIX = "Question:\n"
+_ANSWER_PROMPT_SUFFIX = "\nAnswer:"
+
+
 @dataclass(frozen=True, slots=True)
 class RenderedTrainingPair:
     clean_text: str
@@ -53,7 +57,7 @@ def render_training_pair(pair: TrainingPair) -> RenderedTrainingPair:
     else:
         if pair.answer is None:
             raise ValueError("reasoning training pair requires an answer")
-        prefix, prompt_suffix = "Question:\n", "\nAnswer:"
+        prefix, prompt_suffix = _QUESTION_PREFIX, _ANSWER_PROMPT_SUFFIX
         answer_suffix = f" {pair.answer}\n"
         clean_prompt = prefix + pair.clean_text + prompt_suffix
         typo_prompt = prefix + pair.typo_text + prompt_suffix
@@ -139,11 +143,14 @@ def _answer_targets(
     ids: tuple[int, ...],
     offsets: tuple[tuple[int, int], ...],
     span: tuple[int, int] | None,
+    required: bool,
 ) -> tuple[tuple[int, int], ...]:
     if span is None:
         return ()
     start, stop = span
     if stop > max((token_stop for _token_start, token_stop in offsets), default=0):
+        if required:
+            raise ValueError("reasoning answer suffix was truncated from the training sequence")
         return ()
     targets = tuple(
         (index - 1, ids[index])
@@ -160,6 +167,8 @@ def encode_training_pair(
     *,
     tokenizer: Any,
     max_length: int,
+    require_answer_targets: bool = False,
+    require_all_edits_visible: bool = False,
 ) -> PairedEncoding:
     """Tokenize one pair and derive all masks without heuristic token alignment."""
 
@@ -206,6 +215,8 @@ def encode_training_pair(
             )
             if clean_span[1] <= clean_extent and typo_span[1] <= typo_extent
         )
+        if require_all_edits_visible and len(visible_spans) != len(pair.edits):
+            raise ValueError("training typo edit falls outside the retained token window")
         clean_edit_positions = edited_word_final_token_positions(
             clean_offsets,
             tuple(clean_span for clean_span, _typo_span in visible_spans),
@@ -234,15 +245,36 @@ def encode_training_pair(
             ids=typo_ids,
             offsets=typo_offsets,
             span=rendered.typo_answer_span,
+            required=require_answer_targets,
         ),
         student_tokens=sum(typo_mask),
         is_noop=pair.is_noop,
     )
 
 
+def retained_clean_character_extent(
+    pair: TrainingPair,
+    *,
+    tokenizer: Any,
+    max_length: int,
+) -> int:
+    """Return the raw clean-text prefix fully retained after token truncation."""
+
+    rendered = render_training_pair(pair)
+    _ids, _mask, offsets = _tokenize(
+        tokenizer,
+        text=rendered.clean_text,
+        max_length=max_length,
+    )
+    retained_stop = max((stop for _start, stop in offsets), default=0)
+    shift = len(_QUESTION_PREFIX) if pair.task is not None else 0
+    return max(0, min(len(pair.clean_text), retained_stop - shift))
+
+
 __all__ = [
     "PairedEncoding",
     "RenderedTrainingPair",
     "encode_training_pair",
+    "retained_clean_character_extent",
     "render_training_pair",
 ]

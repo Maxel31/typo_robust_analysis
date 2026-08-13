@@ -247,3 +247,10 @@ def test_word_final_positions_allow_punctuation_in_the_same_token() -> None:
     offsets = ((0, 0), (0, 3), (4, 10), (11, 14))
 
     assert edited_word_final_token_positions(offsets, ((6, 9),), text=text) == (2,)
+
+
+def test_word_final_positions_allow_a_token_to_cross_the_word_boundary() -> None:
+    text = "airport. works"
+    offsets = ((0, 0), (0, 8), (9, 14))
+
+    assert edited_word_final_token_positions(offsets, ((0, 7),), text=text) == (1,)
