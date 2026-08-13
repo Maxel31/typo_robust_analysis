@@ -156,9 +156,20 @@ def _rng(
     return random.Random(int.from_bytes(hashlib.sha256(material).digest(), "big"))
 
 
-def _record_id(record: CleanRecord, *, condition: str, role: str) -> str:
+def _record_id(
+    record: CleanRecord,
+    *,
+    condition: str,
+    role: str,
+    seed: int,
+    variant: int,
+    edit_count: int,
+) -> str:
     return hashlib.sha256(
-        f"frozen-evaluation-pair/v1\0{role}\0{condition}\0{record.record_id}".encode()
+        (
+            "frozen-evaluation-pair/v2\0"
+            f"{role}\0{condition}\0{seed}\0{variant}\0{edit_count}\0{record.record_id}"
+        ).encode()
     ).hexdigest()
 
 
@@ -190,7 +201,14 @@ def generate_evaluation_typo(
         if operation_inventory:
             raise ValueError("zero-edit evaluation cannot declare operations")
         return FrozenEvaluationTypo(
-            record_id=_record_id(record, condition=condition, role=role),
+            record_id=_record_id(
+                record,
+                condition=condition,
+                role=role,
+                seed=seed,
+                variant=variant,
+                edit_count=0,
+            ),
             clean_text=record.text,
             typo_text=record.text,
             edits=(),
@@ -215,18 +233,16 @@ def generate_evaluation_typo(
         record,
         minimum_word_letters=minimum_word_letters,
     )
-    if operation_inventory == ("adjacent-transposition",):
-        spans = tuple(
-            span
-            for span in spans
-            if any(
-                left != right
-                for left, right in zip(
-                    record.text[slice(*span)],
-                    record.text[slice(*span)][1:],
-                )
-            )
+
+    def compatible_operations(word: str) -> tuple[str, ...]:
+        transposable = any(left != right for left, right in zip(word, word[1:]))
+        return tuple(
+            operation
+            for operation in operation_inventory
+            if operation != "adjacent-transposition" or transposable
         )
+
+    spans = tuple(span for span in spans if compatible_operations(record.text[slice(*span)]))
     if len(spans) < edit_count:
         raise ValueError(
             f"evaluation record has {len(spans)} eligible words but requires {edit_count}"
@@ -235,8 +251,8 @@ def generate_evaluation_typo(
     selected = sorted(rng.sample(spans, edit_count))
     replacements: list[tuple[tuple[int, int], str, str, str]] = []
     for span in selected:
-        operation = rng.choice(operation_inventory)
         clean_word = record.text[slice(*span)]
+        operation = rng.choice(compatible_operations(clean_word))
         typo_word = apply_typo_operation_to_word(clean_word, operation, rng)
         if typo_word == clean_word:
             raise RuntimeError("evaluation typo operation produced an identity edit")
@@ -274,7 +290,14 @@ def generate_evaluation_typo(
         ):
             raise RuntimeError("evaluation typo spans do not round-trip")
     return FrozenEvaluationTypo(
-        record_id=_record_id(record, condition=condition, role=role),
+        record_id=_record_id(
+            record,
+            condition=condition,
+            role=role,
+            seed=seed,
+            variant=variant,
+            edit_count=edit_count,
+        ),
         clean_text=record.text,
         typo_text=typo_text,
         edits=tuple(edits),
@@ -348,7 +371,14 @@ def generate_natural_injection(
         typo_char_span=(start, start + len(typo_word)),
     )
     return FrozenEvaluationTypo(
-        record_id=_record_id(record, condition="natural-injection", role=role),
+        record_id=_record_id(
+            record,
+            condition="natural-injection",
+            role=role,
+            seed=seed,
+            variant=variant,
+            edit_count=1,
+        ),
         clean_text=record.text,
         typo_text=typo_text,
         edits=(edit,),

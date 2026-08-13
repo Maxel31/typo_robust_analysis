@@ -269,12 +269,30 @@ def assign_balanced_group_roles(
     def digest(value: str, *, purpose: str) -> str:
         return hashlib.sha256(f"{namespace}-{purpose}\0{seed}\0{value}".encode("utf-8")).hexdigest()
 
+    group_inventory = tuple(group_sizes.items())
+    if len(group_inventory) < len(roles):
+        raise ValueError("balanced group roles require at least one group per positive role")
+
+    # Guarantee role coverage with the smallest indivisible groups. Assigning the
+    # first hash-ordered groups can pin a very large repository to a 1% role and
+    # overwhelm the requested record proportions before greedy balancing begins.
+    coverage_groups = sorted(
+        group_inventory,
+        key=lambda item: (item[1], digest(item[0], purpose="coverage-group"), item[0]),
+    )[: len(roles)]
+    coverage_roles = sorted(
+        roles,
+        key=lambda role: (digest(role, purpose="coverage-role"), role),
+    )
+    covered = {group for group, _size in coverage_groups}
+    for (group, size), role in zip(coverage_groups, coverage_roles, strict=True):
+        assignments[group] = role
+        counts[role] += size
+
     ordered_groups = sorted(
-        group_sizes.items(),
+        (item for item in group_inventory if item[0] not in covered),
         key=lambda item: (digest(item[0], purpose="group-order"), item[0]),
     )
-    if len(ordered_groups) < len(roles):
-        raise ValueError("balanced group roles require at least one group per positive role")
     for group, size in ordered_groups:
 
         def candidate_key(candidate: str) -> tuple[float, str, str]:
@@ -288,8 +306,7 @@ def assign_balanced_group_roles(
                 candidate,
             )
 
-        unused_roles = tuple(role for role in roles if counts[role] == 0)
-        role = min(unused_roles or roles, key=candidate_key)
+        role = min(roles, key=candidate_key)
         assignments[group] = role
         counts[role] += size
     return assignments
