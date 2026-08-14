@@ -880,6 +880,37 @@ def _corpus_payload(record: CleanRecord, *, role: str) -> dict[str, object]:
     }
 
 
+_CORPUS_EXACT_TEXT_POLICY = "deduplicate-exact-utf8-text-across-sources-and-roles/v1"
+
+
+def _corpus_text_digest(record: CleanRecord) -> bytes:
+    return hashlib.sha256(record.text.encode("utf-8")).digest()
+
+
+def _take_unique_corpus_texts(
+    records: Sequence[CleanRecord],
+    *,
+    count: int,
+    used_text_digests: set[bytes],
+) -> tuple[CleanRecord, ...]:
+    """Take deterministic rows without reusing emitted evaluation text."""
+
+    if count < 0:
+        raise ValueError("evaluation corpus count must be non-negative")
+    if count == 0:
+        return ()
+    selected: list[CleanRecord] = []
+    for record in records:
+        digest = _corpus_text_digest(record)
+        if digest in used_text_digests:
+            continue
+        used_text_digests.add(digest)
+        selected.append(record)
+        if len(selected) == count:
+            break
+    return tuple(selected)
+
+
 def _select_corpus(
     collected: Mapping[str, Sequence[CleanRecord | NaturalTypoRecord]],
     *,
@@ -891,6 +922,7 @@ def _select_corpus(
         "pre_pr_gate": {},
         "final_test": {},
     }
+    used_text_digests: set[bytes] = set()
     for source in ("fineweb_edu", "dolma"):
         candidates = tuple(
             record
@@ -910,7 +942,11 @@ def _select_corpus(
                 ),
             ),
         )
-        tune_rows = tuple(tune_ordered[:tune_count])
+        tune_rows = _take_unique_corpus_texts(
+            tune_ordered,
+            count=tune_count,
+            used_text_digests=used_text_digests,
+        )
         if len(tune_rows) != tune_count:
             raise ValueError(f"evaluation corpus {source}/tune is too small")
         output["tune"][source] = tune_rows
@@ -930,10 +966,23 @@ def _select_corpus(
                 record, namespace=f"evaluation-corpus-{source}-sealed/v1", seed=protocol.seed
             ),
         )
+        sealed_count = sum(
+            protocol.corpus_counts[role][source]
+            for role in ("pre_pr_gate", "final_test")
+        )
+        sealed_rows = _take_unique_corpus_texts(
+            sealed,
+            count=sealed_count,
+            used_text_digests=used_text_digests,
+        )
+        if len(sealed_rows) != sealed_count:
+            raise ValueError(
+                f"evaluation corpus {source}/sealed has too few unique emitted texts"
+            )
         offset = 0
         for role in ("pre_pr_gate", "final_test"):
             count = protocol.corpus_counts[role][source]
-            rows = tuple(sealed[offset : offset + count])
+            rows = sealed_rows[offset : offset + count]
             if len(rows) != count:
                 raise ValueError(f"evaluation corpus {source}/{role} is too small")
             output[role][source] = rows
@@ -1082,6 +1131,7 @@ def _assert_role_disjointness(
     natural_items: Mapping[str, Sequence[NaturalTypoRecord]],
 ) -> None:
     groups: dict[str, set[tuple[str, str]]] = {}
+    corpus_text_owners: dict[bytes, tuple[str, str, str]] = {}
     for role in ("tune", "pre_pr_gate", "final_test"):
         groups[role] = {
             (record.source, record.group_id)
@@ -1094,6 +1144,18 @@ def _assert_role_disjointness(
             for record in rows
         )
         groups[role].update((record.source, record.group_id) for record in natural_items[role])
+        for rows in corpus_items[role].values():
+            for record in rows:
+                digest = _corpus_text_digest(record)
+                previous = corpus_text_owners.get(digest)
+                if previous is not None:
+                    previous_role, previous_source, previous_record_id = previous
+                    raise ValueError(
+                        "evaluation corpus reuses exact emitted text: "
+                        f"{previous_role}/{previous_source}/{previous_record_id} and "
+                        f"{role}/{record.source}/{record.record_id}"
+                    )
+                corpus_text_owners[digest] = (role, record.source, record.record_id)
     roles = tuple(groups)
     for index, left in enumerate(roles):
         for right in roles[index + 1 :]:
@@ -1220,6 +1282,7 @@ def run_freeze_robustness_evaluation(
                     else None
                 ),
             },
+            "corpus_exact_text_policy": _CORPUS_EXACT_TEXT_POLICY,
         }
         _atomic_json(output / "registry.json", registry)
         _atomic_json(

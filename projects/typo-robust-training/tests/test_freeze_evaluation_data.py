@@ -21,6 +21,7 @@ from typo_robust_training.evaluation.freeze import (
     _could_retain_smallest,
     _natural_edit,
     _retain_smallest,
+    _assert_role_disjointness,
     _select_corpus,
     _select_natural,
     _supports_frozen_typo_grid,
@@ -500,6 +501,98 @@ def test_sealed_corpus_excludes_near_duplicates_of_prior_tune_text() -> None:
     )
 
 
+def test_corpus_selection_deduplicates_emitted_text_across_roles() -> None:
+    protocol = replace(
+        load_evaluation_study_protocol(STUDY),
+        corpus_counts=MappingProxyType(
+            {
+                "tune": {"fineweb_edu": 0, "dolma": 0, "natural_pairs": 0},
+                "pre_pr_gate": {"fineweb_edu": 0, "dolma": 1, "natural_pairs": 0},
+                "final_test": {"fineweb_edu": 0, "dolma": 1, "natural_pairs": 0},
+            }
+        ),
+    )
+
+    def corpus_record(index: int, text: str) -> CleanRecord:
+        return CleanRecord(
+            source="dolma",
+            source_revision="a" * 40,
+            source_split="train",
+            source_id=f"dolma-{index}",
+            group_id=f"dolma-group-{index}",
+            text=text,
+            task=None,
+            answer=None,
+            metadata={"fixture": True},
+        )
+
+    duplicate = "Copyright notice all rights reserved"
+    collected = {
+        "fineweb_edu": (),
+        "dolma": (
+            corpus_record(0, duplicate),
+            corpus_record(1, duplicate),
+            corpus_record(2, "A unique held-out document with sufficient prose."),
+            corpus_record(3, "Another unique held-out document with sufficient prose."),
+        ),
+    }
+    exclusions = _Exclusions(
+        hard_source_ids=frozenset(),
+        hard_groups=frozenset(),
+        prior_tune_source_ids=frozenset(),
+        prior_tune_groups=frozenset(),
+        hard_near_duplicates=NearDuplicateTextIndex(()),
+        prior_tune_near_duplicates=NearDuplicateTextIndex(()),
+        training_repositories=frozenset(),
+        tune_repositories=frozenset(),
+        artifact_sha256={},
+    )
+
+    selected = _select_corpus(collected, protocol=protocol, exclusions=exclusions)
+    emitted = tuple(
+        record.text
+        for role in ("pre_pr_gate", "final_test")
+        for record in selected[role]["dolma"]
+    )
+
+    assert len(emitted) == 2
+    assert len(set(emitted)) == 2
+
+
+def test_role_disjointness_rejects_identical_corpus_text_under_distinct_ids() -> None:
+    first = CleanRecord(
+        source="dolma",
+        source_revision="a" * 40,
+        source_split="train",
+        source_id="dolma-first",
+        group_id="dolma-first",
+        text="Copyright notice all rights reserved",
+        task=None,
+        answer=None,
+        metadata={},
+    )
+    second = replace(
+        first,
+        source_id="dolma-second",
+        group_id="dolma-second",
+        metadata=dict(first.metadata),
+    )
+    task_items = {
+        role: {} for role in ("tune", "pre_pr_gate", "final_test")
+    }
+    corpus_items = {
+        "tune": {},
+        "pre_pr_gate": {"dolma": (first,)},
+        "final_test": {"dolma": (second,)},
+    }
+    natural_items = {
+        role: () for role in ("tune", "pre_pr_gate", "final_test")
+    }
+
+    with pytest.raises(ValueError, match="reuses exact emitted text"):
+        _assert_role_disjointness(task_items, corpus_items, natural_items)
+
+
 def test_freeze_writes_fixed_disjoint_primary_secondary_and_corpus_artifacts(
     tmp_path: Path,
 ) -> None:
@@ -579,6 +672,9 @@ def test_freeze_writes_fixed_disjoint_primary_secondary_and_corpus_artifacts(
     assert registry["roles"]["final_test"]["corpus_records"] == 3_000
     assert registry["opening_order"] == ["pre_pr_gate", "final_test"]
     assert registry["generator"] == "frozen-evaluation-typo/v4"
+    assert registry["corpus_exact_text_policy"] == (
+        "deduplicate-exact-utf8-text-across-sources-and-roles/v1"
+    )
     assert registry["task_capacity_census"]["sealed"]["math_500"] == {
         "source_split_records": 500,
         "after_exclusions": 500,

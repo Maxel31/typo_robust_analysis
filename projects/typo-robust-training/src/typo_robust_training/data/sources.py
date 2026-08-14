@@ -24,7 +24,9 @@ _DOLMA_REMOTE_SHARDS = 16
 _DOLMA_ROWS_PER_SHARD = 256
 _REMOTE_TIMEOUT_SECONDS = 60
 _DOLMA_DUPLICATE_IDENTITY_POLICY = "drop-normalized-text-duplicates-fail-on-conflict/v1"
-_DOLMA_DOCUMENT_DUPLICATE_POLICY = "drop-identical-normalized-documents-first-wins/v1"
+_DOLMA_DOCUMENT_DUPLICATE_POLICY = (
+    "drop-identical-normalized-pre-segmentation-full-documents-first-wins/v2"
+)
 _DOLMA_BLANK_TEXT_POLICY = "skip-blank-string/v1"
 _DOLMA_UNSEGMENTABLE_TEXT_POLICY = "skip-unsegmentable-document/v1"
 _DOLMA_USABLE_TEXT_POLICY = "clean-corpus-segmentation-only/v1"

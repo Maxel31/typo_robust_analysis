@@ -136,6 +136,7 @@ _FROZEN_REGISTRY_FIELDS = {
     "generator",
     "task_capacity_census",
     "natural_evaluation_axes",
+    "corpus_exact_text_policy",
 }
 _EXCLUSION_ARTIFACTS = {
     "training_sources.jsonl",
@@ -217,6 +218,8 @@ def _frozen_registry(
         or registry.get("primary_condition") != "random-2"
         or registry.get("generator_seed") != 42
         or registry.get("generator") != FROZEN_EVALUATION_TYPO_VERSION
+        or registry.get("corpus_exact_text_policy")
+        != "deduplicate-exact-utf8-text-across-sources-and-roles/v1"
         or not _valid_task_capacity_census(registry.get("task_capacity_census"))
         or not isinstance(exclusion_artifacts, Mapping)
         or set(exclusion_artifacts) != _EXCLUSION_ARTIFACTS

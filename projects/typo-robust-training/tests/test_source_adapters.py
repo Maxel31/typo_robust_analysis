@@ -168,7 +168,7 @@ def test_dolma_local_cache_is_hashed(tmp_path: Path) -> None:
     )
     assert (
         provider.provenance()["dolma_document_duplicate_policy"]
-        == "drop-identical-normalized-documents-first-wins/v1"
+        == "drop-identical-normalized-pre-segmentation-full-documents-first-wins/v2"
     )
     assert (
         provider.provenance()["dolma_usable_text_policy"]
