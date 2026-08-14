@@ -217,6 +217,10 @@ def build_wandb_run_presentation(
         f"model:{model.rsplit('/', 1)[-1].lower()}",
         budget_tag,
     ]
+    if cycle == 1:
+        # Preserve the historical condition identity even though legacy runs
+        # intentionally share one broad presentation arm.
+        tags.append(f"condition:{condition}")
     if state_gradient_ratio is not None:
         tags.append(f"state-gradient-ratio:{float(state_gradient_ratio):g}")
     if layer_label is not None:

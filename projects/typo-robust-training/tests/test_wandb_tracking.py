@@ -127,7 +127,32 @@ def test_wandb_presentation_names_the_scientific_arm_and_operation() -> None:
     assert legacy.name.startswith("Legacy · Component-level state distillation")
     assert legacy.job_type == "legacy-component-state-pilot"
     assert "arm:Legacy" in legacy.tags
+    assert "condition:localized-state-distillation" in legacy.tags
     assert "relative-MSE" in legacy.notes
+
+
+def test_legacy_wandb_tags_identify_each_condition() -> None:
+    tags = {
+        condition: build_wandb_run_presentation(
+            condition=condition,
+            schema_version="robustness-adapter-training-config/v1",
+            model="google/gemma-3-4b-it",
+            seed=42,
+            max_optimizer_steps=100,
+            state_gradient_ratio=None,
+            state_layers=(),
+        ).tags
+        for condition in (
+            "noisy-language-model",
+            "output-matching",
+            "global-state-alignment",
+            "localized-state-distillation",
+        )
+    }
+
+    assert len(set(tags.values())) == len(tags)
+    for condition, condition_tags in tags.items():
+        assert f"condition:{condition}" in condition_tags
 
 
 def test_long_run_presentation_uses_the_student_token_budget() -> None:
