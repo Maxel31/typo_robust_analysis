@@ -25,6 +25,11 @@ _DOLMA_ROWS_PER_SHARD = 256
 _REMOTE_TIMEOUT_SECONDS = 60
 _DOLMA_DUPLICATE_IDENTITY_POLICY = "drop-exact-text-duplicates-fail-on-conflict/v1"
 _DOLMA_BLANK_TEXT_POLICY = "skip-blank-string/v1"
+_DOLMA_UNSEGMENTABLE_TEXT_POLICY = "skip-unsegmentable-document/v1"
+
+
+class _UnsegmentableDocumentError(ValueError):
+    """A non-empty document has no complete word in its selected window."""
 
 
 def _text(value: object, *, field: str) -> str:
@@ -86,7 +91,9 @@ def segment_document(record: CleanRecord, *, character_limit: int) -> CleanRecor
             end -= 1
         segment = text[start:end]
         if not segment:
-            raise ValueError(f"document window contains no complete word: {record.source_id}")
+            raise _UnsegmentableDocumentError(
+                f"document window contains no complete word: {record.source_id}"
+            )
     metadata = {
         **dict(record.metadata),
         "original_character_count": len(text),
@@ -296,6 +303,7 @@ class HuggingFaceDataSourceProvider:
             "dolma_selected_urls": list(dolma_urls),
             "dolma_duplicate_identity_policy": _DOLMA_DUPLICATE_IDENTITY_POLICY,
             "dolma_blank_text_policy": _DOLMA_BLANK_TEXT_POLICY,
+            "dolma_unsegmentable_text_policy": _DOLMA_UNSEGMENTABLE_TEXT_POLICY,
             "source_revisions": {
                 name: source.revision for name, source in self.protocol.sources.items()
             },
@@ -412,25 +420,29 @@ class HuggingFaceDataSourceProvider:
         else:
             urls, _ = self._remote_dolma_urls(source)
             payloads = (payload for url in urls for payload in self._remote_dolma_rows(url))
-        seen_text_by_record_id: dict[str, str] = {}
+        seen_raw_text_digest_by_source_id: dict[str, bytes] = {}
         for index, payload in enumerate(payloads):
             payload_text = payload.get("text")
             if isinstance(payload_text, str) and not payload_text.strip():
                 continue
             record = _format_huggingface_record("dolma", source, "train", index, payload)
-            previous_text = seen_text_by_record_id.get(record.record_id)
-            if previous_text is not None:
-                if previous_text != record.text:
+            raw_text_digest = hashlib.sha256(payload_text.encode("utf-8")).digest()
+            previous_digest = seen_raw_text_digest_by_source_id.get(record.source_id)
+            if previous_digest is not None:
+                if previous_digest != raw_text_digest:
                     raise ValueError(
                         "Dolma duplicated source identity with conflicting text: "
                         f"{record.source_id}"
                     )
                 continue
-            seen_text_by_record_id[record.record_id] = record.text
-            yield segment_document(
-                record,
-                character_limit=self.protocol.document_character_window,
-            )
+            seen_raw_text_digest_by_source_id[record.source_id] = raw_text_digest
+            try:
+                yield segment_document(
+                    record,
+                    character_limit=self.protocol.document_character_window,
+                )
+            except _UnsegmentableDocumentError:
+                continue
 
     def iter_records(
         self,

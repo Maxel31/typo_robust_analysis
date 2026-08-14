@@ -162,6 +162,10 @@ def test_dolma_local_cache_is_hashed(tmp_path: Path) -> None:
         == "drop-exact-text-duplicates-fail-on-conflict/v1"
     )
     assert provider.provenance()["dolma_blank_text_policy"] == "skip-blank-string/v1"
+    assert (
+        provider.provenance()["dolma_unsegmentable_text_policy"]
+        == "skip-unsegmentable-document/v1"
+    )
 
 
 def test_dolma_exact_duplicate_identity_is_not_emitted_twice(tmp_path: Path) -> None:
@@ -182,6 +186,8 @@ def test_dolma_exact_duplicate_identity_is_not_emitted_twice(tmp_path: Path) -> 
 
     assert len(records) == 1
     assert records[0].source_id == "dolma:duplicated-upstream-id"
+    assert records[0].metadata["dataset_row_index"] == 0
+    assert records[0].metadata["origin_metadata"] == {"fixture": True}
 
 
 def test_dolma_duplicate_identity_with_conflicting_text_fails_closed(tmp_path: Path) -> None:
@@ -206,12 +212,60 @@ def test_dolma_duplicate_identity_with_conflicting_text_fails_closed(tmp_path: P
         tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
 
 
+def test_dolma_duplicate_identity_compares_raw_not_trimmed_text(tmp_path: Path) -> None:
+    protocol = load_training_data_config(DEFAULT_CONFIG)
+    archive = tmp_path / "dolma.jsonl.gz"
+    with gzip.open(archive, "wt", encoding="utf-8") as handle:
+        for text in ("Alpha held-out document.", "Alpha held-out document.\n\n   "):
+            handle.write(
+                json.dumps(
+                    {
+                        "id": "same-upstream-id",
+                        "text": text,
+                        "source": "gutenberg",
+                        "metadata": {},
+                    }
+                )
+                + "\n"
+            )
+
+    provider = HuggingFaceDataSourceProvider(protocol=protocol, dolma_corpus_path=archive)
+    with pytest.raises(ValueError, match="duplicated source identity with conflicting text"):
+        tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
+
+
 def test_dolma_blank_text_rows_are_not_emitted(tmp_path: Path) -> None:
     protocol = load_training_data_config(DEFAULT_CONFIG)
     archive = tmp_path / "dolma.jsonl.gz"
     with gzip.open(archive, "wt", encoding="utf-8") as handle:
         for source_id, text in (
             ("blank", "  \n"),
+            ("usable", "A non-empty held-out document remains available."),
+        ):
+            handle.write(
+                json.dumps(
+                    {
+                        "id": source_id,
+                        "text": text,
+                        "source": "common-crawl",
+                        "metadata": {},
+                    }
+                )
+                + "\n"
+            )
+
+    provider = HuggingFaceDataSourceProvider(protocol=protocol, dolma_corpus_path=archive)
+    records = tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
+
+    assert [record.source_id for record in records] == ["dolma:usable"]
+
+
+def test_dolma_unsegmentable_rows_are_not_emitted(tmp_path: Path) -> None:
+    protocol = load_training_data_config(DEFAULT_CONFIG)
+    archive = tmp_path / "dolma.jsonl.gz"
+    with gzip.open(archive, "wt", encoding="utf-8") as handle:
+        for source_id, text in (
+            ("blob", "A" * (protocol.document_character_window * 2)),
             ("usable", "A non-empty held-out document remains available."),
         ):
             handle.write(
