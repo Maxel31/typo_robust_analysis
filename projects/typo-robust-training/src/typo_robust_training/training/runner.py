@@ -50,6 +50,7 @@ from typo_robust_training.training.tracking import (
 
 
 _MAX_SYNTHETIC_PAIR_VARIANTS = 32
+_TRAINING_MONITOR_INTERVAL_OPTIMIZER_STEPS = 10
 
 
 def _now() -> str:
@@ -612,14 +613,17 @@ def run_adapter_training(
         clean_count = sum(record.source == "fineweb_edu" for record in monitor_records)
         paired_count = sum(record.kind == "natural" for record in monitor_records)
         if (
-            clean_count != study.monitor_clean_documents
-            or paired_count != study.monitor_paired_documents
+            clean_count != study.tune_fineweb_documents
+            or paired_count != study.tune_natural_pairs
             or len(monitor_records) != clean_count + paired_count
         ):
             raise ValueError("training monitor frozen record inventory differs")
         monitor_protocol_sha = study.config_sha256
         monitor_data_sha = monitor_bundle.manifest_sha256
-        monitor_interval = study.monitor_interval_optimizer_steps
+        # Monitor scheduling is an operational training-run concern.  Evaluation
+        # v1.4 freezes the tune inventory and safety gates, but deliberately does
+        # not own the cadence (see robustness_evaluation_protocol_v1.md).
+        monitor_interval = _TRAINING_MONITOR_INTERVAL_OPTIMIZER_STEPS
         monitor_clean_kl_limit = float(study.gates["maximum_clean_kl_nats_per_token"])
         monitor_ppl_limit = float(study.gates["maximum_clean_ppl_ratio"])
     elif not protocol.schema_version.endswith("/v1") and runtime is None:

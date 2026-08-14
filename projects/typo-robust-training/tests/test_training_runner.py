@@ -11,6 +11,7 @@ import pytest
 
 from typo_robust_training.data.perturb import TypoGenerator
 from typo_robust_training.data.splits import normalized_content_sha256
+from typo_robust_training.evaluation.study import load_evaluation_study_protocol
 from typo_robust_training.training.checkpoint import TrainingCursor
 from typo_robust_training.training.data import TrainingDataBundle
 from typo_robust_training.training.pairs import TrainingPair, TrainingSource
@@ -30,6 +31,7 @@ from typo_robust_training.training.runner import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BASE_CONFIG = PROJECT_ROOT / "configs/baselines/noisy-language-model.yaml"
 CYCLE2_OUTPUT_CONFIG = PROJECT_ROOT / "configs/cycle2/gemma4b-output-matching-100step.yaml"
+EVALUATION_PROTOCOL = PROJECT_ROOT / "configs/robustness-evaluation-v1.yaml"
 NATURAL_SUBSTITUTIONS = {
     character: {"z" if character != "z" else "x": 1.0} for character in "abcdefghijklmnopqrstuvwxyz"
 }
@@ -630,33 +632,25 @@ def test_cycle2_runner_loads_and_executes_the_frozen_tune_monitor(
 ) -> None:
     payload = json.loads(CYCLE2_OUTPUT_CONFIG.read_text(encoding="utf-8"))
     payload["optimization"]["gradient_accumulation_steps"] = 4
-    payload["optimization"]["max_optimizer_steps"] = 1
-    payload["optimization"]["checkpoint_every_optimizer_steps"] = 1
+    payload["optimization"]["max_optimizer_steps"] = 10
+    payload["optimization"]["checkpoint_every_optimizer_steps"] = 10
     config_path = tmp_path / "cycle2-output.yaml"
     config_path.write_text(json.dumps(payload), encoding="utf-8")
-    protocol_sha = "d" * 64
+    study = load_evaluation_study_protocol(EVALUATION_PROTOCOL)
     loader_calls: list[dict[str, object]] = []
-
-    monkeypatch.setattr(
-        "typo_robust_training.evaluation.study.load_evaluation_study_protocol",
-        lambda _path: SimpleNamespace(
-            config_sha256=protocol_sha,
-            monitor_clean_documents=1,
-            monitor_paired_documents=1,
-            monitor_interval_optimizer_steps=1,
-            gates={
-                "maximum_clean_kl_nats_per_token": 0.03,
-                "maximum_clean_ppl_ratio": 1.02,
-            },
-        ),
-    )
 
     def load_monitor(_root: Path, **kwargs: object) -> SimpleNamespace:
         loader_calls.append(dict(kwargs))
         return SimpleNamespace(
             records=(
-                SimpleNamespace(source="fineweb_edu", kind="clean-corpus"),
-                SimpleNamespace(source="github_typo_corpus", kind="natural"),
+                *(
+                    SimpleNamespace(source="fineweb_edu", kind="clean-corpus")
+                    for _ in range(study.tune_fineweb_documents)
+                ),
+                *(
+                    SimpleNamespace(source="github_typo_corpus", kind="natural")
+                    for _ in range(study.tune_natural_pairs)
+                ),
             ),
             manifest_sha256="e" * 64,
         )
@@ -666,7 +660,7 @@ def test_cycle2_runner_loads_and_executes_the_frozen_tune_monitor(
         load_monitor,
     )
     runtime = _Cycle2Runtime()
-    run_adapter_training(
+    result = run_adapter_training(
         AdapterTrainingRunConfig(
             condition="output-matching",
             config_path=config_path,
@@ -678,7 +672,7 @@ def test_cycle2_runner_loads_and_executes_the_frozen_tune_monitor(
             wandb_project=None,
             wandb_entity=None,
             output_dir=tmp_path / "monitored-run",
-            evaluation_protocol_path=tmp_path / "study.yaml",
+            evaluation_protocol_path=EVALUATION_PROTOCOL,
             monitor_data_dir=tmp_path / "monitor-data",
         ),
         runtime=runtime,
@@ -686,12 +680,20 @@ def test_cycle2_runner_loads_and_executes_the_frozen_tune_monitor(
     )
 
     assert runtime.monitor_calls == 1
+    run = json.loads(result.run_path.read_text(encoding="utf-8"))
+    assert run["monitor"] == {
+        "protocol_sha256": study.config_sha256,
+        "data_sha256": "e" * 64,
+        "records": study.tune_fineweb_documents + study.tune_natural_pairs,
+        "interval_optimizer_steps": 10,
+        "task_accuracy_allowed": False,
+    }
     assert loader_calls == [
         {
             "evaluation_role": "tune",
-            "study_protocol_sha256": protocol_sha,
-            "access_binding_sha256": protocol_sha,
-            "experiment_binding_sha256": protocol_sha,
+            "study_protocol_sha256": study.config_sha256,
+            "access_binding_sha256": study.config_sha256,
+            "experiment_binding_sha256": study.config_sha256,
             "output_dir": tmp_path / "monitored-run",
             "confirm_sealed_role": False,
             "resume": False,
