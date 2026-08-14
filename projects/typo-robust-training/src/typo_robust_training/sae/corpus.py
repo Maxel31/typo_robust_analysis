@@ -22,7 +22,10 @@ from typo_robust_training.sae.data import (
     write_json_atomic,
 )
 from typo_robust_training.sae.duplicates import CharacterNgramDuplicateGuard
-from typo_robust_training.sae.registry import load_sae_preregistration
+from typo_robust_training.sae.registry import (
+    load_sae_preregistration,
+    validate_sae_prepared_sources,
+)
 from typo_robust_training.training.pairs import TrainingSource
 
 
@@ -365,6 +368,7 @@ def run_build_sae_clean_corpus(
         reserved_epoch=protocol.reserved_order_epoch,
         reserved_records=protocol.reserved_prefix_records,
     )
+    validate_sae_prepared_sources(prepared, preregistration=preregistration)
     existing = (*prepared.reserved, *prepared.sources)
     if any(
         source.source_revision != protocol.source_revision
@@ -383,6 +387,12 @@ def run_build_sae_clean_corpus(
         existing=existing,
         exclusion_files=exclusion_files,
     )
+    # Some rows removed from the eligible stream as normalized-content
+    # duplicates can replay with different segmentation. Preserve every raw
+    # input identity so those rows cannot re-enter through the supplement.
+    record_ids.update(prepared.input_record_ids)
+    source_ids.update(prepared.input_source_ids)
+    group_ids.update(prepared.input_group_ids)
     target = _target_source_tokens(protocol, training_budget=config.training_budget)
     needed = target - prepared.source_tokens
     if needed <= 0:
@@ -453,6 +463,9 @@ def run_build_sae_clean_corpus(
             "training_budget": config.training_budget,
             "target_total_eligible_source_tokens": target,
             "prior_eligible_source_tokens": prepared.source_tokens,
+            "protected_normalized_duplicates_removed": (
+                prepared.protected_normalized_duplicates_removed
+            ),
             "supplement_records": len(selected),
             "supplement_source_tokens": supplement_tokens,
             "total_eligible_source_tokens": prepared.source_tokens + supplement_tokens,

@@ -6,6 +6,7 @@ import hashlib
 import json
 import random
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,7 +20,7 @@ from typo_robust_training.sae.corpus import (
     _segment_document,
     run_build_sae_clean_corpus,
 )
-from typo_robust_training.sae.data import sha256_file
+from typo_robust_training.sae.data import prepare_sae_sources, sha256_file
 from typo_robust_training.sae.duplicates import CharacterNgramDuplicateGuard
 from typo_robust_training.training.pairs import TrainingSource
 
@@ -94,6 +95,24 @@ def _write_sources(path: Path, rows: tuple[TrainingSource, ...]) -> None:
     )
 
 
+def _preregistration_for(path: Path, protocol: SimpleNamespace) -> SimpleNamespace:
+    prepared = prepare_sae_sources(
+        [path],
+        protected_manifest_sha256=sha256_file(path),
+        reserved_seed=protocol.reserved_order_seed,
+        reserved_epoch=protocol.reserved_order_epoch,
+        reserved_records=protocol.reserved_prefix_records,
+    )
+    return SimpleNamespace(
+        source_manifest_sha256=sha256_file(path),
+        sha256="d" * 64,
+        initial_eligible_records=prepared.protected_eligible_records,
+        initial_eligible_source_tokens=prepared.protected_eligible_source_tokens,
+        initial_eligible_record_ids_sha256=prepared.protected_eligible_record_ids_sha256,
+        eligible_records_removed=prepared.protected_normalized_duplicates_removed,
+    )
+
+
 def test_character_ngram_guard_rejects_normalized_and_near_duplicates() -> None:
     guard = CharacterNgramDuplicateGuard(shingle_size=3, threshold=0.80)
     assert guard.add("first", "The airport is located in Chicago.") is None
@@ -109,7 +128,7 @@ def test_exclusion_seeding_indexes_each_nontransitive_near_duplicate(tmp_path: P
 
     def mutate(text: str, index: int) -> str:
         replacement = "z" if text[index] != "z" else "y"
-        return f"{text[:index]}{replacement}{text[index + 1:]}"
+        return f"{text[:index]}{replacement}{text[index + 1 :]}"
 
     typo = mutate(clean, 500)
     candidate = mutate(typo, 1000)
@@ -194,9 +213,7 @@ def test_sae_source_provider_skips_only_unpreparable_unspaced_rows(monkeypatch) 
             retained = min(len(text), 10 if not any(char.isspace() for char in text) else len(text))
             result = {"input_ids": list(range(retained))}
             if return_offsets_mapping:
-                result["offset_mapping"] = [
-                    (index, index + 1) for index in range(retained)
-                ]
+                result["offset_mapping"] = [(index, index + 1) for index in range(retained)]
             return result
 
     dataset = (
@@ -293,10 +310,7 @@ def test_sae_corpus_builder_requires_all_roles_and_reaches_budget(
         splice_documents=1,
         max_sequence_length=2,
     )
-    preregistration = SimpleNamespace(
-        source_manifest_sha256=sha256_file(existing_path),
-        sha256="d" * 64,
-    )
+    preregistration = _preregistration_for(existing_path, protocol)
     monkeypatch.setattr(
         "typo_robust_training.sae.corpus.load_sae_protocol",
         lambda _path: protocol,
@@ -334,3 +348,110 @@ def test_sae_corpus_builder_requires_all_roles_and_reaches_budget(
     registry = json.loads(result.registry_path.read_text(encoding="utf-8"))
     assert registry["exclusion_roles"] == sorted(roles)
     assert registry["skipped_exact_identity"] == 1
+
+
+def test_sae_corpus_builder_blocks_deduplicated_identity_with_new_segmentation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing_path = tmp_path / "existing.jsonl"
+    duplicate_text = "same normalized protected document with sufficient educational content"
+    existing = (
+        _source(0, text=duplicate_text),
+        _source(1, text=duplicate_text),
+        _source(2),
+        _source(3),
+    )
+    _write_sources(existing_path, existing)
+    exclusion_path = tmp_path / "excluded.jsonl"
+    roles = (
+        "tune",
+        "pre_pr_gate",
+        "final_test",
+        "localization-selection",
+        "localization-validation",
+    )
+    exclusion_path.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "record_id": f"excluded-{index}",
+                    "source_id": f"excluded-source-{index}",
+                    "group_id": f"excluded-group-{index}",
+                    "split": role,
+                    "text": f"held out document role {role} unique {index}",
+                }
+            )
+            + "\n"
+            for index, role in enumerate(roles)
+        ),
+        encoding="utf-8",
+    )
+    protocol = SimpleNamespace(
+        config_sha256="c" * 64,
+        reserved_order_seed=42,
+        reserved_order_epoch=0,
+        reserved_prefix_records=1,
+        source_revision="f" * 40,
+        source="fineweb_edu",
+        source_split="train",
+        model="model",
+        model_revision="a" * 40,
+        near_duplicate_shingle_size=3,
+        near_duplicate_jaccard_threshold=0.99,
+        minimum_training_tokens=10,
+        preferred_training_tokens=20,
+        statistics_tokens=2,
+        splice_documents=1,
+        max_sequence_length=2,
+    )
+    preregistration = _preregistration_for(existing_path, protocol)
+    prepared = prepare_sae_sources(
+        [existing_path],
+        protected_manifest_sha256=preregistration.source_manifest_sha256,
+        reserved_seed=42,
+        reserved_epoch=0,
+        reserved_records=1,
+    )
+    retained_ids = {row.record_id for row in (*prepared.reserved, *prepared.sources)}
+    (dropped,) = tuple(row for row in existing if row.record_id not in retained_ids)
+    replayed = replace(
+        dropped,
+        clean_text="same source identity replayed from a different document segment",
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.sae.corpus.load_sae_protocol",
+        lambda _path: protocol,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.sae.corpus.load_sae_preregistration",
+        lambda _path, protocol: preregistration,
+    )
+
+    class Provider:
+        def iter_sources(self):
+            yield replayed
+            for index in range(10, 20):
+                yield _source(index)
+
+        def provenance(self):
+            return {"provider": "fake-clean-stream/v1"}
+
+    output = tmp_path / "output"
+    result = run_build_sae_clean_corpus(
+        SaeCorpusBuildConfig(
+            config_path=tmp_path / "config.json",
+            registry_path=tmp_path / "registry.json",
+            existing_data_paths=(existing_path,),
+            exclusion_paths=(exclusion_path,),
+            training_budget="minimum",
+            output_dir=output,
+        ),
+        source_provider=Provider(),
+    )
+
+    rows = [json.loads(line) for line in result.supplement_path.read_text().splitlines()]
+    assert dropped.record_id not in {row["record_id"] for row in rows}
+    registry = json.loads(result.registry_path.read_text(encoding="utf-8"))
+    assert registry["skipped_exact_identity"] == 1
+    assert registry["protected_normalized_duplicates_removed"] == 1

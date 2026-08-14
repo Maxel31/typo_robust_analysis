@@ -95,8 +95,15 @@ def test_sae_calibration_closes_tracker_when_runtime_initialization_fails(
         reserved=(SimpleNamespace(),),
         input_paths=(tmp_path / "source.jsonl",),
         input_sha256=("d" * 64,),
+        input_record_ids=frozenset({"record"}),
+        input_source_ids=frozenset({"source"}),
+        input_group_ids=frozenset({"group"}),
         record_id_sha256="e" * 64,
         source_tokens=10,
+        protected_eligible_records=1,
+        protected_eligible_source_tokens=10,
+        protected_eligible_record_ids_sha256="e" * 64,
+        protected_normalized_duplicates_removed=1,
     )
 
     def fake_inputs(*, output_dir: Path, **_kwargs):
@@ -163,8 +170,15 @@ def test_sae_training_writes_hash_bound_models_and_resumes_exactly(
         reserved=(SimpleNamespace(),),
         input_paths=(tmp_path / "source.jsonl",),
         input_sha256=("d" * 64,),
+        input_record_ids=frozenset({"record"}),
+        input_source_ids=frozenset({"source"}),
+        input_group_ids=frozenset({"group"}),
         record_id_sha256="e" * 64,
         source_tokens=10,
+        protected_eligible_records=1,
+        protected_eligible_source_tokens=10,
+        protected_eligible_record_ids_sha256="e" * 64,
+        protected_normalized_duplicates_removed=1,
     )
 
     def fake_inputs(*, output_dir: Path, **_kwargs):
