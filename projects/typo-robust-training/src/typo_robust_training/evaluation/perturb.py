@@ -25,9 +25,10 @@ _SUPPORTED = frozenset(
         "adjacent-transposition",
     }
 )
-_ANSWER_WORD = re.compile(r"[A-Za-z]{3,}")
+FROZEN_EVALUATION_TYPO_VERSION = "frozen-evaluation-typo/v4"
+_ANSWER_WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+_DOLLAR_MATH_SPAN = re.compile(r"(?<!\\)\$(?!\s)(?:\\.|[^$\\\n])*(?<![\s\\])\$")
 _MATH_SPANS = (
-    re.compile(r"\$[^$\n]+\$"),
     re.compile(r"\\\([^\n]*?\\\)"),
     re.compile(r"\\\[[^\n]*?\\\]"),
     re.compile(r"\\[A-Za-z]+(?:\{[^{}]*\})*"),
@@ -114,6 +115,54 @@ def _question_stop(record: CleanRecord) -> int:
     return len(record.text)
 
 
+def _question_span_metadata(record: CleanRecord, typo_text: str) -> Mapping[str, object]:
+    clean_stop = _question_stop(record)
+    if record.task in _MULTIPLE_CHOICE_TASKS:
+        typo_stop = typo_text.find("\n")
+        if typo_stop <= 0:
+            raise RuntimeError("multiple-choice typo text has no option separator")
+    else:
+        typo_stop = len(typo_text)
+    return MappingProxyType(
+        {
+            "clean_question_char_span": [0, clean_stop],
+            "typo_question_char_span": [0, typo_stop],
+        }
+    )
+
+
+def _multiple_choice_answer_text(record: CleanRecord) -> str:
+    stored = record.metadata.get("answer_choice_text")
+    if stored is not None:
+        if not isinstance(stored, str) or not stored.strip():
+            raise ValueError("multiple-choice answer_choice_text metadata must be non-empty")
+        return stored
+    if record.answer is None:
+        raise ValueError("multiple-choice evaluation record has no answer")
+    prefix = f"{record.answer}. "
+    matches = tuple(
+        line.removeprefix(prefix)
+        for line in record.text.splitlines()[1:]
+        if line.startswith(prefix)
+    )
+    if len(matches) != 1 or not matches[0]:
+        raise ValueError("multiple-choice answer label does not identify one rendered option")
+    return matches[0]
+
+
+def _forbidden_answer_words(record: CleanRecord) -> frozenset[str]:
+    if record.answer is None:
+        return frozenset()
+    answer_texts = [record.answer]
+    if record.task in _MULTIPLE_CHOICE_TASKS:
+        answer_texts.append(_multiple_choice_answer_text(record))
+    return frozenset(
+        word.casefold()
+        for answer_text in answer_texts
+        for word in _ANSWER_WORD.findall(answer_text)
+    )
+
+
 def evaluation_eligible_word_spans(
     record: CleanRecord,
     *,
@@ -125,9 +174,11 @@ def evaluation_eligible_word_spans(
         raise TypeError("evaluation typo targets require a task CleanRecord with an answer")
     stop = _question_stop(record)
     question = record.text[:stop]
-    answer_words = {word.casefold() for word in _ANSWER_WORD.findall(record.answer)}
+    answer_words = _forbidden_answer_words(record)
     math_spans = tuple(
-        match.span() for pattern in _MATH_SPANS for match in pattern.finditer(question)
+        match.span()
+        for pattern in (*_MATH_SPANS, _DOLLAR_MATH_SPAN)
+        for match in pattern.finditer(question)
     )
     return tuple(
         (start, end)
@@ -151,7 +202,8 @@ def _rng(
     variant: int,
 ) -> random.Random:
     material = (
-        f"frozen-evaluation-typo/v1\0{seed}\0{role}\0{condition}\0{variant}\0{record.record_id}"
+        f"{FROZEN_EVALUATION_TYPO_VERSION}\0{seed}\0{role}\0{condition}\0{variant}\0"
+        f"{record.record_id}"
     ).encode("utf-8")
     return random.Random(int.from_bytes(hashlib.sha256(material).digest(), "big"))
 
@@ -167,7 +219,7 @@ def _record_id(
 ) -> str:
     return hashlib.sha256(
         (
-            "frozen-evaluation-pair/v2\0"
+            "frozen-evaluation-pair/v4\0"
             f"{role}\0{condition}\0{seed}\0{variant}\0{edit_count}\0{record.record_id}"
         ).encode()
     ).hexdigest()
@@ -219,7 +271,7 @@ def generate_evaluation_typo(
                 {
                     "evaluation_condition": condition,
                     "base_record_id": record.record_id,
-                    "question_char_span": [0, _question_stop(record)],
+                    **_question_span_metadata(record, record.text),
                 }
             ),
         )
@@ -242,13 +294,19 @@ def generate_evaluation_typo(
             if operation != "adjacent-transposition" or transposable
         )
 
-    spans = tuple(span for span in spans if compatible_operations(record.text[slice(*span)]))
-    if len(spans) < edit_count:
+    spans_by_word: dict[str, list[tuple[int, int]]] = {}
+    for span in spans:
+        word = record.text[slice(*span)]
+        if compatible_operations(word):
+            spans_by_word.setdefault(word.casefold(), []).append(span)
+    if len(spans_by_word) < edit_count:
         raise ValueError(
-            f"evaluation record has {len(spans)} eligible words but requires {edit_count}"
+            "evaluation record has "
+            f"{len(spans_by_word)} eligible distinct words but requires {edit_count}"
         )
     rng = _rng(record, condition=condition, seed=seed, role=role, variant=variant)
-    selected = sorted(rng.sample(spans, edit_count))
+    selected_word_keys = rng.sample(tuple(spans_by_word), edit_count)
+    selected = sorted(rng.choice(spans_by_word[key]) for key in selected_word_keys)
     replacements: list[tuple[tuple[int, int], str, str, str]] = []
     for span in selected:
         clean_word = record.text[slice(*span)]
@@ -283,6 +341,8 @@ def generate_evaluation_typo(
     typo_text = "".join(chunks)
     if len(edits) != edit_count or len({edit.clean_char_span for edit in edits}) != edit_count:
         raise RuntimeError("evaluation typo generator violated exact distinct-edit count")
+    if len({edit.clean_word.casefold() for edit in edits}) != edit_count:
+        raise RuntimeError("evaluation typo generator violated exact distinct-word count")
     for edit in edits:
         if (
             record.text[slice(*edit.clean_char_span)] != edit.clean_word
@@ -308,7 +368,7 @@ def generate_evaluation_typo(
             {
                 "evaluation_condition": condition,
                 "base_record_id": record.record_id,
-                "question_char_span": [0, _question_stop(record)],
+                **_question_span_metadata(record, typo_text),
             }
         ),
     )
@@ -389,13 +449,14 @@ def generate_natural_injection(
             {
                 "evaluation_condition": "natural-injection",
                 "base_record_id": record.record_id,
-                "question_char_span": [0, _question_stop(record)],
+                **_question_span_metadata(record, typo_text),
             }
         ),
     )
 
 
 __all__ = [
+    "FROZEN_EVALUATION_TYPO_VERSION",
     "FrozenEvaluationTypo",
     "NaturalInjectionDictionary",
     "NoNaturalInjectionTargetError",

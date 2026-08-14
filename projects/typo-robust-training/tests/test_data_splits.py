@@ -9,6 +9,8 @@ import pytest
 from typo_robust_training.data.records import CleanRecord
 from typo_robust_training.data.splits import (
     NearDuplicateTextIndex,
+    _minhash_coefficients,
+    _minhash_signature,
     assign_balanced_group_roles,
     assign_content_splits,
     assign_repository_split,
@@ -16,6 +18,16 @@ from typo_robust_training.data.splits import (
     normalized_content_sha256,
     validate_group_disjointness,
 )
+
+
+def test_vectorized_minhash_matches_the_scalar_definition() -> None:
+    shingles = frozenset({0, 1, 17, 2**32, 2**64 - 1})
+    expected = tuple(
+        min((multiplier * shingle + offset) & (2**64 - 1) for shingle in shingles)
+        for multiplier, offset in _minhash_coefficients(32)
+    )
+
+    assert _minhash_signature(shingles) == expected
 
 
 def _record(index: int, text: str, *, group: str | None = None) -> CleanRecord:
@@ -75,6 +87,16 @@ def test_near_duplicate_text_index_reuses_the_clustering_rule() -> None:
         "The airport is located in Chicago and serves many passenger."
     )
     assert not index.contains_near_duplicate("A completely unrelated medieval discussion.")
+
+
+def test_near_duplicate_text_index_does_not_retain_uncompressed_corpus_or_cache() -> None:
+    text = "The airport is located in Chicago. " * 1_000
+    index = NearDuplicateTextIndex((text,))
+
+    assert not hasattr(index, "_texts")
+    assert not hasattr(index, "_cached_shingles")
+    assert len(index._compressed_normalized_texts[0]) < len(text.encode("utf-8")) // 10
+    assert index.contains_near_duplicate(text)
 
 
 def test_content_assignment_does_not_depend_on_input_order() -> None:
@@ -172,3 +194,16 @@ def test_balanced_group_role_coverage_cannot_pin_a_giant_group_to_a_tiny_role() 
     assert assignments["giant"] == "train"
     assert counts["tune"] < 0.05 * sum(sizes.values())
     assert counts["held_out"] < 0.05 * sum(sizes.values())
+
+
+def test_balanced_group_role_coverage_uses_weights_when_all_groups_are_required() -> None:
+    sizes = {"big": 1_000, "mid": 10, "small": 5}
+    assignments = assign_balanced_group_roles(
+        sizes,
+        seed=42,
+        namespace="small-inventory-fixture",
+        weights={"train": 0.70, "tune": 0.10, "held_out": 0.20},
+    )
+
+    assert assignments["big"] == "train"
+    assert set(assignments.values()) == {"train", "tune", "held_out"}

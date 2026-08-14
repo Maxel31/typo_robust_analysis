@@ -54,7 +54,11 @@ def _synthetic(
         "typo_text": typo,
         "task": task,
         "answer": answer,
-        "metadata": {},
+        "metadata": {
+            "evaluation_condition": (
+                "transposition-2" if operation == "adjacent-transposition" else "random-2"
+            )
+        },
         "operation": operation,
         "operations": [operation],
         "edit_count": 1,
@@ -95,7 +99,7 @@ def _natural(index: int, *, split: str) -> dict[str, object]:
         "repository_license": "mit",
         "clean_sha256": hashlib.sha256(clean.encode()).hexdigest(),
         "typo_sha256": hashlib.sha256(typo.encode()).hexdigest(),
-        "metadata": {},
+        "metadata": {"evaluation_condition": "natural-lm-pair"},
     }
 
 

@@ -24,18 +24,32 @@ from typo_robust_training.evaluation.config import (
     load_robustness_evaluation_config,
 )
 from typo_robust_training.evaluation.data import (
+    EvaluationCorpusBundle,
+    EvaluationCorpusRecord,
     EvaluationDataBundle,
     EvaluationPair,
     complete_evaluation_role,
+    load_evaluation_corpus_bundle,
     load_evaluation_bundle,
+    load_frozen_evaluation_provenance,
 )
 from typo_robust_training.evaluation.metrics import build_evaluation_report
-from typo_robust_training.evaluation.records import EvaluationObservation
+from typo_robust_training.evaluation.records import (
+    CorpusEvaluationObservation,
+    EvaluationObservation,
+)
 from typo_robust_training.integrity import sha256_file as _sha256_file
 
 
 class RobustnessEvaluationRuntime(Protocol):
     def scan_pair(self, pair: EvaluationPair) -> EvaluationObservation: ...
+
+    def scan_corpus(
+        self,
+        record: EvaluationCorpusRecord,
+        *,
+        max_tokens: int,
+    ) -> CorpusEvaluationObservation: ...
 
     def provenance(self) -> Mapping[str, object]: ...
 
@@ -88,6 +102,8 @@ class RobustnessEvaluationRunConfig:
 class RobustnessEvaluationRunResult:
     records: int
     records_path: Path
+    corpus_records: int
+    corpus_records_path: Path
     report_path: Path
     run_path: Path
     gate_passed: bool
@@ -131,14 +147,16 @@ def _experiment_binding(
     study_protocol_sha256: str,
     descriptors: Sequence[AdapterDescriptor],
     patch_window: PatchWindow,
+    training_sources_sha256: str | None,
 ) -> str:
     return _canonical_sha256(
         {
-            "schema_version": "robustness-evaluation-experiment-binding/v1",
+            "schema_version": "robustness-evaluation-experiment-binding/v2",
             "config_sha256": protocol.config_sha256,
             "study_protocol_sha256": study_protocol_sha256,
             "patch_window_sha256": patch_window.artifact_sha256,
             "patch_layers": list(patch_window.layers),
+            "training_sources_sha256": training_sources_sha256,
             "adapters": [
                 {
                     "condition_id": descriptor.condition_id,
@@ -170,6 +188,13 @@ def _access_binding(
 
 
 def _checkpoint_path(work_dir: Path, *, condition_id: str, record_id: str) -> Path:
+    safe = condition_id.replace(":", "__")
+    directory = work_dir / safe
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / f"{record_id}.json"
+
+
+def _corpus_checkpoint_path(work_dir: Path, *, condition_id: str, record_id: str) -> Path:
     safe = condition_id.replace(":", "__")
     directory = work_dir / safe
     directory.mkdir(parents=True, exist_ok=True)
@@ -225,7 +250,78 @@ def _load_checkpoint(
     return observation
 
 
+def _write_corpus_checkpoint(
+    path: Path,
+    *,
+    binding: str,
+    condition_id: str,
+    observation: CorpusEvaluationObservation,
+) -> None:
+    _write_json(
+        path,
+        {
+            "schema_version": "robustness-evaluation-corpus-checkpoint/v1",
+            "access_binding_sha256": binding,
+            "condition_id": condition_id,
+            "record_id": observation.record_id,
+            "observation": observation.as_dict(),
+        },
+    )
+
+
+def _load_corpus_checkpoint(
+    path: Path,
+    *,
+    binding: str,
+    condition_id: str,
+    record_id: str,
+) -> CorpusEvaluationObservation:
+    payload = strict_loads(path.read_text(encoding="utf-8"), context=str(path))
+    expected = {
+        "schema_version",
+        "access_binding_sha256",
+        "condition_id",
+        "record_id",
+        "observation",
+    }
+    if (
+        not isinstance(payload, Mapping)
+        or set(payload) != expected
+        or payload.get("schema_version") != "robustness-evaluation-corpus-checkpoint/v1"
+        or payload.get("access_binding_sha256") != binding
+        or payload.get("condition_id") != condition_id
+        or payload.get("record_id") != record_id
+    ):
+        raise ValueError(f"evaluation corpus checkpoint binding differs: {path}")
+    observation = CorpusEvaluationObservation.from_dict(payload["observation"])
+    if observation.condition_id != condition_id or observation.record_id != record_id:
+        raise ValueError(f"evaluation corpus checkpoint observation identity differs: {path}")
+    return observation
+
+
 def _write_records(path: Path, rows: Sequence[EvaluationObservation]) -> None:
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(
+                    json.dumps(
+                        row.as_dict(),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    )
+                    + "\n"
+                )
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _write_corpus_records(
+    path: Path,
+    rows: Sequence[CorpusEvaluationObservation],
+) -> None:
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
         with temporary.open("w", encoding="utf-8") as handle:
@@ -249,9 +345,15 @@ def _validate_injected_inputs(
     *,
     protocol: RobustnessEvaluationProtocol,
     data_bundle: EvaluationDataBundle | None,
+    corpus_bundle: EvaluationCorpusBundle | None,
     descriptors: Sequence[AdapterDescriptor] | None,
     patch_window: PatchWindow | None,
-) -> tuple[tuple[AdapterDescriptor, ...], PatchWindow, EvaluationDataBundle | None]:
+) -> tuple[
+    tuple[AdapterDescriptor, ...],
+    PatchWindow,
+    EvaluationDataBundle | None,
+    EvaluationCorpusBundle | None,
+]:
     if descriptors is None:
         resolved_descriptors = load_adapter_descriptors(
             config.checkpoint_paths,
@@ -312,7 +414,12 @@ def _validate_injected_inputs(
             raise TypeError("injected evaluation data bundle is invalid")
         if data_bundle.evaluation_role != config.evaluation_role:
             raise ValueError("injected evaluation data role differs")
-    return resolved_descriptors, resolved_window, data_bundle
+    if corpus_bundle is not None:
+        if not isinstance(corpus_bundle, EvaluationCorpusBundle):
+            raise TypeError("injected evaluation corpus bundle is invalid")
+        if corpus_bundle.evaluation_role != config.evaluation_role:
+            raise ValueError("injected evaluation corpus role differs")
+    return resolved_descriptors, resolved_window, data_bundle, corpus_bundle
 
 
 def run_robustness_evaluation(
@@ -320,6 +427,7 @@ def run_robustness_evaluation(
     *,
     runtime_factory: RuntimeFactory | None = None,
     data_bundle: EvaluationDataBundle | None = None,
+    corpus_bundle: EvaluationCorpusBundle | None = None,
     descriptors: Sequence[AdapterDescriptor] | None = None,
     patch_window: PatchWindow | None = None,
 ) -> RobustnessEvaluationRunResult:
@@ -339,22 +447,60 @@ def run_robustness_evaluation(
         or study.bootstrap_seed != protocol.bootstrap_seed
         or study.confidence_level != protocol.confidence_level
         or study.max_new_tokens != protocol.max_new_tokens
+        or study.gates["patch_audit_is_blocking"] is not False
     ):
         raise ValueError("evaluation runtime and study protocols differ")
-    if data_bundle is not None and config.evaluation_role != "tune":
+    if (data_bundle is not None or corpus_bundle is not None) and config.evaluation_role != "tune":
         raise ValueError("sealed evaluation roles cannot use injected data bundles")
-    resolved_descriptors, resolved_window, injected_bundle = _validate_injected_inputs(
+    if (data_bundle is None) != (corpus_bundle is None):
+        raise ValueError("injected task and corpus evaluation bundles must be provided together")
+    if (
+        data_bundle is None
+        and not (config.evaluation_data_dir.resolve() / "registry.json").is_file()
+    ):
+        raise ValueError("production robustness evaluation requires a frozen evaluation registry")
+    (
+        resolved_descriptors,
+        resolved_window,
+        injected_bundle,
+        injected_corpus_bundle,
+    ) = _validate_injected_inputs(
         config,
         protocol=protocol,
         data_bundle=data_bundle,
+        corpus_bundle=corpus_bundle,
         descriptors=descriptors,
         patch_window=patch_window,
     )
+    training_sources_sha256: str | None = None
+    if injected_bundle is None:
+        from typo_robust_training.training.data import load_training_data_provenance
+
+        training_bundle = load_training_data_provenance(config.training_data_dir)
+        if {item.training_data_sha256 for item in resolved_descriptors} != {
+            training_bundle.training_data_sha256
+        } or {item.data_identity_sha256 for item in resolved_descriptors} != {
+            training_bundle.data_identity_sha256
+        }:
+            raise ValueError("evaluation adapter training-data provenance differs")
+        frozen_provenance = load_frozen_evaluation_provenance(
+            config.evaluation_data_dir,
+            study_protocol_sha256=study.config_sha256,
+        )
+        training_sources_sha256 = training_bundle.artifact_sha256["training_sources.jsonl"]
+        if (
+            frozen_provenance.exclusion_artifact_sha256["training_sources.jsonl"]
+            != training_sources_sha256
+        ):
+            raise ValueError(
+                "frozen evaluation exclusions were built from different training sources"
+            )
     experiment_binding = _experiment_binding(
         protocol=protocol,
         study_protocol_sha256=study.config_sha256,
         descriptors=resolved_descriptors,
         patch_window=resolved_window,
+        training_sources_sha256=training_sources_sha256,
     )
     binding = _access_binding(experiment_binding=experiment_binding, config=config)
     output_dir = config.output_dir.resolve()
@@ -372,18 +518,11 @@ def run_robustness_evaluation(
         prior_run = loaded
     work_dir = output_dir / ".evaluate-work"
     work_dir.mkdir(exist_ok=True)
+    corpus_work_dir = output_dir / ".evaluate-corpus-work"
+    corpus_work_dir.mkdir(exist_ok=True)
     records_path = output_dir / "records.jsonl"
+    corpus_records_path = output_dir / "corpus_records.jsonl"
     report_path = output_dir / "report.json"
-    if injected_bundle is None:
-        from typo_robust_training.training.data import load_training_data_provenance
-
-        training_bundle = load_training_data_provenance(config.training_data_dir)
-        if {item.training_data_sha256 for item in resolved_descriptors} != {
-            training_bundle.training_data_sha256
-        } or {item.data_identity_sha256 for item in resolved_descriptors} != {
-            training_bundle.data_identity_sha256
-        }:
-            raise ValueError("evaluation adapter training-data provenance differs")
     bundle = injected_bundle or load_evaluation_bundle(
         config.evaluation_data_dir,
         evaluation_role=config.evaluation_role,
@@ -397,6 +536,16 @@ def run_robustness_evaluation(
         resume=config.resume,
         study_protocol_sha256=study.config_sha256,
     )
+    resolved_corpus_bundle = injected_corpus_bundle or load_evaluation_corpus_bundle(
+        config.evaluation_data_dir,
+        evaluation_role=config.evaluation_role,
+        study_protocol_sha256=study.config_sha256,
+        access_binding_sha256=binding,
+        experiment_binding_sha256=experiment_binding,
+        output_dir=output_dir,
+        confirm_sealed_role=config.confirm_sealed_role,
+        resume=config.resume,
+    )
     if any(not set(pair.strata) & set(config.splits) for pair in bundle.records):
         raise ValueError("evaluation data bundle contains an unrequested record")
     run_base = {
@@ -409,8 +558,10 @@ def run_robustness_evaluation(
         "training_data_identity_sha256": next(
             iter(item.data_identity_sha256 for item in resolved_descriptors)
         ),
+        "training_sources_sha256": training_sources_sha256,
         "study_protocol_sha256": study.config_sha256,
         "role_manifest_sha256": bundle.manifest_sha256,
+        "corpus_manifest_sha256": resolved_corpus_bundle.manifest_sha256,
         "evaluation_manifest_sha256": bundle.evaluation_manifest_sha256,
         "patch_window_sha256": resolved_window.artifact_sha256,
         "patch_layers": list(resolved_window.layers),
@@ -449,6 +600,7 @@ def run_robustness_evaluation(
             started_at = previous_started_at
     _write_json(run_path, {**run_base, "status": "running", "started_at": started_at})
     observations: list[EvaluationObservation] = []
+    corpus_observations: list[CorpusEvaluationObservation] = []
     runtime_provenance: dict[str, object] = prior_runtime
     owned_runtime_factory = None
     try:
@@ -466,7 +618,7 @@ def run_robustness_evaluation(
             active_runtime_factory = owned_runtime_factory
         for descriptor in _condition_inventory(resolved_descriptors):
             condition_id = _condition_id(descriptor)
-            pending = [
+            pending_pairs = [
                 pair
                 for pair in bundle.records
                 if not _checkpoint_path(
@@ -475,7 +627,18 @@ def run_robustness_evaluation(
                     record_id=pair.record_id,
                 ).is_file()
             ]
-            runtime = active_runtime_factory(descriptor) if pending else None
+            pending_corpus = [
+                record
+                for record in resolved_corpus_bundle.records
+                if not _corpus_checkpoint_path(
+                    corpus_work_dir,
+                    condition_id=condition_id,
+                    record_id=record.record_id,
+                ).is_file()
+            ]
+            runtime = (
+                active_runtime_factory(descriptor) if pending_pairs or pending_corpus else None
+            )
             try:
                 if runtime is not None:
                     runtime_provenance[condition_id] = dict(runtime.provenance())
@@ -513,17 +676,65 @@ def run_robustness_evaluation(
                             observation=observation,
                         )
                     observations.append(observation)
+                for record in resolved_corpus_bundle.records:
+                    checkpoint = _corpus_checkpoint_path(
+                        corpus_work_dir,
+                        condition_id=condition_id,
+                        record_id=record.record_id,
+                    )
+                    if checkpoint.is_file():
+                        if not config.resume:
+                            raise ValueError(
+                                "evaluation found a corpus checkpoint without --resume"
+                            )
+                        corpus_observation = _load_corpus_checkpoint(
+                            checkpoint,
+                            binding=binding,
+                            condition_id=condition_id,
+                            record_id=record.record_id,
+                        )
+                    else:
+                        if runtime is None:
+                            raise RuntimeError(
+                                "evaluation runtime is missing for a pending corpus record"
+                            )
+                        corpus_observation = runtime.scan_corpus(
+                            record,
+                            max_tokens=study.corpus_max_tokens,
+                        )
+                        if (
+                            not isinstance(corpus_observation, CorpusEvaluationObservation)
+                            or corpus_observation.condition_id != condition_id
+                            or corpus_observation.record_id != record.record_id
+                        ):
+                            raise ValueError(
+                                "evaluation runtime returned a different corpus identity"
+                            )
+                        _write_corpus_checkpoint(
+                            checkpoint,
+                            binding=binding,
+                            condition_id=condition_id,
+                            observation=corpus_observation,
+                        )
+                    corpus_observations.append(corpus_observation)
             finally:
                 if runtime is not None:
                     runtime.close()
         _write_records(records_path, observations)
+        _write_corpus_records(corpus_records_path, corpus_observations)
         report = {
-            **build_evaluation_report(observations, protocol=protocol),
+            **build_evaluation_report(
+                observations,
+                protocol=protocol,
+                study=study,
+                corpus_observations=corpus_observations,
+            ),
             "evaluation_role": config.evaluation_role,
             "splits": list(config.splits),
             "config_sha256": protocol.config_sha256,
             "data_identity_sha256": bundle.data_identity_sha256,
             "role_manifest_sha256": bundle.manifest_sha256,
+            "corpus_manifest_sha256": resolved_corpus_bundle.manifest_sha256,
             "patch_window_sha256": resolved_window.artifact_sha256,
             "experiment_binding_sha256": experiment_binding,
             "access_binding_sha256": binding,
@@ -546,10 +757,12 @@ def run_robustness_evaluation(
                 "started_at": started_at,
                 "completed_at": _now(),
                 "records": len(observations),
+                "corpus_records": len(corpus_observations),
                 "runtime": runtime_provenance,
                 "gate_passed": gate_passed,
                 "outputs": {
                     "records.jsonl": {"sha256": _sha256_file(records_path)},
+                    "corpus_records.jsonl": {"sha256": _sha256_file(corpus_records_path)},
                     "report.json": {"sha256": _sha256_file(report_path)},
                 },
             },
@@ -563,6 +776,7 @@ def run_robustness_evaluation(
                 "started_at": started_at,
                 "failed_at": _now(),
                 "completed_records": len(observations),
+                "completed_corpus_records": len(corpus_observations),
                 "runtime": runtime_provenance,
                 "error": {"type": type(exc).__name__, "message": str(exc)},
             },
@@ -574,6 +788,8 @@ def run_robustness_evaluation(
     return RobustnessEvaluationRunResult(
         records=len(observations),
         records_path=records_path,
+        corpus_records=len(corpus_observations),
+        corpus_records_path=corpus_records_path,
         report_path=report_path,
         run_path=run_path,
         gate_passed=gate_passed,

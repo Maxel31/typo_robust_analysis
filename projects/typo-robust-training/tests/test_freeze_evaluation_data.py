@@ -17,11 +17,14 @@ from typo_robust_training.data.splits import NearDuplicateTextIndex
 from typo_robust_training.evaluation.freeze import (
     FreezeEvaluationRunConfig,
     _Exclusions,
+    _exclusions,
     _could_retain_smallest,
     _natural_edit,
     _retain_smallest,
     _select_corpus,
     _select_natural,
+    _supports_frozen_typo_grid,
+    _supports_transposition,
     run_freeze_robustness_evaluation,
 )
 from typo_robust_training.evaluation.data import (
@@ -34,6 +37,41 @@ from typo_robust_training.evaluation.study import load_evaluation_study_protocol
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 STUDY = PROJECT_ROOT / "configs/robustness-evaluation-v1.yaml"
 SOURCES = PROJECT_ROOT / "configs" / "cycle3" / "gemma4b-data-64m.yaml"
+
+
+def test_frozen_typo_grid_counts_distinct_words_not_occurrences() -> None:
+    protocol = load_evaluation_study_protocol(STUDY)
+    record = CleanRecord(
+        source="gsm8k",
+        source_revision="a" * 40,
+        source_split="test",
+        source_id="gsm8k:repeated-word-grid",
+        group_id="gsm8k:repeated-word-grid",
+        text="Add value value value value now.",
+        task="gsm8k",
+        answer="42",
+        metadata={},
+    )
+
+    assert not _supports_frozen_typo_grid(record, protocol=protocol)
+
+
+def test_transposition_eligibility_does_not_shrink_primary_population() -> None:
+    protocol = load_evaluation_study_protocol(STUDY)
+    record = CleanRecord(
+        source="math_500",
+        source_revision="a" * 40,
+        source_split="test",
+        source_id="math_500:non-transposable-primary",
+        group_id="math_500:non-transposable-primary",
+        text="Aaa bbb ccc ddd.",
+        task="math_500",
+        answer="42",
+        metadata={},
+    )
+
+    assert _supports_frozen_typo_grid(record, protocol=protocol)
+    assert not _supports_transposition(record, protocol=protocol)
 
 
 def _letters(index: int) -> str:
@@ -198,6 +236,7 @@ def _write_exclusions(root: Path) -> None:
             "group_id": f"https://example.test/train-{index // 10}.git",
             "kind": "natural",
             "repository": f"https://example.test/train-{index // 10}.git",
+            "clean_text": f"The reliable airport example {index} remains readable.",
         }
         for index in range(200)
     ]
@@ -207,6 +246,7 @@ def _write_exclusions(root: Path) -> None:
             "source": "gsm8k",
             "source_id": f"gsm8k:train-{index}",
             "group_id": f"gsm8k:train-{index}",
+            "clean_text": f"The reliable GSM8K diagnostic example {index} remains readable.",
         }
         for index in range(10)
     ]
@@ -217,6 +257,7 @@ def _write_exclusions(root: Path) -> None:
                 "source": "gsm8k",
                 "source_id": f"gsm8k:train-{100 + index}",
                 "group_id": f"gsm8k:train-{100 + index}",
+                "clean_text": f"The reliable GSM8K tune example {index} remains readable.",
             }
             for index in range(100)
         ],
@@ -226,6 +267,7 @@ def _write_exclusions(root: Path) -> None:
                 "source": "fineweb_edu",
                 "source_id": f"fineweb_edu:train-{index}",
                 "group_id": f"fineweb_edu:train-{index}",
+                "clean_text": f"Educational document {_letters(index)} explains a reliable concept.",
             }
             for index in range(200)
         ],
@@ -237,6 +279,7 @@ def _write_exclusions(root: Path) -> None:
                 "group_id": f"https://example.test/tune-{(200 + index) // 10}.git",
                 "kind": "natural",
                 "repository": f"https://example.test/tune-{(200 + index) // 10}.git",
+                "clean_text": f"The reliable airport tune example {index} remains readable.",
             }
             for index in range(100)
         ],
@@ -281,6 +324,33 @@ def test_natural_dictionary_excludes_case_only_corrections() -> None:
     )
 
     assert _natural_edit(record, minimum_word_letters=3) is None
+
+
+def test_exclusions_index_clean_text_and_reject_rows_without_text(tmp_path: Path) -> None:
+    exclusion_root = tmp_path / "exclusions"
+    _write_exclusions(exclusion_root)
+    exclusions = _exclusions(exclusion_root)
+    tune_rows = [
+        json.loads(line)
+        for line in (exclusion_root / "tune_manifest.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line
+    ]
+
+    assert exclusions.prior_tune_near_duplicates.contains_near_duplicate(
+        str(tune_rows[0]["clean_text"])
+    )
+
+    broken = dict(tune_rows[0])
+    broken.pop("clean_text")
+    tune_rows[0] = broken
+    (exclusion_root / "tune_manifest.jsonl").write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in tune_rows),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="row has no clean text"):
+        _exclusions(exclusion_root)
 
 
 def test_bottom_k_prefilter_skips_noncompetitive_near_duplicate_queries() -> None:
@@ -465,7 +535,7 @@ def test_freeze_writes_fixed_disjoint_primary_secondary_and_corpus_artifacts(
     primary_pre = [row for row in pre_pr if row["metadata"]["evaluation_condition"] == "random-2"]
     primary_final = [row for row in final if row["metadata"]["evaluation_condition"] == "random-2"]
     assert len(primary_pre) == 2_500
-    assert len(primary_final) == 2_966
+    assert len(primary_final) == 2_940
     assert {row["task"] for row in primary_pre} == {
         "gsm8k",
         "mmlu",
@@ -505,9 +575,17 @@ def test_freeze_writes_fixed_disjoint_primary_secondary_and_corpus_artifacts(
     assert registry["protocol_sha256"] == hashlib.sha256(STUDY.read_bytes()).hexdigest()
     assert registry["roles"]["pre_pr_gate"]["maximum_openings"] == 1
     assert registry["roles"]["final_test"]["maximum_openings"] == 1
-    assert registry["roles"]["final_test"]["task_primary_records"] == 2_966
+    assert registry["roles"]["final_test"]["task_primary_records"] == 2_940
     assert registry["roles"]["final_test"]["corpus_records"] == 3_000
     assert registry["opening_order"] == ["pre_pr_gate", "final_test"]
+    assert registry["generator"] == "frozen-evaluation-typo/v4"
+    assert registry["task_capacity_census"]["sealed"]["math_500"] == {
+        "source_split_records": 500,
+        "after_exclusions": 500,
+        "typo_grid_eligible": 500,
+        "transposition_eligible": 500,
+        "required": 440,
+    }
     assert registry["exclusion_data_protocol_sha256"] == registry["source_config_sha256"]
     assert registry["natural_evaluation_axes"] == {
         "language_model_pairs": "repository-disjoint/v1",

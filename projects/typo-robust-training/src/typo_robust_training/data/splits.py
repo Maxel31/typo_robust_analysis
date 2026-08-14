@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import re
+import zlib
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from functools import cache
+
+import numpy as np
 
 from typo_robust_training.data.records import CleanRecord
 
@@ -39,8 +42,7 @@ def normalized_content_sha256(text: str) -> str:
     return hashlib.sha256(normalize_for_duplicate_detection(text).encode("utf-8")).hexdigest()
 
 
-def _shingles(text: str, size: int) -> frozenset[int]:
-    normalized = normalize_for_duplicate_detection(text)
+def _normalized_shingles(normalized: str, size: int) -> frozenset[int]:
     if not normalized:
         return frozenset()
     width = min(size, len(normalized))
@@ -55,6 +57,10 @@ def _shingles(text: str, size: int) -> frozenset[int]:
         value = ((value - outgoing * high) * _SHINGLE_BASE + incoming) & _HASH_MASK
         hashes.add(value)
     return frozenset(hashes)
+
+
+def _shingles(text: str, size: int) -> frozenset[int]:
+    return _normalized_shingles(normalize_for_duplicate_detection(text), size)
 
 
 def _jaccard(left: frozenset[int], right: frozenset[int]) -> float:
@@ -96,38 +102,42 @@ class NearDuplicateTextIndex:
             raise ValueError("shingle_size must be a positive integer")
         if not isinstance(threshold, (int, float)) or not 0.0 < float(threshold) <= 1.0:
             raise ValueError("threshold must be in (0, 1]")
-        self._texts = tuple(texts)
-        if any(not isinstance(text, str) for text in self._texts):
-            raise TypeError("near-duplicate index texts must be strings")
         self._shingle_size = shingle_size
         self._threshold = float(threshold)
-        self._exact = {normalized_content_sha256(text) for text in self._texts}
+        self._exact: set[bytes] = set()
+        self._compressed_normalized_texts: list[bytes] = []
         self._buckets: dict[tuple[int, tuple[int, ...]], list[int]] = defaultdict(list)
-        for index, text in enumerate(self._texts):
-            signature = _minhash_signature(_shingles(text, shingle_size))
+        for index, text in enumerate(texts):
+            if not isinstance(text, str):
+                raise TypeError("near-duplicate index texts must be strings")
+            normalized = normalize_for_duplicate_detection(text)
+            encoded = normalized.encode("utf-8")
+            self._exact.add(hashlib.sha256(encoded).digest())
+            self._compressed_normalized_texts.append(zlib.compress(encoded, level=1))
+            signature = _minhash_signature(_normalized_shingles(normalized, shingle_size))
             for band_index in range(8):
                 start = band_index * 4
                 self._buckets[(band_index, signature[start : start + 4])].append(index)
-        self._cached_shingles: dict[int, frozenset[int]] = {}
 
     def contains_near_duplicate(self, text: str) -> bool:
         """Return whether ``text`` is exact/near-duplicate to the indexed corpus."""
 
         if not isinstance(text, str):
             raise TypeError("near-duplicate query text must be a string")
-        if normalized_content_sha256(text) in self._exact:
+        normalized = normalize_for_duplicate_detection(text)
+        if hashlib.sha256(normalized.encode("utf-8")).digest() in self._exact:
             return True
-        query_shingles = _shingles(text, self._shingle_size)
+        query_shingles = _normalized_shingles(normalized, self._shingle_size)
         signature = _minhash_signature(query_shingles)
         candidates: set[int] = set()
         for band_index in range(8):
             start = band_index * 4
             candidates.update(self._buckets.get((band_index, signature[start : start + 4]), ()))
         for index in candidates:
-            indexed = self._cached_shingles.get(index)
-            if indexed is None:
-                indexed = _shingles(self._texts[index], self._shingle_size)
-                self._cached_shingles[index] = indexed
+            indexed = _normalized_shingles(
+                zlib.decompress(self._compressed_normalized_texts[index]).decode("utf-8"),
+                self._shingle_size,
+            )
             if _jaccard(query_shingles, indexed) >= self._threshold:
                 return True
         return False
@@ -136,10 +146,16 @@ class NearDuplicateTextIndex:
 def _minhash_signature(shingles: frozenset[int], *, components: int = 32) -> tuple[int, ...]:
     if not shingles:
         return (0,) * components
-    return tuple(
-        min((multiplier * shingle + offset) & _HASH_MASK for shingle in shingles)
-        for multiplier, offset in _minhash_coefficients(components)
-    )
+    values = np.fromiter(shingles, dtype=np.uint64, count=len(shingles))
+    coefficients = np.asarray(_minhash_coefficients(components), dtype=np.uint64)
+    minima = np.full(components, np.iinfo(np.uint64).max, dtype=np.uint64)
+    # Bound the temporary matrix while evaluating the same 64-bit affine hashes
+    # as the scalar implementation. NumPy unsigned arithmetic wraps modulo 2**64.
+    for start in range(0, values.size, 4096):
+        block = values[start : start + 4096, None]
+        transformed = block * coefficients[None, :, 0] + coefficients[None, :, 1]
+        minima = np.minimum(minima, transformed.min(axis=0))
+    return tuple(int(value) for value in minima)
 
 
 def cluster_near_duplicates(
@@ -280,10 +296,30 @@ def assign_balanced_group_roles(
         group_inventory,
         key=lambda item: (item[1], digest(item[0], purpose="coverage-group"), item[0]),
     )[: len(roles)]
-    coverage_roles = sorted(
-        roles,
-        key=lambda role: (digest(role, purpose="coverage-role"), role),
-    )
+    # Find the globally best one-to-one role assignment for the mandatory
+    # coverage groups.  Hash-zipping the groups to roles ignores the requested
+    # weights entirely and can place the only large group in a tiny role when
+    # the number of groups is close to the number of roles.  This dynamic
+    # program is O(r * 2**r) in the (normally very small) number of roles.
+    coverage_states: dict[int, tuple[float, tuple[str, ...], tuple[str, ...]]] = {0: (0.0, (), ())}
+    for group, size in coverage_groups:
+        next_states: dict[int, tuple[float, tuple[str, ...], tuple[str, ...]]] = {}
+        for mask, (cost, tie_keys, assigned_roles) in coverage_states.items():
+            for role_index, role in enumerate(roles):
+                bit = 1 << role_index
+                if mask & bit:
+                    continue
+                candidate = (
+                    cost + (size - targets[role]) ** 2,
+                    (*tie_keys, digest(f"{group}\0{role}", purpose="coverage-role")),
+                    (*assigned_roles, role),
+                )
+                previous = next_states.get(mask | bit)
+                if previous is None or candidate < previous:
+                    next_states[mask | bit] = candidate
+        coverage_states = next_states
+    full_mask = (1 << len(roles)) - 1
+    coverage_roles = coverage_states[full_mask][2]
     covered = {group for group, _size in coverage_groups}
     for (group, size), role in zip(coverage_groups, coverage_roles, strict=True):
         assignments[group] = role

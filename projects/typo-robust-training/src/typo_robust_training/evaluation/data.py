@@ -15,6 +15,7 @@ from typing import Iterator
 
 from typo_robust_training.data.config import strict_loads
 from typo_robust_training.data.records import TypoEdit, infer_single_word_typo_edit
+from typo_robust_training.evaluation.perturb import FROZEN_EVALUATION_TYPO_VERSION
 from typo_robust_training.integrity import sha256_file as _sha256_file
 
 
@@ -30,6 +31,16 @@ _SPLITS = ("same-task", "unseen-task", "unseen-content", "unseen-typo")
 _SAME_TASKS = frozenset({"gsm8k", "mmlu", "arc"})
 _UNSEEN_TASKS = frozenset({"mmlu_pro", "math_500", "commonsense_qa"})
 _UNSEEN_CONTENT_SOURCES = frozenset({"fineweb_edu", "dolma"})
+_EVALUATION_CONDITIONS = frozenset(
+    {
+        "random-1",
+        "random-2",
+        "random-4",
+        "transposition-2",
+        "natural-injection",
+        "natural-lm-pair",
+    }
+)
 _SYNTHETIC_FIELDS = {
     "schema_version",
     "kind",
@@ -123,8 +134,48 @@ _FROZEN_REGISTRY_FIELDS = {
     "primary_condition",
     "generator_seed",
     "generator",
+    "task_capacity_census",
     "natural_evaluation_axes",
 }
+_EXCLUSION_ARTIFACTS = {
+    "training_sources.jsonl",
+    "diagnostic_manifest.jsonl",
+    "tune_manifest.jsonl",
+    "run.json",
+}
+
+
+def _valid_task_capacity_census(value: object) -> bool:
+    if not isinstance(value, Mapping) or set(value) != {"tune", "sealed"}:
+        return False
+    expected_tasks = {
+        "tune": {"gsm8k", "mmlu", "arc"},
+        "sealed": {"gsm8k", "mmlu", "arc", "mmlu_pro", "math_500", "commonsense_qa"},
+    }
+    fields = {
+        "source_split_records",
+        "after_exclusions",
+        "typo_grid_eligible",
+        "transposition_eligible",
+        "required",
+    }
+    for role, tasks in expected_tasks.items():
+        rows = value.get(role)
+        if not isinstance(rows, Mapping) or set(rows) != tasks:
+            return False
+        for row in rows.values():
+            if (
+                not isinstance(row, Mapping)
+                or set(row) != fields
+                or any(type(row[field]) is not int or row[field] < 0 for field in fields)
+                or not row["source_split_records"]
+                >= row["after_exclusions"]
+                >= row["typo_grid_eligible"]
+                >= row["required"]
+                or row["transposition_eligible"] > row["typo_grid_eligible"]
+            ):
+                return False
+    return True
 
 
 def _object(path: Path) -> Mapping[str, object]:
@@ -134,6 +185,15 @@ def _object(path: Path) -> Mapping[str, object]:
     if not isinstance(payload, Mapping):
         raise ValueError(f"evaluation artifact must contain an object: {path}")
     return payload
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenEvaluationProvenance:
+    """Data identities that a frozen evaluation population excluded."""
+
+    root: Path
+    data_identity_sha256: str
+    exclusion_artifact_sha256: Mapping[str, str]
 
 
 def _frozen_registry(
@@ -146,6 +206,7 @@ def _frozen_registry(
     registry_path = root / "registry.json"
     registry = _object(registry_path)
     natural_axes = registry.get("natural_evaluation_axes")
+    exclusion_artifacts = registry.get("exclusion_artifact_sha256")
     corrected_words = (
         natural_axes.get("corrected_word_split") if isinstance(natural_axes, Mapping) else None
     )
@@ -155,7 +216,14 @@ def _frozen_registry(
         or registry.get("opening_order") != ["pre_pr_gate", "final_test"]
         or registry.get("primary_condition") != "random-2"
         or registry.get("generator_seed") != 42
-        or registry.get("generator") != "frozen-evaluation-typo/v1"
+        or registry.get("generator") != FROZEN_EVALUATION_TYPO_VERSION
+        or not _valid_task_capacity_census(registry.get("task_capacity_census"))
+        or not isinstance(exclusion_artifacts, Mapping)
+        or set(exclusion_artifacts) != _EXCLUSION_ARTIFACTS
+        or any(
+            not isinstance(digest, str) or _SHA64.fullmatch(digest) is None
+            for digest in exclusion_artifacts.values()
+        )
         or registry.get("source_config_sha256") != registry.get("exclusion_data_protocol_sha256")
         or registry.get("protocol_sha256") != study_protocol_sha256
         or not isinstance(natural_axes, Mapping)
@@ -171,10 +239,40 @@ def _frozen_registry(
         or run.get("status") != "completed"
         or run.get("protocol_sha256") != study_protocol_sha256
         or run.get("source_config_sha256") != registry.get("source_config_sha256")
+        or run.get("task_capacity_census") != registry.get("task_capacity_census")
         or run.get("registry_sha256") != _sha256_file(registry_path)
     ):
         raise ValueError("frozen evaluation data build is not completed")
     return registry, registry_path
+
+
+def load_frozen_evaluation_provenance(
+    root: Path,
+    *,
+    study_protocol_sha256: str,
+) -> FrozenEvaluationProvenance:
+    """Return the exclusion identity before any frozen role is claimed."""
+
+    resolved = Path(root).resolve()
+    registry, _registry_path = _frozen_registry(
+        resolved,
+        study_protocol_sha256=study_protocol_sha256,
+    )
+    identity = registry.get("data_identity_sha256")
+    exclusions = registry.get("exclusion_artifact_sha256")
+    if (
+        not isinstance(identity, str)
+        or _SHA64.fullmatch(identity) is None
+        or not isinstance(exclusions, Mapping)
+    ):
+        raise ValueError("frozen evaluation provenance differs")
+    return FrozenEvaluationProvenance(
+        root=resolved,
+        data_identity_sha256=identity,
+        exclusion_artifact_sha256=MappingProxyType(
+            {str(name): str(digest) for name, digest in exclusions.items()}
+        ),
+    )
 
 
 def _text(value: object, *, field: str) -> str:
@@ -223,6 +321,7 @@ class EvaluationPair:
     answer: str | None
     operation: str
     edits: tuple[TypoEdit, ...]
+    mechanistic_audit: bool
     metadata: Mapping[str, object]
     strata: tuple[str, ...]
 
@@ -264,6 +363,16 @@ class EvaluationPair:
         metadata = value.get("metadata")
         if not isinstance(metadata, Mapping):
             raise ValueError("evaluation pair metadata must be an object")
+        evaluation_condition = metadata.get("evaluation_condition")
+        if evaluation_condition not in _EVALUATION_CONDITIONS:
+            raise ValueError("evaluation pair typo condition is unsupported")
+        mechanistic_audit = metadata.get("mechanistic_audit", False)
+        if type(mechanistic_audit) is not bool:
+            raise ValueError("evaluation pair mechanistic_audit must be boolean")
+        if mechanistic_audit and (
+            kind != "synthetic" or evaluation_condition != "random-2" or task is None
+        ):
+            raise ValueError("mechanistic audit must select a synthetic random-2 task pair")
         try:
             json.dumps(metadata, sort_keys=True, allow_nan=False)
         except (TypeError, ValueError) as exc:
@@ -324,7 +433,6 @@ class EvaluationPair:
             strata.append("unseen-task")
         if source in _UNSEEN_CONTENT_SOURCES:
             strata.append("unseen-content")
-        evaluation_condition = metadata.get("evaluation_condition")
         if (
             kind == "natural"
             or evaluation_condition in {"natural-injection", "transposition-2"}
@@ -346,6 +454,7 @@ class EvaluationPair:
             answer=answer,
             operation=operation,
             edits=parsed_edits,
+            mechanistic_audit=mechanistic_audit,
             metadata=MappingProxyType(dict(metadata)),
             strata=tuple(strata),
         )
@@ -808,7 +917,14 @@ def load_evaluation_bundle(
     expected_data_identity_sha256: str | None = None,
     study_protocol_sha256: str | None = None,
 ) -> EvaluationDataBundle:
-    """Validate one role and return only the requested overlapping strata."""
+    """Validate one role and return only the requested overlapping strata.
+
+    Frozen text is intentionally model-independent: ``model`` and
+    ``model_revision`` retain the legacy-call signature and the revision format
+    check, while the evaluation runner binds the concrete model/config in its
+    experiment and access hashes. The frozen registry instead binds source
+    revisions, the study protocol, and every realized text artifact.
+    """
 
     if evaluation_role not in _ROLES:
         raise ValueError("evaluation role is unsupported")
@@ -820,7 +936,9 @@ def load_evaluation_bundle(
     ):
         raise ValueError("evaluation splits must be unique members of the frozen inventory")
     if (
-        _SHA40.fullmatch(model_revision) is None
+        not isinstance(model, str)
+        or not model
+        or _SHA40.fullmatch(model_revision) is None
         or _SHA64.fullmatch(access_binding_sha256) is None
         or _SHA64.fullmatch(experiment_binding_sha256) is None
     ):
@@ -926,7 +1044,9 @@ __all__ = [
     "EvaluationCorpusRecord",
     "EvaluationDataBundle",
     "EvaluationPair",
+    "FrozenEvaluationProvenance",
     "complete_evaluation_role",
     "load_evaluation_corpus_bundle",
     "load_evaluation_bundle",
+    "load_frozen_evaluation_provenance",
 ]

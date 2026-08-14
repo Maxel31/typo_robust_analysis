@@ -14,13 +14,16 @@ from typing import Any
 
 from typo_robust_training.evaluation.checkpoints import AdapterDescriptor, PatchWindow
 from typo_robust_training.evaluation.config import RobustnessEvaluationProtocol
-from typo_robust_training.evaluation.data import EvaluationPair
+from typo_robust_training.evaluation.data import EvaluationCorpusRecord, EvaluationPair
 from typo_robust_training.evaluation.prompting import (
     EvaluationPrompts,
     build_evaluation_prompts,
     classify_tokenization_counts,
 )
-from typo_robust_training.evaluation.records import EvaluationObservation
+from typo_robust_training.evaluation.records import (
+    CorpusEvaluationObservation,
+    EvaluationObservation,
+)
 
 
 def _version(name: str) -> str:
@@ -249,7 +252,12 @@ def causal_nll_and_forward_kl(
             -1,
             targets[:, start:stop].unsqueeze(-1),
         ).sum()
-        forward_kl = (base_log_probs.exp() * (base_log_probs - candidate_log_probs)).sum()
+        forward_kl = (
+            (base_log_probs.exp() * (base_log_probs - candidate_log_probs))
+            .sum(dim=-1)
+            .clamp_min(0.0)
+            .sum()
+        )
         nll_total += float(nll.detach().cpu())
         kl_total += float(forward_kl.detach().cpu())
     count = int(targets.numel())
@@ -292,7 +300,12 @@ def aligned_forward_kl_sum(
         typo_selected = typo_logits[0, [typo for _clean, typo in chunk], :].float()
         clean_log_probs = clean_selected.log_softmax(dim=-1)
         typo_log_probs = typo_selected.log_softmax(dim=-1)
-        values = (clean_log_probs.exp() * (clean_log_probs - typo_log_probs)).sum()
+        values = (
+            (clean_log_probs.exp() * (clean_log_probs - typo_log_probs))
+            .sum(dim=-1)
+            .clamp_min(0.0)
+            .sum()
+        )
         total += float(values.detach().cpu())
     return total, len(causal_pairs)
 
@@ -406,6 +419,7 @@ class HuggingFaceRobustnessEvaluationRuntimeFactory:
         if getattr(self.tokenizer, "is_fast", False) is not True:
             raise ValueError("robustness evaluation requires a fast tokenizer with offsets")
         self.tokenizer.padding_side = "left"
+        self.tokenizer.truncation_side = "right"
         self.device = next(self.model.parameters()).device
         self.effective_eos_token_ids, self.eos_source = resolve_effective_eos_token_ids(
             generation_config=self.model.generation_config,
@@ -514,6 +528,156 @@ class HuggingFaceRobustnessEvaluationRuntime:
 
     def _tensor(self, values: tuple[int, ...]) -> Any:
         return self._torch.tensor([values], dtype=self._torch.long, device=self.device)
+
+    def _corpus_encoding(
+        self,
+        text: str,
+        *,
+        max_tokens: int,
+    ) -> tuple[Any, Any, tuple[tuple[int, int], ...]]:
+        encoded = self.tokenizer(
+            text,
+            add_special_tokens=True,
+            truncation=True,
+            max_length=max_tokens,
+            return_attention_mask=True,
+            return_offsets_mapping=True,
+        )
+        if not isinstance(encoded, Mapping):
+            raise ValueError("evaluation corpus tokenizer must return a mapping")
+        ids = _flat(encoded.get("input_ids"), field="corpus.input_ids")
+        mask = _flat(encoded.get("attention_mask"), field="corpus.attention_mask")
+        offsets_raw = _flat(encoded.get("offset_mapping"), field="corpus.offset_mapping")
+        if (
+            len(ids) < 2
+            or len(ids) != len(mask)
+            or len(ids) != len(offsets_raw)
+            or len(ids) > max_tokens
+        ):
+            raise ValueError("evaluation corpus tokenizer returned inconsistent fields")
+        normalized_ids: list[int] = []
+        normalized_mask: list[int] = []
+        offsets: list[tuple[int, int]] = []
+        for index, (token, attended, raw) in enumerate(zip(ids, mask, offsets_raw, strict=True)):
+            if isinstance(token, bool) or not isinstance(token, int) or token < 0:
+                raise ValueError(f"evaluation corpus input_ids[{index}] is invalid")
+            if isinstance(attended, bool) or not isinstance(attended, int) or attended != 1:
+                raise ValueError(f"evaluation corpus attention_mask[{index}] is invalid")
+            if (
+                not isinstance(raw, (tuple, list))
+                or len(raw) != 2
+                or any(isinstance(value, bool) or not isinstance(value, int) for value in raw)
+                or not 0 <= raw[0] <= raw[1] <= len(text)
+            ):
+                raise ValueError(f"evaluation corpus offset_mapping[{index}] is invalid")
+            normalized_ids.append(token)
+            normalized_mask.append(attended)
+            offsets.append((raw[0], raw[1]))
+        return (
+            self._tensor(tuple(normalized_ids)),
+            self._tensor(tuple(normalized_mask)),
+            tuple(offsets),
+        )
+
+    def _base_forward(self, *, input_ids: Any, attention_mask: Any) -> Any:
+        if self.descriptor is None:
+            return self.model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+        disable_adapter = getattr(self.model, "disable_adapter", None)
+        if not callable(disable_adapter):
+            raise RuntimeError("adapter evaluation model cannot expose its frozen base")
+        with disable_adapter():
+            return self.model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+
+    def scan_corpus(
+        self,
+        record: EvaluationCorpusRecord,
+        *,
+        max_tokens: int,
+    ) -> CorpusEvaluationObservation:
+        """Measure frozen-document PPL, base drift, and natural-pair aligned KL."""
+
+        if not isinstance(record, EvaluationCorpusRecord):
+            raise TypeError("evaluation corpus runtime requires a validated record")
+        clean_ids, clean_mask, clean_offsets = self._corpus_encoding(
+            record.clean_text,
+            max_tokens=max_tokens,
+        )
+        with self._torch.inference_mode():
+            candidate_clean = self.model(
+                input_ids=clean_ids,
+                attention_mask=clean_mask,
+                use_cache=False,
+            )
+            candidate_clean_logits = candidate_clean.logits
+            if self.descriptor is None:
+                base_clean_logits = candidate_clean_logits
+            else:
+                base_clean = self._base_forward(
+                    input_ids=clean_ids,
+                    attention_mask=clean_mask,
+                )
+                base_clean_logits = base_clean.logits
+            clean_nll, clean_tokens, base_kl, base_kl_tokens = causal_nll_and_forward_kl(
+                candidate_clean_logits,
+                clean_ids,
+                base_logits=base_clean_logits,
+            )
+            typo_nll = 0.0
+            typo_tokens = 0
+            natural_kl = 0.0
+            natural_kl_tokens = 0
+            if record.kind == "natural":
+                if record.typo_text is None or not record.edits:
+                    raise RuntimeError("validated natural corpus record lost its typo pair")
+                typo_ids, typo_mask, typo_offsets = self._corpus_encoding(
+                    record.typo_text,
+                    max_tokens=max_tokens,
+                )
+                candidate_typo = self.model(
+                    input_ids=typo_ids,
+                    attention_mask=typo_mask,
+                    use_cache=False,
+                )
+                typo_nll, typo_tokens = causal_nll_sum(candidate_typo.logits, typo_ids)
+                from typo_robust_training.training.pairs import align_unchanged_token_positions
+
+                token_pairs = align_unchanged_token_positions(
+                    clean_text=record.clean_text,
+                    typo_text=record.typo_text,
+                    clean_edit_spans=tuple(edit.clean_char_span for edit in record.edits),
+                    typo_edit_spans=tuple(edit.typo_char_span for edit in record.edits),
+                    clean_offsets=clean_offsets,
+                    typo_offsets=typo_offsets,
+                )
+                clean_token_ids = clean_ids[0].detach().cpu().tolist()
+                typo_token_ids = typo_ids[0].detach().cpu().tolist()
+                token_pairs = tuple(
+                    (clean, typo)
+                    for clean, typo in token_pairs
+                    if clean_token_ids[clean] == typo_token_ids[typo]
+                )
+                natural_kl, natural_kl_tokens = aligned_forward_kl_sum(
+                    candidate_clean_logits,
+                    candidate_typo.logits,
+                    token_pairs=token_pairs,
+                )
+                if natural_kl_tokens < 1:
+                    raise ValueError("natural corpus pair has no aligned next-token targets")
+        return CorpusEvaluationObservation(
+            record_id=record.record_id,
+            condition=self.condition,
+            seed=self.seed,
+            kind=record.kind,
+            source=record.source,
+            clean_nll_sum=clean_nll,
+            clean_nll_tokens=clean_tokens,
+            typo_nll_sum=typo_nll,
+            typo_nll_tokens=typo_tokens,
+            base_clean_kl_sum=base_kl,
+            base_clean_kl_tokens=base_kl_tokens,
+            natural_clean_typo_kl_sum=natural_kl,
+            natural_clean_typo_kl_tokens=natural_kl_tokens,
+        )
 
     def _generate(
         self,
@@ -685,17 +849,26 @@ class HuggingFaceRobustnessEvaluationRuntime:
             )
             untreated: tuple[float, ...] = ()
             patched: tuple[float, ...] = ()
-            patch_invalid_reason = invalid_reason
+            patch_invalid_reason = (
+                invalid_reason if pair.mechanistic_audit else "not-mechanistic-audit"
+            )
             patched_generation = None
             patched_answer = None
             if invalid_reason is None:
                 clean_full = self._append_targets(clean_ids, clean_mask, targets)
                 typo_full = self._append_targets(typo_ids, typo_mask, targets)
-                donors, clean_output = self._capture_donors_and_forward(
-                    input_ids=clean_full[0],
-                    attention_mask=clean_full[1],
-                    positions=profile.clean_positions,
-                )
+                if pair.mechanistic_audit:
+                    donors, clean_output = self._capture_donors_and_forward(
+                        input_ids=clean_full[0],
+                        attention_mask=clean_full[1],
+                        positions=profile.clean_positions,
+                    )
+                else:
+                    clean_output = self.model(
+                        input_ids=clean_full[0],
+                        attention_mask=clean_full[1],
+                        use_cache=False,
+                    )
                 typo_output = self.model(
                     input_ids=typo_full[0], attention_mask=typo_full[1], use_cache=False
                 )
@@ -712,61 +885,68 @@ class HuggingFaceRobustnessEvaluationRuntime:
                     typo_logits,
                     teacher_forced_tokens=self.protocol.teacher_forced_tokens,
                 )
-                patched_output = window_patched_forward(
-                    self.layers,
-                    layer_indices=self.patch_window.layers,
-                    positions=profile.typo_positions,
-                    donor_values=donors,
-                    forward=lambda: self.model(
-                        input_ids=typo_full[0],
-                        attention_mask=typo_full[1],
-                        use_cache=False,
-                    ),
-                )
-                patched_logits = self._target_logits(
-                    patched_output,
-                    prompt_tokens=len(profile.typo_input_ids),
-                )
-                patched = teacher_forced_kl_readout(
-                    clean_logits,
-                    patched_logits,
-                    teacher_forced_tokens=self.protocol.teacher_forced_tokens,
-                )
-                patch_invalid_reason = None
-                if prompts.task_for_extractor is not None:
-                    from typo_cot.experiments.fixed_window_answer_patching.patching import (
-                        PrefillBlockOutputWindowPatch,
-                    )
-
-                    patched_generation = self._generate(
-                        input_ids=typo_ids,
-                        attention_mask=typo_mask,
-                        field=f"{pair.record_id}:{self.condition}:patched",
-                        patch=PrefillBlockOutputWindowPatch(
-                            self.layers,
-                            layer_indices=self.patch_window.layers,
-                            positions=profile.typo_positions,
-                            donor_values=donors,
+                if pair.mechanistic_audit:
+                    patched_output = window_patched_forward(
+                        self.layers,
+                        layer_indices=self.patch_window.layers,
+                        positions=profile.typo_positions,
+                        donor_values=donors,
+                        forward=lambda: self.model(
+                            input_ids=typo_full[0],
+                            attention_mask=typo_full[1],
+                            use_cache=False,
                         ),
                     )
-                    if prompts.answer is None:
-                        raise RuntimeError("task evaluation prompt lost its gold answer")
-                    patched_answer = self._answer(
-                        patched_generation,
-                        task=prompts.task_for_extractor,
-                        gold=prompts.answer,
+                    patched_logits = self._target_logits(
+                        patched_output,
+                        prompt_tokens=len(profile.typo_input_ids),
                     )
-                del clean_output, typo_output, patched_output
+                    patched = teacher_forced_kl_readout(
+                        clean_logits,
+                        patched_logits,
+                        teacher_forced_tokens=self.protocol.teacher_forced_tokens,
+                    )
+                    patch_invalid_reason = None
+                    if prompts.task_for_extractor is not None:
+                        from typo_cot.experiments.fixed_window_answer_patching.patching import (
+                            PrefillBlockOutputWindowPatch,
+                        )
+
+                        patched_generation = self._generate(
+                            input_ids=typo_ids,
+                            attention_mask=typo_mask,
+                            field=f"{pair.record_id}:{self.condition}:patched",
+                            patch=PrefillBlockOutputWindowPatch(
+                                self.layers,
+                                layer_indices=self.patch_window.layers,
+                                positions=profile.typo_positions,
+                                donor_values=donors,
+                            ),
+                        )
+                        if prompts.answer is None:
+                            raise RuntimeError("task evaluation prompt lost its gold answer")
+                        patched_answer = self._answer(
+                            patched_generation,
+                            task=prompts.task_for_extractor,
+                            gold=prompts.answer,
+                        )
+                    del patched_output
+                del clean_output, typo_output
 
         task = pair.task
+        evaluation_condition = pair.metadata.get("evaluation_condition")
+        if not isinstance(evaluation_condition, str):
+            raise RuntimeError("validated evaluation pair lost its typo condition")
         return EvaluationObservation(
             record_id=pair.record_id,
             condition=self.condition,
             seed=self.seed,
+            evaluation_condition=evaluation_condition,
             source=pair.source,
             task=task,
             operation=pair.operation,
             edit_count=len(pair.edits),
+            mechanistic_audit=pair.mechanistic_audit,
             strata=pair.strata,
             clean_answer=None if clean_answer is None else str(clean_answer["value"]),
             typo_answer=None if typo_answer is None else str(typo_answer["value"]),
@@ -783,6 +963,7 @@ class HuggingFaceRobustnessEvaluationRuntime:
             typo_subtoken_counts=profile.typo_subtoken_counts,
             tokenization_stratum=profile.tokenization_stratum,
             audit={
+                "mechanistic_audit": pair.mechanistic_audit,
                 "clean_prompt_sha256": hashlib.sha256(prompts.clean.text.encode()).hexdigest(),
                 "typo_prompt_sha256": hashlib.sha256(prompts.typo.text.encode()).hexdigest(),
                 "clean_prompt_tokens": len(profile.clean_input_ids),
