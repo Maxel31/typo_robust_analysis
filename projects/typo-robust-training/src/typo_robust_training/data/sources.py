@@ -17,7 +17,6 @@ from urllib.parse import urlsplit
 
 from typo_robust_training.data.config import DatasetSource, TrainingDataProtocol, strict_loads
 from typo_robust_training.data.natural_typos import parse_github_typo_commit
-from typo_robust_training.data.perturb import eligible_word_spans
 from typo_robust_training.data.records import CleanRecord, NaturalTypoRecord
 
 
@@ -27,8 +26,8 @@ _REMOTE_TIMEOUT_SECONDS = 60
 _DOLMA_DUPLICATE_IDENTITY_POLICY = "drop-normalized-text-duplicates-fail-on-conflict/v1"
 _DOLMA_BLANK_TEXT_POLICY = "skip-blank-string/v1"
 _DOLMA_UNSEGMENTABLE_TEXT_POLICY = "skip-unsegmentable-document/v1"
-_DOLMA_SEGMENT_DUPLICATE_POLICY = "drop-identical-fallback-segments-first-wins/v1"
-_DOLMA_USABLE_TEXT_POLICY = "require-two-distinct-transposition-targets/v1"
+_DOLMA_SEGMENT_DUPLICATE_POLICY = "drop-identical-emitted-segments-first-wins/v1"
+_DOLMA_USABLE_TEXT_POLICY = "clean-corpus-segmentation-only/v1"
 _DOCUMENT_SEGMENTATION_POLICY = "content-hash-then-nearest-complete-word-window/v3"
 
 
@@ -124,56 +123,6 @@ def _nearest_complete_word_window(
             best = (start, stop, segment)
             best_key = key
     return best
-
-
-def _has_two_distinct_transposition_targets(text: str) -> bool:
-    selected_words: set[str] = set()
-    for start, stop in eligible_word_spans(text):
-        word = text[start:stop]
-        normalized = word.casefold()
-        if normalized in selected_words or not any(
-            word[index] != word[index + 1] for index in range(len(word) - 1)
-        ):
-            continue
-        selected_words.add(normalized)
-        if len(selected_words) == 2:
-            return True
-    return False
-
-
-def _segment_dolma_document(record: CleanRecord, *, character_limit: int) -> CleanRecord:
-    """Return a segment satisfying the held-out Dolma perturbation contract."""
-    segmented = segment_document(record, character_limit=character_limit)
-    if _has_two_distinct_transposition_targets(segmented.text):
-        return segmented
-    if len(record.text) > character_limit:
-        available_starts = len(record.text) - character_limit + 1
-        preferred_start = (
-            int.from_bytes(hashlib.sha256(record.text.encode()).digest(), "big")
-            % available_starts
-        )
-        fallback = _nearest_complete_word_window(
-            record.text,
-            preferred_start=preferred_start,
-            character_limit=character_limit,
-        )
-        if fallback is not None:
-            start, end, segment = fallback
-            if _has_two_distinct_transposition_targets(segment):
-                return replace(
-                    record,
-                    text=segment,
-                    metadata={
-                        **dict(record.metadata),
-                        "original_character_count": len(record.text),
-                        "document_window": [start, end],
-                        "document_character_limit": character_limit,
-                        "document_window_strategy": "nearest-complete-word-fallback",
-                    },
-                )
-    raise _UnsegmentableDocumentError(
-        f"document has fewer than two usable typo targets: {record.source_id}"
-    )
 
 
 def segment_document(record: CleanRecord, *, character_limit: int) -> CleanRecord:
@@ -543,7 +492,7 @@ class HuggingFaceDataSourceProvider:
             urls, _ = self._remote_dolma_urls(source)
             payloads = (payload for url in urls for payload in self._remote_dolma_rows(url))
         seen_normalized_text_digest_by_source_id: dict[str, bytes] = {}
-        seen_fallback_segment_text_digests: set[bytes] = set()
+        seen_emitted_text_digests: set[bytes] = set()
         for index, payload in enumerate(payloads):
             payload_text = payload.get("text")
             if isinstance(payload_text, str) and not payload_text.strip():
@@ -560,22 +509,16 @@ class HuggingFaceDataSourceProvider:
                 continue
             seen_normalized_text_digest_by_source_id[record.source_id] = normalized_text_digest
             try:
-                segmented_record = _segment_dolma_document(
+                segmented_record = segment_document(
                     record,
                     character_limit=self.protocol.document_character_window,
                 )
             except _UnsegmentableDocumentError:
                 continue
-            if (
-                segmented_record.metadata.get("document_window_strategy")
-                == "nearest-complete-word-fallback"
-            ):
-                segment_digest = hashlib.sha256(
-                    segmented_record.text.encode("utf-8")
-                ).digest()
-                if segment_digest in seen_fallback_segment_text_digests:
-                    continue
-                seen_fallback_segment_text_digests.add(segment_digest)
+            segment_digest = hashlib.sha256(segmented_record.text.encode("utf-8")).digest()
+            if segment_digest in seen_emitted_text_digests:
+                continue
+            seen_emitted_text_digests.add(segment_digest)
             yield segmented_record
 
     def iter_records(

@@ -168,11 +168,11 @@ def test_dolma_local_cache_is_hashed(tmp_path: Path) -> None:
     )
     assert (
         provider.provenance()["dolma_segment_duplicate_policy"]
-        == "drop-identical-fallback-segments-first-wins/v1"
+        == "drop-identical-emitted-segments-first-wins/v1"
     )
     assert (
         provider.provenance()["dolma_usable_text_policy"]
-        == "require-two-distinct-transposition-targets/v1"
+        == "clean-corpus-segmentation-only/v1"
     )
     assert (
         provider.provenance()["document_segmentation_policy"]
@@ -309,11 +309,11 @@ def test_dolma_word_rich_documents_survive_unlucky_hashed_windows(tmp_path: Path
         for index in range(20):
             handle.write(
                 json.dumps(
-                    {
-                        "id": f"word-rich-{index}",
-                        "text": ("alpha beta gamma " * 1_000)
-                        + f"document-{index} "
-                        + chr(65 + index) * (limit * 2),
+                        {
+                            "id": f"word-rich-{index}",
+                            "text": (f"alpha{index} beta{index} gamma{index} " * 1_000)
+                            + f"document-{index} "
+                            + chr(65 + index) * (limit * 2),
                         "source": "common-crawl",
                         "metadata": {},
                     }
@@ -335,16 +335,51 @@ def test_dolma_word_rich_documents_survive_unlucky_hashed_windows(tmp_path: Path
     assert len({record.text for record in fallback_records}) == len(fallback_records)
 
 
-def test_dolma_degenerate_or_invisible_documents_are_not_emitted(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "flat_prefix",
+    (
+        "1234 5678 9012 3456 ",
+        "Menu Menu Menu Menu ",
+    ),
+)
+def test_dolma_clean_documents_survive_hashed_flat_regions(
+    tmp_path: Path,
+    flat_prefix: str,
+) -> None:
     protocol = load_training_data_config(DEFAULT_CONFIG)
     archive = tmp_path / "dolma.jsonl.gz"
     limit = protocol.document_character_window
+    rich = " ".join(
+        f"paragraph{index} contains varied prose about robustness research"
+        for index in range(120)
+    )
+    text = flat_prefix * (limit * 20 // len(flat_prefix)) + rich
+    with gzip.open(archive, "wt", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "id": "flat-prefix-with-prose",
+                    "text": text,
+                    "source": "common-crawl",
+                    "metadata": {},
+                }
+            )
+            + "\n"
+        )
+
+    provider = HuggingFaceDataSourceProvider(protocol=protocol, dolma_corpus_path=archive)
+    records = tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
+
+    assert [record.source_id for record in records] == ["dolma:flat-prefix-with-prose"]
+
+
+def test_dolma_clean_corpus_does_not_require_typo_targets(tmp_path: Path) -> None:
+    protocol = load_training_data_config(DEFAULT_CONFIG)
+    archive = tmp_path / "dolma.jsonl.gz"
     with gzip.open(archive, "wt", encoding="utf-8") as handle:
         for source_id, text in (
-            ("fallback-one-word", "a " + "B" * (limit * 2)),
-            ("short-blob", "B" * (limit // 2)),
-            ("zero-width", "\u200b\u200b"),
-            ("usable", "A useful document has multiple editable words."),
+            ("one-word", "a"),
+            ("two-letter-words", "ab ba ab ba"),
         ):
             handle.write(
                 json.dumps(
@@ -361,7 +396,10 @@ def test_dolma_degenerate_or_invisible_documents_are_not_emitted(tmp_path: Path)
     provider = HuggingFaceDataSourceProvider(protocol=protocol, dolma_corpus_path=archive)
     records = tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
 
-    assert [record.source_id for record in records] == ["dolma:usable"]
+    assert [record.source_id for record in records] == [
+        "dolma:one-word",
+        "dolma:two-letter-words",
+    ]
 
 
 def test_dolma_fallback_deduplicates_identical_emitted_segments(tmp_path: Path) -> None:
@@ -389,6 +427,32 @@ def test_dolma_fallback_deduplicates_identical_emitted_segments(tmp_path: Path) 
     assert len(records) == 1
     assert records[0].source_id == "dolma:boilerplate-0"
     assert records[0].text == "Copyright notice all rights reserved"
+
+
+def test_dolma_deduplicates_identical_full_documents_across_source_ids(
+    tmp_path: Path,
+) -> None:
+    protocol = load_training_data_config(DEFAULT_CONFIG)
+    archive = tmp_path / "dolma.jsonl.gz"
+    text = "A held-out document appears verbatim under two upstream identities."
+    with gzip.open(archive, "wt", encoding="utf-8") as handle:
+        for source_id in ("upstream-a", "upstream-b"):
+            handle.write(
+                json.dumps(
+                    {
+                        "id": source_id,
+                        "text": text,
+                        "source": "gutenberg",
+                        "metadata": {},
+                    }
+                )
+                + "\n"
+            )
+
+    provider = HuggingFaceDataSourceProvider(protocol=protocol, dolma_corpus_path=archive)
+    records = tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
+
+    assert [record.source_id for record in records] == ["dolma:upstream-a"]
 
 
 def test_dolma_default_streams_selected_shards_from_pinned_inventory(
