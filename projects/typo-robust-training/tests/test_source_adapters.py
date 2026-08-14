@@ -166,6 +166,18 @@ def test_dolma_local_cache_is_hashed(tmp_path: Path) -> None:
         provider.provenance()["dolma_unsegmentable_text_policy"]
         == "skip-unsegmentable-document/v1"
     )
+    assert (
+        provider.provenance()["dolma_segment_duplicate_policy"]
+        == "drop-identical-fallback-segments-first-wins/v1"
+    )
+    assert (
+        provider.provenance()["dolma_usable_text_policy"]
+        == "require-two-distinct-transposition-targets/v1"
+    )
+    assert (
+        provider.provenance()["document_segmentation_policy"]
+        == "content-hash-then-nearest-complete-word-window/v3"
+    )
 
 
 def test_dolma_exact_duplicate_identity_is_not_emitted_twice(tmp_path: Path) -> None:
@@ -299,7 +311,9 @@ def test_dolma_word_rich_documents_survive_unlucky_hashed_windows(tmp_path: Path
                 json.dumps(
                     {
                         "id": f"word-rich-{index}",
-                        "text": "alpha beta gamma delta " + chr(65 + index) * (limit * 2),
+                        "text": ("alpha beta gamma " * 1_000)
+                        + f"document-{index} "
+                        + chr(65 + index) * (limit * 2),
                         "source": "common-crawl",
                         "metadata": {},
                     }
@@ -311,7 +325,70 @@ def test_dolma_word_rich_documents_survive_unlucky_hashed_windows(tmp_path: Path
     records = tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
 
     assert len(records) == 20
-    assert all(record.text == "alpha beta gamma delta" for record in records)
+    fallback_records = tuple(
+        record
+        for record in records
+        if record.metadata["document_window_strategy"] == "nearest-complete-word-fallback"
+    )
+    assert fallback_records
+    assert all(len(record.text) > limit * 0.9 for record in fallback_records)
+    assert len({record.text for record in fallback_records}) == len(fallback_records)
+
+
+def test_dolma_degenerate_or_invisible_documents_are_not_emitted(tmp_path: Path) -> None:
+    protocol = load_training_data_config(DEFAULT_CONFIG)
+    archive = tmp_path / "dolma.jsonl.gz"
+    limit = protocol.document_character_window
+    with gzip.open(archive, "wt", encoding="utf-8") as handle:
+        for source_id, text in (
+            ("fallback-one-word", "a " + "B" * (limit * 2)),
+            ("short-blob", "B" * (limit // 2)),
+            ("zero-width", "\u200b\u200b"),
+            ("usable", "A useful document has multiple editable words."),
+        ):
+            handle.write(
+                json.dumps(
+                    {
+                        "id": source_id,
+                        "text": text,
+                        "source": "common-crawl",
+                        "metadata": {},
+                    }
+                )
+                + "\n"
+            )
+
+    provider = HuggingFaceDataSourceProvider(protocol=protocol, dolma_corpus_path=archive)
+    records = tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
+
+    assert [record.source_id for record in records] == ["dolma:usable"]
+
+
+def test_dolma_fallback_deduplicates_identical_emitted_segments(tmp_path: Path) -> None:
+    protocol = load_training_data_config(DEFAULT_CONFIG)
+    archive = tmp_path / "dolma.jsonl.gz"
+    limit = protocol.document_character_window
+    with gzip.open(archive, "wt", encoding="utf-8") as handle:
+        for index in range(5):
+            handle.write(
+                json.dumps(
+                    {
+                        "id": f"boilerplate-{index}",
+                        "text": "Copyright notice all rights reserved "
+                        + chr(65 + index) * (limit * 2),
+                        "source": "common-crawl",
+                        "metadata": {},
+                    }
+                )
+                + "\n"
+            )
+
+    provider = HuggingFaceDataSourceProvider(protocol=protocol, dolma_corpus_path=archive)
+    records = tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
+
+    assert len(records) == 1
+    assert records[0].source_id == "dolma:boilerplate-0"
+    assert records[0].text == "Copyright notice all rights reserved"
 
 
 def test_dolma_default_streams_selected_shards_from_pinned_inventory(
