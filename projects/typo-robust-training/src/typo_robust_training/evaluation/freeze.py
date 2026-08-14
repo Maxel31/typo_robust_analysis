@@ -283,6 +283,7 @@ def _collect_evaluation_sources(
     split_counts: dict[str, int] = defaultdict(int)
     per_split_limit = source_collection_limit(name, sources)
     fineweb_ids: set[str] = set()
+    fineweb_text_digests: set[bytes] = set()
     iterator = iter(source_provider.iter_records(name, source))
     try:
         for raw_record in iterator:
@@ -294,9 +295,13 @@ def _collect_evaluation_sources(
                 raise ValueError("FineWeb evaluation source emitted an undeclared split")
             if raw_record.record_id in fineweb_ids:
                 raise ValueError("FineWeb evaluation source duplicated record identity")
+            fineweb_ids.add(raw_record.record_id)
             if split_counts[raw_record.source_split] >= per_split_limit:
                 continue
-            fineweb_ids.add(raw_record.record_id)
+            text_digest = _corpus_text_digest(raw_record)
+            if text_digest in fineweb_text_digests:
+                continue
+            fineweb_text_digests.add(text_digest)
             split_counts[raw_record.source_split] += 1
             tune_digest = int(
                 _order_key(
@@ -349,14 +354,86 @@ def _collect_evaluation_sources(
     if len(tune_heap) != tune_limit or len(sealed_heap) < sealed_count:
         raise ValueError("FineWeb evaluation source has insufficient disjoint candidates")
     retained = {record.record_id: record for _key, _record_id, record in (*tune_heap, *sealed_heap)}
+
+    generic_source_names = tuple(
+        source_name
+        for source_name in sources.sources
+        if source_name not in {name, "dolma"}
+    )
     collected = collect_sources(
         sources,
         source_provider,
-        source_names=tuple(source_name for source_name in sources.sources if source_name != name),
+        source_names=generic_source_names,
     )
     if any(record.record_id in fineweb_ids for records in collected.values() for record in records):
         raise ValueError("evaluation source identities cross configured sources")
     collected[name] = tuple(retained[record_id] for record_id in sorted(retained))
+
+    dolma_name = "dolma"
+    dolma_source = sources.sources[dolma_name]
+    dolma_required = sum(
+        protocol.corpus_counts[role][dolma_name]
+        for role in ("tune", "pre_pr_gate", "final_test")
+    )
+    earlier_corpus_count = sum(
+        protocol.corpus_counts[role][name]
+        for role in ("tune", "pre_pr_gate", "final_test")
+    )
+    # Any selected FineWeb text may also occur in Dolma. Retaining that many
+    # additional unique Dolma texts guarantees that selection can refill every
+    # cross-source collision without materializing an unbounded local corpus.
+    dolma_limit = dolma_required + earlier_corpus_count
+    dolma_heap: list[tuple[int, str, CleanRecord]] = []
+    dolma_ids: set[str] = set()
+    dolma_text_digests: set[bytes] = set()
+    reserved_ids = {
+        record.record_id for records in collected.values() for record in records
+    } | fineweb_ids
+    iterator = iter(source_provider.iter_records(dolma_name, dolma_source))
+    try:
+        for raw_record in iterator:
+            if not isinstance(raw_record, CleanRecord):
+                raise TypeError("Dolma evaluation source emitted a non-clean record")
+            if (
+                raw_record.source != dolma_name
+                or raw_record.source_revision != dolma_source.revision
+            ):
+                raise ValueError("Dolma evaluation source provenance differs")
+            if raw_record.source_split not in dolma_source.splits:
+                raise ValueError("Dolma evaluation source emitted an undeclared split")
+            if raw_record.record_id in dolma_ids:
+                raise ValueError("Dolma evaluation source duplicated record identity")
+            if raw_record.record_id in reserved_ids:
+                raise ValueError("evaluation source identities cross configured sources")
+            dolma_ids.add(raw_record.record_id)
+            if not _eligible_clean(raw_record, exclusions=exclusions, sealed=True):
+                continue
+            text_digest = _corpus_text_digest(raw_record)
+            if text_digest in dolma_text_digests:
+                continue
+            dolma_text_digests.add(text_digest)
+            key = int(
+                _order_key(
+                    raw_record,
+                    namespace="evaluation-corpus-dolma-sealed/v1",
+                    seed=protocol.seed,
+                ),
+                16,
+            )
+            _retain_smallest(dolma_heap, raw_record, key=key, limit=dolma_limit)
+    finally:
+        close = getattr(iterator, "close", None)
+        if callable(close):
+            close()
+    if len(dolma_heap) < dolma_required:
+        raise ValueError("Dolma evaluation source has insufficient unique candidates")
+    collected[dolma_name] = tuple(
+        record
+        for _key, _record_id, record in sorted(
+            dolma_heap,
+            key=lambda item: item[1],
+        )
+    )
     return collected
 
 
@@ -880,6 +957,37 @@ def _corpus_payload(record: CleanRecord, *, role: str) -> dict[str, object]:
     }
 
 
+_CORPUS_EXACT_TEXT_POLICY = "deduplicate-exact-utf8-text-across-sources-and-roles/v1"
+
+
+def _corpus_text_digest(record: CleanRecord) -> bytes:
+    return hashlib.sha256(record.text.encode("utf-8")).digest()
+
+
+def _take_unique_corpus_texts(
+    records: Sequence[CleanRecord],
+    *,
+    count: int,
+    used_text_digests: set[bytes],
+) -> tuple[CleanRecord, ...]:
+    """Take deterministic rows without reusing emitted evaluation text."""
+
+    if count < 0:
+        raise ValueError("evaluation corpus count must be non-negative")
+    if count == 0:
+        return ()
+    selected: list[CleanRecord] = []
+    for record in records:
+        digest = _corpus_text_digest(record)
+        if digest in used_text_digests:
+            continue
+        used_text_digests.add(digest)
+        selected.append(record)
+        if len(selected) == count:
+            break
+    return tuple(selected)
+
+
 def _select_corpus(
     collected: Mapping[str, Sequence[CleanRecord | NaturalTypoRecord]],
     *,
@@ -891,6 +999,7 @@ def _select_corpus(
         "pre_pr_gate": {},
         "final_test": {},
     }
+    used_text_digests: set[bytes] = set()
     for source in ("fineweb_edu", "dolma"):
         candidates = tuple(
             record
@@ -910,7 +1019,11 @@ def _select_corpus(
                 ),
             ),
         )
-        tune_rows = tuple(tune_ordered[:tune_count])
+        tune_rows = _take_unique_corpus_texts(
+            tune_ordered,
+            count=tune_count,
+            used_text_digests=used_text_digests,
+        )
         if len(tune_rows) != tune_count:
             raise ValueError(f"evaluation corpus {source}/tune is too small")
         output["tune"][source] = tune_rows
@@ -930,12 +1043,23 @@ def _select_corpus(
                 record, namespace=f"evaluation-corpus-{source}-sealed/v1", seed=protocol.seed
             ),
         )
+        sealed_count = sum(
+            protocol.corpus_counts[role][source]
+            for role in ("pre_pr_gate", "final_test")
+        )
+        sealed_rows = _take_unique_corpus_texts(
+            sealed,
+            count=sealed_count,
+            used_text_digests=used_text_digests,
+        )
+        if len(sealed_rows) != sealed_count:
+            raise ValueError(
+                f"evaluation corpus {source}/sealed has too few unique emitted texts"
+            )
         offset = 0
         for role in ("pre_pr_gate", "final_test"):
             count = protocol.corpus_counts[role][source]
-            rows = tuple(sealed[offset : offset + count])
-            if len(rows) != count:
-                raise ValueError(f"evaluation corpus {source}/{role} is too small")
+            rows = sealed_rows[offset : offset + count]
             output[role][source] = rows
             offset += count
     return output
@@ -1082,6 +1206,7 @@ def _assert_role_disjointness(
     natural_items: Mapping[str, Sequence[NaturalTypoRecord]],
 ) -> None:
     groups: dict[str, set[tuple[str, str]]] = {}
+    corpus_text_owners: dict[bytes, tuple[str, str, str]] = {}
     for role in ("tune", "pre_pr_gate", "final_test"):
         groups[role] = {
             (record.source, record.group_id)
@@ -1094,6 +1219,18 @@ def _assert_role_disjointness(
             for record in rows
         )
         groups[role].update((record.source, record.group_id) for record in natural_items[role])
+        for rows in corpus_items[role].values():
+            for record in rows:
+                digest = _corpus_text_digest(record)
+                previous = corpus_text_owners.get(digest)
+                if previous is not None:
+                    previous_role, previous_source, previous_record_id = previous
+                    raise ValueError(
+                        "evaluation corpus reuses exact emitted text: "
+                        f"{previous_role}/{previous_source}/{previous_record_id} and "
+                        f"{role}/{record.source}/{record.record_id}"
+                    )
+                corpus_text_owners[digest] = (role, record.source, record.record_id)
     roles = tuple(groups)
     for index, left in enumerate(roles):
         for right in roles[index + 1 :]:
@@ -1220,6 +1357,7 @@ def run_freeze_robustness_evaluation(
                     else None
                 ),
             },
+            "corpus_exact_text_policy": _CORPUS_EXACT_TEXT_POLICY,
         }
         _atomic_json(output / "registry.json", registry)
         _atomic_json(
