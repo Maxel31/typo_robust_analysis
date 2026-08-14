@@ -11,12 +11,15 @@ import pytest
 import torch
 
 from typo_robust_training.sae.data import PreparedSaeSources
+from typo_robust_training.sae.model import SparseAutoencoder
 from typo_robust_training.sae.runner import (
     SaeCalibrationRunConfig,
     SaeTrainingRunConfig,
+    _load_training_checkpoint,
     _load_final_saes,
     _load_wp2_attempts,
     _record_wp2_attempt,
+    _save_training_checkpoint,
     run_calibrate_sae_l1,
     run_train_saes,
 )
@@ -233,6 +236,66 @@ def test_sae_training_writes_hash_bound_models_and_resumes_exactly(
     assert resumed.trained_tokens == 4
     assert resumed.optimizer_steps == 2
     assert len(trackers) == tracker_count
+
+
+def test_sae_checkpoint_metadata_failure_preserves_previous_generation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    output = tmp_path / "training"
+    output.mkdir()
+    bindings = {"config_sha256": "a" * 64}
+    model = SparseAutoencoder(d_model=2, d_sae=4, seed=42)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    models = {"layer-5-seed-42": model}
+    optimizers = {"layer-5-seed-42": optimizer}
+    first_cursor = {
+        "trained_tokens": 4,
+        "optimizer_steps": 2,
+        "next_source_index": 1,
+        "next_source_offset": 0,
+        "next_buffer_index": 1,
+    }
+    _save_training_checkpoint(
+        output=output,
+        bindings=bindings,
+        models=models,
+        optimizers=optimizers,
+        cursor=first_cursor,
+    )
+    first_parameters = {name: value.detach().clone() for name, value in model.state_dict().items()}
+
+    with torch.no_grad():
+        next(model.parameters()).add_(1.0)
+    second_cursor = dict(first_cursor, trained_tokens=8, optimizer_steps=4, next_buffer_index=2)
+
+    def fail_metadata_commit(*_args, **_kwargs):
+        raise OSError("simulated metadata commit failure")
+
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner.write_json_atomic",
+        fail_metadata_commit,
+    )
+    with pytest.raises(OSError, match="simulated metadata commit failure"):
+        _save_training_checkpoint(
+            output=output,
+            bindings=bindings,
+            models=models,
+            optimizers=optimizers,
+            cursor=second_cursor,
+        )
+
+    resumed_model = SparseAutoencoder(d_model=2, d_sae=4, seed=7)
+    resumed_optimizer = torch.optim.Adam(resumed_model.parameters(), lr=1e-3)
+    loaded_cursor = _load_training_checkpoint(
+        output=output,
+        bindings=bindings,
+        models={"layer-5-seed-42": resumed_model},
+        optimizers={"layer-5-seed-42": resumed_optimizer},
+    )
+    assert loaded_cursor == first_cursor
+    for name, value in resumed_model.state_dict().items():
+        assert torch.equal(value, first_parameters[name])
 
 
 def test_wp2_attempt_ledger_enforces_one_preregistered_retrain(tmp_path: Path) -> None:

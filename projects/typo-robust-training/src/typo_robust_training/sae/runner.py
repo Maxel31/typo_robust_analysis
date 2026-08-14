@@ -33,6 +33,7 @@ from typo_robust_training.training.tracking import (
 
 
 _CHECKPOINT_INTERVAL_TOKENS = 10_000_000
+_CHECKPOINT_STATE_FILES = ("checkpoint.0.pt", "checkpoint.1.pt")
 
 
 @dataclass(frozen=True, slots=True)
@@ -533,6 +534,23 @@ def _torch_save_atomic(path: Path, payload: object) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _next_training_checkpoint_state_path(output: Path) -> Path:
+    """Choose the inactive checkpoint slot without invalidating the committed one."""
+
+    metadata_path = output / "checkpoint.json"
+    if not metadata_path.is_file():
+        return output / _CHECKPOINT_STATE_FILES[0]
+    payload = strict_loads(metadata_path.read_text(encoding="utf-8"), context=str(metadata_path))
+    if not isinstance(payload, Mapping):
+        raise ValueError("SAE checkpoint metadata must be an object")
+    current = payload.get("state_file")
+    if current == _CHECKPOINT_STATE_FILES[0]:
+        return output / _CHECKPOINT_STATE_FILES[1]
+    if current in {_CHECKPOINT_STATE_FILES[1], "checkpoint.pt"}:
+        return output / _CHECKPOINT_STATE_FILES[0]
+    raise ValueError("SAE checkpoint state file is outside the supported slots")
+
+
 def _save_training_checkpoint(
     *,
     output: Path,
@@ -541,7 +559,10 @@ def _save_training_checkpoint(
     optimizers: Mapping[str, Any],
     cursor: Mapping[str, int],
 ) -> None:
-    state_path = output / "checkpoint.pt"
+    # The metadata file is the commit point.  Write the new state to the inactive
+    # slot first so a crash before the metadata swap leaves the prior generation
+    # fully loadable.  Keeping two bounded slots also avoids checkpoint buildup.
+    state_path = _next_training_checkpoint_state_path(output)
     _torch_save_atomic(
         state_path,
         {
@@ -588,10 +609,13 @@ def _load_training_checkpoint(
     if (
         payload.get("schema_version") != "robustness-sae-training-checkpoint/v1"
         or payload.get("bindings") != dict(bindings)
-        or payload.get("state_file") != "checkpoint.pt"
+        or payload.get("state_file")
+        not in {*_CHECKPOINT_STATE_FILES, "checkpoint.pt"}
     ):
         raise ValueError("SAE checkpoint bindings differ")
-    state_path = output / "checkpoint.pt"
+    state_path = output / str(payload["state_file"])
+    if not state_path.is_file():
+        raise ValueError("SAE checkpoint state file is missing")
     if payload.get("state_sha256") != sha256_file(state_path):
         raise ValueError("SAE checkpoint state hash differs")
     state = torch.load(
@@ -994,7 +1018,8 @@ def _load_final_saes(
             path = root / f"sae-{key}.pt"
             declaration = declared_models.get(path.name)
             if (
-                not isinstance(declaration, Mapping)
+                not path.is_file()
+                or not isinstance(declaration, Mapping)
                 or declaration.get("sha256") != sha256_file(path)
                 or declaration.get("bytes") != path.stat().st_size
             ):
