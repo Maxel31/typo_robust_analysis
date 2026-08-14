@@ -33,6 +33,13 @@
       "source_manifest_changed": false,
       "wp2_or_wp5_gate_changed": false
     },
+    "identity_replay_amendment": {
+      "amended_at": "2026-08-15T02:00:00+09:00",
+      "trigger": "calibration input validation found protected record IDs replayed with different segmentation before runtime initialization",
+      "rule": "retain every raw protected record, source, and group ID in the supplement exclusion inventory, including normalized-content duplicates removed from the eligible stream",
+      "overlapping_record_ids_observed": 8,
+      "model_forward_started": false
+    },
     "selected_record_id_sha256": null
   },
   "wp2_gates": {

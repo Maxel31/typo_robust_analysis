@@ -24,6 +24,7 @@ from typo_robust_training.sae.model import SparseAutoencoder
 from typo_robust_training.sae.registry import (
     SaePreregistration,
     load_sae_preregistration,
+    validate_sae_prepared_sources,
 )
 from typo_robust_training.sae.runtime import HuggingFaceSaeRuntime
 from typo_robust_training.training.tracking import (
@@ -122,6 +123,7 @@ def _load_inputs(
         reserved_epoch=protocol.reserved_order_epoch,
         reserved_records=protocol.reserved_prefix_records,
     )
+    validate_sae_prepared_sources(prepared, preregistration=preregistration)
     for source in (*prepared.reserved, *prepared.sources):
         if source.source_revision != protocol.source_revision:
             raise ValueError("SAE source revision differs from the frozen FineWeb-Edu revision")
@@ -135,6 +137,7 @@ def _load_inputs(
         input_sha256=prepared.input_sha256,
         reserved=prepared.reserved,
         eligible=prepared.sources,
+        protected_normalized_duplicates_removed=(prepared.protected_normalized_duplicates_removed),
     )
     registry.update(
         {
@@ -609,8 +612,7 @@ def _load_training_checkpoint(
     if (
         payload.get("schema_version") != "robustness-sae-training-checkpoint/v1"
         or payload.get("bindings") != dict(bindings)
-        or payload.get("state_file")
-        not in {*_CHECKPOINT_STATE_FILES, "checkpoint.pt"}
+        or payload.get("state_file") not in {*_CHECKPOINT_STATE_FILES, "checkpoint.pt"}
     ):
         raise ValueError("SAE checkpoint bindings differ")
     state_path = output / str(payload["state_file"])
@@ -1056,9 +1058,7 @@ def _load_wp2_attempts(
     ledger_path = _wp2_attempt_ledger_path(checkpoint_dir)
     attempts: list[Mapping[str, object]] = []
     if ledger_path.is_file():
-        payload = strict_loads(
-            ledger_path.read_text(encoding="utf-8"), context=str(ledger_path)
-        )
+        payload = strict_loads(ledger_path.read_text(encoding="utf-8"), context=str(ledger_path))
         if (
             not isinstance(payload, Mapping)
             or set(payload)
@@ -1072,8 +1072,7 @@ def _load_wp2_attempts(
             or payload.get("schema_version") != "robustness-sae-wp2-attempt-ledger/v1"
             or payload.get("config_sha256") != protocol.config_sha256
             or payload.get("preregistration_sha256") != preregistration.sha256
-            or payload.get("maximum_retrains_after_failure")
-            != protocol.maximum_gate_retrains
+            or payload.get("maximum_retrains_after_failure") != protocol.maximum_gate_retrains
             or not isinstance(payload.get("attempts"), list)
         ):
             raise ValueError("SAE WP-2 attempt ledger differs from preregistration")
@@ -1120,9 +1119,7 @@ def _record_wp2_attempt(
     preregistration: SaePreregistration,
 ) -> None:
     if ledger_path.is_file():
-        current = strict_loads(
-            ledger_path.read_text(encoding="utf-8"), context=str(ledger_path)
-        )
+        current = strict_loads(ledger_path.read_text(encoding="utf-8"), context=str(ledger_path))
         current_attempts = current.get("attempts") if isinstance(current, Mapping) else None
         if current_attempts != list(prior_attempts):
             raise RuntimeError("SAE WP-2 attempt ledger changed during validation")

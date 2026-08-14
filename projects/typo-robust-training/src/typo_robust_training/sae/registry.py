@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 
 from typo_robust_training.data.config import strict_loads
 from typo_robust_training.sae.config import SaeProtocol
+
+if TYPE_CHECKING:
+    from typo_robust_training.sae.data import PreparedSaeSources
 
 
 _FORBIDDEN_DATA_ROLES = [
@@ -18,6 +22,34 @@ _FORBIDDEN_DATA_ROLES = [
     "localization-selection",
     "localization-validation",
 ]
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+_DATA_CONTRACT_FIELDS = {
+    "allowed",
+    "forbidden_roles",
+    "source_manifest_sha256",
+    "current_run_exclusion_rule",
+    "initial_eligible_records",
+    "initial_eligible_source_tokens",
+    "initial_eligible_record_ids_sha256",
+    "deduplication_amendment",
+    "identity_replay_amendment",
+    "selected_record_id_sha256",
+}
+_DEDUPLICATION_AMENDMENT_FIELDS = {
+    "amended_at",
+    "trigger",
+    "rule",
+    "eligible_records_removed",
+    "source_manifest_changed",
+    "wp2_or_wp5_gate_changed",
+}
+_IDENTITY_REPLAY_AMENDMENT_FIELDS = {
+    "amended_at",
+    "trigger",
+    "rule",
+    "overlapping_record_ids_observed",
+    "model_forward_started",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +58,39 @@ class SaePreregistration:
     sha256: str
     source_manifest_sha256: str
     sae_gpu_id: int
+    initial_eligible_records: int
+    initial_eligible_source_tokens: int
+    initial_eligible_record_ids_sha256: str
+    eligible_records_removed: int
+
+
+def _positive_int(value: object, *, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"SAE preregistration {field} must be a positive integer")
+    return value
+
+
+def validate_sae_prepared_sources(
+    prepared: PreparedSaeSources,
+    *,
+    preregistration: SaePreregistration,
+) -> None:
+    """Bind derived protected-stream values to their committed preregistration."""
+
+    observed = (
+        prepared.protected_eligible_records,
+        prepared.protected_eligible_source_tokens,
+        prepared.protected_eligible_record_ids_sha256,
+        prepared.protected_normalized_duplicates_removed,
+    )
+    expected = (
+        preregistration.initial_eligible_records,
+        preregistration.initial_eligible_source_tokens,
+        preregistration.initial_eligible_record_ids_sha256,
+        preregistration.eligible_records_removed,
+    )
+    if observed != expected:
+        raise ValueError("SAE protected eligible stream differs from preregistration")
 
 
 def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregistration:
@@ -65,12 +130,13 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
     data = payload["data_contract"]
     if (
         not isinstance(data, Mapping)
+        or set(data) != _DATA_CONTRACT_FIELDS
         or data.get("allowed") != "clean FineWeb-Edu train split only"
         or data.get("forbidden_roles") != _FORBIDDEN_DATA_ROLES
     ):
         raise ValueError("SAE data preregistration differs")
     source_sha = data.get("source_manifest_sha256")
-    if not isinstance(source_sha, str) or len(source_sha) != 64:
+    if not isinstance(source_sha, str) or _SHA256.fullmatch(source_sha) is None:
         raise ValueError("SAE source-manifest preregistration differs")
     expected_exclusion = (
         "stable-training-order-prefix/v1:seed="
@@ -79,6 +145,57 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
     )
     if data.get("current_run_exclusion_rule") != expected_exclusion:
         raise ValueError("SAE current-run exclusion registration differs")
+    initial_records = _positive_int(
+        data.get("initial_eligible_records"),
+        field="initial_eligible_records",
+    )
+    initial_tokens = _positive_int(
+        data.get("initial_eligible_source_tokens"),
+        field="initial_eligible_source_tokens",
+    )
+    initial_digest = data.get("initial_eligible_record_ids_sha256")
+    if not isinstance(initial_digest, str) or _SHA256.fullmatch(initial_digest) is None:
+        raise ValueError("SAE initial eligible record-ID digest differs")
+    deduplication = data.get("deduplication_amendment")
+    if (
+        not isinstance(deduplication, Mapping)
+        or set(deduplication) != _DEDUPLICATION_AMENDMENT_FIELDS
+        or not isinstance(deduplication.get("amended_at"), str)
+        or not deduplication.get("amended_at")
+        or not isinstance(deduplication.get("trigger"), str)
+        or not deduplication.get("trigger")
+        or not isinstance(deduplication.get("rule"), str)
+        or not deduplication.get("rule")
+        or deduplication.get("source_manifest_changed") is not False
+        or deduplication.get("wp2_or_wp5_gate_changed") is not False
+    ):
+        raise ValueError("SAE deduplication amendment differs")
+    removed = _positive_int(
+        deduplication.get("eligible_records_removed"),
+        field="eligible_records_removed",
+    )
+    identity_replay = data.get("identity_replay_amendment")
+    if (
+        not isinstance(identity_replay, Mapping)
+        or set(identity_replay) != _IDENTITY_REPLAY_AMENDMENT_FIELDS
+        or not isinstance(identity_replay.get("amended_at"), str)
+        or not identity_replay.get("amended_at")
+        or not isinstance(identity_replay.get("trigger"), str)
+        or not identity_replay.get("trigger")
+        or not isinstance(identity_replay.get("rule"), str)
+        or not identity_replay.get("rule")
+        or identity_replay.get("model_forward_started") is not False
+    ):
+        raise ValueError("SAE identity-replay amendment differs")
+    _positive_int(
+        identity_replay.get("overlapping_record_ids_observed"),
+        field="overlapping_record_ids_observed",
+    )
+    selected_digest = data.get("selected_record_id_sha256")
+    if selected_digest is not None and (
+        not isinstance(selected_digest, str) or _SHA256.fullmatch(selected_digest) is None
+    ):
+        raise ValueError("SAE selected record-ID digest differs")
     wp2 = payload["wp2_gates"]
     if not isinstance(wp2, Mapping) or (
         wp2.get("fvu_max") != protocol.fvu_max
@@ -103,7 +220,15 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
         sha256=hashlib.sha256(raw).hexdigest(),
         source_manifest_sha256=source_sha,
         sae_gpu_id=1,
+        initial_eligible_records=initial_records,
+        initial_eligible_source_tokens=initial_tokens,
+        initial_eligible_record_ids_sha256=initial_digest,
+        eligible_records_removed=removed,
     )
 
 
-__all__ = ["SaePreregistration", "load_sae_preregistration"]
+__all__ = [
+    "SaePreregistration",
+    "load_sae_preregistration",
+    "validate_sae_prepared_sources",
+]

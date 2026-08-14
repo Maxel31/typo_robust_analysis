@@ -20,8 +20,15 @@ class PreparedSaeSources:
     reserved: tuple[TrainingSource, ...]
     input_paths: tuple[Path, ...]
     input_sha256: tuple[str, ...]
+    input_record_ids: frozenset[str]
+    input_source_ids: frozenset[str]
+    input_group_ids: frozenset[str]
     record_id_sha256: str
     source_tokens: int
+    protected_eligible_records: int
+    protected_eligible_source_tokens: int
+    protected_eligible_record_ids_sha256: str
+    protected_normalized_duplicates_removed: int
 
 
 def sha256_file(path: Path) -> str:
@@ -117,16 +124,14 @@ def _manifest_identities(
         )
         if any(not isinstance(value, str) or not value for value in values):
             raise ValueError("SAE identity record is incomplete")
-        for index, (value, inventory, name) in enumerate(
-            zip(
-                values,
-                (record_ids, source_ids, group_ids, normalized_hashes),
-                ("record ID", "source ID", "group ID", "normalized content"),
-                strict=True,
-            )
+        for value, inventory, name in zip(
+            values,
+            (record_ids, source_ids, group_ids, normalized_hashes),
+            ("record ID", "source ID", "group ID", "normalized content"),
+            strict=True,
         ):
             if value in inventory:
-                if index == 3 and allow_duplicate_normalized_content:
+                if name == "normalized content" and allow_duplicate_normalized_content:
                     continue
                 raise ValueError(f"SAE manifest duplicates {name}")
             inventory.add(value)
@@ -180,6 +185,8 @@ def prepare_sae_sources(
     seen_source_ids: set[str] = set()
     seen_group_ids: set[str] = set()
     seen_normalized: set[str] = set()
+    protected_eligible: tuple[TrainingSource, ...] | None = None
+    protected_duplicates_removed: int | None = None
     for path, digest in zip(resolved_paths, hashes, strict=True):
         rows = load_clean_fineweb_sources(path)
         is_protected = digest == protected_manifest_sha256
@@ -204,17 +211,28 @@ def prepare_sae_sources(
                 epoch=reserved_epoch,
                 reserved_records=reserved_records,
             )
-            all_sources.extend(_deduplicate_protected_eligible(reserved, eligible))
+            protected_eligible = _deduplicate_protected_eligible(reserved, eligible)
+            protected_duplicates_removed = len(eligible) - len(protected_eligible)
+            all_sources.extend(protected_eligible)
         else:
             all_sources.extend(rows)
+    if protected_eligible is None or protected_duplicates_removed is None:
+        raise AssertionError("protected SAE manifest was not prepared")
     ordered = _sae_order(all_sources)
     return PreparedSaeSources(
         sources=ordered,
         reserved=reserved,
         input_paths=resolved_paths,
         input_sha256=hashes,
+        input_record_ids=frozenset(seen_record_ids),
+        input_source_ids=frozenset(seen_source_ids),
+        input_group_ids=frozenset(seen_group_ids),
         record_id_sha256=record_id_sha256(ordered),
         source_tokens=sum(row.token_count for row in ordered),
+        protected_eligible_records=len(protected_eligible),
+        protected_eligible_source_tokens=sum(row.token_count for row in protected_eligible),
+        protected_eligible_record_ids_sha256=record_id_sha256(protected_eligible),
+        protected_normalized_duplicates_removed=protected_duplicates_removed,
     )
 
 
@@ -224,6 +242,7 @@ def canonical_record_registry(
     input_sha256: Sequence[str],
     reserved: Sequence[TrainingSource],
     eligible: Sequence[TrainingSource],
+    protected_normalized_duplicates_removed: int,
 ) -> dict[str, object]:
     if len(input_paths) != len(input_sha256):
         raise ValueError("SAE input paths and hashes differ")
@@ -238,6 +257,7 @@ def canonical_record_registry(
         "eligible_records": len(eligible),
         "eligible_source_tokens": sum(row.token_count for row in eligible),
         "eligible_record_ids_sha256": record_id_sha256(eligible),
+        "protected_normalized_duplicates_removed": (protected_normalized_duplicates_removed),
     }
 
 

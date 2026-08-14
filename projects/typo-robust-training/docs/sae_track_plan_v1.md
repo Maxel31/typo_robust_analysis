@@ -66,6 +66,16 @@ already occurs in the protected prefix or an earlier eligible row. This leaves
 supplements the difference to the unchanged token budget. No acceptance gate,
 kill-test threshold, evaluation item, or model setting changed.
 
+A subsequent calibration-input check stopped before runtime initialization after
+finding eight protected record IDs in the first supplement. Those documents had
+been omitted from the eligible stream as exact normalized-content duplicates,
+then replayed from FineWeb-Edu with different segmentation. The supplement
+builder therefore retains every raw protected record/source/group identity as an
+exclusion, even when the row itself is omitted from eligible training. The first
+supplement is quarantined and rebuilt; no model forward had started. Derived
+eligible values are now checked mechanically against this preregistration at
+corpus-build, calibration, training, and validation input loading.
+
 ## Preregistered acceptance and kill-test rules
 
 WP-2 requires FVU <= 0.35, median L0 in [30, 150], dead-feature rate <= 20%

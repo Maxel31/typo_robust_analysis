@@ -32,6 +32,13 @@ prefixは変更しません。予約prefixの全行を除外anchorとして保�
 除きます。初期eligibleは126,901件・51,735,090 source tokensとなり、不足分は新規FineWeb-Eduで
 補います。acceptance gate、kill-test閾値、評価項目、model設定は変更していません。
 
+続くcalibration入力検査はruntime初期化前に停止し、最初のsupplementへ保護対象record IDが8件
+再流入していることを検出しました。これらは正規化content重複としてeligibleから除かれた後、
+異なるsegmentationでFineWeb-Eduから再生された文書です。このため、eligibleから除いた行も含め、
+保護manifestの全record/source/group IDをsupplement除外集合へ保持します。最初のsupplementは隔離して
+再構築し、model forwardは開始していません。派生eligible値はcorpus build、calibration、training、
+validationの入力読込時にこの事前登録と機械的に照合します。
+
 WP-2 は FVU <= 0.35、median L0 in [30,150]、dead feature 率 <= 20%、splice KL 中央値
 <= 0.15 nats/token、`p_i` と再構成誤差中央値 `s` の保存を要求します。WP-5 は層 5 の 2 seed で
 `median(R_z) >= 0.5 median(R_full)` と因果方向の再現を必須とします。合格前に neuron/head/feature

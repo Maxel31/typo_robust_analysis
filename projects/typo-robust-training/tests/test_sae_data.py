@@ -15,6 +15,7 @@ from typo_robust_training.sae.data import (
     reserve_confirmatory_training_prefix,
     sha256_file,
 )
+from typo_robust_training.sae.registry import validate_sae_prepared_sources
 
 
 def _row(index: int, *, source: str = "fineweb_edu", kind: str = "clean") -> dict[str, object]:
@@ -35,7 +36,7 @@ def _row(index: int, *, source: str = "fineweb_edu", kind: str = "clean") -> dic
         "answer": None,
         "content_sha256": hashlib.sha256(text.encode()).hexdigest(),
         "normalized_content_sha256": hashlib.sha256(
-            " ".join(text.lower().split()).encode()
+            " ".join(text.casefold().split()).encode()
         ).hexdigest(),
         "metadata": {},
         "token_count": 8,
@@ -53,7 +54,7 @@ def _replace_text(row: dict[str, object], text: str) -> None:
     row["text"] = text
     row["content_sha256"] = hashlib.sha256(text.encode()).hexdigest()
     row["normalized_content_sha256"] = hashlib.sha256(
-        " ".join(text.lower().split()).encode()
+        " ".join(text.casefold().split()).encode()
     ).hexdigest()
 
 
@@ -124,7 +125,21 @@ def test_protected_manifest_deduplicates_only_eligible_content(tmp_path: Path) -
     assert expected_eligible[0].record_id not in eligible_ids
     assert len(eligible_ids & set(duplicate_ids)) == 1
     assert len(prepared.sources) == len(rows) - len(expected_reserved) - 2
+    assert prepared.protected_normalized_duplicates_removed == 2
+    assert expected_eligible[0].record_id in prepared.input_record_ids
+    assert len(prepared.input_record_ids) == len(rows)
     assert len({row.clean_text.casefold() for row in prepared.sources}) == len(prepared.sources)
+
+    class Preregistration:
+        initial_eligible_records = prepared.protected_eligible_records
+        initial_eligible_source_tokens = prepared.protected_eligible_source_tokens
+        initial_eligible_record_ids_sha256 = prepared.protected_eligible_record_ids_sha256
+        eligible_records_removed = prepared.protected_normalized_duplicates_removed
+
+    validate_sae_prepared_sources(prepared, preregistration=Preregistration())
+    Preregistration.initial_eligible_records += 1
+    with pytest.raises(ValueError, match="differs from preregistration"):
+        validate_sae_prepared_sources(prepared, preregistration=Preregistration())
 
 
 def test_protected_manifest_still_rejects_duplicate_source_identity(tmp_path: Path) -> None:
