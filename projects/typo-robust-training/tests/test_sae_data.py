@@ -10,8 +10,10 @@ import pytest
 
 from typo_robust_training.sae.data import (
     load_clean_fineweb_sources,
+    prepare_sae_sources,
     record_id_sha256,
     reserve_confirmatory_training_prefix,
+    sha256_file,
 )
 
 
@@ -47,6 +49,14 @@ def _write(path: Path, rows: list[dict[str, object]]) -> None:
     )
 
 
+def _replace_text(row: dict[str, object], text: str) -> None:
+    row["text"] = text
+    row["content_sha256"] = hashlib.sha256(text.encode()).hexdigest()
+    row["normalized_content_sha256"] = hashlib.sha256(
+        " ".join(text.lower().split()).encode()
+    ).hexdigest()
+
+
 def test_sae_input_accepts_only_clean_fineweb_train_records(tmp_path: Path) -> None:
     path = tmp_path / "training.jsonl"
     _write(path, [_row(index) for index in range(5)])
@@ -77,3 +87,76 @@ def test_sae_input_rejects_reasoning_or_typo_rows(
     _write(path, [row])
     with pytest.raises(ValueError, match=message):
         load_clean_fineweb_sources(path)
+
+
+def test_protected_manifest_deduplicates_only_eligible_content(tmp_path: Path) -> None:
+    path = tmp_path / "protected.jsonl"
+    rows = [_row(index) for index in range(8)]
+    _write(path, rows)
+    loaded = load_clean_fineweb_sources(path)
+    expected_reserved, expected_eligible = reserve_confirmatory_training_prefix(
+        loaded,
+        seed=42,
+        epoch=0,
+        reserved_records=2,
+    )
+    by_id = {str(row["record_id"]): row for row in rows}
+    reserved_text = expected_reserved[0].clean_text
+    _replace_text(by_id[expected_eligible[0].record_id], reserved_text)
+    duplicate_text = "eligible duplicate content retained by deterministic order"
+    duplicate_ids = (expected_eligible[1].record_id, expected_eligible[2].record_id)
+    for record_id in duplicate_ids:
+        _replace_text(by_id[record_id], duplicate_text)
+    _write(path, rows)
+
+    prepared = prepare_sae_sources(
+        [path],
+        protected_manifest_sha256=sha256_file(path),
+        reserved_seed=42,
+        reserved_epoch=0,
+        reserved_records=2,
+    )
+
+    assert [row.record_id for row in prepared.reserved] == [
+        row.record_id for row in expected_reserved
+    ]
+    eligible_ids = {row.record_id for row in prepared.sources}
+    assert expected_eligible[0].record_id not in eligible_ids
+    assert len(eligible_ids & set(duplicate_ids)) == 1
+    assert len(prepared.sources) == len(rows) - len(expected_reserved) - 2
+    assert len({row.clean_text.casefold() for row in prepared.sources}) == len(prepared.sources)
+
+
+def test_protected_manifest_still_rejects_duplicate_source_identity(tmp_path: Path) -> None:
+    path = tmp_path / "protected.jsonl"
+    rows = [_row(index) for index in range(4)]
+    rows[3]["source_id"] = rows[2]["source_id"]
+    _write(path, rows)
+
+    with pytest.raises(ValueError, match="duplicates source ID"):
+        prepare_sae_sources(
+            [path],
+            protected_manifest_sha256=sha256_file(path),
+            reserved_seed=42,
+            reserved_epoch=0,
+            reserved_records=1,
+        )
+
+
+def test_supplement_cannot_overlap_protected_normalized_content(tmp_path: Path) -> None:
+    protected = tmp_path / "protected.jsonl"
+    supplement = tmp_path / "supplement.jsonl"
+    protected_rows = [_row(index) for index in range(4)]
+    supplement_row = _row(10)
+    _replace_text(supplement_row, str(protected_rows[2]["text"]))
+    _write(protected, protected_rows)
+    _write(supplement, [supplement_row])
+
+    with pytest.raises(ValueError, match="overlap by normalized content"):
+        prepare_sae_sources(
+            [protected, supplement],
+            protected_manifest_sha256=sha256_file(protected),
+            reserved_seed=42,
+            reserved_epoch=0,
+            reserved_records=1,
+        )

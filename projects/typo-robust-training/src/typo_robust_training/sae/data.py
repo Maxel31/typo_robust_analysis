@@ -10,6 +10,7 @@ from typing import Sequence
 
 from typo_robust_training.data.config import strict_loads
 from typo_robust_training.data.jsonl import read_lf_jsonl_lines
+from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.training.pairs import TrainingSource, stable_epoch_sources
 
 
@@ -95,7 +96,11 @@ def _sae_order(sources: Sequence[TrainingSource]) -> tuple[TrainingSource, ...]:
     return tuple(sorted(sources, key=key))
 
 
-def _manifest_identities(path: Path) -> tuple[set[str], set[str], set[str], set[str]]:
+def _manifest_identities(
+    path: Path,
+    *,
+    allow_duplicate_normalized_content: bool = False,
+) -> tuple[set[str], set[str], set[str], set[str]]:
     record_ids: set[str] = set()
     source_ids: set[str] = set()
     group_ids: set[str] = set()
@@ -112,16 +117,42 @@ def _manifest_identities(path: Path) -> tuple[set[str], set[str], set[str], set[
         )
         if any(not isinstance(value, str) or not value for value in values):
             raise ValueError("SAE identity record is incomplete")
-        for value, inventory, name in zip(
-            values,
-            (record_ids, source_ids, group_ids, normalized_hashes),
-            ("record ID", "source ID", "group ID", "normalized content"),
-            strict=True,
+        for index, (value, inventory, name) in enumerate(
+            zip(
+                values,
+                (record_ids, source_ids, group_ids, normalized_hashes),
+                ("record ID", "source ID", "group ID", "normalized content"),
+                strict=True,
+            )
         ):
             if value in inventory:
+                if index == 3 and allow_duplicate_normalized_content:
+                    continue
                 raise ValueError(f"SAE manifest duplicates {name}")
             inventory.add(value)
     return record_ids, source_ids, group_ids, normalized_hashes
+
+
+def _deduplicate_protected_eligible(
+    reserved: Sequence[TrainingSource],
+    eligible: Sequence[TrainingSource],
+) -> tuple[TrainingSource, ...]:
+    """Keep one deterministic eligible row per normalized clean document.
+
+    Every reserved row remains an exclusion anchor, including duplicate text.  An
+    eligible row is retained only when its normalized content occurs in neither
+    the protected prefix nor an earlier row in the SAE-specific stable order.
+    """
+
+    seen = {normalized_content_sha256(source.clean_text) for source in reserved}
+    retained: list[TrainingSource] = []
+    for source in _sae_order(eligible):
+        normalized_hash = normalized_content_sha256(source.clean_text)
+        if normalized_hash in seen:
+            continue
+        seen.add(normalized_hash)
+        retained.append(source)
+    return tuple(retained)
 
 
 def prepare_sae_sources(
@@ -151,7 +182,11 @@ def prepare_sae_sources(
     seen_normalized: set[str] = set()
     for path, digest in zip(resolved_paths, hashes, strict=True):
         rows = load_clean_fineweb_sources(path)
-        identities = _manifest_identities(path)
+        is_protected = digest == protected_manifest_sha256
+        identities = _manifest_identities(
+            path,
+            allow_duplicate_normalized_content=is_protected,
+        )
         for observed, prior, name in zip(
             identities,
             (seen_record_ids, seen_source_ids, seen_group_ids, seen_normalized),
@@ -162,14 +197,14 @@ def prepare_sae_sources(
             if overlap:
                 raise ValueError(f"SAE manifests overlap by {name}")
             prior.update(observed)
-        if digest == protected_manifest_sha256:
+        if is_protected:
             reserved, eligible = reserve_confirmatory_training_prefix(
                 rows,
                 seed=reserved_seed,
                 epoch=reserved_epoch,
                 reserved_records=reserved_records,
             )
-            all_sources.extend(eligible)
+            all_sources.extend(_deduplicate_protected_eligible(reserved, eligible))
         else:
             all_sources.extend(rows)
     ordered = _sae_order(all_sources)
