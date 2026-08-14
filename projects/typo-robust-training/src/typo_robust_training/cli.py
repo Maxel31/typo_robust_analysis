@@ -304,6 +304,8 @@ def _run_validate_sparse_autoencoders(args: argparse.Namespace) -> int:
     print(f"WP-2 acceptance passed={result.passed}: {result.acceptance_path}")
     print(f"run manifest: {result.run_path}")
     return 0 if result.passed else 2
+
+
 def _run_adapter_training(args: argparse.Namespace) -> int:
     from typo_robust_training.training.runner import (
         AdapterTrainingRunConfig,

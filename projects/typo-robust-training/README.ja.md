@@ -422,6 +422,12 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --output-dir "${SAE_ROOT}/training"
 ```
 
+凍結済みの10M-token activation subsampleは4層のbfloat16 residual streamを保存するため、
+約205 GBのディスクを使用します。また、1M-token shuffle bufferの結合・並べ替え時には、
+ホストRAMを一時的に41 GB超使用し得ます。実行前に`SAE_ROOT`へ220 GB以上の空き容量と、
+ホストに48 GB以上の利用可能RAMがあることを確認してください。現在指定している共有volumeは
+この条件を満たしています。
+
 最後に held-in clean text で発火率、再構成誤差 scale、WP-2 検収値を計算します。task accuracy は
 測らず、評価 tier も開封しません。
 
@@ -436,6 +442,10 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --gpu-id "${GPU_ID}" \
   --output-dir "${SAE_ROOT}/validation"
 ```
+
+WP-2 validationは異なるcheckpointごとの試行を`${SAE_ROOT}/wp2_attempts.json`へ記録し、
+初回validationと、失敗後に許された最大1回の再学習だけを、新しいvalidation出力directory間でも
+強制します。
 
 `--resume`は対象 command 自身の hash-bound checkpoint が既にある場合だけ追加します。固定した
 手法とgateは [`docs/sae_track_plan_v1.ja.md`](docs/sae_track_plan_v1.ja.md) にあります。

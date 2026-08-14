@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from typo_robust_training.sae.data import PreparedSaeSources
-from typo_robust_training.sae.runner import SaeTrainingRunConfig, run_train_saes
+from typo_robust_training.sae.runner import (
+    SaeTrainingRunConfig,
+    _load_final_saes,
+    _load_wp2_attempts,
+    _record_wp2_attempt,
+    run_train_saes,
+)
 from typo_robust_training.sae.runtime import ActivationBuffer
 
 
@@ -145,6 +154,17 @@ def test_sae_training_writes_hash_bound_models_and_resumes_exactly(
     assert (output / "checkpoint.json").is_file()
     assert len(tuple(output.glob("sae-layer-*.pt"))) == 3
 
+    (output / "run.json").unlink()
+    resumed_from_checkpoint = run_train_saes(
+        SaeTrainingRunConfig(**base, resume=True),
+        runtime_factory=_Runtime,
+        tracker_factory=tracker_factory,
+    )
+    assert resumed_from_checkpoint.trained_tokens == 4
+    assert resumed_from_checkpoint.optimizer_steps == 2
+    assert trackers[-1].steps == []
+    assert trackers[-1].status == "completed"
+
     tracker_count = len(trackers)
     resumed = run_train_saes(
         SaeTrainingRunConfig(**base, resume=True),
@@ -154,3 +174,95 @@ def test_sae_training_writes_hash_bound_models_and_resumes_exactly(
     assert resumed.trained_tokens == 4
     assert resumed.optimizer_steps == 2
     assert len(trackers) == tracker_count
+
+
+def test_wp2_attempt_ledger_enforces_one_preregistered_retrain(tmp_path: Path) -> None:
+    protocol = SimpleNamespace(config_sha256="a" * 64, maximum_gate_retrains=1)
+    preregistration = SimpleNamespace(sha256="b" * 64)
+
+    def checkpoint(name: str, value: int) -> Path:
+        root = tmp_path / name
+        root.mkdir()
+        (root / "run.json").write_text(json.dumps({"value": value}) + "\n", encoding="utf-8")
+        return root
+
+    first = checkpoint("training-first", 1)
+    ledger, attempts, digest = _load_wp2_attempts(
+        checkpoint_dir=first,
+        protocol=protocol,
+        preregistration=preregistration,
+    )
+    _record_wp2_attempt(
+        ledger_path=ledger,
+        prior_attempts=attempts,
+        checkpoint_run_sha256=digest,
+        output_dir=tmp_path / "validation-first",
+        passed=False,
+        acceptance_sha256="c" * 64,
+        protocol=protocol,
+        preregistration=preregistration,
+    )
+
+    second = checkpoint("training-retrain", 2)
+    ledger, attempts, digest = _load_wp2_attempts(
+        checkpoint_dir=second,
+        protocol=protocol,
+        preregistration=preregistration,
+    )
+    _record_wp2_attempt(
+        ledger_path=ledger,
+        prior_attempts=attempts,
+        checkpoint_run_sha256=digest,
+        output_dir=tmp_path / "validation-retrain",
+        passed=False,
+        acceptance_sha256="d" * 64,
+        protocol=protocol,
+        preregistration=preregistration,
+    )
+
+    third = checkpoint("training-prohibited", 3)
+    with pytest.raises(ValueError, match="retrain limit is exhausted"):
+        _load_wp2_attempts(
+            checkpoint_dir=third,
+            protocol=protocol,
+            preregistration=preregistration,
+        )
+
+
+def test_final_sae_loader_rejects_a_different_preregistration(tmp_path: Path) -> None:
+    root = tmp_path / "training"
+    root.mkdir()
+    source_registry = root / "source_registry.json"
+    source_registry.write_text("{}\n", encoding="utf-8")
+    bindings = {
+        "config_sha256": "a" * 64,
+        "preregistration_sha256": "old-" + "b" * 60,
+    }
+    (root / "run.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "robustness-sae-training-run/v1",
+                "operation": "train-sparse-autoencoders",
+                "bindings": bindings,
+                "cursor": {},
+                "l1_by_model": {},
+                "models": {},
+                "source_registry_sha256": hashlib.sha256(b"{}\n").hexdigest(),
+                "runtime": {},
+                "wandb": {},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    protocol = SimpleNamespace(
+        config_sha256="a" * 64,
+        seeds_by_layer={5: (42, 43), 20: (42,)},
+    )
+    with pytest.raises(ValueError, match="training bindings differ"):
+        _load_final_saes(
+            checkpoint_dir=root,
+            protocol=protocol,
+            preregistration_sha256="new-" + "c" * 60,
+            device=torch.device("cpu"),
+        )

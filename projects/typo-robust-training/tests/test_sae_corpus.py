@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from typo_robust_training.data.records import CleanRecord
 from typo_robust_training.sae.corpus import (
+    HuggingFaceSaeCleanSourceProvider,
     SaeCorpusBuildConfig,
+    _segment_document,
     run_build_sae_clean_corpus,
 )
 from typo_robust_training.sae.data import sha256_file
@@ -95,6 +99,105 @@ def test_character_ngram_guard_rejects_normalized_and_near_duplicates() -> None:
     assert guard.add("near", "The airport is located in Chicagoo.") == "first"
     assert guard.add("other", "Sparse autoencoders expose residual features.") is None
     assert guard.records == 2
+
+
+def test_default_sae_source_provider_accepts_the_production_counter_contract() -> None:
+    protocol = SimpleNamespace(
+        model="google/gemma-3-4b-it",
+        model_revision="a" * 40,
+        max_sequence_length=512,
+    )
+    tokenizer = object()
+    provider = HuggingFaceSaeCleanSourceProvider(protocol=protocol, tokenizer=tokenizer)
+    assert provider.counter.tokenizer is tokenizer
+    assert provider.counter.max_sequence_length == 512
+
+
+def test_sae_source_provider_replays_fineweb_identity_convention(monkeypatch) -> None:
+    class Tokenizer:
+        def __call__(self, text, *, return_offsets_mapping=False, **_kwargs):
+            result = {"input_ids": list(range(len(text)))}
+            if return_offsets_mapping:
+                result["offset_mapping"] = [(index, index + 1) for index in range(len(text))]
+            return result
+
+    row_id = "<urn:uuid:replayed>"
+    dataset = ({"id": row_id, "text": "Clean educational text."},)
+    monkeypatch.setitem(
+        sys.modules,
+        "datasets",
+        SimpleNamespace(load_dataset=lambda *_args, **_kwargs: dataset),
+    )
+    protocol = SimpleNamespace(
+        model="google/gemma-3-4b-it",
+        model_revision="a" * 40,
+        max_sequence_length=512,
+        source_dataset="HuggingFaceFW/fineweb-edu",
+        source_subset="sample-10BT",
+        source_split="train",
+        source_revision="f" * 40,
+        document_character_limit=8192,
+    )
+    provider = HuggingFaceSaeCleanSourceProvider(protocol=protocol, tokenizer=Tokenizer())
+    (source,) = tuple(provider.iter_sources())
+    assert source.source_id == f"fineweb_edu:{row_id}"
+    assert source.group_id == f"fineweb_edu:{row_id}"
+
+
+def test_sae_source_provider_skips_only_unpreparable_unspaced_rows(monkeypatch) -> None:
+    class Tokenizer:
+        def __call__(self, text, *, return_offsets_mapping=False, **_kwargs):
+            retained = min(len(text), 10 if not any(char.isspace() for char in text) else len(text))
+            result = {"input_ids": list(range(retained))}
+            if return_offsets_mapping:
+                result["offset_mapping"] = [
+                    (index, index + 1) for index in range(retained)
+                ]
+            return result
+
+    dataset = (
+        {"id": "unspaced", "text": "文" * 20_000},
+        {"id": "usable", "text": "Clean educational text."},
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "datasets",
+        SimpleNamespace(load_dataset=lambda *_args, **_kwargs: dataset),
+    )
+    protocol = SimpleNamespace(
+        model="google/gemma-3-4b-it",
+        model_revision="a" * 40,
+        max_sequence_length=512,
+        source_dataset="HuggingFaceFW/fineweb-edu",
+        source_subset="sample-10BT",
+        source_split="train",
+        source_revision="f" * 40,
+        document_character_limit=8192,
+    )
+    provider = HuggingFaceSaeCleanSourceProvider(protocol=protocol, tokenizer=Tokenizer())
+    rows = tuple(provider.iter_sources())
+    assert [row.source_id for row in rows] == ["fineweb_edu:usable"]
+    assert provider.skipped_unsegmentable == 1
+
+
+@pytest.mark.parametrize("text", ("A" * 20_000, "文" * 20_000))
+def test_sae_segmentation_keeps_long_documents_without_whitespace(text: str) -> None:
+    record = CleanRecord(
+        source="fineweb_edu",
+        source_revision="f" * 40,
+        source_split="train",
+        source_id="fineweb_edu:unspaced",
+        group_id="fineweb_edu:unspaced",
+        text=text,
+        task=None,
+        answer=None,
+        metadata={},
+    )
+    segmented = _segment_document(record, character_limit=8192)
+    assert len(segmented.text) == 8192
+    assert segmented.metadata["document_window_strategy"] == (
+        "fixed-character-hash-window-no-whitespace"
+    )
 
 
 def test_sae_corpus_builder_requires_all_roles_and_reaches_budget(

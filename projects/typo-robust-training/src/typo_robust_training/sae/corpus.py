@@ -83,9 +83,11 @@ def _segment_document(record: CleanRecord, *, character_limit: int) -> CleanReco
     text = record.text
     if len(text) <= character_limit:
         start, end, segment = 0, len(text), text
+        window_strategy = "full-document"
     else:
         starts = len(text) - character_limit + 1
-        start = int.from_bytes(hashlib.sha256(text.encode()).digest(), "big") % starts
+        hashed_start = int.from_bytes(hashlib.sha256(text.encode()).digest(), "big") % starts
+        start = hashed_start
         if start > 0 and not text[start - 1].isspace():
             while start < len(text) and not text[start].isspace():
                 start += 1
@@ -99,7 +101,12 @@ def _segment_document(record: CleanRecord, *, character_limit: int) -> CleanReco
             end -= 1
         segment = text[start:end]
         if not segment:
-            raise ValueError("FineWeb-Edu supplement window contains no complete word")
+            start = hashed_start
+            end = start + character_limit
+            segment = text[start:end]
+            window_strategy = "fixed-character-hash-window-no-whitespace"
+        else:
+            window_strategy = "complete-word-hash-window"
     return replace(
         record,
         text=segment,
@@ -108,6 +115,7 @@ def _segment_document(record: CleanRecord, *, character_limit: int) -> CleanReco
             "original_character_count": len(text),
             "document_window": [start, end],
             "document_character_limit": character_limit,
+            "document_window_strategy": window_strategy,
         },
     )
 
@@ -141,11 +149,11 @@ class HuggingFaceSaeCleanSourceProvider:
 
     def __init__(self, *, protocol: SaeProtocol, tokenizer: object | None = None) -> None:
         self.protocol = protocol
+        self.skipped_unsegmentable = 0
         self.counter = HuggingFaceTokenCounter(
             model=protocol.model,
             revision=protocol.model_revision,
             max_sequence_length=protocol.max_sequence_length,
-            typo_token_headroom=0,
             tokenizer=tokenizer,
         )
 
@@ -186,12 +194,18 @@ class HuggingFaceSaeCleanSourceProvider:
                 answer=None,
                 metadata=metadata,
             )
-            prepared = self.counter.prepare_record(
-                _segment_document(
-                    record,
-                    character_limit=self.protocol.document_character_limit,
+            try:
+                prepared = self.counter.prepare_record(
+                    _segment_document(
+                        record,
+                        character_limit=self.protocol.document_character_limit,
+                    )
                 )
-            )
+            except ValueError as exc:
+                if "token preparation retained no complete word" not in str(exc):
+                    raise
+                self.skipped_unsegmentable += 1
+                continue
             payload = {
                 "schema_version": "robustness-clean-record/v1",
                 "kind": "clean",
@@ -228,6 +242,7 @@ class HuggingFaceSaeCleanSourceProvider:
             "transformers_version": transformers.__version__,
             "tokenizer": self.protocol.model,
             "tokenizer_revision": self.protocol.model_revision,
+            "skipped_unsegmentable_records": self.skipped_unsegmentable,
         }
 
 
@@ -424,6 +439,7 @@ def run_build_sae_clean_corpus(
         os.replace(temporary, supplement_path)
     finally:
         temporary.unlink(missing_ok=True)
+    provider_provenance = dict(provider.provenance())
     registry_path = output / "source_registry.json"
     write_json_atomic(
         registry_path,
@@ -451,6 +467,7 @@ def run_build_sae_clean_corpus(
                 "minhash32-lsh8x4-exact-jaccard-"
                 f"{protocol.near_duplicate_jaccard_threshold:g}/v1"
             ),
+            "provider": provider_provenance,
         },
     )
     run_path = output / "run.json"
@@ -462,7 +479,7 @@ def run_build_sae_clean_corpus(
             "status": "completed",
             "config_sha256": protocol.config_sha256,
             "preregistration_sha256": preregistration.sha256,
-            "provider": dict(provider.provenance()),
+            "provider": provider_provenance,
             "outputs": {
                 supplement_path.name: sha256_file(supplement_path),
                 registry_path.name: sha256_file(registry_path),

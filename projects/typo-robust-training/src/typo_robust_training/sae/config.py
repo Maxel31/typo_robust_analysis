@@ -279,6 +279,14 @@ def load_sae_protocol(path: Path) -> SaeProtocol:
     )
     if tuple(sorted(set(l1_coefficients))) != l1_coefficients:
         raise ValueError("SAE L1 coefficients must be sorted and unique")
+    l1_calibration_tokens = _positive_int(
+        sae["l1_calibration_tokens"], field="sae.l1_calibration_tokens"
+    )
+    shuffle_buffer_activations = _positive_int(
+        data["shuffle_buffer_activations"], field="data.shuffle_buffer_activations"
+    )
+    if l1_calibration_tokens > shuffle_buffer_activations:
+        raise ValueError("SAE L1 calibration must fit in one frozen shuffle buffer")
     seeds_raw = sae["seeds_by_layer"]
     if not isinstance(seeds_raw, Mapping) or set(seeds_raw) != {"5", "20"}:
         raise ValueError("SAE layer seeds differ")
@@ -361,9 +369,7 @@ def load_sae_protocol(path: Path) -> SaeProtocol:
         activation_subsample_tokens=_positive_int(
             data["activation_subsample_tokens"], field="data.activation_subsample_tokens"
         ),
-        shuffle_buffer_activations=_positive_int(
-            data["shuffle_buffer_activations"], field="data.shuffle_buffer_activations"
-        ),
+        shuffle_buffer_activations=shuffle_buffer_activations,
         reserved_order_seed=_nonnegative_int(exclusion["seed"], field="exclusion.seed"),
         reserved_order_epoch=_nonnegative_int(exclusion["epoch"], field="exclusion.epoch"),
         reserved_prefix_records=_positive_int(
@@ -377,9 +383,7 @@ def load_sae_protocol(path: Path) -> SaeProtocol:
         activation=str(sae["activation"]),
         regularizer=str(sae["regularizer"]),
         l1_coefficients=l1_coefficients,
-        l1_calibration_tokens=_positive_int(
-            sae["l1_calibration_tokens"], field="sae.l1_calibration_tokens"
-        ),
+        l1_calibration_tokens=l1_calibration_tokens,
         l1_selection_rule=str(sae["l1_selection_rule"]),
         optimizer=str(sae["optimizer"]),
         learning_rate=_positive_float(sae["learning_rate"], field="sae.learning_rate"),

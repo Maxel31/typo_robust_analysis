@@ -592,7 +592,7 @@ def _load_training_checkpoint(
     state = torch.load(
         state_path,
         map_location=next(iter(models.values())).encoder.weight.device,
-        weights_only=False,
+        weights_only=True,
     )
     if not isinstance(state, Mapping) or state.get("bindings") != dict(bindings):
         raise ValueError("SAE runtime checkpoint bindings differ")
@@ -939,6 +939,7 @@ def _load_final_saes(
     *,
     checkpoint_dir: Path,
     protocol: SaeProtocol,
+    preregistration_sha256: str,
     device: Any,
 ) -> tuple[dict[str, SparseAutoencoder], Mapping[str, object]]:
     import torch
@@ -972,7 +973,11 @@ def _load_final_saes(
     ):
         raise ValueError("SAE completed training source registry hash differs")
     bindings = run.get("bindings")
-    if not isinstance(bindings, Mapping) or bindings.get("config_sha256") != protocol.config_sha256:
+    if (
+        not isinstance(bindings, Mapping)
+        or bindings.get("config_sha256") != protocol.config_sha256
+        or bindings.get("preregistration_sha256") != preregistration_sha256
+    ):
         raise ValueError("SAE completed training bindings differ")
     declared_models = run.get("models")
     if not isinstance(declared_models, Mapping):
@@ -1004,6 +1009,117 @@ def _load_final_saes(
     return models, run
 
 
+def _wp2_attempt_ledger_path(checkpoint_dir: Path) -> Path:
+    return Path(checkpoint_dir).resolve().parent / "wp2_attempts.json"
+
+
+def _load_wp2_attempts(
+    *,
+    checkpoint_dir: Path,
+    protocol: SaeProtocol,
+    preregistration: SaePreregistration,
+) -> tuple[Path, list[Mapping[str, object]], str]:
+    checkpoint_run = Path(checkpoint_dir).resolve() / "run.json"
+    if not checkpoint_run.is_file():
+        raise ValueError("SAE validation requires a completed training run.json")
+    checkpoint_sha256 = sha256_file(checkpoint_run)
+    ledger_path = _wp2_attempt_ledger_path(checkpoint_dir)
+    attempts: list[Mapping[str, object]] = []
+    if ledger_path.is_file():
+        payload = strict_loads(
+            ledger_path.read_text(encoding="utf-8"), context=str(ledger_path)
+        )
+        if (
+            not isinstance(payload, Mapping)
+            or set(payload)
+            != {
+                "schema_version",
+                "config_sha256",
+                "preregistration_sha256",
+                "maximum_retrains_after_failure",
+                "attempts",
+            }
+            or payload.get("schema_version") != "robustness-sae-wp2-attempt-ledger/v1"
+            or payload.get("config_sha256") != protocol.config_sha256
+            or payload.get("preregistration_sha256") != preregistration.sha256
+            or payload.get("maximum_retrains_after_failure")
+            != protocol.maximum_gate_retrains
+            or not isinstance(payload.get("attempts"), list)
+        ):
+            raise ValueError("SAE WP-2 attempt ledger differs from preregistration")
+        attempts = list(payload["attempts"])
+        required = {
+            "attempt",
+            "checkpoint_run_sha256",
+            "output_dir",
+            "passed",
+            "acceptance_sha256",
+        }
+        if any(
+            not isinstance(row, Mapping)
+            or set(row) != required
+            or isinstance(row.get("attempt"), bool)
+            or not isinstance(row.get("attempt"), int)
+            or row.get("attempt") != index
+            or not isinstance(row.get("checkpoint_run_sha256"), str)
+            or not isinstance(row.get("output_dir"), str)
+            or type(row.get("passed")) is not bool
+            or not isinstance(row.get("acceptance_sha256"), str)
+            for index, row in enumerate(attempts, 1)
+        ):
+            raise ValueError("SAE WP-2 attempt ledger entries differ")
+    if any(row["passed"] is True for row in attempts):
+        raise ValueError("SAE WP-2 already passed; further validation attempts are prohibited")
+    if any(row["checkpoint_run_sha256"] == checkpoint_sha256 for row in attempts):
+        raise ValueError("SAE WP-2 checkpoint was already evaluated")
+    maximum_attempts = 1 + protocol.maximum_gate_retrains
+    if len(attempts) >= maximum_attempts:
+        raise ValueError("SAE WP-2 preregistered retrain limit is exhausted")
+    return ledger_path, attempts, checkpoint_sha256
+
+
+def _record_wp2_attempt(
+    *,
+    ledger_path: Path,
+    prior_attempts: Sequence[Mapping[str, object]],
+    checkpoint_run_sha256: str,
+    output_dir: Path,
+    passed: bool,
+    acceptance_sha256: str,
+    protocol: SaeProtocol,
+    preregistration: SaePreregistration,
+) -> None:
+    if ledger_path.is_file():
+        current = strict_loads(
+            ledger_path.read_text(encoding="utf-8"), context=str(ledger_path)
+        )
+        current_attempts = current.get("attempts") if isinstance(current, Mapping) else None
+        if current_attempts != list(prior_attempts):
+            raise RuntimeError("SAE WP-2 attempt ledger changed during validation")
+    elif prior_attempts:
+        raise RuntimeError("SAE WP-2 attempt ledger disappeared during validation")
+    attempts = [
+        *prior_attempts,
+        {
+            "attempt": len(prior_attempts) + 1,
+            "checkpoint_run_sha256": checkpoint_run_sha256,
+            "output_dir": str(Path(output_dir).resolve()),
+            "passed": passed,
+            "acceptance_sha256": acceptance_sha256,
+        },
+    ]
+    write_json_atomic(
+        ledger_path,
+        {
+            "schema_version": "robustness-sae-wp2-attempt-ledger/v1",
+            "config_sha256": protocol.config_sha256,
+            "preregistration_sha256": preregistration.sha256,
+            "maximum_retrains_after_failure": protocol.maximum_gate_retrains,
+            "attempts": attempts,
+        },
+    )
+
+
 def run_validate_saes(
     config: SaeValidationRunConfig,
     *,
@@ -1013,6 +1129,11 @@ def run_validate_saes(
     preregistration = load_sae_preregistration(config.registry_path, protocol=protocol)
     if str(config.gpu_id) != str(preregistration.sae_gpu_id):
         raise ValueError("SAE validation must use preregistered GPU 1")
+    ledger_path, prior_attempts, checkpoint_run_sha256 = _load_wp2_attempts(
+        checkpoint_dir=config.checkpoint_dir,
+        protocol=protocol,
+        preregistration=preregistration,
+    )
     output = _prepare_output(config.output_dir, resume=False)
     sources = _load_inputs(
         protocol=protocol,
@@ -1024,6 +1145,7 @@ def run_validate_saes(
     models, training_run = _load_final_saes(
         checkpoint_dir=config.checkpoint_dir,
         protocol=protocol,
+        preregistration_sha256=preregistration.sha256,
         device=runtime.device,
     )
     cursor = training_run.get("cursor")
@@ -1149,6 +1271,16 @@ def run_validate_saes(
             "runtime": dict(runtime.provenance()),
             "training_run_sha256": sha256_file(Path(config.checkpoint_dir) / "run.json"),
         },
+    )
+    _record_wp2_attempt(
+        ledger_path=ledger_path,
+        prior_attempts=prior_attempts,
+        checkpoint_run_sha256=checkpoint_run_sha256,
+        output_dir=output,
+        passed=all_passed,
+        acceptance_sha256=sha256_file(acceptance_path),
+        protocol=protocol,
+        preregistration=preregistration,
     )
     return SaeValidationResult(
         acceptance_path=acceptance_path,

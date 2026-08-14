@@ -72,6 +72,16 @@ def test_sae_config_is_strict_and_rejects_top_k(tmp_path: Path) -> None:
         load_sae_protocol(path)
 
 
+def test_sae_config_rejects_calibration_larger_than_shuffle_buffer(tmp_path: Path) -> None:
+    payload = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    payload["sae"]["l1_calibration_tokens"] = 1_000_001
+    path = tmp_path / "bad-buffer.json"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="fit in one frozen shuffle buffer"):
+        load_sae_protocol(path)
+
+
 def test_cli_keeps_sae_calibration_training_and_validation_separate() -> None:
     root = argparse.ArgumentParser()
     commands = root.add_subparsers(dest="command")

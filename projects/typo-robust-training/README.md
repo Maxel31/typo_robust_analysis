@@ -462,6 +462,12 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --output-dir "${SAE_ROOT}/training"
 ```
 
+The frozen 10M-token activation subsample stores four bfloat16 residual streams
+and requires about 205 GB of disk. A 1M-token shuffle buffer can temporarily use
+more than 41 GB of host RAM while it is joined and permuted. Before starting,
+ensure that `SAE_ROOT` has at least 220 GB free and the host has at least 48 GB
+available RAM. The configured shared volume currently satisfies these bounds.
+
 Finally compute held-in firing probabilities, reconstruction-error scale, and
 the frozen WP-2 acceptance report. This command evaluates only clean LM data;
 it does not run task accuracy or open any evaluation tier.
@@ -477,6 +483,10 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --gpu-id "${GPU_ID}" \
   --output-dir "${SAE_ROOT}/validation"
 ```
+
+WP-2 validation records each distinct checkpoint in
+`${SAE_ROOT}/wp2_attempts.json`; the initial validation plus at most one failed
+retrain are enforced across fresh validation output directories.
 
 Append `--resume` to a calibration/training command only after its own
 hash-bound checkpoint exists. The frozen method and gates are documented in
