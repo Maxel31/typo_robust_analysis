@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
-from typo_robust_training.data.perturb import TypoGenerator
+from typo_robust_training.data.perturb import TypoGenerator, eligible_word_spans
 from typo_robust_training.integrity import sha256_tree
 from typo_robust_training.training.checkpoint import (
     TrainingCursor,
@@ -304,10 +304,20 @@ def _materialize_usable_pair(
         or maximum_target_stop <= 0
     ):
         raise ValueError("retained token window contains no eligible typo target")
-    candidate_stops: list[int] = []
-    margin = 0
-    while maximum_target_stop - margin > 0:
-        target_stop = maximum_target_stop - margin
+    candidate_stops = tuple(
+        sorted(
+            {
+                stop
+                for _start, stop in eligible_word_spans(
+                    source.clean_text,
+                    minimum_letters=generator.minimum_word_letters,
+                )
+                if stop <= maximum_target_stop
+            },
+            reverse=True,
+        )
+    )
+    for target_stop in candidate_stops:
         try:
             constrained = materialize_training_pair(
                 source,
@@ -320,11 +330,9 @@ def _materialize_usable_pair(
         except ValueError as exc:
             if "contains no eligible typo target" not in str(exc):
                 raise
-            break
-        candidate_stops.append(target_stop)
+            continue
         if validator(constrained):
             return constrained
-        margin = 1 if margin == 0 else margin * 2
     for variant in range(1, _MAX_SYNTHETIC_PAIR_VARIANTS):
         for target_stop in candidate_stops:
             constrained = materialize_training_pair(

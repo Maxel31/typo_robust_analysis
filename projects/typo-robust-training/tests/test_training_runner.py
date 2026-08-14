@@ -373,8 +373,86 @@ def test_state_pair_generation_retries_until_typo_tokens_are_visible(
         runtime=Runtime(),
     )
 
-    assert pair.metadata["maximum_target_stop"] == 24
-    assert attempts == [None, 32, 31, 30, 28, 24]
+    assert pair.metadata["maximum_target_stop"] == 19
+    assert attempts == [None, 27, 19]
+
+
+def test_state_pair_generation_checks_every_reachable_word_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    text = "abcdefghijklmnopqr " + ("tailword " * 10).strip()
+    source = TrainingSource.from_dict(
+        {
+            "schema_version": "robustness-clean-record/v1",
+            "kind": "clean",
+            "record_id": "f" * 64,
+            "source": "fineweb_edu",
+            "source_revision": "a" * 40,
+            "source_split": "train",
+            "source_id": "backoff-counterexample",
+            "group_id": "backoff-counterexample",
+            "split": "train",
+            "text": text,
+            "task": None,
+            "answer": None,
+            "content_sha256": hashlib.sha256(text.encode()).hexdigest(),
+            "normalized_content_sha256": normalized_content_sha256(text),
+            "metadata": {},
+            "token_count": 11,
+        }
+    )
+    attempts: list[int | None] = []
+
+    def materialize(
+        candidate_source: TrainingSource,
+        *,
+        generator: TypoGenerator,
+        epoch: int,
+        variant: int = 0,
+        force_noop: bool | None,
+        maximum_target_stop: int | None = None,
+    ) -> TrainingPair:
+        del generator, force_noop
+        attempts.append(maximum_target_stop)
+        return TrainingPair(
+            record_id=candidate_source.record_id,
+            clean_text=candidate_source.clean_text,
+            typo_text=candidate_source.clean_text,
+            task=None,
+            answer=None,
+            metadata={"maximum_target_stop": maximum_target_stop},
+            edits=(),
+            is_noop=False,
+            epoch=epoch,
+            variant=variant,
+        )
+
+    class Runtime:
+        @staticmethod
+        def pair_is_usable(pair: TrainingPair) -> bool:
+            return pair.metadata["maximum_target_stop"] == 18
+
+        @staticmethod
+        def retained_clean_character_extent(_pair: TrainingPair) -> int:
+            return len(text)
+
+    monkeypatch.setattr(
+        "typo_robust_training.training.runner.materialize_training_pair",
+        materialize,
+    )
+    pair = _materialize_usable_pair(
+        source=source,
+        generator=_bundle(tmp_path).generator,
+        epoch=0,
+        force_noop=False,
+        protocol=SimpleNamespace(schema_version="robustness-adapter-training-config/v3"),
+        runtime=Runtime(),
+    )
+
+    assert pair is not None
+    assert pair.metadata["maximum_target_stop"] == 18
+    assert attempts[-1] == 18
 
 
 def test_state_pair_generation_retries_deterministic_variants(
@@ -414,7 +492,7 @@ def test_state_pair_generation_retries_deterministic_variants(
 
         @staticmethod
         def retained_clean_character_extent(_pair: TrainingPair) -> int:
-            return 8
+            return 32
 
     monkeypatch.setattr(
         "typo_robust_training.training.runner.materialize_training_pair",
@@ -431,7 +509,7 @@ def test_state_pair_generation_retries_deterministic_variants(
 
     assert pair is not None
     assert pair.variant == 1
-    assert attempts == [(0, None), (0, 8), (0, 7), (0, 6), (0, 4), (1, 8)]
+    assert attempts == [(0, None), (0, 27), (0, 19), (0, 11), (1, 27)]
 
 
 def test_training_stream_skips_unusable_source_without_consuming_micro_step(
