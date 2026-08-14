@@ -11,6 +11,7 @@ import pytest
 
 from typo_robust_training.data.perturb import TypoGenerator
 from typo_robust_training.data.splits import normalized_content_sha256
+from typo_robust_training.training.checkpoint import TrainingCursor
 from typo_robust_training.training.data import TrainingDataBundle
 from typo_robust_training.training.pairs import TrainingPair, TrainingSource
 from typo_robust_training.training.runner import (
@@ -19,6 +20,7 @@ from typo_robust_training.training.runner import (
     TrainingMicroStepScales,
     _materialize_usable_pair,
     _monitor_violation_streak,
+    _next_usable_training_pair,
     _optimizer_step_telemetry,
     normalized_accumulation_scales,
     run_adapter_training,
@@ -330,10 +332,11 @@ def test_state_pair_generation_retries_until_typo_tokens_are_visible(
         *,
         generator: TypoGenerator,
         epoch: int,
+        variant: int = 0,
         force_noop: bool | None,
         maximum_target_stop: int | None = None,
     ) -> TrainingPair:
-        del generator, force_noop
+        del generator, force_noop, variant
         attempts.append(maximum_target_stop)
         return TrainingPair(
             record_id=candidate_source.record_id,
@@ -372,6 +375,107 @@ def test_state_pair_generation_retries_until_typo_tokens_are_visible(
 
     assert pair.metadata["maximum_target_stop"] == 24
     assert attempts == [None, 32, 31, 30, 28, 24]
+
+
+def test_state_pair_generation_retries_deterministic_variants(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts: list[tuple[int, int | None]] = []
+
+    def materialize(
+        candidate_source: TrainingSource,
+        *,
+        generator: TypoGenerator,
+        epoch: int,
+        variant: int = 0,
+        force_noop: bool | None,
+        maximum_target_stop: int | None = None,
+    ) -> TrainingPair:
+        del generator, force_noop
+        attempts.append((variant, maximum_target_stop))
+        return TrainingPair(
+            record_id=candidate_source.record_id,
+            clean_text=candidate_source.clean_text,
+            typo_text=candidate_source.clean_text.replace("airport", "arport"),
+            task=None,
+            answer=None,
+            metadata={"variant": variant},
+            edits=(),
+            is_noop=False,
+            epoch=epoch,
+            variant=variant,
+        )
+
+    class Runtime:
+        @staticmethod
+        def pair_is_usable(pair: TrainingPair) -> bool:
+            return pair.variant == 1
+
+        @staticmethod
+        def retained_clean_character_extent(_pair: TrainingPair) -> int:
+            return 8
+
+    monkeypatch.setattr(
+        "typo_robust_training.training.runner.materialize_training_pair",
+        materialize,
+    )
+    pair = _materialize_usable_pair(
+        source=_source(0),
+        generator=_bundle(tmp_path).generator,
+        epoch=0,
+        force_noop=False,
+        protocol=SimpleNamespace(schema_version="robustness-adapter-training-config/v3"),
+        runtime=Runtime(),
+    )
+
+    assert pair is not None
+    assert pair.variant == 1
+    assert attempts == [(0, None), (0, 8), (0, 7), (0, 6), (0, 4), (1, 8)]
+
+
+def test_training_stream_skips_unusable_source_without_consuming_micro_step(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _bundle(tmp_path)
+    attempted: list[str] = []
+
+    def materialize(**kwargs: object) -> TrainingPair | None:
+        source = kwargs["source"]
+        assert isinstance(source, TrainingSource)
+        attempted.append(source.record_id)
+        if len(attempted) == 1:
+            return None
+        return TrainingPair(
+            record_id=source.record_id,
+            clean_text=source.clean_text,
+            typo_text=source.clean_text,
+            task=None,
+            answer=None,
+            metadata={},
+            edits=(),
+            is_noop=True,
+            epoch=int(kwargs["epoch"]),
+        )
+
+    monkeypatch.setattr(
+        "typo_robust_training.training.runner._materialize_usable_pair",
+        materialize,
+    )
+    cursor = TrainingCursor(0, 0, 1, 0, 0)
+    pair, _epoch, next_cursor = _next_usable_training_pair(
+        bundle=bundle,
+        cursor=cursor,
+        seed=42,
+        protocol=SimpleNamespace(pairing_policy="exact-alternating-clean-noisy/v1"),
+        runtime=object(),
+    )
+
+    assert pair.record_id == attempted[1]
+    assert len(attempted) == 2
+    assert next_cursor.micro_steps == cursor.micro_steps + 1
+    assert next_cursor.source_index == cursor.source_index + 2
 
 
 def test_cycle2_runner_enforces_exact_clean_noisy_pairs_per_optimizer_step(

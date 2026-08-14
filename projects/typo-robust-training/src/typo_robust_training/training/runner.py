@@ -49,6 +49,9 @@ from typo_robust_training.training.tracking import (
 )
 
 
+_MAX_SYNTHETIC_PAIR_VARIANTS = 32
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -255,20 +258,13 @@ def _state_calibration_pairs(
     cursor = TrainingCursor(0, 0, 0, 0, 0)
     pairs: list[TrainingPair] = []
     while len(pairs) < required:
-        source, epoch, next_cursor = next_training_source(
-            bundle.sources,
+        pair, _epoch, cursor = _next_usable_training_pair(
+            bundle=bundle,
             cursor=cursor,
             seed=seed,
-        )
-        pair = _materialize_usable_pair(
-            source=source,
-            generator=bundle.generator,
-            epoch=epoch,
-            force_noop=_forced_noop(protocol, micro_step=cursor.micro_steps),
             protocol=protocol,
             runtime=runtime,
         )
-        cursor = next_cursor
         if not pair.is_noop:
             pairs.append(pair)
     return tuple(pairs)
@@ -282,7 +278,7 @@ def _materialize_usable_pair(
     force_noop: bool | None,
     protocol: AdapterTrainingProtocol,
     runtime: AdapterTrainingRuntime,
-) -> TrainingPair:
+) -> TrainingPair | None:
     """Keep every cycle-2/3 typo target inside the tokenizer-retained prefix."""
 
     pair = materialize_training_pair(
@@ -297,7 +293,7 @@ def _materialize_usable_pair(
     if not callable(validator) or validator(pair):
         return pair
     if source.kind == "natural":
-        raise ValueError("fixed natural typo target falls outside the retained token window")
+        return None
     extent_reader = getattr(runtime, "retained_clean_character_extent", None)
     if not callable(extent_reader):
         raise TypeError("cycle-2 runtime cannot constrain typo targets to retained tokens")
@@ -308,6 +304,7 @@ def _materialize_usable_pair(
         or maximum_target_stop <= 0
     ):
         raise ValueError("retained token window contains no eligible typo target")
+    candidate_stops: list[int] = []
     margin = 0
     while maximum_target_stop - margin > 0:
         target_stop = maximum_target_stop - margin
@@ -316,6 +313,7 @@ def _materialize_usable_pair(
                 source,
                 generator=generator,
                 epoch=epoch,
+                variant=0,
                 force_noop=force_noop,
                 maximum_target_stop=target_stop,
             )
@@ -323,10 +321,54 @@ def _materialize_usable_pair(
             if "contains no eligible typo target" not in str(exc):
                 raise
             break
+        candidate_stops.append(target_stop)
         if validator(constrained):
             return constrained
         margin = 1 if margin == 0 else margin * 2
-    raise ValueError("no tokenizer-visible synthetic typo target could be generated")
+    for variant in range(1, _MAX_SYNTHETIC_PAIR_VARIANTS):
+        for target_stop in candidate_stops:
+            constrained = materialize_training_pair(
+                source,
+                generator=generator,
+                epoch=epoch,
+                variant=variant,
+                force_noop=force_noop,
+                maximum_target_stop=target_stop,
+            )
+            if validator(constrained):
+                return constrained
+    return None
+
+
+def _next_usable_training_pair(
+    *,
+    bundle: TrainingDataBundle,
+    cursor: TrainingCursor,
+    seed: int,
+    protocol: AdapterTrainingProtocol,
+    runtime: AdapterTrainingRuntime,
+) -> tuple[TrainingPair, int, TrainingCursor]:
+    """Advance past unusable sources without consuming a training micro-step."""
+
+    source_cursor = cursor
+    for _attempt in range(len(bundle.sources)):
+        source, epoch, next_cursor = next_training_source(
+            bundle.sources,
+            cursor=source_cursor,
+            seed=seed,
+        )
+        pair = _materialize_usable_pair(
+            source=source,
+            generator=bundle.generator,
+            epoch=epoch,
+            force_noop=_forced_noop(protocol, micro_step=cursor.micro_steps),
+            protocol=protocol,
+            runtime=runtime,
+        )
+        if pair is not None:
+            return pair, epoch, next_cursor
+        source_cursor = replace(next_cursor, micro_steps=cursor.micro_steps)
+    raise ValueError("training source inventory contains no usable pair for this micro-step")
 
 
 def _monitor_violation_streak(
@@ -746,19 +788,10 @@ def run_adapter_training(
             micro_rows: list[dict[str, object]] = []
             pending: list[tuple[int, int, TrainingPair]] = []
             for accumulation_index in range(protocol.gradient_accumulation_steps):
-                source, epoch, next_cursor = next_training_source(
-                    bundle.sources,
+                pair, epoch, next_cursor = _next_usable_training_pair(
+                    bundle=bundle,
                     cursor=cursor,
                     seed=config.seed,
-                )
-                pair = _materialize_usable_pair(
-                    source=source,
-                    generator=bundle.generator,
-                    epoch=epoch,
-                    force_noop=_forced_noop(
-                        protocol,
-                        micro_step=cursor.micro_steps,
-                    ),
                     protocol=protocol,
                     runtime=runtime,
                 )

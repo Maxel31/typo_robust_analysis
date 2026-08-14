@@ -239,6 +239,7 @@ def load_residual_state_evidence(
     if policy == "frozen-causal-window/v1":
         selected = tuple(range(start, stop))
     elif policy == "sha256-seed42-middle-late-nonoverlap-same-width/v1":
+        first_start = math.ceil(0.4 * decoder_layers)
         if schema == "robustness-joint-window-selection/v1":
             control = layers.get("random_control_window")
             if (
@@ -254,11 +255,11 @@ def load_residual_state_evidence(
             if (
                 selected_stop - selected_start != width
                 or selected_stop > decoder_layers
+                or selected_start < first_start
                 or not (selected_stop <= start or stop <= selected_start)
             ):
                 raise ValueError("confirmatory random control window is invalid")
         else:
-            first_start = math.ceil(0.4 * decoder_layers)
             candidates = tuple(
                 candidate
                 for candidate in range(first_start, decoder_layers - width + 1)

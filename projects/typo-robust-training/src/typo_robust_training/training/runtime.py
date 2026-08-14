@@ -270,12 +270,17 @@ class HuggingFaceAdapterTrainingRuntime:
         )
 
     def pair_is_usable(self, pair: TrainingPair) -> bool:
-        """Return whether every noisy edit survives the frozen token truncation."""
+        """Return whether a generated pair supplies every frozen training target."""
 
         try:
             self._encode_pair(pair)
         except ValueError as exc:
-            if str(exc) == "training typo edit falls outside the retained token window":
+            if str(exc) in {
+                "edited words resolve to duplicate token positions",
+                "training edited-word token cardinalities differ",
+                "training pair has no aligned non-edited next-token targets",
+                "training typo edit falls outside the retained token window",
+            }:
                 return False
             raise
         return True

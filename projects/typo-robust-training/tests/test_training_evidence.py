@@ -250,6 +250,34 @@ def test_residual_evidence_requires_passed_independent_confirmatory_validation(
     assert random_control.evidence_sha256 != causal.evidence_sha256
 
 
+def test_confirmatory_random_control_must_be_in_frozen_middle_late_band(
+    tmp_path: Path,
+) -> None:
+    selection, validation = _confirmatory_fixture(tmp_path)
+    selection_payload = json.loads(selection.read_text(encoding="utf-8"))
+    selection_payload["random_control_window"] = {
+        "start": 6,
+        "stop": 12,
+        "rule": "sha256-drawn-nonoverlapping-same-width/v1",
+    }
+    _write(selection, selection_payload)
+    validation_payload = json.loads(validation.read_text(encoding="utf-8"))
+    validation_payload["window_selection_sha256"] = hashlib.sha256(
+        selection.read_bytes()
+    ).hexdigest()
+    _write(validation, validation_payload)
+
+    with pytest.raises(ValueError, match="random control window is invalid"):
+        load_residual_state_evidence(
+            layer_selection_path=selection,
+            window_validation_path=validation,
+            model=MODEL,
+            model_revision=REVISION,
+            decoder_layers=34,
+            policy="sha256-seed42-middle-late-nonoverlap-same-width/v1",
+        )
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
