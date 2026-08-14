@@ -1,0 +1,62 @@
+{
+  "schema_version": "robustness-adapter-training-config/v3",
+  "condition": "output-matching",
+  "model": {
+    "id": "google/gemma-3-4b-it",
+    "revision": "093f9f388b31de276ce2de164bdc2081324b9767",
+    "dtype": "bfloat16",
+    "decoder_layers": 34
+  },
+  "sequence": {
+    "max_length": 512,
+    "on_the_fly_typo": "record-epoch-counter-based/v1",
+    "natural_pairs": "fixed-clean-typo-source-pairs/v1",
+    "answer_format": "no-hard-answer-target/v1",
+    "pairing_policy": "exact-alternating-clean-noisy/v1"
+  },
+  "adapter": {
+    "method": "lora",
+    "rank": 16,
+    "alpha": 8,
+    "dropout": 0,
+    "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    "layer_scope": "all-decoder-layers",
+    "bias": "none",
+    "task_type": "CAUSAL_LM"
+  },
+  "optimization": {
+    "optimizer": "adamw",
+    "learning_rate": 0.0001,
+    "weight_decay": 0.01,
+    "warmup_ratio": 0.0,
+    "scheduler": "constant-with-warmup",
+    "gradient_checkpointing": true,
+    "micro_batch_size": 1,
+    "gradient_accumulation_steps": 32,
+    "max_optimizer_steps": 10000,
+    "max_student_tokens": 10000000,
+    "max_grad_norm": 1.0,
+    "checkpoint_every_optimizer_steps": 50,
+    "log_every_micro_steps": 1,
+    "seed_inventory": [42, 43, 44],
+    "resume_contract": "exact-next-sample-and-rng/v1"
+  },
+  "objective": {
+    "weights": {
+      "noisy_language_model": 0,
+      "answer": 0,
+      "output": 1,
+      "state": 0,
+      "clean": 0
+    },
+    "state_scope": "none",
+    "state_distance": "cosine-residual/v1",
+    "output_scope": "aligned-non-edited-next-token/v1",
+    "noisy_language_model_scope": "all-nonpadding-next-tokens/v1",
+    "temperature": 1.0,
+    "epsilon": 1e-8,
+    "state_gradient_ratio": null,
+    "calibration_micro_batches": 0,
+    "state_window_policy": "none"
+  }
+}

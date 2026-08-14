@@ -12,7 +12,7 @@ from typing import Mapping
 
 
 _SOURCE_REVISION = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
-_WORD_CHARACTER = re.compile(r"[A-Za-z']")
+_LETTER = re.compile(r"[A-Za-z]")
 
 
 def _nonempty(value: object, *, field_name: str) -> str:
@@ -160,17 +160,31 @@ class TypoEdit:
                 raise ValueError(f"{field_name} must be an increasing integer span")
 
 
+def _is_word_character(text: str, index: int) -> bool:
+    if not 0 <= index < len(text):
+        return False
+    if _LETTER.fullmatch(text[index]):
+        return True
+    return (
+        text[index] == "'"
+        and index > 0
+        and index + 1 < len(text)
+        and _LETTER.fullmatch(text[index - 1]) is not None
+        and _LETTER.fullmatch(text[index + 1]) is not None
+    )
+
+
 def _word_span(text: str, start: int, stop: int) -> tuple[int, int]:
     anchor = start
-    if start == stop and (anchor == len(text) or not _WORD_CHARACTER.fullmatch(text[anchor])):
+    if start == stop and not _is_word_character(text, anchor):
         anchor -= 1
-    if not 0 <= anchor < len(text) or not _WORD_CHARACTER.fullmatch(text[anchor]):
+    if not _is_word_character(text, anchor):
         raise ValueError("natural typo change is not inside an English word")
     left = anchor
     right = max(anchor + 1, stop)
-    while left and _WORD_CHARACTER.fullmatch(text[left - 1]):
+    while _is_word_character(text, left - 1):
         left -= 1
-    while right < len(text) and _WORD_CHARACTER.fullmatch(text[right]):
+    while _is_word_character(text, right):
         right += 1
     return left, right
 

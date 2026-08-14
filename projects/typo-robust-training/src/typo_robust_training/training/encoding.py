@@ -8,9 +8,14 @@ from typing import Any
 
 from typo_robust_training.training.pairs import (
     TrainingPair,
+    UnusableTrainingPairError,
     align_unchanged_token_positions,
     edited_word_final_token_positions,
 )
+
+
+_QUESTION_PREFIX = "Question:\n"
+_ANSWER_PROMPT_SUFFIX = "\nAnswer:"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,13 +58,15 @@ def render_training_pair(pair: TrainingPair) -> RenderedTrainingPair:
     else:
         if pair.answer is None:
             raise ValueError("reasoning training pair requires an answer")
-        prefix, prompt_suffix = "Question:\n", "\nAnswer:"
+        prefix, prompt_suffix = _QUESTION_PREFIX, _ANSWER_PROMPT_SUFFIX
         answer_suffix = f" {pair.answer}\n"
         clean_prompt = prefix + pair.clean_text + prompt_suffix
         typo_prompt = prefix + pair.typo_text + prompt_suffix
         clean_text = clean_prompt + answer_suffix
         typo_text = typo_prompt + answer_suffix
         clean_shift = typo_shift = len(prefix)
+        # Keep the historical v1 answer target, including its trailing newline.
+        # Truncation validation below checks the answer content boundary separately.
         clean_answer_span = len(clean_prompt), len(clean_text)
         typo_answer_span = len(typo_prompt), len(typo_text)
     clean_spans = tuple(
@@ -139,10 +146,22 @@ def _answer_targets(
     ids: tuple[int, ...],
     offsets: tuple[tuple[int, int], ...],
     span: tuple[int, int] | None,
+    required: bool,
 ) -> tuple[tuple[int, int], ...]:
     if span is None:
         return ()
     start, stop = span
+    # ``render_training_pair`` appends exactly one newline. It remains a legacy
+    # hard target when tokenized, while only the answer content must be visible
+    # for truncation detection because some tokenizers omit whitespace offsets.
+    required_content_stop = stop - 1
+    if required_content_stop > max(
+        (token_stop for _token_start, token_stop in offsets),
+        default=0,
+    ):
+        if required:
+            raise ValueError("reasoning answer suffix was truncated from the training sequence")
+        return ()
     targets = tuple(
         (index - 1, ids[index])
         for index, (token_start, token_stop) in enumerate(offsets)
@@ -158,6 +177,8 @@ def encode_training_pair(
     *,
     tokenizer: Any,
     max_length: int,
+    require_answer_targets: bool = False,
+    require_all_edits_visible: bool = False,
 ) -> PairedEncoding:
     """Tokenize one pair and derive all masks without heuristic token alignment."""
 
@@ -191,22 +212,39 @@ def encode_training_pair(
         if clean_index > 0 and typo_index > 0
     )
     if not output_pairs:
-        raise ValueError("training pair has no aligned non-edited next-token targets")
+        raise UnusableTrainingPairError(
+            "training pair has no aligned non-edited next-token targets"
+        )
     if pair.edits:
+        clean_extent = max((stop for _start, stop in clean_offsets), default=0)
+        typo_extent = max((stop for _start, stop in typo_offsets), default=0)
+        visible_spans = tuple(
+            (clean_span, typo_span)
+            for clean_span, typo_span in zip(
+                rendered.clean_edit_spans,
+                rendered.typo_edit_spans,
+                strict=True,
+            )
+            if clean_span[1] <= clean_extent and typo_span[1] <= typo_extent
+        )
+        if require_all_edits_visible and len(visible_spans) != len(pair.edits):
+            raise UnusableTrainingPairError(
+                "training typo edit falls outside the retained token window"
+            )
         clean_edit_positions = edited_word_final_token_positions(
             clean_offsets,
-            rendered.clean_edit_spans,
+            tuple(clean_span for clean_span, _typo_span in visible_spans),
             text=rendered.clean_text,
         )
         typo_edit_positions = edited_word_final_token_positions(
             typo_offsets,
-            rendered.typo_edit_spans,
+            tuple(typo_span for _clean_span, typo_span in visible_spans),
             text=rendered.typo_text,
         )
     else:
         clean_edit_positions = typo_edit_positions = ()
     if len(clean_edit_positions) != len(typo_edit_positions):
-        raise ValueError("training edited-word token cardinalities differ")
+        raise UnusableTrainingPairError("training edited-word token cardinalities differ")
     return PairedEncoding(
         record_id=pair.record_id,
         clean_input_ids=clean_ids,
@@ -221,15 +259,36 @@ def encode_training_pair(
             ids=typo_ids,
             offsets=typo_offsets,
             span=rendered.typo_answer_span,
+            required=require_answer_targets,
         ),
         student_tokens=sum(typo_mask),
         is_noop=pair.is_noop,
     )
 
 
+def retained_clean_character_extent(
+    pair: TrainingPair,
+    *,
+    tokenizer: Any,
+    max_length: int,
+) -> int:
+    """Return the raw clean-text prefix fully retained after token truncation."""
+
+    rendered = render_training_pair(pair)
+    _ids, _mask, offsets = _tokenize(
+        tokenizer,
+        text=rendered.clean_text,
+        max_length=max_length,
+    )
+    retained_stop = max((stop for _start, stop in offsets), default=0)
+    shift = len(_QUESTION_PREFIX) if pair.task is not None else 0
+    return max(0, min(len(pair.clean_text), retained_stop - shift))
+
+
 __all__ = [
     "PairedEncoding",
     "RenderedTrainingPair",
     "encode_training_pair",
+    "retained_clean_character_extent",
     "render_training_pair",
 ]

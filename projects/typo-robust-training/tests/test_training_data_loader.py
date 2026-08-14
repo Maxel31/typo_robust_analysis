@@ -17,7 +17,7 @@ from typo_robust_training.training.data import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CONFIG = PROJECT_ROOT / "configs/ablations/gemma4b-component-state-cycle1.yaml"
+CONFIG = PROJECT_ROOT / "configs/gemma4b-targeted-lora.yaml"
 
 
 def _write_json(path: Path, payload: object) -> None:

@@ -110,7 +110,7 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
         "subword-position-patching",
         "held-out-window-evaluation",
     }
-    assert registered.isdisjoint(TRAINING_COMMANDS)
+    assert set(TRAINING_COMMANDS) <= registered
     assert get_experiment("build-rebuttal-manifest").status == "implemented"
     assert get_experiment("six-setting-patch-controls").status == "implemented"
     assert get_experiment("source-write-coordinate-grid").status == "implemented"

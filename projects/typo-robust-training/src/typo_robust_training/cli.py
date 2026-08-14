@@ -208,6 +208,7 @@ def _run_adapter_training(args: argparse.Namespace) -> int:
                 config_path=args.config,
                 training_data_dir=args.training_data,
                 layer_selection_path=getattr(args, "layer_selection", None),
+                window_validation_path=getattr(args, "window_validation", None),
                 component_selection_path=getattr(args, "component_selection", None),
                 seed=args.seed,
                 gpu_id=args.gpu_id,
@@ -215,6 +216,8 @@ def _run_adapter_training(args: argparse.Namespace) -> int:
                 wandb_entity=args.wandb_entity,
                 output_dir=args.output_dir,
                 resume=args.resume,
+                evaluation_protocol_path=args.evaluation_protocol,
+                monitor_data_dir=args.monitor_data,
             )
         )
     except (FileExistsError, RuntimeError, ValueError) as exc:
@@ -268,18 +271,23 @@ def _add_training_arguments(
     *,
     command: str,
     condition: str,
-    requires_localization: bool,
+    requires_layer_selection: bool,
+    accepts_component_selection: bool = False,
 ) -> None:
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--training-data", required=True, type=Path)
-    if requires_localization:
+    if requires_layer_selection:
         parser.add_argument("--layer-selection", required=True, type=Path)
-        parser.add_argument("--component-selection", required=True, type=Path)
+        parser.add_argument("--window-validation", type=Path)
+    if accepts_component_selection:
+        parser.add_argument("--component-selection", type=Path)
     parser.add_argument("--seed", required=True, type=int)
     parser.add_argument("--gpu-id", required=True)
     parser.add_argument("--wandb-project", required=True)
     parser.add_argument("--wandb-entity")
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--evaluation-protocol", type=Path)
+    parser.add_argument("--monitor-data", type=Path)
     parser.add_argument("--resume", action="store_true")
     parser.set_defaults(
         _typo_cot_plugin_handler=_run_adapter_training,
@@ -383,6 +391,10 @@ def register_commands(
         ("train-noisy-language-model", "noisy-language-model"),
         ("train-output-matching", "output-matching"),
         ("train-global-state-alignment", "global-state-alignment"),
+        (
+            "train-random-window-state-distillation",
+            "random-window-state-distillation",
+        ),
         ("train-localized-state-distillation", "localized-state-distillation"),
     ):
         training = commands.add_parser(
@@ -393,7 +405,12 @@ def register_commands(
             training,
             command=command,
             condition=condition,
-            requires_localization=condition == "localized-state-distillation",
+            requires_layer_selection=condition
+            in {
+                "localized-state-distillation",
+                "random-window-state-distillation",
+            },
+            accepts_component_selection=condition == "localized-state-distillation",
         )
 
     evaluation = commands.add_parser(

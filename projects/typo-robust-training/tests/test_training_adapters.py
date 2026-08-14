@@ -16,7 +16,7 @@ from typo_robust_training.training.config import load_adapter_training_config
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-COMPONENT_ABLATION_CONFIG = PROJECT_ROOT / "configs/ablations/gemma4b-component-state-cycle1.yaml"
+PROPOSED_CONFIG = PROJECT_ROOT / "configs/gemma4b-targeted-lora.yaml"
 NOISY_CONFIG = PROJECT_ROOT / "configs/baselines/noisy-language-model.yaml"
 
 
@@ -52,7 +52,7 @@ def _small_protocol(path: Path):
 def test_targeted_lora_freezes_base_and_updates_only_component_containing_layer() -> None:
     adapted = attach_lora_adapters(
         _tiny_model(),
-        protocol=_small_protocol(COMPONENT_ABLATION_CONFIG),
+        protocol=_small_protocol(PROPOSED_CONFIG),
         decoder_layers=(1,),
     )
     report = trainable_parameter_report(

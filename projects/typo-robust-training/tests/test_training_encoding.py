@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from typo_robust_training.data.records import TypoEdit
 from typo_robust_training.training.encoding import encode_training_pair, render_training_pair
-from typo_robust_training.training.pairs import TrainingPair
+from typo_robust_training.training.pairs import TrainingPair, UnusableTrainingPairError
 
 
 class _WordTokenizer:
@@ -14,7 +16,6 @@ class _WordTokenizer:
         self.vocabulary: dict[str, int] = {"<bos>": 1}
 
     def __call__(self, text: str, **kwargs: object) -> dict[str, list[object]]:
-        del kwargs
         pieces = [
             (match.group(), match.span()) for match in re.finditer(r"[A-Za-z]+|\d+|[^\w\s]", text)
         ]
@@ -23,6 +24,10 @@ class _WordTokenizer:
         for piece, span in pieces:
             ids.append(self.vocabulary.setdefault(piece, len(self.vocabulary) + 1))
             offsets.append(span)
+        if kwargs.get("truncation"):
+            maximum = int(kwargs["max_length"])
+            ids = ids[:maximum]
+            offsets = offsets[:maximum]
         return {
             "input_ids": ids,
             "attention_mask": [1] * len(ids),
@@ -117,6 +122,87 @@ def test_noop_pair_has_zero_edit_positions_but_keeps_all_exact_alignment() -> No
         (index, index) for index in range(len(encoding.clean_input_ids) - 1)
     )
     assert encoding.answer_targets == ()
+
+
+def test_natural_edit_inside_an_alphanumeric_identifier_is_unusable() -> None:
+    pair = TrainingPair(
+        record_id="d" * 64,
+        clean_text="The covid19 report explains the local study results.",
+        typo_text="The covod19 report explains the local study results.",
+        task=None,
+        answer=None,
+        metadata={},
+        edits=(
+            TypoEdit(
+                operation="keyboard-neighbor-substitution",
+                clean_word="covid",
+                typo_word="covod",
+                clean_char_span=(4, 9),
+                typo_char_span=(4, 9),
+            ),
+        ),
+        is_noop=False,
+        epoch=0,
+    )
+
+    with pytest.raises(
+        UnusableTrainingPairError,
+        match=r"spans\[0\] starts or ends inside an alphanumeric word",
+    ):
+        encode_training_pair(pair, tokenizer=_WordTokenizer(), max_length=512)
+
+
+def test_encoding_ignores_only_edits_truncated_from_either_side() -> None:
+    pair = TrainingPair(
+        record_id="c" * 64,
+        clean_text="airport works terminal",
+        typo_text="arport works termnal",
+        task=None,
+        answer=None,
+        metadata={},
+        edits=(
+            TypoEdit("deletion", "airport", "arport", (0, 7), (0, 6)),
+            TypoEdit("deletion", "terminal", "termnal", (14, 22), (13, 20)),
+        ),
+        is_noop=False,
+        epoch=0,
+    )
+
+    encoding = encode_training_pair(pair, tokenizer=_WordTokenizer(), max_length=3)
+
+    assert len(encoding.clean_edit_positions) == len(encoding.typo_edit_positions) == 1
+    assert encoding.clean_input_ids != encoding.typo_input_ids
+
+    with pytest.raises(
+        UnusableTrainingPairError,
+        match="outside the retained token window",
+    ):
+        encode_training_pair(
+            pair,
+            tokenizer=_WordTokenizer(),
+            max_length=3,
+            require_all_edits_visible=True,
+        )
+
+
+def test_encoding_skips_answer_ce_when_the_answer_suffix_is_truncated() -> None:
+    encoding = encode_training_pair(
+        _pair(task="gsm8k", answer="72"),
+        tokenizer=_WordTokenizer(),
+        max_length=6,
+    )
+
+    assert encoding.clean_edit_positions
+    assert encoding.typo_edit_positions
+    assert encoding.answer_targets == ()
+
+    with pytest.raises(ValueError, match="answer suffix was truncated"):
+        encode_training_pair(
+            _pair(task="gsm8k", answer="72"),
+            tokenizer=_WordTokenizer(),
+            max_length=6,
+            require_answer_targets=True,
+        )
 
 
 def test_encoding_maps_an_edited_word_inside_a_punctuation_token() -> None:

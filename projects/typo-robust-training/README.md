@@ -279,6 +279,45 @@ of these version-1 runs are placed in the separate `Historical Cycle 1` group,
 so they cannot be mistaken for the bounded residual-window comparison, whose
 config and W&B mapping are introduced with that later training feature.
 
+### Confirmatory Cycle 3 training and controls
+
+Cycle 3 holds the frozen self-teacher, training stream, all-linear LoRA
+capacity, optimizer, exact clean:noisy alternation, and 10M student-token
+budget constant. The proposed condition differs from output-distribution
+matching only by a bounded residual-state cosine loss at the independently
+selected causal window. The random-window and all-layer controls change only
+the state-loss layer scope.
+
+```bash
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-random-window-state-distillation \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-random-window-10m.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --monitor-data "${TRAIN_ROOT}/evaluation-data/robustness-v1" \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --output-dir "${TRAIN_ROOT}/training/cycle3/random-window-state-distillation/seed-42"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-global-state-alignment \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-all-layer-state-10m.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --monitor-data "${TRAIN_ROOT}/evaluation-data/robustness-v1" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --output-dir "${TRAIN_ROOT}/training/cycle3/all-layer-state-distillation/seed-42"
+```
+
+Run the two controls serially when only one GPU is available. Add `--resume`
+only when the same output directory already contains an exact compatible
+checkpoint. W&B uses descriptive names beginning with `Random-window control`
+and `All-layer control`; each name also includes the operation, layer range,
+model, token budget, and seed.
+
 ## 5. Freeze the independent evaluation study
 
 Freeze the exact clean/typo texts before comparing any adapter. The source

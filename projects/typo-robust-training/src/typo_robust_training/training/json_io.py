@@ -1,4 +1,4 @@
-"""Small atomic JSON writer shared by training metadata producers."""
+"""Backward-compatible atomic JSON writer for training metadata."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 def write_json_atomic(path: Path, payload: object) -> None:
-    """Replace one UTF-8 JSON artifact only after canonical serialization succeeds."""
+    """Replace one UTF-8 JSON artifact only after serialization succeeds."""
 
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
