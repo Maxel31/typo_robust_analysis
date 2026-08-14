@@ -24,11 +24,11 @@ _DOLMA_REMOTE_SHARDS = 16
 _DOLMA_ROWS_PER_SHARD = 256
 _REMOTE_TIMEOUT_SECONDS = 60
 _DOLMA_DUPLICATE_IDENTITY_POLICY = "drop-normalized-text-duplicates-fail-on-conflict/v1"
+_DOLMA_DOCUMENT_DUPLICATE_POLICY = "drop-identical-normalized-documents-first-wins/v1"
 _DOLMA_BLANK_TEXT_POLICY = "skip-blank-string/v1"
 _DOLMA_UNSEGMENTABLE_TEXT_POLICY = "skip-unsegmentable-document/v1"
-_DOLMA_SEGMENT_DUPLICATE_POLICY = "drop-identical-emitted-segments-first-wins/v1"
 _DOLMA_USABLE_TEXT_POLICY = "clean-corpus-segmentation-only/v1"
-_DOCUMENT_SEGMENTATION_POLICY = "content-hash-then-nearest-complete-word-window/v3"
+_DOCUMENT_SEGMENTATION_POLICY = "maximal-complete-word-window-hash-tiebreak/v4"
 
 
 class _UnsegmentableDocumentError(ValueError):
@@ -66,37 +66,13 @@ def _answer_choice_text(
     return matches[0]
 
 
-def _complete_word_window(
-    text: str,
-    *,
-    start: int,
-    character_limit: int,
-) -> tuple[int, int, str] | None:
-    """Return a bounded window containing only complete whitespace-delimited words."""
-    if start > 0 and not text[start - 1].isspace():
-        while start < len(text) and not text[start].isspace():
-            start += 1
-    while start < len(text) and text[start].isspace():
-        start += 1
-    end = min(start + character_limit, len(text))
-    if end < len(text) and not text[end].isspace():
-        while end > start and not text[end - 1].isspace():
-            end -= 1
-    while end > start and text[end - 1].isspace():
-        end -= 1
-    segment = text[start:end]
-    if not segment:
-        return None
-    return start, end, segment
-
-
 def _nearest_complete_word_window(
     text: str,
     *,
     preferred_start: int,
     character_limit: int,
 ) -> tuple[int, int, str] | None:
-    """Find the nearest bounded word window, maximizing content at that location."""
+    """Find the fullest bounded word window, using hash proximity as a tie-break."""
     spans = tuple(
         match.span()
         for match in re.finditer(r"\S+", text)
@@ -118,7 +94,7 @@ def _nearest_complete_word_window(
             distance = preferred_start - stop
         else:
             distance = 0
-        key = (-distance, len(segment), -start)
+        key = (len(segment), -distance, -start)
         if best_key is None or key > best_key:
             best = (start, stop, segment)
             best_key = key
@@ -143,19 +119,12 @@ def segment_document(record: CleanRecord, *, character_limit: int) -> CleanRecor
         hashed_start = (
             int.from_bytes(hashlib.sha256(text.encode()).digest(), "big") % available_starts
         )
-        window = _complete_word_window(
+        window = _nearest_complete_word_window(
             text,
-            start=hashed_start,
+            preferred_start=hashed_start,
             character_limit=character_limit,
         )
-        window_strategy = "content-hash"
-        if window is None:
-            window = _nearest_complete_word_window(
-                text,
-                preferred_start=hashed_start,
-                character_limit=character_limit,
-            )
-            window_strategy = "nearest-complete-word-fallback"
+        window_strategy = "maximal-complete-word-hash-tiebreak"
         if window is None:
             raise _UnsegmentableDocumentError(
                 f"document contains no bounded complete word: {record.source_id}"
@@ -372,7 +341,7 @@ class HuggingFaceDataSourceProvider:
             "dolma_duplicate_identity_policy": _DOLMA_DUPLICATE_IDENTITY_POLICY,
             "dolma_blank_text_policy": _DOLMA_BLANK_TEXT_POLICY,
             "dolma_unsegmentable_text_policy": _DOLMA_UNSEGMENTABLE_TEXT_POLICY,
-            "dolma_segment_duplicate_policy": _DOLMA_SEGMENT_DUPLICATE_POLICY,
+            "dolma_document_duplicate_policy": _DOLMA_DOCUMENT_DUPLICATE_POLICY,
             "dolma_usable_text_policy": _DOLMA_USABLE_TEXT_POLICY,
             "document_segmentation_policy": _DOCUMENT_SEGMENTATION_POLICY,
             "source_revisions": {
@@ -492,7 +461,7 @@ class HuggingFaceDataSourceProvider:
             urls, _ = self._remote_dolma_urls(source)
             payloads = (payload for url in urls for payload in self._remote_dolma_rows(url))
         seen_normalized_text_digest_by_source_id: dict[str, bytes] = {}
-        seen_emitted_text_digests: set[bytes] = set()
+        seen_normalized_text_digests: set[bytes] = set()
         for index, payload in enumerate(payloads):
             payload_text = payload.get("text")
             if isinstance(payload_text, str) and not payload_text.strip():
@@ -508,6 +477,9 @@ class HuggingFaceDataSourceProvider:
                     )
                 continue
             seen_normalized_text_digest_by_source_id[record.source_id] = normalized_text_digest
+            if normalized_text_digest in seen_normalized_text_digests:
+                continue
+            seen_normalized_text_digests.add(normalized_text_digest)
             try:
                 segmented_record = segment_document(
                     record,
@@ -515,10 +487,6 @@ class HuggingFaceDataSourceProvider:
                 )
             except _UnsegmentableDocumentError:
                 continue
-            segment_digest = hashlib.sha256(segmented_record.text.encode("utf-8")).digest()
-            if segment_digest in seen_emitted_text_digests:
-                continue
-            seen_emitted_text_digests.add(segment_digest)
             yield segmented_record
 
     def iter_records(

@@ -167,8 +167,8 @@ def test_dolma_local_cache_is_hashed(tmp_path: Path) -> None:
         == "skip-unsegmentable-document/v1"
     )
     assert (
-        provider.provenance()["dolma_segment_duplicate_policy"]
-        == "drop-identical-emitted-segments-first-wins/v1"
+        provider.provenance()["dolma_document_duplicate_policy"]
+        == "drop-identical-normalized-documents-first-wins/v1"
     )
     assert (
         provider.provenance()["dolma_usable_text_policy"]
@@ -176,7 +176,7 @@ def test_dolma_local_cache_is_hashed(tmp_path: Path) -> None:
     )
     assert (
         provider.provenance()["document_segmentation_policy"]
-        == "content-hash-then-nearest-complete-word-window/v3"
+        == "maximal-complete-word-window-hash-tiebreak/v4"
     )
 
 
@@ -325,14 +325,13 @@ def test_dolma_word_rich_documents_survive_unlucky_hashed_windows(tmp_path: Path
     records = tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
 
     assert len(records) == 20
-    fallback_records = tuple(
-        record
+    assert all(
+        record.metadata["document_window_strategy"]
+        == "maximal-complete-word-hash-tiebreak"
         for record in records
-        if record.metadata["document_window_strategy"] == "nearest-complete-word-fallback"
     )
-    assert fallback_records
-    assert all(len(record.text) > limit * 0.9 for record in fallback_records)
-    assert len({record.text for record in fallback_records}) == len(fallback_records)
+    assert all(len(record.text) > limit * 0.9 for record in records)
+    assert len({record.text for record in records}) == len(records)
 
 
 @pytest.mark.parametrize(
@@ -402,7 +401,9 @@ def test_dolma_clean_corpus_does_not_require_typo_targets(tmp_path: Path) -> Non
     ]
 
 
-def test_dolma_fallback_deduplicates_identical_emitted_segments(tmp_path: Path) -> None:
+def test_dolma_preserves_distinct_documents_with_identical_emitted_segments(
+    tmp_path: Path,
+) -> None:
     protocol = load_training_data_config(DEFAULT_CONFIG)
     archive = tmp_path / "dolma.jsonl.gz"
     limit = protocol.document_character_window
@@ -424,9 +425,45 @@ def test_dolma_fallback_deduplicates_identical_emitted_segments(tmp_path: Path) 
     provider = HuggingFaceDataSourceProvider(protocol=protocol, dolma_corpus_path=archive)
     records = tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
 
-    assert len(records) == 1
-    assert records[0].source_id == "dolma:boilerplate-0"
-    assert records[0].text == "Copyright notice all rights reserved"
+    assert len(records) == 5
+    assert [record.source_id for record in records] == [
+        f"dolma:boilerplate-{index}" for index in range(5)
+    ]
+    assert {record.text for record in records} == {"Copyright notice all rights reserved"}
+
+
+def test_dolma_prefers_full_prose_over_nearby_single_token(tmp_path: Path) -> None:
+    protocol = load_training_data_config(DEFAULT_CONFIG)
+    archive = tmp_path / "dolma.jsonl.gz"
+    limit = protocol.document_character_window
+    with gzip.open(archive, "wt", encoding="utf-8") as handle:
+        for index in range(20):
+            prose = " ".join(
+                f"paragraph{index}-{paragraph} contains varied prose about robustness"
+                for paragraph in range(300)
+            )
+            handle.write(
+                json.dumps(
+                    {
+                        "id": f"prose-rich-{index}",
+                        "text": prose
+                        + " "
+                        + "A" * (3 * limit)
+                        + "\n1\n"
+                        + "B" * (50 * limit),
+                        "source": "common-crawl",
+                        "metadata": {},
+                    }
+                )
+                + "\n"
+            )
+
+    provider = HuggingFaceDataSourceProvider(protocol=protocol, dolma_corpus_path=archive)
+    records = tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
+
+    assert len(records) == 20
+    assert all(len(record.text) > limit * 0.9 for record in records)
+    assert all("varied prose" in record.text for record in records)
 
 
 def test_dolma_deduplicates_identical_full_documents_across_source_ids(
