@@ -195,6 +195,117 @@ def _run_localize_components(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_calibrate_sparse_autoencoder_l1(args: argparse.Namespace) -> int:
+    from typo_robust_training.sae.runner import (
+        SaeCalibrationRunConfig,
+        run_calibrate_sae_l1,
+    )
+
+    try:
+        result = run_calibrate_sae_l1(
+            SaeCalibrationRunConfig(
+                config_path=args.config,
+                registry_path=args.registry,
+                training_data_paths=tuple(args.training_data),
+                gpu_id=args.gpu_id,
+                wandb_project=args.wandb_project,
+                wandb_entity=args.wandb_entity,
+                output_dir=args.output_dir,
+                resume=args.resume,
+            )
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"calibrate-sparse-autoencoder-l1: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"selected L1 coefficients: {result.selection_path}")
+    print(f"calibration report: {result.report_path}")
+    print(f"run manifest: {result.run_path}")
+    return 0
+
+
+def _run_build_sae_clean_corpus(args: argparse.Namespace) -> int:
+    from typo_robust_training.sae.corpus import (
+        SaeCorpusBuildConfig,
+        run_build_sae_clean_corpus,
+    )
+
+    try:
+        result = run_build_sae_clean_corpus(
+            SaeCorpusBuildConfig(
+                config_path=args.config,
+                registry_path=args.registry,
+                existing_data_paths=tuple(args.existing_data),
+                exclusion_paths=tuple(args.exclude_data),
+                training_budget=args.training_budget,
+                output_dir=args.output_dir,
+            )
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"build-sae-clean-corpus: error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"built {result.supplement_records} clean supplement record(s), "
+        f"{result.supplement_tokens} source token(s): {result.supplement_path}"
+    )
+    print(f"total eligible source tokens: {result.total_eligible_tokens}")
+    print(f"source registry: {result.registry_path}")
+    print(f"run manifest: {result.run_path}")
+    return 0
+
+
+def _run_train_sparse_autoencoders(args: argparse.Namespace) -> int:
+    from typo_robust_training.sae.runner import SaeTrainingRunConfig, run_train_saes
+
+    try:
+        result = run_train_saes(
+            SaeTrainingRunConfig(
+                config_path=args.config,
+                registry_path=args.registry,
+                training_data_paths=tuple(args.training_data),
+                l1_selection_path=args.l1_selection,
+                gpu_id=args.gpu_id,
+                wandb_project=args.wandb_project,
+                wandb_entity=args.wandb_entity,
+                output_dir=args.output_dir,
+                resume=args.resume,
+            )
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"train-sparse-autoencoders: error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"trained SAE(s) for {result.trained_tokens} activation token(s), "
+        f"{result.optimizer_steps} optimizer step(s): {result.checkpoint_dir}"
+    )
+    print(f"run manifest: {result.run_path}")
+    return 0
+
+
+def _run_validate_sparse_autoencoders(args: argparse.Namespace) -> int:
+    from typo_robust_training.sae.runner import (
+        SaeValidationRunConfig,
+        run_validate_saes,
+    )
+
+    try:
+        result = run_validate_saes(
+            SaeValidationRunConfig(
+                config_path=args.config,
+                registry_path=args.registry,
+                validation_data_paths=tuple(args.validation_data),
+                checkpoint_dir=args.checkpoint_dir,
+                gpu_id=args.gpu_id,
+                output_dir=args.output_dir,
+            )
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"validate-sparse-autoencoders: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"WP-2 acceptance passed={result.passed}: {result.acceptance_path}")
+    print(f"run manifest: {result.run_path}")
+    return 0 if result.passed else 2
+
+
 def _run_adapter_training(args: argparse.Namespace) -> int:
     from typo_robust_training.training.runner import (
         AdapterTrainingRunConfig,
@@ -350,6 +461,63 @@ def register_commands(
     joint_validation.add_argument("--output-dir", required=True, type=Path)
     joint_validation.add_argument("--resume", action="store_true")
     joint_validation.set_defaults(_typo_cot_plugin_handler=_run_validate_generic_joint_window)
+
+    sae_corpus = commands.add_parser(
+        "build-sae-clean-corpus",
+        help="Build a role-disjoint clean FineWeb-Edu supplement for SAE training.",
+    )
+    sae_corpus.add_argument("--config", required=True, type=Path)
+    sae_corpus.add_argument("--registry", required=True, type=Path)
+    sae_corpus.add_argument("--existing-data", required=True, action="append", type=Path)
+    sae_corpus.add_argument("--exclude-data", required=True, action="append", type=Path)
+    sae_corpus.add_argument(
+        "--training-budget",
+        required=True,
+        choices=("minimum", "preferred"),
+    )
+    sae_corpus.add_argument("--output-dir", required=True, type=Path)
+    sae_corpus.set_defaults(_typo_cot_plugin_handler=_run_build_sae_clean_corpus)
+
+    sae_calibration = commands.add_parser(
+        "calibrate-sparse-autoencoder-l1",
+        help="Calibrate the frozen three-value L1 grid on clean FineWeb-Edu activations.",
+    )
+    sae_calibration.add_argument("--config", required=True, type=Path)
+    sae_calibration.add_argument("--registry", required=True, type=Path)
+    sae_calibration.add_argument("--training-data", required=True, action="append", type=Path)
+    sae_calibration.add_argument("--gpu-id", required=True)
+    sae_calibration.add_argument("--wandb-project", required=True)
+    sae_calibration.add_argument("--wandb-entity")
+    sae_calibration.add_argument("--output-dir", required=True, type=Path)
+    sae_calibration.add_argument("--resume", action="store_true")
+    sae_calibration.set_defaults(_typo_cot_plugin_handler=_run_calibrate_sparse_autoencoder_l1)
+
+    sae_training = commands.add_parser(
+        "train-sparse-autoencoders",
+        help="Train preregistered layer-5/layer-20 SAEs on clean FineWeb-Edu only.",
+    )
+    sae_training.add_argument("--config", required=True, type=Path)
+    sae_training.add_argument("--registry", required=True, type=Path)
+    sae_training.add_argument("--training-data", required=True, action="append", type=Path)
+    sae_training.add_argument("--l1-selection", required=True, type=Path)
+    sae_training.add_argument("--gpu-id", required=True)
+    sae_training.add_argument("--wandb-project", required=True)
+    sae_training.add_argument("--wandb-entity")
+    sae_training.add_argument("--output-dir", required=True, type=Path)
+    sae_training.add_argument("--resume", action="store_true")
+    sae_training.set_defaults(_typo_cot_plugin_handler=_run_train_sparse_autoencoders)
+
+    sae_validation = commands.add_parser(
+        "validate-sparse-autoencoders",
+        help="Compute held-in SAE statistics, splice KL, and frozen WP-2 gates.",
+    )
+    sae_validation.add_argument("--config", required=True, type=Path)
+    sae_validation.add_argument("--registry", required=True, type=Path)
+    sae_validation.add_argument("--validation-data", required=True, action="append", type=Path)
+    sae_validation.add_argument("--checkpoint-dir", required=True, type=Path)
+    sae_validation.add_argument("--gpu-id", required=True)
+    sae_validation.add_argument("--output-dir", required=True, type=Path)
+    sae_validation.set_defaults(_typo_cot_plugin_handler=_run_validate_sparse_autoencoders)
 
     selection = commands.add_parser(
         "select-distillation-layers",

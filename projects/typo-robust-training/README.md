@@ -395,3 +395,99 @@ are retained locally and summarized in the eventual PR.
 
 The full frozen protocol is in
 [`../typo-cot/docs/robustness_training_plan_v1.md`](../typo-cot/docs/robustness_training_plan_v1.md).
+
+## 7. Run the parallel SAE diagnostic track (GPU 1 only)
+
+The SAE track is diagnostic/future-study work. It must not modify or interrupt
+the protected GPU 5/6 output-matching and causal-window runs. If frozen
+robustness evaluation and this track compete for resources, stop scheduling new
+SAE work and give the frozen evaluation priority.
+
+First extend the remaining clean FineWeb-Edu stream to the preregistered source
+budget. The builder requires all frozen evaluation and localization roles,
+rejects exact identity/content overlap, and applies the frozen character-5gram
+near-duplicate check. This is a separate data-preparation command and uses no
+GPU:
+
+```bash
+GPU_ID="1"
+SAE_ROOT="/diskthalys/ssd14tc/sfukuhata/typo_sae_artifacts/gemma4b-v1"
+TRAINING_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-training/results/data/gemma4b-cycle3-64m/training_sources.jsonl"
+EVALUATION_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-training/results/evaluation-data/robustness-v1"
+LOCALIZATION_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-training/results/localization/generic-joint-window-v1/pairs"
+SUPPLEMENT_DATA="${SAE_ROOT}/clean-corpus/sae_clean_supplement.jsonl"
+WANDB_PROJECT="typo-robustness-sae"
+
+uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-sae-clean-corpus \
+  --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
+  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --existing-data "${TRAINING_DATA}" \
+  --exclude-data "${EVALUATION_DATA}" \
+  --exclude-data "${LOCALIZATION_DATA}" \
+  --training-budget minimum \
+  --output-dir "${SAE_ROOT}/clean-corpus"
+```
+
+Then calibrate the three preregistered L1 coefficients on the same combined
+clean stream:
+
+```bash
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot calibrate-sparse-autoencoder-l1 \
+  --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
+  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --training-data "${TRAINING_DATA}" \
+  --training-data "${SUPPLEMENT_DATA}" \
+  --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --output-dir "${SAE_ROOT}/l1-calibration"
+```
+
+Train the two layer-5 initialization seeds and the layer-20 SAE. The
+command refuses typo/task records and writes the eligible record-ID SHA-256
+before the first model forward. Add another decontaminated clean FineWeb-Edu
+manifest by repeating `--training-data` when needed to reach at least 100M
+unique source tokens.
+
+```bash
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-sparse-autoencoders \
+  --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
+  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --training-data "${TRAINING_DATA}" \
+  --training-data "${SUPPLEMENT_DATA}" \
+  --l1-selection "${SAE_ROOT}/l1-calibration/l1_selection.json" \
+  --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --output-dir "${SAE_ROOT}/training"
+```
+
+The frozen 10M-token activation subsample stores four bfloat16 residual streams
+and requires about 205 GB of disk. A 1M-token shuffle buffer can temporarily use
+more than 41 GB of host RAM while it is joined and permuted. Before starting,
+ensure that `SAE_ROOT` has at least 220 GB free and the host has at least 48 GB
+available RAM. The configured shared volume currently satisfies these bounds.
+
+Finally compute held-in firing probabilities, reconstruction-error scale, and
+the frozen WP-2 acceptance report. This command evaluates only clean LM data;
+it does not run task accuracy or open any evaluation tier.
+
+```bash
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot validate-sparse-autoencoders \
+  --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
+  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --validation-data "${TRAINING_DATA}" \
+  --validation-data "${SUPPLEMENT_DATA}" \
+  --checkpoint-dir "${SAE_ROOT}/training" \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${SAE_ROOT}/validation"
+```
+
+WP-2 validation records each distinct checkpoint in
+`${SAE_ROOT}/wp2_attempts.json`; the initial validation plus at most one failed
+retrain are enforced across fresh validation output directories.
+
+Append `--resume` to a calibration/training command only after its own
+hash-bound checkpoint exists. The frozen method and gates are documented in
+[`docs/sae_track_plan_v1.md`](docs/sae_track_plan_v1.md).

@@ -360,3 +360,92 @@ natural typoを含めます。固定PR前gateは、primary random-2 typo accurac
 完全な固定protocolは
 [`../typo-cot/docs/robustness_training_plan_v1.md`](../typo-cot/docs/robustness_training_plan_v1.md)
 にあります。
+
+## 7. 並行 SAE 診断トラックを実行する（GPU 1 のみ）
+
+SAE は診断・将来研究用です。GPU 5/6 で保護している output matching と causal-window run を
+変更・中断しません。凍結済み頑健性評価と GPU または人手が競合した場合は、SAE の新規投入を
+止めて凍結評価を優先します。
+
+最初に、残余の clean FineWeb-Edu stream を事前登録したsource budgetまで拡張します。builderには
+凍結済み評価とlocalizationの全roleを渡す必要があり、ID・contentの完全一致に加えて、固定した
+character 5-gram近重複検査を行います。このデータ準備commandはGPUを使用しません。
+
+```bash
+GPU_ID="1"
+SAE_ROOT="/diskthalys/ssd14tc/sfukuhata/typo_sae_artifacts/gemma4b-v1"
+TRAINING_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-training/results/data/gemma4b-cycle3-64m/training_sources.jsonl"
+EVALUATION_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-training/results/evaluation-data/robustness-v1"
+LOCALIZATION_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-training/results/localization/generic-joint-window-v1/pairs"
+SUPPLEMENT_DATA="${SAE_ROOT}/clean-corpus/sae_clean_supplement.jsonl"
+WANDB_PROJECT="typo-robustness-sae"
+
+uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-sae-clean-corpus \
+  --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
+  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --existing-data "${TRAINING_DATA}" \
+  --exclude-data "${EVALUATION_DATA}" \
+  --exclude-data "${LOCALIZATION_DATA}" \
+  --training-budget minimum \
+  --output-dir "${SAE_ROOT}/clean-corpus"
+```
+
+続いて、同じ統合clean streamを使い、事前登録した3点のL1係数を較正します。
+
+```bash
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot calibrate-sparse-autoencoder-l1 \
+  --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
+  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --training-data "${TRAINING_DATA}" \
+  --training-data "${SUPPLEMENT_DATA}" \
+  --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --output-dir "${SAE_ROOT}/l1-calibration"
+```
+
+続いて層 5 の 2 初期値 seed と層 20 の SAE を学習します。この command は typo/task record を
+拒否し、最初の model forward より前に使用 record ID の SHA-256 を保存します。unique clean
+source token を 100M 以上にするため追加データが必要な場合は、同じ漏洩検査を通した FineWeb-Edu
+manifestを `--training-data` の繰り返しで追加します。
+
+```bash
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-sparse-autoencoders \
+  --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
+  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --training-data "${TRAINING_DATA}" \
+  --training-data "${SUPPLEMENT_DATA}" \
+  --l1-selection "${SAE_ROOT}/l1-calibration/l1_selection.json" \
+  --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --output-dir "${SAE_ROOT}/training"
+```
+
+凍結済みの10M-token activation subsampleは4層のbfloat16 residual streamを保存するため、
+約205 GBのディスクを使用します。また、1M-token shuffle bufferの結合・並べ替え時には、
+ホストRAMを一時的に41 GB超使用し得ます。実行前に`SAE_ROOT`へ220 GB以上の空き容量と、
+ホストに48 GB以上の利用可能RAMがあることを確認してください。現在指定している共有volumeは
+この条件を満たしています。
+
+最後に held-in clean text で発火率、再構成誤差 scale、WP-2 検収値を計算します。task accuracy は
+測らず、評価 tier も開封しません。
+
+```bash
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot validate-sparse-autoencoders \
+  --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
+  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --validation-data "${TRAINING_DATA}" \
+  --validation-data "${SUPPLEMENT_DATA}" \
+  --checkpoint-dir "${SAE_ROOT}/training" \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${SAE_ROOT}/validation"
+```
+
+WP-2 validationは異なるcheckpointごとの試行を`${SAE_ROOT}/wp2_attempts.json`へ記録し、
+初回validationと、失敗後に許された最大1回の再学習だけを、新しいvalidation出力directory間でも
+強制します。
+
+`--resume`は対象 command 自身の hash-bound checkpoint が既にある場合だけ追加します。固定した
+手法とgateは [`docs/sae_track_plan_v1.ja.md`](docs/sae_track_plan_v1.ja.md) にあります。
