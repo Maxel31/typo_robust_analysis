@@ -1,6 +1,9 @@
-# Typo-robustness evaluation protocol v1.2
+# Typo-robustness evaluation protocol v1.4
 
-Status: **prospectively frozen before training cycle 2**.
+Status: **endpoints frozen before training cycle 2; v1.4 is a pre-opening
+executable-scope amendment with no model-output access**. It removes declarations
+that had no implementation in the frozen evaluator; the confirmatory endpoints
+and all implemented secondary endpoints are unchanged.
 
 This document is the evaluation contract for typo-robustness training. Training
 losses, data mixtures, adapter placement, and stopping rules may change between
@@ -35,7 +38,7 @@ clean-correct/typo-wrong cohort. Such a flip cohort is secondary only.
 
 | Tier | Purpose | Access |
 |---|---|---|
-| monitor | clean/output KL and numerical safety during training | every 10 optimizer steps; no task accuracy |
+| monitor | training-side clean/output KL and numerical safety | schedule is owned by the training run; this evaluation contract only forbids task accuracy |
 | tune | cycle and ablation selection | repeatable; all accesses logged; known to be optimizable |
 | pre-PR gate | one confirmatory check of a frozen candidate | opened once after arm, three seeds, config, and checkpoint hashes are committed |
 | final test | paper headline result | opened exactly once after every model, arm, seed, and analysis decision is frozen and the pre-PR gate passed |
@@ -58,8 +61,8 @@ MMLU-Pro, and CommonsenseQA (2,500 task items). MATH-500 is reserved for the
 final test because its released test set has only 500 records.
 
 The final test contains 500 records each from GSM8K, MMLU, ARC-Challenge,
-MMLU-Pro, and CommonsenseQA, plus all 466 MATH-500 records that support the
-unchanged four-distinct-word severity condition (2,966 task items). MMLU and
+MMLU-Pro, and CommonsenseQA, plus all 440 MATH-500 records that support the
+unchanged four-distinct-word severity condition (2,940 task items). MMLU and
 MMLU-Pro are stratified by subject/category; MATH-500 is stratified by subject
 and level.
 Selections are deterministic from source ID, namespace, and seed 42. All pools
@@ -80,12 +83,12 @@ Secondary conditions are:
 - `transposition-2`, on 500 items, as an edit-operation held out from training;
 - `natural-injection`, one real misspelling on 500 task items, using an evaluation-only dictionary
   derived from held-out licensed GitHub repositories;
-- held-out natural clean/typo language-model pairs (1,000 in final test);
-- model-specific Attribution-4 stress pairs (200 GSM8K and 200 MMLU), whose
-  locations are computed once with the unadapted Base and reused by every arm.
+- held-out natural clean/typo language-model pairs (1,000 in final test).
 
 Secondary conditions cannot replace or be pooled into the confirmatory
-`random-2` endpoint. Attribution-4 is a stress test, not a population sample.
+`random-2` endpoint. Model-specific Attribution-4 remains a possible separately
+preregistered stress diagnostic, but it is not declared by this model-independent
+frozen battery and cannot affect its gates.
 
 Only the question is edited; few-shot demonstrations remain clean. Eligible
 targets are alphabetic words of at least three letters. URL, email, identifier,
@@ -164,6 +167,7 @@ For a model/candidate to pass:
 - typo `random-2` macro: estimate at least +2.0 points and 95% lower confidence
   bound above 0 versus Base;
 - clean PPL ratio at most 1.02;
+- clean forward `KL(Base || Adapter)` median at most 0.03 nats/token;
 - at least two of three seeds have non-negative clean change and positive typo
   change.
 
@@ -178,9 +182,10 @@ than evidence that causal target selection mattered. Natural injection
 must have a point change of at least -1.0 point and lower bound above -2.0
 points; held-out natural KL must not expand. These are key secondary gates.
 
-`KL(Base || Adapter) <= 0.03` nats/token is a safety diagnostic. State distance,
-state loss, clean--typo KL-gap closure, and paired-patch gain are mechanistic
-diagnostics and never block a behaviorally successful model.
+`KL(Base || Adapter) <= 0.03` nats/token is a frozen safety gate. State distance,
+state loss, and paired-patch gain are mechanistic diagnostics and never block a
+behaviorally successful model. The held-out natural-pair clean--typo KL gap is
+the separately declared key-secondary non-degradation gate above.
 
 ## 7. Mechanistic audit
 
@@ -195,18 +200,16 @@ changes the primary pass/fail decision.
 ## 8. Change control and reporting
 
 Version 1.1 was a prospective source-capacity amendment made before cycle-2
-training and before any model outcome was evaluated. The released MATH-500
-split has 500 records, but 34 have fewer than four eligible distinct words
-under the already frozen minimum-three-letter, question-only eligibility rule.
-Version 1.0 was therefore impossible to materialize without weakening the typo
-definition. Version 1.1 retains that definition and freezes all 466 eligible
-records; no accuracy, KL, or patching result informed the amendment.
+training and before any model outcome was evaluated. Its initial audit reported
+that 34 of the released 500 MATH-500 records had fewer than four eligible words
+and consequently declared a 466-record population. Version 1.3 below documents
+why that audit did not enforce the full distinct-word eligibility contract.
 
-The pre-training source-capacity audit was: GSM8K 1,319/1,000 eligible/needed,
+The v1.1 pre-training source-capacity audit reported: GSM8K 1,319/1,000 eligible/needed,
 MMLU 13,667/1,000, ARC-Challenge 1,156/1,000, MMLU-Pro 11,792/1,000,
-MATH-500 466/466, and CommonsenseQA 1,213/1,000. Thus only MATH-500 exhausted
-its released population; every other task retains a deterministic unused
-margin.
+MATH-500 466/466, and CommonsenseQA 1,213/1,000. The MATH-500 value is
+superseded by the corrected v1.3 census; the other task pools retain a
+deterministic unused margin.
 
 Version 1.2 separates two prespecified natural-typo estimands that v1.1's first
 implementation had incorrectly coupled. Natural LM pairs test unseen
@@ -218,6 +221,20 @@ repository. The first v1.1 materialization attempt failed before writing a
 registry because its coupled tune dictionary covered 0/100 task items. This
 amendment was made without model inference or outcome access and preserves all
 endpoints, typo operations, thresholds, and opening rules.
+
+Version 1.3 is a prospective correctness amendment made before any frozen
+evaluation role was opened or any model output was read. A falsification test
+showed that the v1.1 capacity audit counted eligible word occurrences rather
+than case-insensitive distinct lexical words and did not apply the complete
+mathematical-expression and gold-answer exclusions. Re-running a full census
+against the pinned MATH-500 revision with the already declared eligibility
+rules yields 440/500 records with at least four eligible distinct words; all
+440 also support two distinct adjacent-transposition targets. The previous
+v1.2 artifacts are invalidated rather than opened. Version 1.3 freezes those
+440 records, records the task-level source/exclusion/eligibility census in the
+registry, and does not weaken any edit rule, endpoint, threshold, or opening
+condition. No accuracy, KL, likelihood, generation, or patching result informed
+this amendment.
 
 `registry.json` binds protocol/config/source hashes, item and pair files,
 prompt/extractor versions, opening records, and reports. A pre-opening memo

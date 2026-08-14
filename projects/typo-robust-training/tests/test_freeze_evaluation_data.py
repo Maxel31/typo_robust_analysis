@@ -13,11 +13,18 @@ import pytest
 
 from typo_robust_training.data.config import DatasetSource, load_training_data_config
 from typo_robust_training.data.records import CleanRecord, NaturalTypoRecord
+from typo_robust_training.data.splits import NearDuplicateTextIndex
 from typo_robust_training.evaluation.freeze import (
     FreezeEvaluationRunConfig,
     _Exclusions,
+    _exclusions,
+    _could_retain_smallest,
     _natural_edit,
+    _retain_smallest,
+    _select_corpus,
     _select_natural,
+    _supports_frozen_typo_grid,
+    _supports_transposition,
     run_freeze_robustness_evaluation,
 )
 from typo_robust_training.evaluation.data import (
@@ -30,6 +37,41 @@ from typo_robust_training.evaluation.study import load_evaluation_study_protocol
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 STUDY = PROJECT_ROOT / "configs/robustness-evaluation-v1.yaml"
 SOURCES = PROJECT_ROOT / "configs" / "cycle3" / "gemma4b-data-64m.yaml"
+
+
+def test_frozen_typo_grid_counts_distinct_words_not_occurrences() -> None:
+    protocol = load_evaluation_study_protocol(STUDY)
+    record = CleanRecord(
+        source="gsm8k",
+        source_revision="a" * 40,
+        source_split="test",
+        source_id="gsm8k:repeated-word-grid",
+        group_id="gsm8k:repeated-word-grid",
+        text="Add value value value value now.",
+        task="gsm8k",
+        answer="42",
+        metadata={},
+    )
+
+    assert not _supports_frozen_typo_grid(record, protocol=protocol)
+
+
+def test_transposition_eligibility_does_not_shrink_primary_population() -> None:
+    protocol = load_evaluation_study_protocol(STUDY)
+    record = CleanRecord(
+        source="math_500",
+        source_revision="a" * 40,
+        source_split="test",
+        source_id="math_500:non-transposable-primary",
+        group_id="math_500:non-transposable-primary",
+        text="Aaa bbb ccc ddd.",
+        task="math_500",
+        answer="42",
+        metadata={},
+    )
+
+    assert _supports_frozen_typo_grid(record, protocol=protocol)
+    assert not _supports_transposition(record, protocol=protocol)
 
 
 def _letters(index: int) -> str:
@@ -194,6 +236,7 @@ def _write_exclusions(root: Path) -> None:
             "group_id": f"https://example.test/train-{index // 10}.git",
             "kind": "natural",
             "repository": f"https://example.test/train-{index // 10}.git",
+            "clean_text": f"The reliable airport example {index} remains readable.",
         }
         for index in range(200)
     ]
@@ -203,6 +246,7 @@ def _write_exclusions(root: Path) -> None:
             "source": "gsm8k",
             "source_id": f"gsm8k:train-{index}",
             "group_id": f"gsm8k:train-{index}",
+            "clean_text": f"The reliable GSM8K diagnostic example {index} remains readable.",
         }
         for index in range(10)
     ]
@@ -213,6 +257,7 @@ def _write_exclusions(root: Path) -> None:
                 "source": "gsm8k",
                 "source_id": f"gsm8k:train-{100 + index}",
                 "group_id": f"gsm8k:train-{100 + index}",
+                "clean_text": f"The reliable GSM8K tune example {index} remains readable.",
             }
             for index in range(100)
         ],
@@ -222,6 +267,7 @@ def _write_exclusions(root: Path) -> None:
                 "source": "fineweb_edu",
                 "source_id": f"fineweb_edu:train-{index}",
                 "group_id": f"fineweb_edu:train-{index}",
+                "clean_text": f"Educational document {_letters(index)} explains a reliable concept.",
             }
             for index in range(200)
         ],
@@ -233,6 +279,7 @@ def _write_exclusions(root: Path) -> None:
                 "group_id": f"https://example.test/tune-{(200 + index) // 10}.git",
                 "kind": "natural",
                 "repository": f"https://example.test/tune-{(200 + index) // 10}.git",
+                "clean_text": f"The reliable airport tune example {index} remains readable.",
             }
             for index in range(100)
         ],
@@ -276,7 +323,55 @@ def test_natural_dictionary_excludes_case_only_corrections() -> None:
         metadata={},
     )
 
-    assert _natural_edit(record) is None
+    assert _natural_edit(record, minimum_word_letters=3) is None
+
+
+def test_exclusions_index_clean_text_and_reject_rows_without_text(tmp_path: Path) -> None:
+    exclusion_root = tmp_path / "exclusions"
+    _write_exclusions(exclusion_root)
+    exclusions = _exclusions(exclusion_root)
+    tune_rows = [
+        json.loads(line)
+        for line in (exclusion_root / "tune_manifest.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line
+    ]
+
+    assert exclusions.prior_tune_near_duplicates.contains_near_duplicate(
+        str(tune_rows[0]["clean_text"])
+    )
+
+    broken = dict(tune_rows[0])
+    broken.pop("clean_text")
+    tune_rows[0] = broken
+    (exclusion_root / "tune_manifest.jsonl").write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in tune_rows),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="row has no clean text"):
+        _exclusions(exclusion_root)
+
+
+def test_bottom_k_prefilter_skips_noncompetitive_near_duplicate_queries() -> None:
+    heap: list[tuple[int, str, CleanRecord]] = []
+    records = tuple(_task_record("gsm8k", "a" * 40, "test", index) for index in range(3))
+    _retain_smallest(heap, records[0], key=10, limit=2)
+    _retain_smallest(heap, records[1], key=20, limit=2)
+
+    assert not _could_retain_smallest(
+        heap,
+        record_id=records[2].record_id,
+        key=30,
+        limit=2,
+    )
+    assert _could_retain_smallest(
+        heap,
+        record_id=records[2].record_id,
+        key=5,
+        limit=2,
+    )
+    assert not _could_retain_smallest([], record_id="unused", key=0, limit=0)
 
 
 def _rows(path: Path) -> tuple[dict[str, object], ...]:
@@ -329,6 +424,8 @@ def test_natural_lm_pairs_are_repository_held_out_while_injection_words_are_disj
         hard_groups=frozenset(),
         prior_tune_source_ids=frozenset(record.source_id for record in tune),
         prior_tune_groups=frozenset((record.source, record.group_id) for record in tune),
+        hard_near_duplicates=NearDuplicateTextIndex(()),
+        prior_tune_near_duplicates=NearDuplicateTextIndex(()),
         training_repositories=frozenset({train.repository}),
         tune_repositories=frozenset({tune[0].repository}),
         artifact_sha256={},
@@ -343,6 +440,64 @@ def test_natural_lm_pairs_are_repository_held_out_while_injection_words_are_disj
     assert "shared" not in dictionaries["tune"]
     assert len(selected["pre_pr_gate"]) == 2
     assert len(selected["final_test"]) == 3
+
+
+def test_sealed_corpus_excludes_near_duplicates_of_prior_tune_text() -> None:
+    protocol = replace(
+        load_evaluation_study_protocol(STUDY),
+        corpus_counts=MappingProxyType(
+            {
+                "tune": {"fineweb_edu": 0, "dolma": 0, "natural_pairs": 0},
+                "pre_pr_gate": {"fineweb_edu": 1, "dolma": 1, "natural_pairs": 0},
+                "final_test": {"fineweb_edu": 1, "dolma": 1, "natural_pairs": 0},
+            }
+        ),
+    )
+
+    def corpus_record(source: str, index: int, text: str) -> CleanRecord:
+        return CleanRecord(
+            source=source,
+            source_revision="a" * 40,
+            source_split="train",
+            source_id=f"{source}-{index}",
+            group_id=f"{source}-group-{index}",
+            text=text,
+            task=None,
+            answer=None,
+            metadata={"fixture": True},
+        )
+
+    prior_text = " ".join(f"token{index:04d}" for index in range(1000))
+    near_prior = f"{prior_text[:-1]}8"
+    collected = {
+        source: (
+            corpus_record(source, 0, near_prior),
+            corpus_record(source, 1, f"Unique {source} document alpha with sufficient prose."),
+            corpus_record(source, 2, f"Unique {source} document beta with different prose."),
+        )
+        for source in ("fineweb_edu", "dolma")
+    }
+    exclusions = _Exclusions(
+        hard_source_ids=frozenset(),
+        hard_groups=frozenset(),
+        prior_tune_source_ids=frozenset(),
+        prior_tune_groups=frozenset(),
+        hard_near_duplicates=NearDuplicateTextIndex(()),
+        prior_tune_near_duplicates=NearDuplicateTextIndex(
+            (prior_text,), shingle_size=5, threshold=0.99
+        ),
+        training_repositories=frozenset(),
+        tune_repositories=frozenset(),
+        artifact_sha256={},
+    )
+    selected = _select_corpus(collected, protocol=protocol, exclusions=exclusions)
+
+    assert all(
+        record.text != near_prior
+        for role in ("pre_pr_gate", "final_test")
+        for source in ("fineweb_edu", "dolma")
+        for record in selected[role][source]
+    )
 
 
 def test_freeze_writes_fixed_disjoint_primary_secondary_and_corpus_artifacts(
@@ -380,7 +535,7 @@ def test_freeze_writes_fixed_disjoint_primary_secondary_and_corpus_artifacts(
     primary_pre = [row for row in pre_pr if row["metadata"]["evaluation_condition"] == "random-2"]
     primary_final = [row for row in final if row["metadata"]["evaluation_condition"] == "random-2"]
     assert len(primary_pre) == 2_500
-    assert len(primary_final) == 2_966
+    assert len(primary_final) == 2_940
     assert {row["task"] for row in primary_pre} == {
         "gsm8k",
         "mmlu",
@@ -420,9 +575,17 @@ def test_freeze_writes_fixed_disjoint_primary_secondary_and_corpus_artifacts(
     assert registry["protocol_sha256"] == hashlib.sha256(STUDY.read_bytes()).hexdigest()
     assert registry["roles"]["pre_pr_gate"]["maximum_openings"] == 1
     assert registry["roles"]["final_test"]["maximum_openings"] == 1
-    assert registry["roles"]["final_test"]["task_primary_records"] == 2_966
+    assert registry["roles"]["final_test"]["task_primary_records"] == 2_940
     assert registry["roles"]["final_test"]["corpus_records"] == 3_000
     assert registry["opening_order"] == ["pre_pr_gate", "final_test"]
+    assert registry["generator"] == "frozen-evaluation-typo/v4"
+    assert registry["task_capacity_census"]["sealed"]["math_500"] == {
+        "source_split_records": 500,
+        "after_exclusions": 500,
+        "typo_grid_eligible": 500,
+        "transposition_eligible": 500,
+        "required": 440,
+    }
     assert registry["exclusion_data_protocol_sha256"] == registry["source_config_sha256"]
     assert registry["natural_evaluation_axes"] == {
         "language_model_pairs": "repository-disjoint/v1",
@@ -473,6 +636,26 @@ def test_freeze_writes_fixed_disjoint_primary_secondary_and_corpus_artifacts(
     assert len(corpus.records) == 300
     assert sum(record.kind == "clean-corpus" for record in corpus.records) == 200
     assert sum(record.kind == "natural" for record in corpus.records) == 100
+
+    sealed_arguments = {
+        "evaluation_role": "pre-pr-gate",
+        "study_protocol_sha256": hashlib.sha256(STUDY.read_bytes()).hexdigest(),
+        "access_binding_sha256": "a" * 64,
+        "experiment_binding_sha256": "b" * 64,
+        "output_dir": tmp_path / "sealed-evaluation-output",
+        "confirm_sealed_role": True,
+        "resume": False,
+    }
+    sealed_tasks = load_evaluation_bundle(
+        output,
+        splits=("same-task", "unseen-task", "unseen-content", "unseen-typo"),
+        model="google/gemma-3-4b-it",
+        model_revision="093f9f388b31de276ce2de164bdc2081324b9767",
+        **sealed_arguments,
+    )
+    sealed_corpus = load_evaluation_corpus_bundle(output, **sealed_arguments)
+    assert sealed_tasks.records
+    assert sealed_corpus.records
 
     with pytest.raises(ValueError, match="completed passing pre-PR gate"):
         load_evaluation_corpus_bundle(

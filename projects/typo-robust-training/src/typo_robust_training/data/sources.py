@@ -45,6 +45,17 @@ def _multiple_choice_text(question: str, choices: tuple[tuple[str, str], ...]) -
     return question + "\n" + "\n".join(f"{label}. {text}" for label, text in choices)
 
 
+def _answer_choice_text(
+    choices: tuple[tuple[str, str], ...],
+    *,
+    answer: str,
+) -> str:
+    matches = tuple(text for label, text in choices if label == answer)
+    if len(matches) != 1:
+        raise ValueError("multiple-choice answer must identify exactly one choice")
+    return matches[0]
+
+
 def segment_document(record: CleanRecord, *, character_limit: int) -> CleanRecord:
     if not isinstance(record, CleanRecord) or record.task is not None:
         raise TypeError("document segmentation requires a non-task CleanRecord")
@@ -127,12 +138,14 @@ def _format_huggingface_record(
         answer = choices[raw_answer][0]
         group_id = source_id
         metadata["subject"] = row.get("subject")
+        metadata["answer_choice_text"] = choices[raw_answer][1]
     elif source_name in {"arc", "commonsense_qa"}:
         source_id = str(row.get("id") or f"{split}-{index}")
         choices = _choices(row.get("choices"))
         text = _multiple_choice_text(_text(row.get("question"), field="question"), choices)
         answer = _text(row.get("answerKey"), field="answerKey")
         group_id = source_id
+        metadata["answer_choice_text"] = _answer_choice_text(choices, answer=answer)
     elif source_name == "mmlu_pro":
         source_id = str(row.get("question_id") or row.get("id") or f"{split}-{index}")
         choices = _choices(row.get("options") or row.get("choices"))
@@ -146,6 +159,7 @@ def _format_huggingface_record(
             answer = _text(raw_answer, field="answer")
         group_id = source_id
         metadata["category"] = row.get("category")
+        metadata["answer_choice_text"] = _answer_choice_text(choices, answer=answer)
     elif source_name == "math_500":
         source_id = str(row.get("unique_id") or row.get("id") or f"{split}-{index}")
         text = _text(row.get("problem"), field="problem")

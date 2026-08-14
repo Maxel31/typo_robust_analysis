@@ -21,6 +21,7 @@ _CONDITIONS = (
     "output-matching",
     "global-state-alignment",
     "localized-state-distillation",
+    "random-window-state-distillation",
 )
 
 
@@ -134,7 +135,13 @@ def load_adapter_descriptors(
             field="localization_sha256",
             optional=True,
         )
-        if (condition == "localized-state-distillation") != (localization is not None):
+        if (
+            condition
+            in {
+                "localized-state-distillation",
+                "random-window-state-distillation",
+            }
+        ) != (localization is not None):
             raise ValueError("evaluation adapter localization provenance differs")
         outputs = run.get("outputs")
         adapter_output = outputs.get("adapter") if isinstance(outputs, Mapping) else None

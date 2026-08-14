@@ -27,12 +27,7 @@ _TOP = {
     "opening",
 }
 _TIERS = {"monitor", "tune", "pre_pr_gate", "final_test"}
-_MONITOR = {
-    "task_accuracy_allowed",
-    "clean_documents",
-    "paired_documents",
-    "interval_optimizer_steps",
-}
+_MONITOR = {"task_accuracy_allowed"}
 _TUNE = {
     "repeatable",
     "task_records_total",
@@ -50,9 +45,6 @@ _SECONDARY = {
     "held_out_records_total",
     "natural_injection_records_total",
     "natural_injection_edit_count",
-    "natural_lm_pairs",
-    "attribution4_records_per_task",
-    "attribution4_tasks",
 }
 _ELIGIBILITY = {
     "minimum_word_letters",
@@ -186,9 +178,6 @@ class EvaluationStudyProtocol:
     seed: int
     training_seeds: tuple[int, ...]
     monitor_task_accuracy_allowed: bool
-    monitor_clean_documents: int
-    monitor_paired_documents: int
-    monitor_interval_optimizer_steps: int
     tune_task_records_total: int
     tune_fineweb_documents: int
     tune_natural_pairs: int
@@ -206,9 +195,6 @@ class EvaluationStudyProtocol:
     held_out_records_total: int
     natural_injection_records_total: int
     natural_injection_edit_count: int
-    natural_lm_pairs: int
-    attribution4_records_per_task: int
-    attribution4_tasks: tuple[str, ...]
     minimum_word_letters: int
     distinct_words: bool
     question_only: bool
@@ -217,7 +203,10 @@ class EvaluationStudyProtocol:
     forbid_numbers_math_urls_email_identifiers: bool
     corpus_counts: Mapping[str, Mapping[str, int]]
     corpus_max_tokens: int
+    corpus_truncation: str
     corpus_ppl_sources: tuple[str, ...]
+    corpus_clean_kl_source: str
+    corpus_natural_alignment: str
     audit_records: Mapping[str, int]
     shots: Mapping[str, int]
     max_new_tokens: int
@@ -243,7 +232,7 @@ def load_evaluation_study_protocol(path: Path) -> EvaluationStudyProtocol:
     top = _mapping(payload, field="config", fields=_TOP)
     if (
         top["schema_version"] != "robustness-evaluation-study/v1"
-        or top["protocol_id"] != "typo-robustness-evaluation-v1.2"
+        or top["protocol_id"] != "typo-robustness-evaluation-v1.4"
         or top["seed"] != 42
     ):
         raise ValueError("evaluation study identity differs")
@@ -256,9 +245,6 @@ def load_evaluation_study_protocol(path: Path) -> EvaluationStudyProtocol:
     if (
         _boolean(monitor["task_accuracy_allowed"], field="monitor.task_accuracy_allowed")
         or not _boolean(tune["repeatable"], field="tune.repeatable")
-        or monitor["clean_documents"] != 200
-        or monitor["paired_documents"] != 100
-        or monitor["interval_optimizer_steps"] != 10
         or tune["task_records_total"] != 500
         or tune["fineweb_documents"] != 200
         or tune["natural_pairs"] != 100
@@ -297,7 +283,7 @@ def load_evaluation_study_protocol(path: Path) -> EvaluationStudyProtocol:
         for task in final_tasks
     }
     expected_pre_pr_counts = {task: 500 for task in pre_pr_tasks}
-    expected_final_counts = {task: (466 if task == "math_500" else 500) for task in final_tasks}
+    expected_final_counts = {task: (440 if task == "math_500" else 500) for task in final_tasks}
     if pre_pr_counts != expected_pre_pr_counts or final_counts != expected_final_counts:
         raise ValueError("evaluation study sealed task sample size differs")
 
@@ -313,7 +299,6 @@ def load_evaluation_study_protocol(path: Path) -> EvaluationStudyProtocol:
         raise ValueError("evaluation study primary typo protocol differs")
     secondary = _mapping(typos["secondary"], field="typos.secondary", fields=_SECONDARY)
     severity = _int_tuple(secondary["severity_edit_counts"], field="severity_edit_counts")
-    attribution_tasks = _string_tuple(secondary["attribution4_tasks"], field="attribution4_tasks")
     expected_secondary = {
         "severity_edit_counts": (1, 4),
         "severity_records_total": 1200,
@@ -321,9 +306,6 @@ def load_evaluation_study_protocol(path: Path) -> EvaluationStudyProtocol:
         "held_out_records_total": 500,
         "natural_injection_records_total": 500,
         "natural_injection_edit_count": 1,
-        "natural_lm_pairs": 1000,
-        "attribution4_records_per_task": 200,
-        "attribution4_tasks": ("gsm8k", "mmlu"),
     }
     actual_secondary = {
         "severity_edit_counts": severity,
@@ -332,9 +314,6 @@ def load_evaluation_study_protocol(path: Path) -> EvaluationStudyProtocol:
         "held_out_records_total": secondary["held_out_records_total"],
         "natural_injection_records_total": secondary["natural_injection_records_total"],
         "natural_injection_edit_count": secondary["natural_injection_edit_count"],
-        "natural_lm_pairs": secondary["natural_lm_pairs"],
-        "attribution4_records_per_task": secondary["attribution4_records_per_task"],
-        "attribution4_tasks": attribution_tasks,
     }
     if actual_secondary != expected_secondary:
         raise ValueError("evaluation study secondary typo protocol differs")
@@ -456,17 +435,6 @@ def load_evaluation_study_protocol(path: Path) -> EvaluationStudyProtocol:
         seed=42,
         training_seeds=training_seeds,
         monitor_task_accuracy_allowed=False,
-        monitor_clean_documents=_integer(
-            monitor["clean_documents"], field="monitor.clean_documents", minimum=1
-        ),
-        monitor_paired_documents=_integer(
-            monitor["paired_documents"], field="monitor.paired_documents", minimum=1
-        ),
-        monitor_interval_optimizer_steps=_integer(
-            monitor["interval_optimizer_steps"],
-            field="monitor.interval_optimizer_steps",
-            minimum=1,
-        ),
         tune_task_records_total=_integer(
             tune["task_records_total"], field="tune.task_records_total", minimum=1
         ),
@@ -497,9 +465,6 @@ def load_evaluation_study_protocol(path: Path) -> EvaluationStudyProtocol:
         held_out_records_total=500,
         natural_injection_records_total=500,
         natural_injection_edit_count=1,
-        natural_lm_pairs=1000,
-        attribution4_records_per_task=200,
-        attribution4_tasks=attribution_tasks,
         minimum_word_letters=3,
         distinct_words=True,
         question_only=True,
@@ -508,7 +473,10 @@ def load_evaluation_study_protocol(path: Path) -> EvaluationStudyProtocol:
         forbid_numbers_math_urls_email_identifiers=True,
         corpus_counts=MappingProxyType(corpus_counts),
         corpus_max_tokens=512,
+        corpus_truncation="tokenizer-right-prefix/v1",
         corpus_ppl_sources=corpus_ppl_sources,
+        corpus_clean_kl_source="fineweb_edu",
+        corpus_natural_alignment="exact-unchanged-token-spans/v1",
         audit_records=MappingProxyType({"tune": 100, "pre_pr_gate": 500, "final_test": 500}),
         shots=MappingProxyType(shots),
         max_new_tokens=512,

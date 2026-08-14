@@ -312,11 +312,13 @@ gate definitions are described in
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot evaluate-typo-robustness \
   --config "${TRAIN_PROJECT}/configs/gemma4b-evaluation.yaml" \
-  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --evaluation-data "${EVALUATION_DATA}" \
   --evaluation-role tune \
   --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
   --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
-  --checkpoint "${TRAIN_ROOT}/training/localized-state-distillation/seed-42/adapter" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-42/adapter" \
   --splits same-task unseen-task unseen-content unseen-typo \
   --gpu-id "${GPU_ID}" \
   --output-dir "${TRAIN_ROOT}/evaluation/tune/targeted-seed-42"
@@ -341,14 +343,16 @@ checkpoints.
 
 The report includes clean/typo accuracy, wrong-to-right, right-to-wrong, net
 accuracy, clean harm, multi-token KL, additional paired-patch gain,
-tokenization strata, unseen tasks, unseen operations, and natural typos. The
+tokenization strata, unseen tasks, unseen operations, held-out corpus PPL and
+Base-to-adapter clean KL, and natural typos. The
 frozen pre-PR gate requires a primary random-2 typo improvement of at least +2
 accuracy points over Base with a 95% confidence-interval lower bound above
 zero, a clean macro decrease of at most 1 point, no task decrease of 3 points
-or more, a held-out clean perplexity ratio at most 1.02, and no material natural
-typo degradation. The mechanistic patch audit is reported but is not a blocking
-gate. Confirmatory claims additionally require three training seeds; failed
-attempts are retained locally and summarized in the eventual PR.
+or more, a held-out clean perplexity ratio at most 1.02, clean forward KL at
+most 0.03 nats/token, and no material natural typo accuracy or held-out-pair KL
+degradation. The mechanistic patch audit is reported but is not a blocking gate.
+Confirmatory claims additionally require three training seeds; failed attempts
+are retained locally and summarized in the eventual PR.
 
 The full frozen protocol is in
 [`../typo-cot/docs/robustness_training_plan_v1.md`](../typo-cot/docs/robustness_training_plan_v1.md).

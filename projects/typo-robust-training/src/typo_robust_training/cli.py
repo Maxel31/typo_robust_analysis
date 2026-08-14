@@ -239,7 +239,9 @@ def _run_robustness_evaluation(args: argparse.Namespace) -> int:
         result = run_robustness_evaluation(
             RobustnessEvaluationRunConfig(
                 config_path=args.config,
+                study_protocol_path=args.evaluation_protocol,
                 training_data_dir=args.training_data,
+                evaluation_data_dir=args.evaluation_data,
                 evaluation_role=args.evaluation_role,
                 layer_selection_path=args.layer_selection,
                 window_validation_path=args.window_validation,
@@ -255,6 +257,7 @@ def _run_robustness_evaluation(args: argparse.Namespace) -> int:
         print(f"evaluate-typo-robustness: error: {exc}", file=sys.stderr)
         return 1
     print(f"evaluated {result.records} record(s): {result.records_path}")
+    print(f"evaluated {result.corpus_records} corpus record(s): {result.corpus_records_path}")
     print(f"robustness report: {result.report_path}")
     print(f"run manifest: {result.run_path}")
     return 0
@@ -398,7 +401,9 @@ def register_commands(
         help="Evaluate base and explicit adapters on one fixed held-out role.",
     )
     evaluation.add_argument("--config", required=True, type=Path)
+    evaluation.add_argument("--evaluation-protocol", required=True, type=Path)
     evaluation.add_argument("--training-data", required=True, type=Path)
+    evaluation.add_argument("--evaluation-data", required=True, type=Path)
     evaluation.add_argument(
         "--evaluation-role",
         required=True,

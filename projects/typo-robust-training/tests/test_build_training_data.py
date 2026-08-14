@@ -6,16 +6,20 @@ import hashlib
 import json
 from collections.abc import Iterable, Mapping
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from typo_robust_training.data.builder import (
     BuildTrainingDataConfig,
     DataSourceProvider,
+    _diagnostic_rows,
+    _pair_payload,
     run_build_training_data,
 )
 from typo_robust_training.data.config import DatasetSource, load_training_data_config
-from typo_robust_training.data.records import CleanRecord, NaturalTypoRecord
+from typo_robust_training.data.records import CleanRecord, NaturalTypoRecord, TypoEdit
+from typo_robust_training.evaluation.data import EvaluationPair
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -135,6 +139,43 @@ def _rows(path: Path) -> tuple[dict[str, object], ...]:
     return tuple(json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line)
 
 
+def test_builder_pair_payload_satisfies_evaluation_parser_condition_contract() -> None:
+    record = CleanRecord(
+        source="gsm8k",
+        source_revision="b" * 40,
+        source_split="test",
+        source_id="gsm8k:test:1",
+        group_id="gsm8k:test:1",
+        text="The quick brown fox jumps over the lazy dog",
+        task="gsm8k",
+        answer="42",
+    )
+    edit = TypoEdit(
+        operation="deletion",
+        clean_word="quick",
+        typo_word="quik",
+        clean_char_span=(4, 9),
+        typo_char_span=(4, 8),
+    )
+    row = _pair_payload(
+        record,
+        split="pre_pr_gate",
+        typo_text="The quik brown fox jumps over the lazy dog",
+        edits=(edit,),
+        protocol=SimpleNamespace(seed=42),
+        variant=0,
+    )
+
+    pair = EvaluationPair.from_dict(
+        row,
+        expected_role="pre_pr_gate",
+        held_out_operations=frozenset({"adjacent-transposition"}),
+    )
+
+    assert pair.record_id == record.record_id
+    assert pair.metadata["evaluation_condition"] == "random-1"
+
+
 def test_builder_writes_hash_bound_disjoint_replayable_artifacts(tmp_path: Path) -> None:
     config_path = _small_config(tmp_path)
     protocol = load_training_data_config(config_path)
@@ -175,6 +216,12 @@ def test_builder_writes_hash_bound_disjoint_replayable_artifacts(tmp_path: Path)
     assert all(row["clean_text"] != row["typo_text"] for row in diagnostic)
     assert all(1 <= len(row["edits"]) <= 4 for row in diagnostic)
     assert all(isinstance(row["metadata"], dict) for row in diagnostic)
+    assert all(
+        row["metadata"]["evaluation_condition"]
+        in {"random-1", "random-2", "random-4", "transposition-2", "natural-lm-pair"}
+        for row in (*tune, *gate, *final)
+        if row["kind"] != "clean"
+    )
     allowed_training_splits = {"gsm8k": "train", "mmlu": "dev", "arc": "train"}
     for row in (*training, *diagnostic):
         if row["source"] in allowed_training_splits:
@@ -187,7 +234,16 @@ def test_builder_writes_hash_bound_disjoint_replayable_artifacts(tmp_path: Path)
     assert all(
         row["operation"] != "adjacent-transposition" for row in training if row["kind"] == "natural"
     )
-    assert any(row["operation"] == "adjacent-transposition" for row in (*gate, *final))
+    transposition_rows = [
+        row
+        for row in (*gate, *final)
+        if row["metadata"]["evaluation_condition"] == "transposition-2"
+    ]
+    assert transposition_rows
+    assert all(row["edit_count"] == 2 and len(row["edits"]) == 2 for row in transposition_rows)
+    assert all(
+        set(row["operations"]) == {"adjacent-transposition"} for row in transposition_rows
+    )
 
     group_sets = [
         {(row["source"], row["group_id"]) for row in rows}
@@ -212,9 +268,46 @@ def test_builder_writes_hash_bound_disjoint_replayable_artifacts(tmp_path: Path)
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["status"] == "completed"
     assert run["source_provider"] == {"provider": "offline-fixture/v1"}
+    category_sources = {
+        "fineweb_edu": {"fineweb_edu"},
+        "reasoning": {"gsm8k", "mmlu", "arc"},
+        "natural_typo": {"github_typo_corpus"},
+    }
+    for category, sources in category_sources.items():
+        expected: dict[str, int] = {}
+        for row in training:
+            source = str(row["source"])
+            if source in sources:
+                expected[source] = expected.get(source, 0) + int(row["token_count"])
+        assert run["mixture_source_tokens"][category] == expected
     for filename, metadata in run["outputs"].items():
         path = output / filename
         assert metadata["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("config_path", (DEFAULT_CONFIG, CYCLE3_CONFIG))
+def test_diagnostic_manifest_accepts_three_edit_bucket(config_path: Path) -> None:
+    protocol = load_training_data_config(config_path)
+    records = tuple(
+        _clean(
+            "gsm8k",
+            protocol.sources["gsm8k"].revision,
+            index,
+            task="gsm8k",
+            source_split="train",
+        )
+        for index in range(protocol.diagnostic_per_task)
+    )
+    substitutions = {letter: {"x": 1} for letter in "abcdefghijklmnopqrstuvwxyz" if letter != "x"}
+
+    rows = _diagnostic_rows(
+        records,
+        protocol=protocol,
+        natural_substitutions=substitutions,
+    )
+
+    assert len(rows) == protocol.diagnostic_per_task
+    assert any(row["edit_count"] == 3 for row in rows)
 
 
 def test_builder_is_byte_deterministic_except_for_run_provenance(tmp_path: Path) -> None:

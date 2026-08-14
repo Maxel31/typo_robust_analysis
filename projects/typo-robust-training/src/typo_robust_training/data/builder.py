@@ -19,7 +19,7 @@ from typo_robust_training.data.config import (
 )
 from typo_robust_training.data.natural_words import (
     natural_corrected_word,
-    natural_dictionary_word_role,
+    natural_dictionary_role_for_word,
 )
 from typo_robust_training.data.perturb import (
     TRAINING_OPERATIONS,
@@ -40,6 +40,11 @@ from typo_robust_training.data.splits import (
     normalized_content_sha256,
     stable_weighted_split,
     validate_group_disjointness,
+)
+from typo_robust_training.data.task_splits import (
+    REASONING_DIAGNOSTIC_SPLITS,
+    REASONING_TRAINING_SPLITS,
+    TRAINING_DATA_EVALUATION_SPLITS,
 )
 from typo_robust_training.data.typo_stats import (
     derive_natural_typo_statistics,
@@ -64,21 +69,6 @@ _REASONING_V1_SPLITS = {
     "gsm8k": frozenset({"train"}),
     "mmlu": frozenset({"dev"}),
     "arc": frozenset({"train"}),
-}
-_REASONING_TRAINING_SPLITS = {
-    "gsm8k": frozenset({"train"}),
-    "mmlu": frozenset({"auxiliary_train"}),
-    "arc": frozenset({"train"}),
-}
-_REASONING_DIAGNOSTIC_SPLITS = {
-    "gsm8k": frozenset({"train"}),
-    "mmlu": frozenset({"dev"}),
-    "arc": frozenset({"train"}),
-}
-_REASONING_EVALUATION_SPLITS = {
-    "gsm8k": frozenset({"test"}),
-    "mmlu": frozenset({"validation", "test"}),
-    "arc": frozenset({"validation", "test"}),
 }
 
 
@@ -328,6 +318,11 @@ def _clean_payload(
 def _natural_payload(
     record: NaturalTypoRecord, *, split: str, token_count: int | None = None
 ) -> dict[str, object]:
+    metadata = dict(record.metadata)
+    existing_condition = metadata.get("evaluation_condition")
+    if existing_condition not in {None, "natural-lm-pair"}:
+        raise ValueError("natural record evaluation condition conflicts with its payload")
+    metadata["evaluation_condition"] = "natural-lm-pair"
     payload: dict[str, object] = {
         "schema_version": "robustness-natural-pair/v1",
         "kind": "natural",
@@ -348,7 +343,7 @@ def _natural_payload(
         "repository_license": record.repository_license,
         "clean_sha256": hashlib.sha256(record.clean_text.encode("utf-8")).hexdigest(),
         "typo_sha256": hashlib.sha256(record.typo_text.encode("utf-8")).hexdigest(),
-        "metadata": dict(record.metadata),
+        "metadata": metadata,
     }
     if token_count is not None:
         payload["token_count"] = token_count
@@ -395,21 +390,53 @@ def _transpose_word(word: str) -> str | None:
     return None
 
 
-def _heldout_transposition(record: CleanRecord) -> tuple[str, TypoEdit]:
+def _heldout_transpositions(
+    record: CleanRecord,
+    *,
+    edit_count: int,
+) -> tuple[str, tuple[TypoEdit, ...]]:
+    selected: list[tuple[int, int, str, str]] = []
+    selected_words: set[str] = set()
     for start, stop in eligible_word_spans(record.text):
         clean_word = record.text[start:stop]
+        normalized_word = clean_word.casefold()
+        if normalized_word in selected_words:
+            continue
         typo_word = _transpose_word(clean_word)
         if typo_word is None:
             continue
-        typo_text = record.text[:start] + typo_word + record.text[stop:]
-        return typo_text, TypoEdit(
-            operation="adjacent-transposition",
-            clean_word=clean_word,
-            typo_word=typo_word,
-            clean_char_span=(start, stop),
-            typo_char_span=(start, start + len(typo_word)),
+        selected.append((start, stop, clean_word, typo_word))
+        selected_words.add(normalized_word)
+        if len(selected) == edit_count:
+            break
+    if len(selected) != edit_count:
+        raise ValueError(
+            f"record has fewer than {edit_count} distinct adjacent-transposition targets: "
+            f"{record.source_id}"
         )
-    raise ValueError(f"record has no adjacent-transposition target: {record.source_id}")
+
+    pieces: list[str] = []
+    edits: list[TypoEdit] = []
+    cursor = 0
+    typo_length = 0
+    for start, stop, clean_word, typo_word in selected:
+        unchanged = record.text[cursor:start]
+        pieces.extend((unchanged, typo_word))
+        typo_length += len(unchanged)
+        typo_start = typo_length
+        typo_length += len(typo_word)
+        edits.append(
+            TypoEdit(
+                operation="adjacent-transposition",
+                clean_word=clean_word,
+                typo_word=typo_word,
+                clean_char_span=(start, stop),
+                typo_char_span=(typo_start, typo_length),
+            )
+        )
+        cursor = stop
+    pieces.append(record.text[cursor:])
+    return "".join(pieces), tuple(edits)
 
 
 def _synthetic_pair_payload(
@@ -422,8 +449,7 @@ def _synthetic_pair_payload(
     variant: int,
 ) -> dict[str, object]:
     if operation == "adjacent-transposition":
-        typo_text, edit = _heldout_transposition(record)
-        edits = (edit,)
+        typo_text, edits = _heldout_transpositions(record, edit_count=2)
     else:
         pair = TypoGenerator(
             seed=protocol.seed,
@@ -457,6 +483,20 @@ def _pair_payload(
     protocol: TrainingDataProtocol,
     variant: int,
 ) -> dict[str, object]:
+    edit_count = len(edits)
+    metadata = dict(record.metadata)
+    if split != "diagnostic":
+        if edit_count not in {1, 2, 4}:
+            raise ValueError("fixed synthetic evaluation pairs require 1, 2, or 4 edits")
+        evaluation_condition = (
+            "transposition-2"
+            if edits and all(edit.operation == "adjacent-transposition" for edit in edits)
+            else f"random-{edit_count}"
+        )
+        existing_condition = metadata.get("evaluation_condition")
+        if existing_condition not in {None, evaluation_condition}:
+            raise ValueError("clean record evaluation condition conflicts with its typo payload")
+        metadata["evaluation_condition"] = evaluation_condition
     return {
         "schema_version": "robustness-fixed-typo-pair/v1",
         "kind": "synthetic",
@@ -471,10 +511,10 @@ def _pair_payload(
         "typo_text": typo_text,
         "task": record.task,
         "answer": record.answer,
-        "metadata": dict(record.metadata),
-        "operation": edits[0].operation if len(edits) == 1 else "multiple",
+        "metadata": metadata,
+        "operation": edits[0].operation if edit_count == 1 else "multiple",
         "operations": [edit.operation for edit in edits],
-        "edit_count": len(edits),
+        "edit_count": edit_count,
         "generator_seed": protocol.seed,
         "generator_variant": variant,
         "edits": [
@@ -593,8 +633,8 @@ def _partition_clean_records(
     )
     clusters = cluster_near_duplicates(all_clean, shingle_size=5, threshold=0.99)
     legacy_v1 = protocol.schema_version == "robustness-training-data-config/v1"
-    training_splits = _REASONING_V1_SPLITS if legacy_v1 else _REASONING_TRAINING_SPLITS
-    diagnostic_splits = _REASONING_V1_SPLITS if legacy_v1 else _REASONING_DIAGNOSTIC_SPLITS
+    training_splits = _REASONING_V1_SPLITS if legacy_v1 else REASONING_TRAINING_SPLITS
+    diagnostic_splits = _REASONING_V1_SPLITS if legacy_v1 else REASONING_DIAGNOSTIC_SPLITS
     by_split: dict[str, list[CleanRecord]] = defaultdict(list)
     diagnostic: list[CleanRecord] = []
     unseen_records = tuple(
@@ -609,7 +649,7 @@ def _partition_clean_records(
         if (
             record.source_split not in training_splits[source_name]
             if legacy_v1
-            else record.source_split in _REASONING_EVALUATION_SPLITS[source_name]
+            else record.source_split in TRAINING_DATA_EVALUATION_SPLITS[source_name]
         )
     )
     evaluation_records = (*same_task_evaluation_records, *unseen_records)
@@ -754,19 +794,25 @@ def _partition_natural_records(
     for record in natural:
         role = repository_roles[record.repository]
         if role == "train":
+            corrected_word = (
+                natural_corrected_word(record)
+                if protocol.natural_dictionary_word_split is not None
+                else None
+            )
+            dictionary_role = (
+                natural_dictionary_role_for_word(
+                    corrected_word,
+                    seed=protocol.seed,
+                    weights=protocol.natural_dictionary_word_split,
+                )
+                if corrected_word is not None and protocol.natural_dictionary_word_split is not None
+                else None
+            )
             if (
                 record.training_eligible
                 and record.operation in protocol.training_operations
                 and record.operation not in protocol.held_out_operations
-                and (
-                    protocol.natural_dictionary_word_split is None
-                    or natural_dictionary_word_role(
-                        record,
-                        seed=protocol.seed,
-                        weights=protocol.natural_dictionary_word_split,
-                    )
-                    == "train"
-                )
+                and (protocol.natural_dictionary_word_split is None or dictionary_role == "train")
             ):
                 output["train"].append(record)
         elif role == "tune":
@@ -848,7 +894,12 @@ def _build_training_rows(
         )
         rows.extend(selected)
         token_counts[category] = tokens
-        source_token_counts[category] = {str(selected[0]["source"]): tokens}
+        per_source: dict[str, int] = defaultdict(int)
+        for row in selected:
+            per_source[str(row["source"])] += int(row["token_count"])
+        if sum(per_source.values()) != tokens:
+            raise RuntimeError("selected source-token accounting differs from the token budget")
+        source_token_counts[category] = dict(sorted(per_source.items()))
     rows.sort(key=lambda row: str(row["record_id"]))
     return rows, sum(token_counts.values()), token_counts, source_token_counts
 
@@ -954,13 +1005,13 @@ def run_build_training_data(
                 if not isinstance(record, NaturalTypoRecord):
                     continue
                 word = natural_corrected_word(record)
-                role = natural_dictionary_word_role(
-                    record,
+                if word is None:
+                    continue
+                role = natural_dictionary_role_for_word(
+                    word,
                     seed=protocol.seed,
                     weights=protocol.natural_dictionary_word_split,
                 )
-                if word is None or role is None:
-                    continue
                 words_by_role[role].add(word)
                 records_by_role[role] += 1
             natural_dictionary_word_counts = {

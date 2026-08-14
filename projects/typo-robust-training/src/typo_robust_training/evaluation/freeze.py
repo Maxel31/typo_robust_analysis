@@ -23,17 +23,24 @@ from typo_robust_training.data.config import (
     strict_loads,
 )
 from typo_robust_training.data.jsonl import read_lf_jsonl_lines
-from typo_robust_training.data.natural_words import natural_dictionary_word_role
+from typo_robust_training.data.natural_words import natural_dictionary_role_for_word
 from typo_robust_training.data.records import (
     CleanRecord,
     NaturalTypoRecord,
     TypoEdit,
     infer_single_word_typo_edit,
 )
-from typo_robust_training.data.splits import assign_balanced_group_roles
+from typo_robust_training.data.splits import NearDuplicateTextIndex, assign_balanced_group_roles
+from typo_robust_training.data.task_splits import (
+    FROZEN_TASK_EVALUATION_SPLITS,
+    REASONING_TRAINING_SPLITS,
+)
 from typo_robust_training.evaluation.perturb import (
+    FROZEN_EVALUATION_TYPO_VERSION,
     FrozenEvaluationTypo,
+    NoNaturalInjectionTargetError,
     evaluation_eligible_word_spans,
+    freeze_natural_injection_dictionary,
     generate_evaluation_typo,
     generate_natural_injection,
 )
@@ -44,19 +51,8 @@ from typo_robust_training.evaluation.study import (
 from typo_robust_training.integrity import sha256_file as _sha256_file
 
 
-_TASK_TUNE_SPLITS = {
-    "gsm8k": frozenset({"train"}),
-    "mmlu": frozenset({"auxiliary_train"}),
-    "arc": frozenset({"train"}),
-}
-_TASK_EVALUATION_SPLITS = {
-    "gsm8k": frozenset({"test"}),
-    "mmlu": frozenset({"test"}),
-    "arc": frozenset({"test"}),
-    "mmlu_pro": frozenset({"test"}),
-    "math_500": frozenset({"test"}),
-    "commonsense_qa": frozenset({"validation"}),
-}
+_TASK_TUNE_SPLITS = REASONING_TRAINING_SPLITS
+_TASK_EVALUATION_SPLITS = FROZEN_TASK_EVALUATION_SPLITS
 _ARTIFACTS = (
     "tune_manifest.jsonl",
     "pre_pr_gate_manifest.jsonl",
@@ -96,6 +92,8 @@ class _Exclusions:
     hard_groups: frozenset[tuple[str, str]]
     prior_tune_source_ids: frozenset[str]
     prior_tune_groups: frozenset[tuple[str, str]]
+    hard_near_duplicates: NearDuplicateTextIndex
+    prior_tune_near_duplicates: NearDuplicateTextIndex
     training_repositories: frozenset[str]
     tune_repositories: frozenset[str]
     artifact_sha256: Mapping[str, str]
@@ -200,11 +198,24 @@ def _exclusions(root: Path) -> _Exclusions:
         }
         return frozenset(values)
 
+    def clean_texts(rows: Sequence[Mapping[str, object]]) -> tuple[str, ...]:
+        texts: list[str] = []
+        for row in rows:
+            value = row.get("text")
+            if not isinstance(value, str) or not value:
+                value = row.get("clean_text")
+            if not isinstance(value, str) or not value:
+                raise ValueError("evaluation exclusion row has no clean text")
+            texts.append(value)
+        return tuple(texts)
+
     return _Exclusions(
         hard_source_ids=frozenset(source_id(row) for row in (*training, *diagnostic)),
         hard_groups=frozenset(group(row) for row in (*training, *diagnostic)),
         prior_tune_source_ids=frozenset(source_id(row) for row in tune),
         prior_tune_groups=frozenset(group(row) for row in tune),
+        hard_near_duplicates=NearDuplicateTextIndex(clean_texts((*training, *diagnostic))),
+        prior_tune_near_duplicates=NearDuplicateTextIndex(clean_texts(tune)),
         training_repositories=repositories(training),
         tune_repositories=repositories(tune),
         artifact_sha256={
@@ -231,6 +242,24 @@ def _retain_smallest(
         heapq.heappush(heap, entry)
     elif entry > heap[0]:
         heapq.heapreplace(heap, entry)
+
+
+def _could_retain_smallest(
+    heap: Sequence[tuple[int, str, CleanRecord]],
+    *,
+    record_id: str,
+    key: int,
+    limit: int,
+) -> bool:
+    """Return whether an item can enter a bounded bottom-k heap."""
+
+    if limit < 0:
+        raise ValueError("bottom-k limit must be non-negative")
+    if limit == 0:
+        return False
+    if len(heap) < limit:
+        return True
+    return (-key, record_id) > heap[0][:2]
 
 
 def _collect_evaluation_sources(
@@ -269,31 +298,42 @@ def _collect_evaluation_sources(
                 continue
             fineweb_ids.add(raw_record.record_id)
             split_counts[raw_record.source_split] += 1
-            if _eligible_clean(raw_record, exclusions=exclusions, sealed=False):
-                tune_digest = int(
-                    _order_key(
-                        raw_record,
-                        namespace="evaluation-corpus-fineweb_edu-tune/v1",
-                        seed=protocol.seed,
-                    ),
-                    16,
-                )
-                tune_priority = 0 if raw_record.source_id in exclusions.prior_tune_source_ids else 1
+            tune_digest = int(
+                _order_key(
+                    raw_record,
+                    namespace="evaluation-corpus-fineweb_edu-tune/v1",
+                    seed=protocol.seed,
+                ),
+                16,
+            )
+            tune_priority = 0 if raw_record.source_id in exclusions.prior_tune_source_ids else 1
+            tune_key = (tune_priority << 256) | tune_digest
+            if _could_retain_smallest(
+                tune_heap,
+                record_id=raw_record.record_id,
+                key=tune_key,
+                limit=tune_limit,
+            ) and _eligible_clean(raw_record, exclusions=exclusions, sealed=False):
                 _retain_smallest(
                     tune_heap,
                     raw_record,
-                    key=(tune_priority << 256) | tune_digest,
+                    key=tune_key,
                     limit=tune_limit,
                 )
-            if _eligible_clean(raw_record, exclusions=exclusions, sealed=True):
-                sealed_key = int(
-                    _order_key(
-                        raw_record,
-                        namespace="evaluation-corpus-fineweb_edu-sealed/v1",
-                        seed=protocol.seed,
-                    ),
-                    16,
-                )
+            sealed_key = int(
+                _order_key(
+                    raw_record,
+                    namespace="evaluation-corpus-fineweb_edu-sealed/v1",
+                    seed=protocol.seed,
+                ),
+                16,
+            )
+            if _could_retain_smallest(
+                sealed_heap,
+                record_id=raw_record.record_id,
+                key=sealed_key,
+                limit=sealed_limit,
+            ) and _eligible_clean(raw_record, exclusions=exclusions, sealed=True):
                 _retain_smallest(
                     sealed_heap,
                     raw_record,
@@ -361,11 +401,16 @@ def _eligible_clean(
     sealed: bool,
 ) -> bool:
     identity = (record.source, record.group_id)
-    if record.source_id in exclusions.hard_source_ids or identity in exclusions.hard_groups:
+    if (
+        record.source_id in exclusions.hard_source_ids
+        or identity in exclusions.hard_groups
+        or exclusions.hard_near_duplicates.contains_near_duplicate(record.text)
+    ):
         return False
     if sealed and (
         record.source_id in exclusions.prior_tune_source_ids
         or identity in exclusions.prior_tune_groups
+        or exclusions.prior_tune_near_duplicates.contains_near_duplicate(record.text)
     ):
         return False
     return True
@@ -376,22 +421,80 @@ def _supports_frozen_typo_grid(
     *,
     protocol: EvaluationStudyProtocol,
 ) -> bool:
-    """Require enough valid question words for every frozen text-level condition."""
+    """Require enough distinct words for the primary and severity conditions."""
 
+    words = _eligible_distinct_words(record, protocol=protocol)
+    if words is None:
+        return False
+    required = max((protocol.primary_edit_count, *protocol.severity_edit_counts))
+    return len(words) >= required
+
+
+def _eligible_distinct_words(
+    record: CleanRecord,
+    *,
+    protocol: EvaluationStudyProtocol,
+) -> Mapping[str, str] | None:
     try:
         spans = evaluation_eligible_word_spans(
             record,
             minimum_word_letters=protocol.minimum_word_letters,
         )
     except (TypeError, ValueError):
+        return None
+    return {record.text[start:stop].casefold(): record.text[start:stop] for start, stop in spans}
+
+
+def _supports_transposition(
+    record: CleanRecord,
+    *,
+    protocol: EvaluationStudyProtocol,
+    edit_count: int = 2,
+) -> bool:
+    """Return whether one item supports the held-out transposition condition."""
+
+    words = _eligible_distinct_words(record, protocol=protocol)
+    if words is None:
         return False
-    required = max((protocol.primary_edit_count, *protocol.severity_edit_counts))
     transposable = sum(
-        any(left != right for left, right in zip(word, word[1:]))
-        for start, stop in spans
-        if (word := record.text[start:stop])
+        any(left != right for left, right in zip(word, word[1:])) for word in words.values()
     )
-    return len(spans) >= required and transposable >= 2
+    return transposable >= edit_count
+
+
+def _task_candidate_pool(
+    records: Sequence[CleanRecord | NaturalTypoRecord],
+    *,
+    splits: frozenset[str],
+    protocol: EvaluationStudyProtocol,
+    exclusions: _Exclusions,
+    sealed: bool,
+    required: int,
+) -> tuple[list[CleanRecord], dict[str, int]]:
+    """Return eligible records and a reason-preserving capacity census."""
+
+    source_split_records = 0
+    after_exclusions = 0
+    eligible: list[CleanRecord] = []
+    transposition_eligible = 0
+    for record in records:
+        if not isinstance(record, CleanRecord) or record.source_split not in splits:
+            continue
+        source_split_records += 1
+        if not _eligible_clean(record, exclusions=exclusions, sealed=sealed):
+            continue
+        after_exclusions += 1
+        if not _supports_frozen_typo_grid(record, protocol=protocol):
+            continue
+        eligible.append(record)
+        transposition_eligible += _supports_transposition(record, protocol=protocol)
+    return eligible, {
+        "source_split_records": source_split_records,
+        "after_exclusions": after_exclusions,
+        "typo_grid_eligible": len(eligible),
+        "transposition_eligible": transposition_eligible,
+        "required": required,
+    }
 
 
 def _select_task_items(
@@ -399,44 +502,59 @@ def _select_task_items(
     *,
     protocol: EvaluationStudyProtocol,
     exclusions: _Exclusions,
-) -> dict[str, dict[str, tuple[CleanRecord, ...]]]:
+) -> tuple[
+    dict[str, dict[str, tuple[CleanRecord, ...]]],
+    dict[str, dict[str, dict[str, int]]],
+]:
     selected: dict[str, dict[str, tuple[CleanRecord, ...]]] = {
         "tune": {},
         "pre_pr_gate": {},
         "final_test": {},
     }
-    tune_candidates: list[CleanRecord] = []
-    for source, splits in _TASK_TUNE_SPLITS.items():
-        tune_candidates.extend(
-            record
-            for record in collected[source]
-            if isinstance(record, CleanRecord)
-            and record.source_split in splits
-            and _eligible_clean(record, exclusions=exclusions, sealed=False)
-            and _supports_frozen_typo_grid(record, protocol=protocol)
+    census: dict[str, dict[str, dict[str, int]]] = {"tune": {}, "sealed": {}}
+    tune_tasks = tuple(sorted(_TASK_TUNE_SPLITS))
+    tune_base, tune_remainder = divmod(protocol.tune_task_records_total, len(tune_tasks))
+    for task_index, source in enumerate(tune_tasks):
+        splits = _TASK_TUNE_SPLITS[source]
+        count = tune_base + (1 if task_index < tune_remainder else 0)
+        candidates, task_census = _task_candidate_pool(
+            collected[source],
+            splits=splits,
+            protocol=protocol,
+            exclusions=exclusions,
+            sealed=False,
+            required=count,
         )
-    tune_candidates.sort(
-        key=lambda record: (
-            record.source_id not in exclusions.prior_tune_source_ids,
-            _order_key(record, namespace="evaluation-tune-task/v1", seed=protocol.seed),
+        census["tune"][source] = task_census
+        candidates.sort(
+            key=lambda record: (
+                record.source_id not in exclusions.prior_tune_source_ids,
+                _order_key(
+                    record,
+                    namespace=f"evaluation-tune-task-{source}/v1",
+                    seed=protocol.seed,
+                ),
+            )
         )
-    )
-    tune_records = tuple(tune_candidates[: protocol.tune_task_records_total])
-    if len(tune_records) != protocol.tune_task_records_total:
-        raise ValueError("evaluation tune task pool is too small")
-    for task in sorted(_TASK_TUNE_SPLITS):
-        selected["tune"][task] = tuple(record for record in tune_records if record.source == task)
+        rows = tuple(candidates[:count])
+        if len(rows) != count:
+            raise ValueError(f"evaluation tune task {source} capacity census: {task_census}")
+        selected["tune"][source] = rows
 
     sealed_by_task: dict[str, tuple[CleanRecord, ...]] = {}
     for task, splits in _TASK_EVALUATION_SPLITS.items():
-        candidates = tuple(
-            record
-            for record in collected[task]
-            if isinstance(record, CleanRecord)
-            and record.source_split in splits
-            and _eligible_clean(record, exclusions=exclusions, sealed=True)
-            and _supports_frozen_typo_grid(record, protocol=protocol)
+        required = sum(
+            protocol.records_per_task[role].get(task, 0) for role in ("pre_pr_gate", "final_test")
         )
+        candidates, task_census = _task_candidate_pool(
+            collected[task],
+            splits=splits,
+            protocol=protocol,
+            exclusions=exclusions,
+            sealed=True,
+            required=required,
+        )
+        census["sealed"][task] = task_census
         sealed_by_task[task] = _stratified_order(
             candidates,
             namespace=f"evaluation-sealed-task-{task}/v1",
@@ -447,7 +565,9 @@ def _select_task_items(
         count = protocol.records_per_task["pre_pr_gate"][task]
         rows = sealed_by_task[task][:count]
         if len(rows) != count:
-            raise ValueError(f"evaluation pre-PR task {task} has fewer than {count} records")
+            raise ValueError(
+                f"evaluation pre-PR task {task} capacity census: {census['sealed'][task]}"
+            )
         selected["pre_pr_gate"][task] = rows
     for task in protocol.role_tasks["final_test"]:
         count = protocol.records_per_task["final_test"][task]
@@ -458,9 +578,11 @@ def _select_task_items(
         )
         rows = sealed_by_task[task][offset : offset + count]
         if len(rows) != count:
-            raise ValueError(f"evaluation final task {task} has fewer than {count} records")
+            raise ValueError(
+                f"evaluation final task {task} capacity census: {census['sealed'][task]}"
+            )
         selected["final_test"][task] = rows
-    return selected
+    return selected, census
 
 
 def _pair_payload(
@@ -541,7 +663,11 @@ def _balanced_subset(
     return tuple(selected)
 
 
-def _natural_edit(record: NaturalTypoRecord) -> TypoEdit | None:
+def _natural_edit(
+    record: NaturalTypoRecord,
+    *,
+    minimum_word_letters: int,
+) -> TypoEdit | None:
     try:
         edit = infer_single_word_typo_edit(
             record.clean_text,
@@ -551,7 +677,7 @@ def _natural_edit(record: NaturalTypoRecord) -> TypoEdit | None:
     except ValueError:
         return None
     if (
-        len(edit.clean_word) < 3
+        len(edit.clean_word) < minimum_word_letters
         or not edit.clean_word.isascii()
         or not edit.clean_word.isalpha()
         or not edit.typo_word.isascii()
@@ -575,7 +701,28 @@ def _select_natural(
 ]:
     natural = tuple(record for record in records if isinstance(record, NaturalTypoRecord))
     valid = tuple(
-        (record, edit) for record in natural if (edit := _natural_edit(record)) is not None
+        (record, edit)
+        for record in natural
+        if (
+            edit := _natural_edit(
+                record,
+                minimum_word_letters=protocol.minimum_word_letters,
+            )
+        )
+        is not None
+    )
+    edits_by_record_id = {record.record_id: edit for record, edit in valid}
+    dictionary_roles_by_record_id = (
+        {
+            record.record_id: natural_dictionary_role_for_word(
+                edit.clean_word.casefold(),
+                seed=dictionary_word_seed,
+                weights=dictionary_word_split,
+            )
+            for record, edit in valid
+        }
+        if dictionary_word_split is not None
+        else {}
     )
     training_words = (
         {
@@ -602,24 +749,16 @@ def _select_natural(
     )
     if len(tune) != protocol.corpus_counts["tune"]["natural_pairs"]:
         raise ValueError("evaluation natural tune pool is too small")
-    if dictionary_word_split is None:
-        tune_words = {
+    tune_words = (
+        {
             edit.clean_word.casefold()
             for record, edit in valid
             if record.repository in exclusions.tune_repositories
             and edit.clean_word.casefold() not in training_words
         }
-    else:
-        tune_words = {
-            edit.clean_word.casefold()
-            for record, edit in valid
-            if natural_dictionary_word_role(
-                record,
-                seed=dictionary_word_seed,
-                weights=dictionary_word_split,
-            )
-            == "tune"
-        }
+        if dictionary_word_split is None
+        else set()
+    )
     candidates = tuple(
         record
         for record, _ in valid
@@ -650,12 +789,7 @@ def _select_natural(
                     and edit.clean_word.casefold() not in training_words
                 )
                 if dictionary_word_split is None
-                else natural_dictionary_word_role(
-                    record,
-                    seed=dictionary_word_seed,
-                    weights=dictionary_word_split,
-                )
-                == "tune"
+                else dictionary_roles_by_record_id[record.record_id] == "tune"
             )
         )
     }
@@ -683,12 +817,7 @@ def _select_natural(
                     and edit.clean_word.casefold() not in tune_words
                 )
                 if dictionary_word_split is None
-                else natural_dictionary_word_role(
-                    record,
-                    seed=dictionary_word_seed,
-                    weights=dictionary_word_split,
-                )
-                == role
+                else dictionary_roles_by_record_id[record.record_id] == role
             )
         )
 
@@ -696,9 +825,8 @@ def _select_natural(
     for role, rows in dictionary_records.items():
         variants: dict[str, set[str]] = defaultdict(set)
         for record in rows:
-            edit = _natural_edit(record)
-            if edit is not None:
-                variants[edit.clean_word.casefold()].add(edit.typo_word.casefold())
+            edit = edits_by_record_id[record.record_id]
+            variants[edit.clean_word.casefold()].add(edit.typo_word.casefold())
         dictionaries[role] = {
             word: tuple(sorted(typos)) for word, typos in sorted(variants.items())
         }
@@ -792,7 +920,8 @@ def _select_corpus(
             (
                 record
                 for record in candidates
-                if record.source_id not in exclusions.prior_tune_source_ids
+                if _eligible_clean(record, exclusions=exclusions, sealed=True)
+                and record.source_id not in exclusions.prior_tune_source_ids
                 and (record.source, record.group_id) not in exclusions.prior_tune_groups
                 and record.source_id not in selected_tune_ids
                 and (record.source, record.group_id) not in selected_tune_groups
@@ -822,6 +951,10 @@ def _task_rows(
     for role in ("tune", "pre_pr_gate", "final_test"):
         by_task = selected[role]
         primary_items = _flat_task_items(by_task)
+        natural_dictionary = freeze_natural_injection_dictionary(
+            natural_dictionaries[role],
+            minimum_word_letters=protocol.minimum_word_letters,
+        )
         audit_ids = {
             record.record_id
             for record in _balanced_subset(
@@ -872,8 +1005,16 @@ def _task_rows(
                         minimum_word_letters=protocol.minimum_word_letters,
                     )
                     rows.append(_pair_payload(record, typo, role=role, primary=False))
+            transposition_by_task = {
+                task: tuple(
+                    record
+                    for record in records
+                    if _supports_transposition(record, protocol=protocol)
+                )
+                for task, records in by_task.items()
+            }
             transposition_items = _balanced_subset(
-                by_task,
+                transposition_by_task,
                 total=protocol.held_out_records_total,
                 namespace=f"evaluation-{role}-transposition/v1",
                 seed=protocol.seed,
@@ -907,13 +1048,13 @@ def _task_rows(
             try:
                 typo = generate_natural_injection(
                     record,
-                    replacements=natural_dictionaries[role],
+                    replacements=natural_dictionary,
                     seed=protocol.seed,
                     role=role,
                     variant=variant,
                     minimum_word_letters=protocol.minimum_word_letters,
                 )
-            except ValueError:
+            except NoNaturalInjectionTargetError:
                 continue
             natural_rows.append(_pair_payload(record, typo, role=role, primary=False))
             if len(natural_rows) == natural_required:
@@ -992,7 +1133,7 @@ def run_freeze_robustness_evaluation(
             protocol=study,
             exclusions=exclusions,
         )
-        task_items = _select_task_items(
+        task_items, task_capacity_census = _select_task_items(
             collected,
             protocol=study,
             exclusions=exclusions,
@@ -1068,7 +1209,8 @@ def run_freeze_robustness_evaluation(
             "opening_order": ["pre_pr_gate", "final_test"],
             "primary_condition": study.primary_typo_condition,
             "generator_seed": study.seed,
-            "generator": "frozen-evaluation-typo/v1",
+            "generator": FROZEN_EVALUATION_TYPO_VERSION,
+            "task_capacity_census": task_capacity_census,
             "natural_evaluation_axes": {
                 "language_model_pairs": "repository-disjoint/v1",
                 "task_injection": "corrected-word-disjoint/v1",
@@ -1090,6 +1232,7 @@ def run_freeze_robustness_evaluation(
                 "protocol_sha256": study.config_sha256,
                 "source_config_sha256": sources.config_sha256,
                 "source_provider": dict(source_provider.provenance()),
+                "task_capacity_census": task_capacity_census,
                 "registry_sha256": _sha256_file(output / "registry.json"),
                 "artifact_sha256": artifact_sha,
             },
