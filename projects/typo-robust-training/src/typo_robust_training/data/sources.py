@@ -23,13 +23,13 @@ from typo_robust_training.data.records import CleanRecord, NaturalTypoRecord
 _DOLMA_REMOTE_SHARDS = 16
 _DOLMA_ROWS_PER_SHARD = 256
 _REMOTE_TIMEOUT_SECONDS = 60
-_DOLMA_DUPLICATE_IDENTITY_POLICY = "drop-exact-text-duplicates-fail-on-conflict/v1"
+_DOLMA_DUPLICATE_IDENTITY_POLICY = "drop-normalized-text-duplicates-fail-on-conflict/v1"
 _DOLMA_BLANK_TEXT_POLICY = "skip-blank-string/v1"
 _DOLMA_UNSEGMENTABLE_TEXT_POLICY = "skip-unsegmentable-document/v1"
 
 
 class _UnsegmentableDocumentError(ValueError):
-    """A non-empty document has no complete word in its selected window."""
+    """A non-empty document has no complete whitespace-delimited word."""
 
 
 def _text(value: object, *, field: str) -> str:
@@ -63,6 +63,30 @@ def _answer_choice_text(
     return matches[0]
 
 
+def _complete_word_window(
+    text: str,
+    *,
+    start: int,
+    character_limit: int,
+) -> tuple[int, int, str] | None:
+    """Return a bounded window containing only complete whitespace-delimited words."""
+    if start > 0 and not text[start - 1].isspace():
+        while start < len(text) and not text[start].isspace():
+            start += 1
+    while start < len(text) and text[start].isspace():
+        start += 1
+    end = min(start + character_limit, len(text))
+    if end < len(text) and not text[end].isspace():
+        while end > start and not text[end - 1].isspace():
+            end -= 1
+    while end > start and text[end - 1].isspace():
+        end -= 1
+    segment = text[start:end]
+    if not segment:
+        return None
+    return start, end, segment
+
+
 def segment_document(record: CleanRecord, *, character_limit: int) -> CleanRecord:
     if not isinstance(record, CleanRecord) or record.task is not None:
         raise TypeError("document segmentation requires a non-task CleanRecord")
@@ -77,23 +101,34 @@ def segment_document(record: CleanRecord, *, character_limit: int) -> CleanRecor
         start, end, segment = 0, len(text), text
     else:
         available_starts = len(text) - character_limit + 1
-        start = int.from_bytes(hashlib.sha256(text.encode()).digest(), "big") % available_starts
-        if start > 0 and not text[start - 1].isspace():
-            while start < len(text) and not text[start].isspace():
-                start += 1
-        while start < len(text) and text[start].isspace():
-            start += 1
-        end = min(start + character_limit, len(text))
-        if end < len(text) and not text[end].isspace():
-            while end > start and not text[end - 1].isspace():
-                end -= 1
-        while end > start and text[end - 1].isspace():
-            end -= 1
-        segment = text[start:end]
-        if not segment:
-            raise _UnsegmentableDocumentError(
-                f"document window contains no complete word: {record.source_id}"
+        hashed_start = (
+            int.from_bytes(hashlib.sha256(text.encode()).digest(), "big") % available_starts
+        )
+        window = _complete_word_window(
+            text,
+            start=hashed_start,
+            character_limit=character_limit,
+        )
+        if window is None:
+            fallback_start = next(
+                (
+                    match.start()
+                    for match in re.finditer(r"\S+", text)
+                    if match.end() - match.start() <= character_limit
+                ),
+                None,
             )
+            if fallback_start is not None:
+                window = _complete_word_window(
+                    text,
+                    start=fallback_start,
+                    character_limit=character_limit,
+                )
+        if window is None:
+            raise _UnsegmentableDocumentError(
+                f"document contains no bounded complete word: {record.source_id}"
+            )
+        start, end, segment = window
     metadata = {
         **dict(record.metadata),
         "original_character_count": len(text),
@@ -420,22 +455,22 @@ class HuggingFaceDataSourceProvider:
         else:
             urls, _ = self._remote_dolma_urls(source)
             payloads = (payload for url in urls for payload in self._remote_dolma_rows(url))
-        seen_raw_text_digest_by_source_id: dict[str, bytes] = {}
+        seen_normalized_text_digest_by_source_id: dict[str, bytes] = {}
         for index, payload in enumerate(payloads):
             payload_text = payload.get("text")
             if isinstance(payload_text, str) and not payload_text.strip():
                 continue
             record = _format_huggingface_record("dolma", source, "train", index, payload)
-            raw_text_digest = hashlib.sha256(payload_text.encode("utf-8")).digest()
-            previous_digest = seen_raw_text_digest_by_source_id.get(record.source_id)
+            normalized_text_digest = hashlib.sha256(record.text.encode("utf-8")).digest()
+            previous_digest = seen_normalized_text_digest_by_source_id.get(record.source_id)
             if previous_digest is not None:
-                if previous_digest != raw_text_digest:
+                if previous_digest != normalized_text_digest:
                     raise ValueError(
                         "Dolma duplicated source identity with conflicting text: "
                         f"{record.source_id}"
                     )
                 continue
-            seen_raw_text_digest_by_source_id[record.source_id] = raw_text_digest
+            seen_normalized_text_digest_by_source_id[record.source_id] = normalized_text_digest
             try:
                 yield segment_document(
                     record,

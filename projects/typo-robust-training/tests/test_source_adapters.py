@@ -159,7 +159,7 @@ def test_dolma_local_cache_is_hashed(tmp_path: Path) -> None:
     )
     assert (
         provider.provenance()["dolma_duplicate_identity_policy"]
-        == "drop-exact-text-duplicates-fail-on-conflict/v1"
+        == "drop-normalized-text-duplicates-fail-on-conflict/v1"
     )
     assert provider.provenance()["dolma_blank_text_policy"] == "skip-blank-string/v1"
     assert (
@@ -212,7 +212,7 @@ def test_dolma_duplicate_identity_with_conflicting_text_fails_closed(tmp_path: P
         tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
 
 
-def test_dolma_duplicate_identity_compares_raw_not_trimmed_text(tmp_path: Path) -> None:
+def test_dolma_duplicate_identity_compares_emitted_normalized_text(tmp_path: Path) -> None:
     protocol = load_training_data_config(DEFAULT_CONFIG)
     archive = tmp_path / "dolma.jsonl.gz"
     with gzip.open(archive, "wt", encoding="utf-8") as handle:
@@ -230,8 +230,11 @@ def test_dolma_duplicate_identity_compares_raw_not_trimmed_text(tmp_path: Path) 
             )
 
     provider = HuggingFaceDataSourceProvider(protocol=protocol, dolma_corpus_path=archive)
-    with pytest.raises(ValueError, match="duplicated source identity with conflicting text"):
-        tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
+    records = tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
+
+    assert len(records) == 1
+    assert records[0].source_id == "dolma:same-upstream-id"
+    assert records[0].text == "Alpha held-out document."
 
 
 def test_dolma_blank_text_rows_are_not_emitted(tmp_path: Path) -> None:
@@ -284,6 +287,31 @@ def test_dolma_unsegmentable_rows_are_not_emitted(tmp_path: Path) -> None:
     records = tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
 
     assert [record.source_id for record in records] == ["dolma:usable"]
+
+
+def test_dolma_word_rich_documents_survive_unlucky_hashed_windows(tmp_path: Path) -> None:
+    protocol = load_training_data_config(DEFAULT_CONFIG)
+    archive = tmp_path / "dolma.jsonl.gz"
+    limit = protocol.document_character_window
+    with gzip.open(archive, "wt", encoding="utf-8") as handle:
+        for index in range(20):
+            handle.write(
+                json.dumps(
+                    {
+                        "id": f"word-rich-{index}",
+                        "text": "alpha beta gamma delta " + chr(65 + index) * (limit * 2),
+                        "source": "common-crawl",
+                        "metadata": {},
+                    }
+                )
+                + "\n"
+            )
+
+    provider = HuggingFaceDataSourceProvider(protocol=protocol, dolma_corpus_path=archive)
+    records = tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
+
+    assert len(records) == 20
+    assert all(record.text == "alpha beta gamma delta" for record in records)
 
 
 def test_dolma_default_streams_selected_shards_from_pinned_inventory(
