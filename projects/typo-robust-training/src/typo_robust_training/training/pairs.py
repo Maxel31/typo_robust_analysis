@@ -64,6 +64,10 @@ _NATURAL_FIELDS = {
 }
 
 
+class UnusableTrainingPairError(ValueError):
+    """A valid text pair that cannot supply the frozen token-level targets."""
+
+
 def _text(value: object, *, field: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{field} must be a non-empty string")
@@ -413,7 +417,9 @@ def edited_word_final_token_positions(
         if text_was_provided and (
             (start > 0 and text[start - 1].isalnum()) or (stop < len(text) and text[stop].isalnum())
         ):
-            raise ValueError(f"spans[{index}] starts or ends inside an alphanumeric word")
+            raise UnusableTrainingPairError(
+                f"spans[{index}] starts or ends inside an alphanumeric word"
+            )
         overlapping = [
             token_index
             for token_index, (token_start, token_stop) in enumerate(tokens)
@@ -428,16 +434,19 @@ def edited_word_final_token_positions(
                 break
             cursor = max(cursor, covered_stop)
         if not overlapping or cursor < stop:
-            raise ValueError(f"spans[{index}] is not fully covered by tokenizer offsets")
+            raise UnusableTrainingPairError(
+                f"spans[{index}] is not fully covered by tokenizer offsets"
+            )
         positions.append(overlapping[-1])
     if len(set(positions)) != len(positions):
-        raise ValueError("edited words resolve to duplicate token positions")
+        raise UnusableTrainingPairError("edited words resolve to duplicate token positions")
     return tuple(positions)
 
 
 __all__ = [
     "TrainingPair",
     "TrainingSource",
+    "UnusableTrainingPairError",
     "align_unchanged_token_positions",
     "edited_word_final_token_positions",
     "materialize_training_pair",

@@ -30,7 +30,7 @@ from typo_robust_training.training.evidence import (
     LocalizationEvidence,
     ResidualStateEvidence,
 )
-from typo_robust_training.training.pairs import TrainingPair
+from typo_robust_training.training.pairs import TrainingPair, UnusableTrainingPairError
 from typo_robust_training.training.runner import (
     TrainingMicroStepResult,
     TrainingMicroStepScales,
@@ -274,15 +274,8 @@ class HuggingFaceAdapterTrainingRuntime:
 
         try:
             self._encode_pair(pair)
-        except ValueError as exc:
-            if str(exc) in {
-                "edited words resolve to duplicate token positions",
-                "training edited-word token cardinalities differ",
-                "training pair has no aligned non-edited next-token targets",
-                "training typo edit falls outside the retained token window",
-            }:
-                return False
-            raise
+        except UnusableTrainingPairError:
+            return False
         return True
 
     def retained_clean_character_extent(self, pair: TrainingPair) -> int:

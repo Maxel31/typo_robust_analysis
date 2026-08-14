@@ -8,7 +8,7 @@ import pytest
 
 from typo_robust_training.data.records import TypoEdit
 from typo_robust_training.training.encoding import encode_training_pair, render_training_pair
-from typo_robust_training.training.pairs import TrainingPair
+from typo_robust_training.training.pairs import TrainingPair, UnusableTrainingPairError
 
 
 class _WordTokenizer:
@@ -124,6 +124,34 @@ def test_noop_pair_has_zero_edit_positions_but_keeps_all_exact_alignment() -> No
     assert encoding.answer_targets == ()
 
 
+def test_natural_edit_inside_an_alphanumeric_identifier_is_unusable() -> None:
+    pair = TrainingPair(
+        record_id="d" * 64,
+        clean_text="The covid19 report explains the local study results.",
+        typo_text="The covod19 report explains the local study results.",
+        task=None,
+        answer=None,
+        metadata={},
+        edits=(
+            TypoEdit(
+                operation="keyboard-neighbor-substitution",
+                clean_word="covid",
+                typo_word="covod",
+                clean_char_span=(4, 9),
+                typo_char_span=(4, 9),
+            ),
+        ),
+        is_noop=False,
+        epoch=0,
+    )
+
+    with pytest.raises(
+        UnusableTrainingPairError,
+        match=r"spans\[0\] starts or ends inside an alphanumeric word",
+    ):
+        encode_training_pair(pair, tokenizer=_WordTokenizer(), max_length=512)
+
+
 def test_encoding_ignores_only_edits_truncated_from_either_side() -> None:
     pair = TrainingPair(
         record_id="c" * 64,
@@ -145,7 +173,10 @@ def test_encoding_ignores_only_edits_truncated_from_either_side() -> None:
     assert len(encoding.clean_edit_positions) == len(encoding.typo_edit_positions) == 1
     assert encoding.clean_input_ids != encoding.typo_input_ids
 
-    with pytest.raises(ValueError, match="outside the retained token window"):
+    with pytest.raises(
+        UnusableTrainingPairError,
+        match="outside the retained token window",
+    ):
         encode_training_pair(
             pair,
             tokenizer=_WordTokenizer(),

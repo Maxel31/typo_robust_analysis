@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
+from typo_robust_training.training.pairs import UnusableTrainingPairError
 from typo_robust_training.training.runtime import (
     HuggingFaceAdapterTrainingRuntime,
     _cpu_cuda_rng_states,
@@ -30,21 +31,11 @@ def test_cuda_rng_state_normalization_rejects_invalid_payloads(states: object) -
         _cpu_cuda_rng_states(states)
 
 
-@pytest.mark.parametrize(
-    "message",
-    [
-        "edited words resolve to duplicate token positions",
-        "training pair has no aligned non-edited next-token targets",
-        "training typo edit falls outside the retained token window",
-    ],
-)
-def test_pair_usability_treats_resampleable_encoding_failures_as_unusable(
-    message: str,
-) -> None:
+def test_pair_usability_treats_resampleable_encoding_failures_as_unusable() -> None:
     class Runtime:
         @staticmethod
         def _encode_pair(_pair: object) -> None:
-            raise ValueError(message)
+            raise UnusableTrainingPairError("pair cannot supply frozen targets")
 
     assert HuggingFaceAdapterTrainingRuntime.pair_is_usable(Runtime(), object()) is False  # type: ignore[arg-type]
 

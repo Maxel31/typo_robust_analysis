@@ -8,6 +8,7 @@ from typing import Any
 
 from typo_robust_training.training.pairs import (
     TrainingPair,
+    UnusableTrainingPairError,
     align_unchanged_token_positions,
     edited_word_final_token_positions,
 )
@@ -211,7 +212,9 @@ def encode_training_pair(
         if clean_index > 0 and typo_index > 0
     )
     if not output_pairs:
-        raise ValueError("training pair has no aligned non-edited next-token targets")
+        raise UnusableTrainingPairError(
+            "training pair has no aligned non-edited next-token targets"
+        )
     if pair.edits:
         clean_extent = max((stop for _start, stop in clean_offsets), default=0)
         typo_extent = max((stop for _start, stop in typo_offsets), default=0)
@@ -225,7 +228,9 @@ def encode_training_pair(
             if clean_span[1] <= clean_extent and typo_span[1] <= typo_extent
         )
         if require_all_edits_visible and len(visible_spans) != len(pair.edits):
-            raise ValueError("training typo edit falls outside the retained token window")
+            raise UnusableTrainingPairError(
+                "training typo edit falls outside the retained token window"
+            )
         clean_edit_positions = edited_word_final_token_positions(
             clean_offsets,
             tuple(clean_span for clean_span, _typo_span in visible_spans),
@@ -239,7 +244,7 @@ def encode_training_pair(
     else:
         clean_edit_positions = typo_edit_positions = ()
     if len(clean_edit_positions) != len(typo_edit_positions):
-        raise ValueError("training edited-word token cardinalities differ")
+        raise UnusableTrainingPairError("training edited-word token cardinalities differ")
     return PairedEncoding(
         record_id=pair.record_id,
         clean_input_ids=clean_ids,
