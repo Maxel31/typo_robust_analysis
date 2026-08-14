@@ -17,8 +17,9 @@ from typo_robust_training.data.splits import NearDuplicateTextIndex
 from typo_robust_training.evaluation.freeze import (
     FreezeEvaluationRunConfig,
     _Exclusions,
-    _exclusions,
+    _collect_evaluation_sources,
     _could_retain_smallest,
+    _exclusions,
     _natural_edit,
     _retain_smallest,
     _assert_role_disjointness,
@@ -227,6 +228,59 @@ class _Provider:
         return {"provider": "evaluation-fixture/v1"}
 
 
+class _DuplicateHeavyCorpusProvider(_Provider):
+    def iter_records(
+        self,
+        source_name: str,
+        source: DatasetSource,
+    ) -> Iterable[CleanRecord | NaturalTypoRecord]:
+        if source_name == "fineweb_edu":
+            for index in range(4_000):
+                source_id = f"fineweb_edu:duplicate-heavy-{index}"
+                text = (
+                    "Repeated FineWeb boilerplate with enough readable words."
+                    if index < 500
+                    else f"FineWeb unique document {_letters(index)} with readable prose."
+                )
+                yield CleanRecord(
+                    source=source_name,
+                    source_revision=source.revision,
+                    source_split="train",
+                    source_id=source_id,
+                    group_id=source_id,
+                    text=text,
+                    task=None,
+                    answer=None,
+                    metadata={},
+                )
+            return
+        if source_name == "dolma":
+            for index in range(6_100):
+                source_id = f"dolma:duplicate-heavy-{index}"
+                if index < 1_000:
+                    text = "Repeated Dolma boilerplate with enough readable words."
+                elif index < 4_500:
+                    fineweb_index = index - 500
+                    text = (
+                        f"FineWeb unique document {_letters(fineweb_index)} with readable prose."
+                    )
+                else:
+                    text = f"Dolma unique document {_letters(index)} with readable prose."
+                yield CleanRecord(
+                    source=source_name,
+                    source_revision=source.revision,
+                    source_split="train",
+                    source_id=source_id,
+                    group_id=source_id,
+                    text=text,
+                    task=None,
+                    answer=None,
+                    metadata={},
+                )
+            return
+        yield from super().iter_records(source_name, source)
+
+
 def _write_exclusions(root: Path) -> None:
     root.mkdir()
     training = [
@@ -373,6 +427,47 @@ def test_bottom_k_prefilter_skips_noncompetitive_near_duplicate_queries() -> Non
         limit=2,
     )
     assert not _could_retain_smallest([], record_id="unused", key=0, limit=0)
+
+
+def test_corpus_collection_refills_duplicate_heavy_bounded_sources() -> None:
+    source_protocol = load_training_data_config(SOURCES)
+    evaluation_protocol = load_evaluation_study_protocol(STUDY)
+    exclusions = _Exclusions(
+        hard_source_ids=frozenset(),
+        hard_groups=frozenset(),
+        prior_tune_source_ids=frozenset(),
+        prior_tune_groups=frozenset(),
+        hard_near_duplicates=NearDuplicateTextIndex(()),
+        prior_tune_near_duplicates=NearDuplicateTextIndex(()),
+        training_repositories=frozenset(),
+        tune_repositories=frozenset(),
+        artifact_sha256={},
+    )
+    collected = _collect_evaluation_sources(
+        source_protocol,
+        _DuplicateHeavyCorpusProvider(source_protocol.sources),
+        protocol=evaluation_protocol,
+        exclusions=exclusions,
+    )
+    selected = _select_corpus(
+        collected,
+        protocol=evaluation_protocol,
+        exclusions=exclusions,
+    )
+
+    rows = tuple(
+        record
+        for role in ("tune", "pre_pr_gate", "final_test")
+        for source in ("fineweb_edu", "dolma")
+        for record in selected[role][source]
+    )
+    expected = sum(
+        evaluation_protocol.corpus_counts[role][source]
+        for role in ("tune", "pre_pr_gate", "final_test")
+        for source in ("fineweb_edu", "dolma")
+    )
+    assert len(rows) == expected
+    assert len({record.text.encode("utf-8") for record in rows}) == expected
 
 
 def _rows(path: Path) -> tuple[dict[str, object], ...]:
