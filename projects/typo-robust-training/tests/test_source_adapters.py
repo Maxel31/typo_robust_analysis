@@ -157,6 +157,79 @@ def test_dolma_local_cache_is_hashed(tmp_path: Path) -> None:
         provider.provenance()["dolma_corpus_sha256"]
         == hashlib.sha256(archive.read_bytes()).hexdigest()
     )
+    assert (
+        provider.provenance()["dolma_duplicate_identity_policy"]
+        == "drop-exact-text-duplicates-fail-on-conflict/v1"
+    )
+    assert provider.provenance()["dolma_blank_text_policy"] == "skip-blank-string/v1"
+
+
+def test_dolma_exact_duplicate_identity_is_not_emitted_twice(tmp_path: Path) -> None:
+    protocol = load_training_data_config(DEFAULT_CONFIG)
+    archive = tmp_path / "dolma.jsonl.gz"
+    duplicate = {
+        "id": "duplicated-upstream-id",
+        "text": "The same upstream document appears twice in the pinned sample.",
+        "source": "gutenberg",
+        "metadata": {"fixture": True},
+    }
+    with gzip.open(archive, "wt", encoding="utf-8") as handle:
+        handle.write(json.dumps(duplicate) + "\n")
+        handle.write(json.dumps({**duplicate, "metadata": {"fixture": "duplicate"}}) + "\n")
+
+    provider = HuggingFaceDataSourceProvider(protocol=protocol, dolma_corpus_path=archive)
+    records = tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
+
+    assert len(records) == 1
+    assert records[0].source_id == "dolma:duplicated-upstream-id"
+
+
+def test_dolma_duplicate_identity_with_conflicting_text_fails_closed(tmp_path: Path) -> None:
+    protocol = load_training_data_config(DEFAULT_CONFIG)
+    archive = tmp_path / "dolma.jsonl.gz"
+    with gzip.open(archive, "wt", encoding="utf-8") as handle:
+        for text in ("First document text.", "Conflicting document text."):
+            handle.write(
+                json.dumps(
+                    {
+                        "id": "conflicting-upstream-id",
+                        "text": text,
+                        "source": "gutenberg",
+                        "metadata": {},
+                    }
+                )
+                + "\n"
+            )
+
+    provider = HuggingFaceDataSourceProvider(protocol=protocol, dolma_corpus_path=archive)
+    with pytest.raises(ValueError, match="duplicated source identity with conflicting text"):
+        tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
+
+
+def test_dolma_blank_text_rows_are_not_emitted(tmp_path: Path) -> None:
+    protocol = load_training_data_config(DEFAULT_CONFIG)
+    archive = tmp_path / "dolma.jsonl.gz"
+    with gzip.open(archive, "wt", encoding="utf-8") as handle:
+        for source_id, text in (
+            ("blank", "  \n"),
+            ("usable", "A non-empty held-out document remains available."),
+        ):
+            handle.write(
+                json.dumps(
+                    {
+                        "id": source_id,
+                        "text": text,
+                        "source": "common-crawl",
+                        "metadata": {},
+                    }
+                )
+                + "\n"
+            )
+
+    provider = HuggingFaceDataSourceProvider(protocol=protocol, dolma_corpus_path=archive)
+    records = tuple(provider.iter_records("dolma", protocol.sources["dolma"]))
+
+    assert [record.source_id for record in records] == ["dolma:usable"]
 
 
 def test_dolma_default_streams_selected_shards_from_pinned_inventory(

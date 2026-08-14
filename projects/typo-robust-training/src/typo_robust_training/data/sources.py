@@ -23,6 +23,8 @@ from typo_robust_training.data.records import CleanRecord, NaturalTypoRecord
 _DOLMA_REMOTE_SHARDS = 16
 _DOLMA_ROWS_PER_SHARD = 256
 _REMOTE_TIMEOUT_SECONDS = 60
+_DOLMA_DUPLICATE_IDENTITY_POLICY = "drop-exact-text-duplicates-fail-on-conflict/v1"
+_DOLMA_BLANK_TEXT_POLICY = "skip-blank-string/v1"
 
 
 def _text(value: object, *, field: str) -> str:
@@ -292,6 +294,8 @@ class HuggingFaceDataSourceProvider:
             ),
             "dolma_url_inventory_sha256": dolma_inventory_sha256,
             "dolma_selected_urls": list(dolma_urls),
+            "dolma_duplicate_identity_policy": _DOLMA_DUPLICATE_IDENTITY_POLICY,
+            "dolma_blank_text_policy": _DOLMA_BLANK_TEXT_POLICY,
             "source_revisions": {
                 name: source.revision for name, source in self.protocol.sources.items()
             },
@@ -408,9 +412,23 @@ class HuggingFaceDataSourceProvider:
         else:
             urls, _ = self._remote_dolma_urls(source)
             payloads = (payload for url in urls for payload in self._remote_dolma_rows(url))
+        seen_text_by_record_id: dict[str, str] = {}
         for index, payload in enumerate(payloads):
+            payload_text = payload.get("text")
+            if isinstance(payload_text, str) and not payload_text.strip():
+                continue
+            record = _format_huggingface_record("dolma", source, "train", index, payload)
+            previous_text = seen_text_by_record_id.get(record.record_id)
+            if previous_text is not None:
+                if previous_text != record.text:
+                    raise ValueError(
+                        "Dolma duplicated source identity with conflicting text: "
+                        f"{record.source_id}"
+                    )
+                continue
+            seen_text_by_record_id[record.record_id] = record.text
             yield segment_document(
-                _format_huggingface_record("dolma", source, "train", index, payload),
+                record,
                 character_limit=self.protocol.document_character_window,
             )
 
