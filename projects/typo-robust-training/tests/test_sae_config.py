@@ -82,6 +82,27 @@ def test_sae_config_rejects_calibration_larger_than_shuffle_buffer(tmp_path: Pat
         load_sae_protocol(path)
 
 
+def test_sae_config_rejects_unregistered_l1_selection_rule(tmp_path: Path) -> None:
+    payload = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    payload["sae"]["l1_selection_rule"] = "choose-after-looking/v1"
+    path = tmp_path / "bad-selection-rule.json"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="L1 selection rule differs"):
+        load_sae_protocol(path)
+
+
+def test_sae_registry_rejects_data_role_drift(tmp_path: Path) -> None:
+    protocol = load_sae_protocol(DEFAULT_CONFIG)
+    payload = json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))
+    payload["data_contract"]["forbidden_roles"][1] = "pre-pr-gate"
+    path = tmp_path / "bad-registry-role.json"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="data preregistration differs"):
+        load_sae_preregistration(path, protocol=protocol)
+
+
 def test_cli_keeps_sae_calibration_training_and_validation_separate() -> None:
     root = argparse.ArgumentParser()
     commands = root.add_subparsers(dest="command")

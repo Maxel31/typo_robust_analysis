@@ -254,6 +254,8 @@ def load_sae_protocol(path: Path) -> SaeProtocol:
         raise ValueError("SAE activation must be relu")
     if sae["regularizer"] != "l1":
         raise ValueError("SAE regularizer must be l1")
+    if sae["l1_selection_rule"] != "in-range-median-l0-then-lowest-fvu/v1":
+        raise ValueError("SAE L1 selection rule differs")
     if sae["optimizer"] != "adam" or sae["precision"] != "float32":
         raise ValueError("SAE optimizer/precision differs")
     betas = sae["adam_betas"]

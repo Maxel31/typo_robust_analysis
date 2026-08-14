@@ -341,17 +341,22 @@ def run_calibrate_sae_l1(
         resume=False,
         resume_optimizer_step=0,
     )
-    runtime = runtime_factory(protocol=protocol, gpu_id=str(config.gpu_id))
-    import torch
-
-    device = runtime.device
-    candidates: dict[str, tuple[int, float, SparseAutoencoder, Any]] = {}
-    for layer in protocol.probe_layers:
-        for coefficient in protocol.l1_coefficients:
-            key = _candidate_key(layer, coefficient)
-            model = _instantiate_sae(protocol=protocol, seed=42, device=device)
-            candidates[key] = (layer, coefficient, model, _optimizer(model, protocol=protocol))
     try:
+        runtime = runtime_factory(protocol=protocol, gpu_id=str(config.gpu_id))
+        import torch
+
+        device = runtime.device
+        candidates: dict[str, tuple[int, float, SparseAutoencoder, Any]] = {}
+        for layer in protocol.probe_layers:
+            for coefficient in protocol.l1_coefficients:
+                key = _candidate_key(layer, coefficient)
+                model = _instantiate_sae(protocol=protocol, seed=42, device=device)
+                candidates[key] = (
+                    layer,
+                    coefficient,
+                    model,
+                    _optimizer(model, protocol=protocol),
+                )
         buffers = tuple(
             runtime.iter_activation_buffers(
                 sources.sources,

@@ -19,7 +19,7 @@
   },
   "data_contract": {
     "allowed": "clean FineWeb-Edu train split only",
-    "forbidden_roles": ["tune", "pre-pr-gate", "final-test", "localization-selection", "localization-validation"],
+    "forbidden_roles": ["tune", "pre_pr_gate", "final_test", "localization-selection", "localization-validation"],
     "source_manifest_sha256": "ed99e962f02564369ac9878ef7db1d3d9e7b7c4e4876f8e39938cbe4fbe73967",
     "current_run_exclusion_rule": "stable-training-order-prefix/v1:seed=42:epoch=0:records=30000",
     "initial_eligible_records": 127032,

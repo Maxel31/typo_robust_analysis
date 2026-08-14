@@ -12,10 +12,12 @@ import torch
 
 from typo_robust_training.sae.data import PreparedSaeSources
 from typo_robust_training.sae.runner import (
+    SaeCalibrationRunConfig,
     SaeTrainingRunConfig,
     _load_final_saes,
     _load_wp2_attempts,
     _record_wp2_attempt,
+    run_calibrate_sae_l1,
     run_train_saes,
 )
 from typo_robust_training.sae.runtime import ActivationBuffer
@@ -71,6 +73,63 @@ class _Runtime:
 
     def provenance(self):
         return {"runtime": "fake-sae-runtime/v1"}
+
+
+def test_sae_calibration_closes_tracker_when_runtime_initialization_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    protocol = SimpleNamespace(
+        config_sha256="a" * 64,
+        model="model",
+        model_revision="b" * 40,
+        expansion_factor=2,
+        l1_calibration_tokens=4,
+    )
+    preregistration = SimpleNamespace(sha256="c" * 64, sae_gpu_id=1)
+    prepared = PreparedSaeSources(
+        sources=(SimpleNamespace(),),
+        reserved=(SimpleNamespace(),),
+        input_paths=(tmp_path / "source.jsonl",),
+        input_sha256=("d" * 64,),
+        record_id_sha256="e" * 64,
+        source_tokens=10,
+    )
+
+    def fake_inputs(*, output_dir: Path, **_kwargs):
+        (output_dir / "source_registry.json").write_text("{}\n", encoding="utf-8")
+        return prepared
+
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner.load_sae_protocol",
+        lambda _path: protocol,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner.load_sae_preregistration",
+        lambda _path, protocol: preregistration,
+    )
+    monkeypatch.setattr("typo_robust_training.sae.runner._load_inputs", fake_inputs)
+    tracker = _Tracker()
+
+    def failing_runtime(**_kwargs):
+        raise RuntimeError("SAE runtime requires exactly one requested CUDA GPU")
+
+    with pytest.raises(RuntimeError, match="exactly one requested CUDA GPU"):
+        run_calibrate_sae_l1(
+            SaeCalibrationRunConfig(
+                config_path=tmp_path / "config.json",
+                registry_path=tmp_path / "registry.json",
+                training_data_paths=(tmp_path / "source.jsonl",),
+                gpu_id="1",
+                wandb_project="test-sae",
+                wandb_entity=None,
+                output_dir=tmp_path / "calibration",
+            ),
+            runtime_factory=failing_runtime,
+            tracker_factory=lambda **_kwargs: tracker,
+        )
+
+    assert tracker.status == "failed"
 
 
 def test_sae_training_writes_hash_bound_models_and_resumes_exactly(

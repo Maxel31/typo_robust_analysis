@@ -11,6 +11,15 @@ from typo_robust_training.data.config import strict_loads
 from typo_robust_training.sae.config import SaeProtocol
 
 
+_FORBIDDEN_DATA_ROLES = [
+    "tune",
+    "pre_pr_gate",
+    "final_test",
+    "localization-selection",
+    "localization-validation",
+]
+
+
 @dataclass(frozen=True, slots=True)
 class SaePreregistration:
     path: Path
@@ -54,7 +63,11 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
     ):
         raise ValueError("SAE GPU non-interference registration differs")
     data = payload["data_contract"]
-    if not isinstance(data, Mapping) or data.get("allowed") != "clean FineWeb-Edu train split only":
+    if (
+        not isinstance(data, Mapping)
+        or data.get("allowed") != "clean FineWeb-Edu train split only"
+        or data.get("forbidden_roles") != _FORBIDDEN_DATA_ROLES
+    ):
         raise ValueError("SAE data preregistration differs")
     source_sha = data.get("source_manifest_sha256")
     if not isinstance(source_sha, str) or len(source_sha) != 64:
