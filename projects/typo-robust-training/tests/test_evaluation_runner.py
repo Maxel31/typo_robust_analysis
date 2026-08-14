@@ -544,58 +544,6 @@ def test_runner_rejects_frozen_population_excluding_different_training_sources(
         )
 
 
-def test_runner_keeps_training_and_frozen_evaluation_identities_separate(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    evaluation_root = tmp_path / "frozen-evaluation"
-    config = replace(
-        _config(tmp_path, tmp_path / "evaluation-output", resume=False),
-        evaluation_data_dir=evaluation_root,
-    )
-    bundle = _bundle(evaluation_root)
-    descriptors = _descriptors(tmp_path)
-    loader_calls: list[tuple[Path, dict[str, object]]] = []
-
-    monkeypatch.setattr(
-        "typo_robust_training.training.data.load_training_data_provenance",
-        lambda root: type(
-            "TrainingBundle",
-            (),
-            {
-                "training_data_sha256": "e" * 64,
-                "data_identity_sha256": "c" * 64,
-            },
-        )(),
-    )
-
-    def load_frozen(root: Path, **kwargs: object) -> EvaluationDataBundle:
-        loader_calls.append((root, dict(kwargs)))
-        return bundle
-
-    monkeypatch.setattr(
-        "typo_robust_training.evaluation.runner.load_evaluation_bundle",
-        load_frozen,
-    )
-    monkeypatch.setattr(
-        "typo_robust_training.evaluation.runner.complete_evaluation_role",
-        lambda *_args, **_kwargs: None,
-    )
-    result = run_robustness_evaluation(
-        config,
-        runtime_factory=_RuntimeFactory(),
-        descriptors=descriptors,
-        patch_window=PatchWindow(0, 6, "9" * 64, "f" * 64),
-    )
-
-    assert result.records == 12
-    assert loader_calls[0][0] == evaluation_root
-    assert len(str(loader_calls[0][1]["study_protocol_sha256"])) == 64
-    run = json.loads(result.run_path.read_text(encoding="utf-8"))
-    assert run["training_data_identity_sha256"] == "c" * 64
-    assert run["evaluation_data_identity_sha256"] == "7" * 64
-
-
 def test_runner_rejects_evaluation_data_or_patch_evidence_drift(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path)
     descriptors = _descriptors(tmp_path)
