@@ -53,6 +53,19 @@ candidates whose exact Jaccard similarity is at least 0.99. The minimum build
 budget includes 100M training activations, 10M held-in statistics activations,
 and 200 untouched splice documents.
 
+### Pre-run data amendment (2026-08-15)
+
+The first corpus-build attempt stopped before writing an artifact or running a
+model because the protected source manifest contains 131 normalized-content
+duplicates outside or across the reserved prefix. The source manifest hash and
+the exact 30,000-record protected prefix remain unchanged. Every protected-prefix
+row remains an exclusion anchor. Eligible rows are traversed in the already
+frozen `sae-clean-source-order/v1`; a row is omitted when its normalized content
+already occurs in the protected prefix or an earlier eligible row. This leaves
+126,901 initial eligible records and 51,735,090 source tokens; fresh FineWeb-Edu
+supplements the difference to the unchanged token budget. No acceptance gate,
+kill-test threshold, evaluation item, or model setting changed.
+
 ## Preregistered acceptance and kill-test rules
 
 WP-2 requires FVU <= 0.35, median L0 in [30, 150], dead-feature rate <= 20%

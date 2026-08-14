@@ -22,9 +22,17 @@
     "forbidden_roles": ["tune", "pre_pr_gate", "final_test", "localization-selection", "localization-validation"],
     "source_manifest_sha256": "ed99e962f02564369ac9878ef7db1d3d9e7b7c4e4876f8e39938cbe4fbe73967",
     "current_run_exclusion_rule": "stable-training-order-prefix/v1:seed=42:epoch=0:records=30000",
-    "initial_eligible_records": 127032,
-    "initial_eligible_source_tokens": 51788434,
-    "initial_eligible_record_ids_sha256": "c7ab61d85fe72794ca50ca0e5b5b20a6cb79137c9c6614c4ad73d9125b934495",
+    "initial_eligible_records": 126901,
+    "initial_eligible_source_tokens": 51735090,
+    "initial_eligible_record_ids_sha256": "c89904867b60a3ae870d6c48aa7d5c0035ebb8783665d6ef62006a7514b9e190",
+    "deduplication_amendment": {
+      "amended_at": "2026-08-15T00:00:00+09:00",
+      "trigger": "pre-run corpus construction rejected duplicate normalized content before producing any artifact or model forward",
+      "rule": "retain every reserved-prefix exclusion; then retain the first eligible record in sae-clean-source-order/v1 for each normalized content hash",
+      "eligible_records_removed": 131,
+      "source_manifest_changed": false,
+      "wp2_or_wp5_gate_changed": false
+    },
     "selected_record_id_sha256": null
   },
   "wp2_gates": {

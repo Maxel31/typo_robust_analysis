@@ -23,6 +23,15 @@ record/source/group ID、正規化contentの一致、およびcharacter 5-gram M
 exact Jaccardが0.99以上の近重複を除外します。minimum budgetには100M学習activation、
 10M held-in統計activation、未使用のsplice 200文書を含めます。
 
+### 実行前データamendment（2026-08-15）
+
+最初のcorpus buildは、artifact作成やmodel forwardの前に、保護対象source manifest内の
+正規化content重複131件を検出して停止しました。source manifestのhashと予約済み30,000件の
+prefixは変更しません。予約prefixの全行を除外anchorとして保持し、eligible行だけを既存の
+`sae-clean-source-order/v1`で走査して、予約prefixまたは先行eligible行と正規化contentが同じ行を
+除きます。初期eligibleは126,901件・51,735,090 source tokensとなり、不足分は新規FineWeb-Eduで
+補います。acceptance gate、kill-test閾値、評価項目、model設定は変更していません。
+
 WP-2 は FVU <= 0.35、median L0 in [30,150]、dead feature 率 <= 20%、splice KL 中央値
 <= 0.15 nats/token、`p_i` と再構成誤差中央値 `s` の保存を要求します。WP-5 は層 5 の 2 seed で
 `median(R_z) >= 0.5 median(R_full)` と因果方向の再現を必須とします。合格前に neuron/head/feature
