@@ -14,6 +14,7 @@ from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.evaluation.study import load_evaluation_study_protocol
 from typo_robust_training.training.checkpoint import TrainingCursor
 from typo_robust_training.training.data import TrainingDataBundle
+from typo_robust_training.training.evidence import ResidualStateEvidence
 from typo_robust_training.training.pairs import TrainingPair, TrainingSource
 from typo_robust_training.training.runner import (
     AdapterTrainingRunConfig,
@@ -31,6 +32,7 @@ from typo_robust_training.training.runner import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BASE_CONFIG = PROJECT_ROOT / "configs/baselines/noisy-language-model.yaml"
 CYCLE2_OUTPUT_CONFIG = PROJECT_ROOT / "configs/cycle2/gemma4b-output-matching-100step.yaml"
+CYCLE3_CAUSAL_CONFIG = PROJECT_ROOT / "configs/cycle3/gemma4b-causal-window-10m.yaml"
 EVALUATION_PROTOCOL = PROJECT_ROOT / "configs/robustness-evaluation-v1.yaml"
 NATURAL_SUBSTITUTIONS = {
     character: {"z" if character != "z" else "x": 1.0} for character in "abcdefghijklmnopqrstuvwxyz"
@@ -231,6 +233,12 @@ class _Cycle2Runtime(_Runtime):
             "clean_kl_nats_per_token": 0.001,
             "fineweb_edu_ppl_ratio": 1.0,
         }
+
+
+class _CalibrationFailureRuntime(_Cycle2Runtime):
+    def calibrate_state_weight(self, pairs: tuple[TrainingPair, ...]) -> None:
+        assert len(pairs) == 8
+        raise FloatingPointError("state calibration produced an invalid gradient norm")
 
 
 def test_runner_resume_matches_uninterrupted_sample_sequence(tmp_path: Path) -> None:
@@ -699,6 +707,54 @@ def test_cycle2_runner_loads_and_executes_the_frozen_tune_monitor(
             "resume": False,
         }
     ]
+
+
+def test_state_calibration_failure_is_recorded_before_training_starts(tmp_path: Path) -> None:
+    output_dir = tmp_path / "calibration-failure"
+    evidence = ResidualStateEvidence(
+        selected_window=(0, 6),
+        state_layers=tuple(range(6)),
+        policy="frozen-causal-window/v1",
+        layer_selection_sha256="d" * 64,
+        validation_sha256="e" * 64,
+        evidence_sha256="f" * 64,
+    )
+
+    with pytest.raises(
+        FloatingPointError,
+        match="state calibration produced an invalid gradient norm",
+    ):
+        run_adapter_training(
+            AdapterTrainingRunConfig(
+                condition="localized-state-distillation",
+                config_path=CYCLE3_CAUSAL_CONFIG,
+                training_data_dir=tmp_path,
+                layer_selection_path=None,
+                component_selection_path=None,
+                seed=42,
+                gpu_id="1",
+                wandb_project=None,
+                wandb_entity=None,
+                output_dir=output_dir,
+            ),
+            runtime=_CalibrationFailureRuntime(),
+            data_bundle=_bundle(tmp_path),
+            evidence=evidence,
+        )
+
+    failed = json.loads((output_dir / "run.json").read_text(encoding="utf-8"))
+    assert failed["status"] == "failed"
+    assert failed["cursor"] == {
+        "epoch": 0,
+        "micro_steps": 0,
+        "optimizer_steps": 0,
+        "source_index": 0,
+        "student_tokens": 0,
+    }
+    assert failed["error"] == {
+        "type": "FloatingPointError",
+        "message": "state calibration produced an invalid gradient norm",
+    }
 
 
 def test_accumulation_scales_use_total_token_and_edited_coordinate_denominators() -> None:

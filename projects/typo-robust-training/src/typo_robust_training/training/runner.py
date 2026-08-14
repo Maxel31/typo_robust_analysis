@@ -693,22 +693,7 @@ def run_adapter_training(
             optimizer_steps=cursor.optimizer_steps,
             interval=protocol.checkpoint_every_optimizer_steps,
         )
-    elif protocol.calibration_micro_batches:
-        calibration = getattr(runtime, "calibrate_state_weight", None)
-        if not callable(calibration):
-            raise TypeError("state training runtime cannot calibrate its loss weight")
-        calibration(
-            _state_calibration_pairs(
-                bundle=bundle,
-                protocol=protocol,
-                seed=config.seed,
-                runtime=runtime,
-            )
-        )
     provenance = dict(runtime.provenance())
-    if cursor.optimizer_steps > protocol.max_optimizer_steps:
-        raise ValueError("training checkpoint exceeds the configured optimizer steps")
-    runtime.zero_grad()
     started_at = _now()
     run_base: dict[str, object] = {
         "schema_version": "robustness-adapter-training-run/v1",
@@ -743,6 +728,26 @@ def run_adapter_training(
     _write_json(run_path, {**run_base, "status": "running", "started_at": started_at})
     tracking_finished = False
     try:
+        if not config.resume and protocol.calibration_micro_batches:
+            calibration = getattr(runtime, "calibrate_state_weight", None)
+            if not callable(calibration):
+                raise TypeError("state training runtime cannot calibrate its loss weight")
+            calibration(
+                _state_calibration_pairs(
+                    bundle=bundle,
+                    protocol=protocol,
+                    seed=config.seed,
+                    runtime=runtime,
+                )
+            )
+            run_base["runtime"] = dict(runtime.provenance())
+            _write_json(
+                run_path,
+                {**run_base, "status": "running", "started_at": started_at},
+            )
+        if cursor.optimizer_steps > protocol.max_optimizer_steps:
+            raise ValueError("training checkpoint exceeds the configured optimizer steps")
+        runtime.zero_grad()
         if tracker is None and config.wandb_project is not None:
             if isinstance(evidence, ResidualStateEvidence):
                 presentation_layers = evidence.state_layers

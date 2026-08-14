@@ -123,7 +123,8 @@ def compute_training_step(
                     teacher,
                     input_ids=clean_ids,
                     attention_mask=clean_mask,
-                    output_hidden_states=legacy_global_state or residual_state,
+                    output_hidden_states=legacy_global_state
+                    or (residual_state and bool(encoding.clean_edit_positions)),
                 )
 
     if component_state and encoding.typo_edit_positions:
@@ -144,7 +145,8 @@ def compute_training_step(
             student,
             input_ids=typo_ids,
             attention_mask=typo_mask,
-            output_hidden_states=legacy_global_state or residual_state,
+            output_hidden_states=legacy_global_state
+            or (residual_state and bool(encoding.typo_edit_positions)),
         )
         student_components = None
     logits = student_output.logits

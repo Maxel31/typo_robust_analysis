@@ -6,6 +6,7 @@ import copy
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 import torch
 from transformers import Gemma3ForCausalLM, Gemma3TextConfig
 
@@ -13,6 +14,7 @@ from typo_robust_training.localization.components import ComponentRef
 from typo_robust_training.training.adapters import attach_lora_adapters
 from typo_robust_training.training.config import load_adapter_training_config
 from typo_robust_training.training.encoding import PairedEncoding
+from typo_robust_training.training import step as training_step_module
 from typo_robust_training.training.step import compute_training_step
 
 
@@ -222,3 +224,54 @@ def test_cycle2_clean_identity_has_zero_residual_state_loss() -> None:
         state_weight=0.05,
     )
     assert output.losses["state"].item() < 1e-7
+
+
+def test_cycle2_noop_pair_does_not_request_unused_hidden_states(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    torch.manual_seed(23)
+    protocol = _cycle2_protocol()
+    teacher = _model()
+    student = attach_lora_adapters(
+        copy.deepcopy(teacher),
+        protocol=protocol,
+        decoder_layers=(0, 1),
+    )
+    encoding = replace(
+        _encoding(typo=(1, 4, 5, 6, 7)),
+        clean_edit_positions=(),
+        typo_edit_positions=(),
+        is_noop=True,
+    )
+    calls: list[tuple[str, bool]] = []
+    original_forward = training_step_module._forward
+
+    def recording_forward(
+        model: object,
+        *,
+        input_ids: object,
+        attention_mask: object,
+        output_hidden_states: bool,
+    ) -> object:
+        calls.append(("teacher" if model is teacher else "student", output_hidden_states))
+        return original_forward(
+            model,
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            output_hidden_states=output_hidden_states,
+        )
+
+    monkeypatch.setattr(training_step_module, "_forward", recording_forward)
+    output = compute_training_step(
+        teacher=teacher,
+        student=student,
+        encoding=encoding,
+        protocol=protocol,
+        component_weights=None,
+        attention_head_dim=4,
+        state_layers=(0,),
+        state_weight=0.05,
+    )
+
+    assert output.losses["state"].item() == 0.0
+    assert calls == [("teacher", False), ("student", False)]
