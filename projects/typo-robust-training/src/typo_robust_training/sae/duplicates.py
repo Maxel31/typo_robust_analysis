@@ -94,6 +94,28 @@ class CharacterNgramDuplicateGuard:
         self._texts: dict[str, str] = {}
         self._buckets: dict[tuple[int, bytes], list[str]] = defaultdict(list)
 
+    def _validate_new_identity(self, identity: str) -> None:
+        if not isinstance(identity, str) or not identity:
+            raise ValueError("duplicate-guard identity must be non-empty")
+        if identity in self._texts:
+            raise ValueError("duplicate-guard identity is duplicated")
+
+    def _index(
+        self,
+        identity: str,
+        text: str,
+        *,
+        shingles: frozenset[int],
+        signature: tuple[int, ...],
+    ) -> None:
+        self._normalized.setdefault(normalized_sha256(text), identity)
+        self._texts[identity] = text
+        for band in range(_BANDS):
+            start = band * _ROWS_PER_BAND
+            self._buckets[_band_key(band, signature[start : start + _ROWS_PER_BAND])].append(
+                identity
+            )
+
     def _find_duplicate(
         self,
         text: str,
@@ -130,10 +152,7 @@ class CharacterNgramDuplicateGuard:
         )
 
     def add(self, identity: str, text: str) -> str | None:
-        if not isinstance(identity, str) or not identity:
-            raise ValueError("duplicate-guard identity must be non-empty")
-        if identity in self._texts:
-            raise ValueError("duplicate-guard identity is duplicated")
+        self._validate_new_identity(identity)
         shingles = _shingles(text, self.shingle_size)
         signature = _signature(shingles)
         duplicate = self._find_duplicate(
@@ -143,14 +162,15 @@ class CharacterNgramDuplicateGuard:
         )
         if duplicate is not None:
             return duplicate
-        self._normalized[normalized_sha256(text)] = identity
-        self._texts[identity] = text
-        for band in range(_BANDS):
-            start = band * _ROWS_PER_BAND
-            self._buckets[_band_key(band, signature[start : start + _ROWS_PER_BAND])].append(
-                identity
-            )
+        self._index(identity, text, shingles=shingles, signature=signature)
         return None
+
+    def add_reference(self, identity: str, text: str) -> None:
+        """Index every protected reference, including mutually near-duplicate ones."""
+
+        self._validate_new_identity(identity)
+        shingles = _shingles(text, self.shingle_size)
+        self._index(identity, text, shingles=shingles, signature=_signature(shingles))
 
     @property
     def records(self) -> int:

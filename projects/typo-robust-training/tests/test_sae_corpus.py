@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from typo_robust_training.data.records import CleanRecord
 from typo_robust_training.sae.corpus import (
     HuggingFaceSaeCleanSourceProvider,
     SaeCorpusBuildConfig,
+    _seed_exclusions,
     _segment_document,
     run_build_sae_clean_corpus,
 )
@@ -99,6 +101,48 @@ def test_character_ngram_guard_rejects_normalized_and_near_duplicates() -> None:
     assert guard.add("near", "The airport is located in Chicagoo.") == "first"
     assert guard.add("other", "Sparse autoencoders expose residual features.") is None
     assert guard.records == 2
+
+
+def test_exclusion_seeding_indexes_each_nontransitive_near_duplicate(tmp_path: Path) -> None:
+    generator = random.Random(42)
+    clean = "".join(generator.choice("abcdefghijklmnopqrstuvwxyz ") for _ in range(1500))
+
+    def mutate(text: str, index: int) -> str:
+        replacement = "z" if text[index] != "z" else "y"
+        return f"{text[:index]}{replacement}{text[index + 1:]}"
+
+    typo = mutate(clean, 500)
+    candidate = mutate(typo, 1000)
+    exclusions = tmp_path / "frozen.jsonl"
+    roles = (
+        "tune",
+        "pre_pr_gate",
+        "final_test",
+        "localization-selection",
+        "localization-validation",
+    )
+    rows = []
+    for index, role in enumerate(roles):
+        rows.append(
+            {
+                "split": role,
+                "text": typo if role == "pre_pr_gate" else f"unrelated frozen text {index}",
+            }
+        )
+    exclusions.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+    guard = CharacterNgramDuplicateGuard(shingle_size=5, threshold=0.99)
+    _seed_exclusions(
+        guard=guard,
+        existing=(_source(1, text=clean),),
+        exclusion_files=(exclusions,),
+    )
+
+    assert guard.records == 1 + len(roles)
+    assert guard.find_duplicate(candidate) is not None
 
 
 def test_default_sae_source_provider_accepts_the_production_counter_contract() -> None:

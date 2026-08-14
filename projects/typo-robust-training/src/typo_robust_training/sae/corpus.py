@@ -299,7 +299,10 @@ def _seed_exclusions(
 
     def register(identity: str, text: str) -> None:
         nonlocal texts
-        guard.add(identity, text)
+        # All protected texts are independent exclusion anchors.  Near-duplicate
+        # references cannot be collapsed because Jaccard similarity is not
+        # transitive: a candidate may match only the otherwise-dropped anchor.
+        guard.add_reference(identity, text)
         texts += 1
 
     for source in existing:
