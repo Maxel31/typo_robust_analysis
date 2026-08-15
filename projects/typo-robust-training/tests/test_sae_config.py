@@ -125,6 +125,28 @@ def test_sae_registry_binds_the_adjusted_calibration_token_budget(tmp_path: Path
         load_sae_preregistration(DEFAULT_REGISTRY, protocol=protocol)
 
 
+def test_sae_registry_binds_the_calibration_shuffle_buffer_partition(tmp_path: Path) -> None:
+    payload = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    payload["data"]["shuffle_buffer_activations"] = 100_000
+    config_path = tmp_path / "tampered-shuffle-buffer.json"
+    config_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    protocol = load_sae_protocol(config_path)
+
+    with pytest.raises(ValueError, match="L1 calibration amendment differs"):
+        load_sae_preregistration(DEFAULT_REGISTRY, protocol=protocol)
+
+
+def test_sae_registry_rejects_tampered_calibration_buffer_count(tmp_path: Path) -> None:
+    protocol = load_sae_protocol(DEFAULT_CONFIG)
+    payload = json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))
+    payload["l1_calibration_amendment"]["calibration_activation_buffers"] = 100
+    registry_path = tmp_path / "tampered-buffer-count.json"
+    registry_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="L1 calibration amendment differs"):
+        load_sae_preregistration(registry_path, protocol=protocol)
+
+
 @pytest.mark.parametrize(
     ("section", "field", "value"),
     [

@@ -49,8 +49,9 @@ validationの入力読込時にこの事前登録と機械的に照合します�
 encoder biasが疎な領域へ到達するには不足することが示されました。product側optimizer経路を使った
 合成反証では、係数を1,000倍にしてもmedian L0は1.2%しか変化しない一方、step数を10倍にすると
 大きく低下しました。このため、同じ事前登録済みlambda/token amendmentの範囲内で、較正予算も
-1Mから10M activation tokensへ引き上げます。既存の決定的な1M-token bufferを順次streaming学習し、
-学習後に同じ10M-token activation streamを再生して最終統計を計算します。選択規則、clean-only
+1Mから10M activation tokensへ引き上げます。決定的な1M-token bufferをちょうど10本、順次
+streaming学習し、学習後に同じ10M-token activation streamを再生して最終統計を計算します。
+1M-tokenというbufferサイズと10本という分割数も同じregistryに固定します。選択規則、clean-only
 データ、WP-2/WP-5 gateは変更しません。失敗したW&B run IDと6個の観測L0をregistryへ記録し、
 追加の係数・token調整は以後認めません。
 

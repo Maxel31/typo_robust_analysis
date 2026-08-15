@@ -27,7 +27,7 @@
   },
   "l1_calibration_amendment": {
     "amended_at": "2026-08-15T04:00:00+09:00",
-    "trigger": "the preregistered one-million-token calibration completed but no candidate entered the frozen median-L0 interval",
+    "trigger": "the preregistered one-million-token calibration completed with no in-range candidate; the single lambda/token amendment jointly widens the coefficient grid and raises the budget to ten deterministic one-million-token buffers",
     "failed_wandb_run_id": "cc36b12ad5150642",
     "original_coefficients": [0.0001, 0.0003, 0.001],
     "observed_median_l0_by_layer": {
@@ -37,6 +37,8 @@
     "adjusted_coefficients": [0.01, 0.1, 1.0],
     "original_calibration_tokens": 1000000,
     "adjusted_calibration_tokens": 10000000,
+    "calibration_shuffle_buffer_activations": 1000000,
+    "calibration_activation_buffers": 10,
     "calibration_tokens_changed": true,
     "model_forward_completed": true,
     "wp2_or_wp5_gate_changed": false,

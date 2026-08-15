@@ -48,11 +48,12 @@ sparse regime: on the product optimizer path, a 1,000-fold coefficient increase
 changed synthetic median L0 by only 1.2%, while ten times as many steps changed
 it materially. The same pre-registered lambda/token amendment therefore raises
 the calibration budget from 1M to 10M activation tokens. Training is streamed in
-the existing deterministic 1M-token buffers, and final statistics are computed
-by replaying the identical 10M-token activation stream after optimization. The
-selection rule, clean-only data, and all WP-2/WP-5 gates remain unchanged. The
-failed W&B run ID and all six observed L0 values are recorded in the registry;
-no further coefficient or token adjustment remains authorized.
+exactly ten deterministic 1M-token buffers, and final statistics are computed by
+replaying the identical 10M-token activation stream after optimization. The
+1M-token buffer size and ten-buffer partition are frozen in the same registry.
+The selection rule, clean-only data, and all WP-2/WP-5 gates remain unchanged.
+The failed W&B run ID and all six observed L0 values are recorded in the
+registry; no further coefficient or token adjustment remains authorized.
 
 GPU 1 subsequently became occupied by an unrelated workload. The operator
 assigned the waiting retry to GPU 0. This operational reassignment changes no
