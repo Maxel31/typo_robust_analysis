@@ -262,16 +262,13 @@ def select_l1_coefficients(
     return selected
 
 
-def _calibration_statistics(
+def _accumulate_calibration_statistics(
     *,
     model: SparseAutoencoder,
     activations: Any,
+    accumulator: SaeStatisticsAccumulator,
     protocol: SaeProtocol,
-) -> dict[str, float]:
-    accumulator = SaeStatisticsAccumulator(
-        d_sae=protocol.d_sae,
-        dead_probability_below=protocol.dead_feature_probability_below,
-    )
+) -> None:
     import torch
 
     model.eval()
@@ -283,8 +280,12 @@ def _calibration_statistics(
             )
             reconstruction, features = model(batch)
             accumulator.update(batch, reconstruction, features)
+
+
+def _finalize_calibration_statistics(
+    accumulator: SaeStatisticsAccumulator,
+) -> dict[str, float]:
     result = accumulator.finalize()
-    model.train()
     return {
         "fvu": result.fvu,
         "median_l0": result.median_l0,
@@ -302,9 +303,7 @@ def run_calibrate_sae_l1(
     protocol = load_sae_protocol(config.config_path)
     preregistration = load_sae_preregistration(config.registry_path, protocol=protocol)
     if str(config.gpu_id) != str(preregistration.sae_gpu_id):
-        raise ValueError(
-            f"SAE calibration must use preregistered GPU {preregistration.sae_gpu_id}"
-        )
+        raise ValueError(f"SAE calibration must use preregistered GPU {preregistration.sae_gpu_id}")
     output = _prepare_output(config.output_dir, resume=config.resume)
     selection_path = output / "l1_selection.json"
     report_path = output / "calibration_report.json"
@@ -363,49 +362,74 @@ def run_calibrate_sae_l1(
                     model,
                     _optimizer(model, protocol=protocol),
                 )
-        buffers = tuple(
-            runtime.iter_activation_buffers(
-                sources.sources,
-                layer_indices=protocol.probe_layers,
-                target_tokens=protocol.l1_calibration_tokens,
-            )
-        )
-        if len(buffers) != 1:
-            raise RuntimeError("SAE L1 calibration must fit one frozen shuffle buffer")
-        activations = buffers[0].activations_by_layer
         step = 0
+        trained_tokens = 0
+        training_buffer_count = 0
         started = time.monotonic()
-        for start in range(0, protocol.l1_calibration_tokens, protocol.activation_batch_size):
-            step += 1
-            metrics: dict[str, int | float] = {"train/optimizer_step": step}
-            for key, (layer, coefficient, model, optimizer) in candidates.items():
-                batch = activations[layer][start : start + protocol.activation_batch_size].to(
-                    device, dtype=torch.float32
-                )
-                values = _train_batch(
-                    model,
-                    optimizer,
-                    batch,
-                    l1_coefficient=coefficient,
-                )
-                for name, value in values.items():
-                    metrics[f"train/{key}/{name}"] = value
-            metrics["train/activation_tokens"] = min(
-                start + protocol.activation_batch_size,
-                protocol.l1_calibration_tokens,
+        for buffer in runtime.iter_activation_buffers(
+            sources.sources,
+            layer_indices=protocol.probe_layers,
+            target_tokens=protocol.l1_calibration_tokens,
+        ):
+            training_buffer_count += 1
+            activations = buffer.activations_by_layer
+            for start in range(0, buffer.tokens, protocol.activation_batch_size):
+                step += 1
+                batch_tokens = min(protocol.activation_batch_size, buffer.tokens - start)
+                metrics: dict[str, int | float] = {"train/optimizer_step": step}
+                for key, (layer, coefficient, model, optimizer) in candidates.items():
+                    batch = activations[layer][start : start + batch_tokens].to(
+                        device, dtype=torch.float32
+                    )
+                    values = _train_batch(
+                        model,
+                        optimizer,
+                        batch,
+                        l1_coefficient=coefficient,
+                    )
+                    for name, value in values.items():
+                        metrics[f"train/{key}/{name}"] = value
+                metrics["train/activation_tokens"] = trained_tokens + start + batch_tokens
+                metrics["train/activation_buffer"] = training_buffer_count
+                metrics["train/elapsed_seconds"] = time.monotonic() - started
+                metrics["system/gpu_peak_memory_gib"] = torch.cuda.max_memory_allocated() / 2**30
+                tracker.log_optimizer_step(metrics, optimizer_step=step)
+            trained_tokens += buffer.tokens
+        if trained_tokens != protocol.l1_calibration_tokens:
+            raise RuntimeError("SAE L1 calibration activation count differs")
+
+        accumulators = {
+            key: SaeStatisticsAccumulator(
+                d_sae=protocol.d_sae,
+                dead_probability_below=protocol.dead_feature_probability_below,
             )
-            metrics["train/elapsed_seconds"] = time.monotonic() - started
-            metrics["system/gpu_peak_memory_gib"] = torch.cuda.max_memory_allocated() / 2**30
-            tracker.log_optimizer_step(metrics, optimizer_step=step)
+            for key in candidates
+        }
+        evaluated_tokens = 0
+        evaluation_buffer_count = 0
+        for buffer in runtime.iter_activation_buffers(
+            sources.sources,
+            layer_indices=protocol.probe_layers,
+            target_tokens=protocol.l1_calibration_tokens,
+        ):
+            evaluation_buffer_count += 1
+            for key, (layer, _coefficient, model, _optimizer_value) in candidates.items():
+                _accumulate_calibration_statistics(
+                    model=model,
+                    activations=buffer.activations_by_layer[layer],
+                    accumulator=accumulators[key],
+                    protocol=protocol,
+                )
+            evaluated_tokens += buffer.tokens
+        if evaluated_tokens != protocol.l1_calibration_tokens:
+            raise RuntimeError("SAE L1 calibration evaluation activation count differs")
 
         metrics_by_layer: dict[int, dict[float, dict[str, float]]] = {
             layer: {} for layer in protocol.probe_layers
         }
-        for _key, (layer, coefficient, model, _optimizer_value) in candidates.items():
-            metrics_by_layer[layer][coefficient] = _calibration_statistics(
-                model=model,
-                activations=activations[layer],
-                protocol=protocol,
+        for key, (layer, coefficient, _model, _optimizer_value) in candidates.items():
+            metrics_by_layer[layer][coefficient] = _finalize_calibration_statistics(
+                accumulators[key]
             )
         selected = select_l1_coefficients(
             metrics_by_layer,
@@ -415,6 +439,9 @@ def run_calibrate_sae_l1(
             "schema_version": "robustness-sae-l1-calibration-report/v1",
             "bindings": bindings,
             "selection_rule": protocol.l1_selection_rule,
+            "training_activation_buffers": training_buffer_count,
+            "evaluation_activation_buffers": evaluation_buffer_count,
+            "evaluation_activation_tokens": evaluated_tokens,
             "candidate_metrics": {
                 str(layer): {str(coefficient): values for coefficient, values in rows.items()}
                 for layer, rows in metrics_by_layer.items()
@@ -766,9 +793,7 @@ def run_train_saes(
     protocol = load_sae_protocol(config.config_path)
     preregistration = load_sae_preregistration(config.registry_path, protocol=protocol)
     if str(config.gpu_id) != str(preregistration.sae_gpu_id):
-        raise ValueError(
-            f"SAE training must use preregistered GPU {preregistration.sae_gpu_id}"
-        )
+        raise ValueError(f"SAE training must use preregistered GPU {preregistration.sae_gpu_id}")
     output = _prepare_output(config.output_dir, resume=config.resume)
     sources = _load_inputs(
         protocol=protocol,
@@ -1159,9 +1184,7 @@ def run_validate_saes(
     protocol = load_sae_protocol(config.config_path)
     preregistration = load_sae_preregistration(config.registry_path, protocol=protocol)
     if str(config.gpu_id) != str(preregistration.sae_gpu_id):
-        raise ValueError(
-            f"SAE validation must use preregistered GPU {preregistration.sae_gpu_id}"
-        )
+        raise ValueError(f"SAE validation must use preregistered GPU {preregistration.sae_gpu_id}")
     ledger_path, prior_attempts, checkpoint_run_sha256 = _load_wp2_attempts(
         checkpoint_dir=config.checkpoint_dir,
         protocol=protocol,

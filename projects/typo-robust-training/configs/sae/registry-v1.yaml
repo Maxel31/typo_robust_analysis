@@ -35,7 +35,9 @@
       "20": [3890.0, 3881.0, 3856.0]
     },
     "adjusted_coefficients": [0.01, 0.1, 1.0],
-    "calibration_tokens_changed": false,
+    "original_calibration_tokens": 1000000,
+    "adjusted_calibration_tokens": 10000000,
+    "calibration_tokens_changed": true,
     "model_forward_completed": true,
     "wp2_or_wp5_gate_changed": false,
     "remaining_adjustments": 0

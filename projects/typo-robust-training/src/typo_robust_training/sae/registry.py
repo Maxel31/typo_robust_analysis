@@ -72,6 +72,8 @@ _L1_CALIBRATION_AMENDMENT_FIELDS = {
     "original_coefficients",
     "observed_median_l0_by_layer",
     "adjusted_coefficients",
+    "original_calibration_tokens",
+    "adjusted_calibration_tokens",
     "calibration_tokens_changed",
     "model_forward_completed",
     "wp2_or_wp5_gate_changed",
@@ -79,6 +81,8 @@ _L1_CALIBRATION_AMENDMENT_FIELDS = {
 }
 _ORIGINAL_L1_COEFFICIENTS = [0.0001, 0.0003, 0.001]
 _ADJUSTED_L1_COEFFICIENTS = [0.01, 0.1, 1.0]
+_ORIGINAL_CALIBRATION_TOKENS = 1_000_000
+_ADJUSTED_CALIBRATION_TOKENS = 10_000_000
 _OBSERVED_MEDIAN_L0 = {
     "5": [5465.0, 5330.0, 4874.0],
     "20": [3890.0, 3881.0, 3856.0],
@@ -160,7 +164,10 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
     ):
         raise ValueError("SAE preregistration schema or track differs")
     non_interference = payload["non_interference"]
-    if not isinstance(non_interference, Mapping) or set(non_interference) != _NON_INTERFERENCE_FIELDS:
+    if (
+        not isinstance(non_interference, Mapping)
+        or set(non_interference) != _NON_INTERFERENCE_FIELDS
+    ):
         raise ValueError("SAE non-interference registration differs")
     if non_interference.get("protected_gpu_ids") != [5, 6]:
         raise ValueError("SAE GPU non-interference registration differs")
@@ -173,8 +180,14 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
         or not gpu_amendment.get("amended_at")
         or not isinstance(gpu_amendment.get("trigger"), str)
         or not gpu_amendment.get("trigger")
-        or gpu_amendment.get("from_gpu_id") != 1
-        or gpu_amendment.get("to_gpu_id") != sae_gpu_id
+        or _nonnegative_int(
+            gpu_amendment.get("from_gpu_id"), field="gpu_reassignment_amendment.from_gpu_id"
+        )
+        != 1
+        or _nonnegative_int(
+            gpu_amendment.get("to_gpu_id"), field="gpu_reassignment_amendment.to_gpu_id"
+        )
+        != sae_gpu_id
         or sae_gpu_id != 0
         or sae_gpu_id in non_interference["protected_gpu_ids"]
         or gpu_amendment.get("scientific_configuration_changed") is not False
@@ -194,10 +207,25 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
         or calibration_amendment.get("observed_median_l0_by_layer") != _OBSERVED_MEDIAN_L0
         or calibration_amendment.get("adjusted_coefficients") != _ADJUSTED_L1_COEFFICIENTS
         or list(protocol.l1_coefficients) != _ADJUSTED_L1_COEFFICIENTS
-        or calibration_amendment.get("calibration_tokens_changed") is not False
+        or _positive_int(
+            calibration_amendment.get("original_calibration_tokens"),
+            field="l1_calibration_amendment.original_calibration_tokens",
+        )
+        != _ORIGINAL_CALIBRATION_TOKENS
+        or _positive_int(
+            calibration_amendment.get("adjusted_calibration_tokens"),
+            field="l1_calibration_amendment.adjusted_calibration_tokens",
+        )
+        != _ADJUSTED_CALIBRATION_TOKENS
+        or protocol.l1_calibration_tokens != _ADJUSTED_CALIBRATION_TOKENS
+        or calibration_amendment.get("calibration_tokens_changed") is not True
         or calibration_amendment.get("model_forward_completed") is not True
         or calibration_amendment.get("wp2_or_wp5_gate_changed") is not False
-        or calibration_amendment.get("remaining_adjustments") != 0
+        or _nonnegative_int(
+            calibration_amendment.get("remaining_adjustments"),
+            field="l1_calibration_amendment.remaining_adjustments",
+        )
+        != 0
     ):
         raise ValueError("SAE L1 calibration amendment differs")
     data = payload["data_contract"]

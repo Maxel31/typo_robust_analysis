@@ -29,8 +29,8 @@ renormalized to unit L2 norm after every optimizer step. The expansion factor is
 ReLU features. No top-k constraint is used because L0 and the registered energy
 score require an unconstrained firing count.
 
-Three L1 candidates are compared on the same one-million-token calibration
-stream. Selection first requires median L0 in [30, 150], then chooses the lowest
+Three L1 candidates are compared on the same calibration stream. Selection first
+requires median L0 in [30, 150], then chooses the lowest
 FVU; deterministic coefficient order breaks an exact tie. This selection cannot
 use typo inputs or downstream behavior.
 
@@ -42,7 +42,14 @@ entered the frozen median-L0 interval. At the strongest coefficient, median L0
 was 4,874 at layer 5 and 3,856 at layer 20, still more than 25 times the upper
 gate. Before any WP-2, WP-3, or WP-5 result was observed, the one adjustment
 allowed by the preregistration was consumed: the grid is now the fixed
-log-spaced bracket `[0.01, 0.1, 1.0]`. The same one-million-token budget,
+log-spaced bracket `[0.01, 0.1, 1.0]`. A falsification-first review then showed
+that 489 optimizer steps were insufficient for the encoder bias to reach the
+sparse regime: on the product optimizer path, a 1,000-fold coefficient increase
+changed synthetic median L0 by only 1.2%, while ten times as many steps changed
+it materially. The same pre-registered lambda/token amendment therefore raises
+the calibration budget from 1M to 10M activation tokens. Training is streamed in
+the existing deterministic 1M-token buffers, and final statistics are computed
+by replaying the identical 10M-token activation stream after optimization. The
 selection rule, clean-only data, and all WP-2/WP-5 gates remain unchanged. The
 failed W&B run ID and all six observed L0 values are recorded in the registry;
 no further coefficient or token adjustment remains authorized.

@@ -13,7 +13,7 @@ GPU・人手が競合する場合は必ず凍結評価を優先します。
 5. feature 対象の後継学習は、既存 decision tree の決着と kill test 合格までは文書草案に限定。
 
 SAE は `z = ReLU(Wx+b)`, `x_hat = Dz` とし、過完備率は 16 倍です。top-k は用いず、decoder の
-各列を optimizer step ごとに単位ノルムへ戻します。3 点の L1 係数を同じ 1M-token clean stream
+各列を optimizer step ごとに単位ノルムへ戻します。3 点の L1 係数を同じ凍結済みclean stream
 で較正し、median L0 が [30,150] に入るものから FVU 最小を選びます。typo や task performance を
 係数選択に使いません。
 
@@ -45,9 +45,14 @@ validationの入力読込時にこの事前登録と機械的に照合します�
 `[0.0001, 0.0003, 0.001]`はいずれも凍結済みmedian-L0範囲へ入りませんでした。最大係数でも
 層5のmedian L0は4,874、層20は3,856で、上限150の25倍超でした。WP-2、WP-3、WP-5の結果を
 見る前に、事前登録で許可した1回の調整を消費し、係数を対数間隔の
-`[0.01, 0.1, 1.0]`へ固定します。1M-token予算、選択規則、clean-onlyデータ、WP-2/WP-5 gateは
-変更しません。失敗したW&B run IDと6個の観測L0をregistryへ記録し、追加の係数・token調整は
-以後認めません。
+`[0.01, 0.1, 1.0]`へ固定します。その後の反証優先レビューにより、489 optimizer stepでは
+encoder biasが疎な領域へ到達するには不足することが示されました。product側optimizer経路を使った
+合成反証では、係数を1,000倍にしてもmedian L0は1.2%しか変化しない一方、step数を10倍にすると
+大きく低下しました。このため、同じ事前登録済みlambda/token amendmentの範囲内で、較正予算も
+1Mから10M activation tokensへ引き上げます。既存の決定的な1M-token bufferを順次streaming学習し、
+学習後に同じ10M-token activation streamを再生して最終統計を計算します。選択規則、clean-only
+データ、WP-2/WP-5 gateは変更しません。失敗したW&B run IDと6個の観測L0をregistryへ記録し、
+追加の係数・token調整は以後認めません。
 
 その後GPU 1が無関係なworkloadで占有されたため、待機中の再較正をGPU 0へ割り当てました。
 これは運用上の変更だけで、データ、モデル、loss、閾値、評価設定は変えていません。

@@ -48,6 +48,7 @@ def test_sae_protocol_freezes_wp1_and_wp2_without_touching_confirmatory_training
     assert protocol.reserved_prefix_records == 30_000
     assert protocol.reserved_order_seed == 42
     assert protocol.l1_coefficients == (0.01, 0.1, 1.0)
+    assert protocol.l1_calibration_tokens == 10_000_000
     assert protocol.fvu_max == 0.35
     assert protocol.median_l0_range == (30, 150)
     assert protocol.dead_feature_rate_max == 0.20
@@ -72,14 +73,13 @@ def test_sae_config_is_strict_and_rejects_top_k(tmp_path: Path) -> None:
         load_sae_protocol(path)
 
 
-def test_sae_config_rejects_calibration_larger_than_shuffle_buffer(tmp_path: Path) -> None:
+def test_sae_config_allows_calibration_to_span_frozen_shuffle_buffers(tmp_path: Path) -> None:
     payload = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
-    payload["sae"]["l1_calibration_tokens"] = 1_000_001
-    path = tmp_path / "bad-buffer.json"
+    assert payload["sae"]["l1_calibration_tokens"] > payload["data"]["shuffle_buffer_activations"]
+    path = tmp_path / "multi-buffer.json"
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="fit in one frozen shuffle buffer"):
-        load_sae_protocol(path)
+    assert load_sae_protocol(path).l1_calibration_tokens == 10_000_000
 
 
 def test_sae_config_rejects_unregistered_l1_selection_rule(tmp_path: Path) -> None:
@@ -111,6 +111,44 @@ def test_sae_registry_rejects_unrecorded_calibration_grid(tmp_path: Path) -> Non
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match="L1 calibration amendment differs"):
+        load_sae_preregistration(path, protocol=protocol)
+
+
+def test_sae_registry_binds_the_adjusted_calibration_token_budget(tmp_path: Path) -> None:
+    payload = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    payload["sae"]["l1_calibration_tokens"] = 8_192
+    config_path = tmp_path / "tampered-token-budget.json"
+    config_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    protocol = load_sae_protocol(config_path)
+
+    with pytest.raises(ValueError, match="L1 calibration amendment differs"):
+        load_sae_preregistration(DEFAULT_REGISTRY, protocol=protocol)
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("non_interference.gpu_reassignment_amendment", "from_gpu_id", True),
+        ("non_interference.gpu_reassignment_amendment", "to_gpu_id", False),
+        ("l1_calibration_amendment", "remaining_adjustments", False),
+    ],
+)
+def test_sae_registry_rejects_boolean_amendment_integers(
+    tmp_path: Path,
+    section: str,
+    field: str,
+    value: bool,
+) -> None:
+    protocol = load_sae_protocol(DEFAULT_CONFIG)
+    payload = json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))
+    target = payload
+    for key in section.split("."):
+        target = target[key]
+    target[field] = value
+    path = tmp_path / f"bad-{field}.json"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError):
         load_sae_preregistration(path, protocol=protocol)
 
 

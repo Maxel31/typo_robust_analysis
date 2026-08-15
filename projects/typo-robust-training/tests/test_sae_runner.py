@@ -78,6 +78,50 @@ class _Runtime:
         return {"runtime": "fake-sae-runtime/v1"}
 
 
+class _MultiBufferCalibrationRuntime:
+    def __init__(self, *, protocol, gpu_id: str) -> None:
+        self.protocol = protocol
+        self.gpu_id = gpu_id
+        self.device = torch.device("cpu")
+        self.calls = 0
+        self.streams: list[list[tuple[int, ...]]] = []
+
+    def iter_activation_buffers(
+        self,
+        _sources,
+        *,
+        layer_indices,
+        target_tokens: int,
+        **_kwargs,
+    ):
+        assert target_tokens == 4
+        self.calls += 1
+        stream: list[tuple[int, ...]] = []
+        self.streams.append(stream)
+        for buffer_index, offset in enumerate((0, 2)):
+            token_ids = tuple(range(offset, offset + 2))
+            stream.append(token_ids)
+            values = {
+                layer: torch.tensor(
+                    [[float(token), float(token * token + layer + 1)] for token in token_ids],
+                    dtype=torch.bfloat16,
+                )
+                for layer in layer_indices
+            }
+            yield ActivationBuffer(
+                activations_by_layer=values,
+                source_start=offset,
+                source_stop=offset + 1,
+                next_source_index=offset + 1,
+                next_source_offset=0,
+                tokens=2,
+                buffer_index=buffer_index,
+            )
+
+    def provenance(self):
+        return {"runtime": "fake-multi-buffer-calibration/v1"}
+
+
 def test_sae_calibration_rejects_a_gpu_that_disagrees_with_the_amendment(
     tmp_path: Path,
     monkeypatch,
@@ -171,6 +215,86 @@ def test_sae_calibration_closes_tracker_when_runtime_initialization_fails(
         )
 
     assert tracker.status == "failed"
+
+
+def test_sae_calibration_streams_and_replays_multiple_frozen_buffers(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    protocol = SimpleNamespace(
+        config_sha256="a" * 64,
+        model="model",
+        model_revision="b" * 40,
+        expansion_factor=2,
+        d_model=2,
+        d_sae=4,
+        probe_layers=(5, 20),
+        l1_coefficients=(0.01,),
+        l1_calibration_tokens=4,
+        learning_rate=1e-3,
+        adam_betas=(0.9, 0.999),
+        adam_epsilon=1e-8,
+        activation_batch_size=2,
+        dead_feature_probability_below=1e-5,
+        median_l0_range=(0, 4),
+        l1_selection_rule="in-range-median-l0-then-lowest-fvu/v1",
+    )
+    preregistration = SimpleNamespace(sha256="c" * 64, sae_gpu_id=0)
+    prepared = PreparedSaeSources(
+        sources=(SimpleNamespace(),),
+        reserved=(SimpleNamespace(),),
+        input_paths=(tmp_path / "source.jsonl",),
+        input_sha256=("d" * 64,),
+        input_record_ids=frozenset({"record"}),
+        input_source_ids=frozenset({"source"}),
+        input_group_ids=frozenset({"group"}),
+        record_id_sha256="e" * 64,
+        source_tokens=4,
+        protected_eligible_records=1,
+        protected_eligible_source_tokens=4,
+        protected_eligible_record_ids_sha256="e" * 64,
+        protected_normalized_duplicates_removed=1,
+    )
+
+    def fake_inputs(*, output_dir: Path, **_kwargs):
+        (output_dir / "source_registry.json").write_text("{}\n", encoding="utf-8")
+        return prepared
+
+    runtime = _MultiBufferCalibrationRuntime(protocol=protocol, gpu_id="0")
+    tracker = _Tracker()
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner.load_sae_protocol",
+        lambda _path: protocol,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner.load_sae_preregistration",
+        lambda _path, protocol: preregistration,
+    )
+    monkeypatch.setattr("typo_robust_training.sae.runner._load_inputs", fake_inputs)
+
+    result = run_calibrate_sae_l1(
+        SaeCalibrationRunConfig(
+            config_path=tmp_path / "config.json",
+            registry_path=tmp_path / "registry.json",
+            training_data_paths=(tmp_path / "source.jsonl",),
+            gpu_id="0",
+            wandb_project="test-sae",
+            wandb_entity=None,
+            output_dir=tmp_path / "calibration",
+        ),
+        runtime_factory=lambda **_kwargs: runtime,
+        tracker_factory=lambda **_kwargs: tracker,
+    )
+
+    report = json.loads(result.report_path.read_text(encoding="utf-8"))
+    assert runtime.calls == 2
+    assert runtime.streams == [[(0, 1), (2, 3)], [(0, 1), (2, 3)]]
+    assert report["training_activation_buffers"] == 2
+    assert report["evaluation_activation_buffers"] == 2
+    assert report["evaluation_activation_tokens"] == 4
+    assert report["optimizer_steps"] == 2
+    assert tracker.steps == [1, 2]
+    assert tracker.status == "completed"
 
 
 def test_sae_training_writes_hash_bound_models_and_resumes_exactly(
