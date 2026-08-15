@@ -39,6 +39,7 @@
     "adjusted_calibration_tokens": 10000000,
     "calibration_shuffle_buffer_activations": 1000000,
     "calibration_activation_buffers": 10,
+    "calibration_activation_batch_size": 2048,
     "calibration_tokens_changed": true,
     "model_forward_completed": true,
     "wp2_or_wp5_gate_changed": false,

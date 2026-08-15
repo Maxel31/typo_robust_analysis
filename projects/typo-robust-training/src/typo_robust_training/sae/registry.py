@@ -87,6 +87,7 @@ _L1_CALIBRATION_AMENDMENT_FIELDS = {
     "adjusted_calibration_tokens",
     "calibration_shuffle_buffer_activations",
     "calibration_activation_buffers",
+    "calibration_activation_batch_size",
     "calibration_tokens_changed",
     "model_forward_completed",
     "wp2_or_wp5_gate_changed",
@@ -98,6 +99,7 @@ _ORIGINAL_CALIBRATION_TOKENS = 1_000_000
 _ADJUSTED_CALIBRATION_TOKENS = 10_000_000
 _CALIBRATION_SHUFFLE_BUFFER_ACTIVATIONS = 1_000_000
 _CALIBRATION_ACTIVATION_BUFFERS = 10
+_CALIBRATION_ACTIVATION_BATCH_SIZE = 2_048
 _OBSERVED_MEDIAN_L0 = {
     "5": [5465.0, 5330.0, 4874.0],
     "20": [3890.0, 3881.0, 3856.0],
@@ -252,6 +254,12 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
         or protocol.l1_calibration_tokens % protocol.shuffle_buffer_activations != 0
         or protocol.l1_calibration_tokens // protocol.shuffle_buffer_activations
         != _CALIBRATION_ACTIVATION_BUFFERS
+        or _positive_int(
+            calibration_amendment.get("calibration_activation_batch_size"),
+            field="l1_calibration_amendment.calibration_activation_batch_size",
+        )
+        != _CALIBRATION_ACTIVATION_BATCH_SIZE
+        or protocol.activation_batch_size != _CALIBRATION_ACTIVATION_BATCH_SIZE
         or calibration_amendment.get("calibration_tokens_changed") is not True
         or calibration_amendment.get("model_forward_completed") is not True
         or calibration_amendment.get("wp2_or_wp5_gate_changed") is not False

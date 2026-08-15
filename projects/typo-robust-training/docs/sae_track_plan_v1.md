@@ -50,10 +50,14 @@ it materially. The same pre-registered lambda/token amendment therefore raises
 the calibration budget from 1M to 10M activation tokens. Training is streamed in
 exactly ten deterministic 1M-token buffers, and final statistics are computed by
 replaying the identical 10M-token activation stream after optimization. The
-1M-token buffer size and ten-buffer partition are frozen in the same registry.
+1M-token buffer size, ten-buffer partition, and 2,048-activation optimizer batch
+are frozen in the same registry, fixing the retry at 4,890 optimizer steps.
 The selection rule, clean-only data, and all WP-2/WP-5 gates remain unchanged.
 The failed W&B run ID and all six observed L0 values are recorded in the
-registry; no further coefficient or token adjustment remains authorized.
+registry; no further coefficient or token adjustment remains authorized. If no
+candidate enters the registered L0 interval, the run stops without a selection,
+but its complete candidate metrics and failure reason remain in the atomic
+`calibration_report.json` diagnostic artifact.
 
 GPU 1 subsequently became occupied by an unrelated workload. The operator
 assigned the waiting retry to GPU 0. This operational reassignment changes no

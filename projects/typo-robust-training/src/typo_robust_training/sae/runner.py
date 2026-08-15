@@ -431,14 +431,12 @@ def run_calibrate_sae_l1(
             metrics_by_layer[layer][coefficient] = _finalize_calibration_statistics(
                 accumulators[key]
             )
-        selected = select_l1_coefficients(
-            metrics_by_layer,
-            median_l0_range=protocol.median_l0_range,
-        )
         report = {
             "schema_version": "robustness-sae-l1-calibration-report/v1",
             "bindings": bindings,
             "selection_rule": protocol.l1_selection_rule,
+            "selection_status": "pending",
+            "selection_error": None,
             "training_activation_buffers": training_buffer_count,
             "evaluation_activation_buffers": evaluation_buffer_count,
             "evaluation_activation_tokens": evaluated_tokens,
@@ -446,12 +444,25 @@ def run_calibrate_sae_l1(
                 str(layer): {str(coefficient): values for coefficient, values in rows.items()}
                 for layer, rows in metrics_by_layer.items()
             },
-            "selected_by_layer": {
-                str(layer): coefficient for layer, coefficient in selected.items()
-            },
+            "selected_by_layer": {},
             "optimizer_steps": step,
             "activation_tokens": protocol.l1_calibration_tokens,
             "runtime": dict(runtime.provenance()),
+        }
+        write_json_atomic(report_path, report)
+        try:
+            selected = select_l1_coefficients(
+                metrics_by_layer,
+                median_l0_range=protocol.median_l0_range,
+            )
+        except RuntimeError as exc:
+            report["selection_status"] = "failed"
+            report["selection_error"] = str(exc)
+            write_json_atomic(report_path, report)
+            raise
+        report["selection_status"] = "selected"
+        report["selected_by_layer"] = {
+            str(layer): coefficient for layer, coefficient in selected.items()
         }
         write_json_atomic(report_path, report)
         selection_payload = {

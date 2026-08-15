@@ -292,9 +292,93 @@ def test_sae_calibration_streams_and_replays_multiple_frozen_buffers(
     assert report["training_activation_buffers"] == 2
     assert report["evaluation_activation_buffers"] == 2
     assert report["evaluation_activation_tokens"] == 4
+    assert report["selection_status"] == "selected"
+    assert report["selection_error"] is None
     assert report["optimizer_steps"] == 2
     assert tracker.steps == [1, 2]
     assert tracker.status == "completed"
+
+
+def test_sae_calibration_preserves_metrics_when_no_candidate_is_selectable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    protocol = SimpleNamespace(
+        config_sha256="a" * 64,
+        model="model",
+        model_revision="b" * 40,
+        expansion_factor=2,
+        d_model=2,
+        d_sae=4,
+        probe_layers=(5, 20),
+        l1_coefficients=(0.01,),
+        l1_calibration_tokens=4,
+        learning_rate=1e-3,
+        adam_betas=(0.9, 0.999),
+        adam_epsilon=1e-8,
+        activation_batch_size=2,
+        dead_feature_probability_below=1e-5,
+        median_l0_range=(5, 6),
+        l1_selection_rule="in-range-median-l0-then-lowest-fvu/v1",
+    )
+    preregistration = SimpleNamespace(sha256="c" * 64, sae_gpu_id=0)
+    prepared = PreparedSaeSources(
+        sources=(SimpleNamespace(),),
+        reserved=(SimpleNamespace(),),
+        input_paths=(tmp_path / "source.jsonl",),
+        input_sha256=("d" * 64,),
+        input_record_ids=frozenset({"record"}),
+        input_source_ids=frozenset({"source"}),
+        input_group_ids=frozenset({"group"}),
+        record_id_sha256="e" * 64,
+        source_tokens=4,
+        protected_eligible_records=1,
+        protected_eligible_source_tokens=4,
+        protected_eligible_record_ids_sha256="e" * 64,
+        protected_normalized_duplicates_removed=1,
+    )
+
+    def fake_inputs(*, output_dir: Path, **_kwargs):
+        (output_dir / "source_registry.json").write_text("{}\n", encoding="utf-8")
+        return prepared
+
+    runtime = _MultiBufferCalibrationRuntime(protocol=protocol, gpu_id="0")
+    tracker = _Tracker()
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner.load_sae_protocol",
+        lambda _path: protocol,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner.load_sae_preregistration",
+        lambda _path, protocol: preregistration,
+    )
+    monkeypatch.setattr("typo_robust_training.sae.runner._load_inputs", fake_inputs)
+    output = tmp_path / "calibration"
+
+    with pytest.raises(RuntimeError, match="has no L1 candidate"):
+        run_calibrate_sae_l1(
+            SaeCalibrationRunConfig(
+                config_path=tmp_path / "config.json",
+                registry_path=tmp_path / "registry.json",
+                training_data_paths=(tmp_path / "source.jsonl",),
+                gpu_id="0",
+                wandb_project="test-sae",
+                wandb_entity=None,
+                output_dir=output,
+            ),
+            runtime_factory=lambda **_kwargs: runtime,
+            tracker_factory=lambda **_kwargs: tracker,
+        )
+
+    report = json.loads((output / "calibration_report.json").read_text(encoding="utf-8"))
+    assert report["selection_status"] == "failed"
+    assert report["selection_error"].startswith("SAE layer 5 has no L1 candidate")
+    assert report["candidate_metrics"]["5"]["0.01"]
+    assert report["candidate_metrics"]["20"]["0.01"]
+    assert report["selected_by_layer"] == {}
+    assert not (output / "l1_selection.json").exists()
+    assert runtime.calls == 2
+    assert tracker.status == "failed"
 
 
 def test_sae_training_writes_hash_bound_models_and_resumes_exactly(

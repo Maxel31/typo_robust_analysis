@@ -171,6 +171,17 @@ def test_sae_registry_rejects_tampered_calibration_buffer_count(tmp_path: Path) 
         load_sae_preregistration(registry_path, protocol=protocol)
 
 
+def test_sae_registry_binds_calibration_optimizer_step_size(tmp_path: Path) -> None:
+    payload = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+    payload["sae"]["activation_batch_size"] = 20_480
+    config_path = tmp_path / "tampered-activation-batch-size.json"
+    config_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    protocol = load_sae_protocol(config_path)
+
+    with pytest.raises(ValueError, match="L1 calibration amendment differs"):
+        load_sae_preregistration(DEFAULT_REGISTRY, protocol=protocol)
+
+
 @pytest.mark.parametrize(
     ("section", "field", "value"),
     [
