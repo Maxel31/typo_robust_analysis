@@ -302,7 +302,9 @@ def run_calibrate_sae_l1(
     protocol = load_sae_protocol(config.config_path)
     preregistration = load_sae_preregistration(config.registry_path, protocol=protocol)
     if str(config.gpu_id) != str(preregistration.sae_gpu_id):
-        raise ValueError("SAE calibration must use preregistered GPU 1")
+        raise ValueError(
+            f"SAE calibration must use preregistered GPU {preregistration.sae_gpu_id}"
+        )
     output = _prepare_output(config.output_dir, resume=config.resume)
     selection_path = output / "l1_selection.json"
     report_path = output / "calibration_report.json"
@@ -764,7 +766,9 @@ def run_train_saes(
     protocol = load_sae_protocol(config.config_path)
     preregistration = load_sae_preregistration(config.registry_path, protocol=protocol)
     if str(config.gpu_id) != str(preregistration.sae_gpu_id):
-        raise ValueError("SAE training must use preregistered GPU 1")
+        raise ValueError(
+            f"SAE training must use preregistered GPU {preregistration.sae_gpu_id}"
+        )
     output = _prepare_output(config.output_dir, resume=config.resume)
     sources = _load_inputs(
         protocol=protocol,
@@ -1155,7 +1159,9 @@ def run_validate_saes(
     protocol = load_sae_protocol(config.config_path)
     preregistration = load_sae_preregistration(config.registry_path, protocol=protocol)
     if str(config.gpu_id) != str(preregistration.sae_gpu_id):
-        raise ValueError("SAE validation must use preregistered GPU 1")
+        raise ValueError(
+            f"SAE validation must use preregistered GPU {preregistration.sae_gpu_id}"
+        )
     ledger_path, prior_attempts, checkpoint_run_sha256 = _load_wp2_attempts(
         checkpoint_dir=config.checkpoint_dir,
         protocol=protocol,

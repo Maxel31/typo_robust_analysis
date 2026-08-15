@@ -1,7 +1,7 @@
 # SAE 診断トラック v1
 
 このトラックは、凍結済み 10M-token 頑健化比較と独立して進めます。GPU 5/6 の run は保護対象で、
-設定変更・再起動・停止・途中の task accuracy 評価を行いません。SAE は GPU 1 を使い、凍結評価と
+設定変更・再起動・停止・途中の task accuracy 評価を行いません。SAE は事前登録した専用GPUを使い、凍結評価と
 GPU・人手が競合する場合は必ず凍結評価を優先します。
 
 ## 作業順
@@ -38,6 +38,19 @@ prefixは変更しません。予約prefixの全行を除外anchorとして保�
 保護manifestの全record/source/group IDをsupplement除外集合へ保持します。最初のsupplementは隔離して
 再構築し、model forwardは開始していません。派生eligible値はcorpus build、calibration、training、
 validationの入力読込時にこの事前登録と機械的に照合します。
+
+### 1回限りの較正amendment（2026-08-15）
+
+初期の1M-token較正はcleanデータ上で489 optimizer stepを完走しましたが、登録済み係数
+`[0.0001, 0.0003, 0.001]`はいずれも凍結済みmedian-L0範囲へ入りませんでした。最大係数でも
+層5のmedian L0は4,874、層20は3,856で、上限150の25倍超でした。WP-2、WP-3、WP-5の結果を
+見る前に、事前登録で許可した1回の調整を消費し、係数を対数間隔の
+`[0.01, 0.1, 1.0]`へ固定します。1M-token予算、選択規則、clean-onlyデータ、WP-2/WP-5 gateは
+変更しません。失敗したW&B run IDと6個の観測L0をregistryへ記録し、追加の係数・token調整は
+以後認めません。
+
+その後GPU 1が無関係なworkloadで占有されたため、待機中の再較正をGPU 0へ割り当てました。
+これは運用上の変更だけで、データ、モデル、loss、閾値、評価設定は変えていません。
 
 WP-2 は FVU <= 0.35、median L0 in [30,150]、dead feature 率 <= 20%、splice KL 中央値
 <= 0.15 nats/token、`p_i` と再構成誤差中央値 `s` の保存を要求します。WP-5 は層 5 の 2 seed で

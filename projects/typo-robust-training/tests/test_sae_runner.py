@@ -78,6 +78,37 @@ class _Runtime:
         return {"runtime": "fake-sae-runtime/v1"}
 
 
+def test_sae_calibration_rejects_a_gpu_that_disagrees_with_the_amendment(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    protocol = SimpleNamespace()
+    preregistration = SimpleNamespace(sae_gpu_id=0)
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner.load_sae_protocol",
+        lambda _path: protocol,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner.load_sae_preregistration",
+        lambda _path, protocol: preregistration,
+    )
+
+    with pytest.raises(ValueError, match="must use preregistered GPU 0"):
+        run_calibrate_sae_l1(
+            SaeCalibrationRunConfig(
+                config_path=tmp_path / "config.json",
+                registry_path=tmp_path / "registry.json",
+                training_data_paths=(tmp_path / "source.jsonl",),
+                gpu_id="1",
+                wandb_project="test-sae",
+                wandb_entity=None,
+                output_dir=tmp_path / "calibration",
+            )
+        )
+
+    assert not (tmp_path / "calibration").exists()
+
+
 def test_sae_calibration_closes_tracker_when_runtime_initialization_fails(
     tmp_path: Path,
     monkeypatch,

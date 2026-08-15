@@ -47,7 +47,7 @@ def test_sae_protocol_freezes_wp1_and_wp2_without_touching_confirmatory_training
     assert protocol.supplement_stream_order == "pinned-unshuffled-stream/v1"
     assert protocol.reserved_prefix_records == 30_000
     assert protocol.reserved_order_seed == 42
-    assert protocol.l1_coefficients == (0.0001, 0.0003, 0.001)
+    assert protocol.l1_coefficients == (0.01, 0.1, 1.0)
     assert protocol.fvu_max == 0.35
     assert protocol.median_l0_range == (30, 150)
     assert protocol.dead_feature_rate_max == 0.20
@@ -56,7 +56,7 @@ def test_sae_protocol_freezes_wp1_and_wp2_without_touching_confirmatory_training
     assert protocol.wp5_feature_sufficiency_ratio == 0.50
     assert protocol.wp5_suppression_ratio == 0.25
     preregistration = load_sae_preregistration(DEFAULT_REGISTRY, protocol=protocol)
-    assert preregistration.sae_gpu_id == 1
+    assert preregistration.sae_gpu_id == 0
     assert preregistration.source_manifest_sha256 == (
         "ed99e962f02564369ac9878ef7db1d3d9e7b7c4e4876f8e39938cbe4fbe73967"
     )
@@ -103,6 +103,28 @@ def test_sae_registry_rejects_data_role_drift(tmp_path: Path) -> None:
         load_sae_preregistration(path, protocol=protocol)
 
 
+def test_sae_registry_rejects_unrecorded_calibration_grid(tmp_path: Path) -> None:
+    protocol = load_sae_protocol(DEFAULT_CONFIG)
+    payload = json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))
+    payload["l1_calibration_amendment"]["adjusted_coefficients"] = [0.001, 0.01, 0.1]
+    path = tmp_path / "bad-calibration-amendment.json"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="L1 calibration amendment differs"):
+        load_sae_preregistration(path, protocol=protocol)
+
+
+def test_sae_registry_rejects_gpu_different_from_recorded_reassignment(tmp_path: Path) -> None:
+    protocol = load_sae_protocol(DEFAULT_CONFIG)
+    payload = json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))
+    payload["non_interference"]["sae_gpu_id"] = 1
+    path = tmp_path / "bad-gpu-amendment.json"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="GPU reassignment amendment differs"):
+        load_sae_preregistration(path, protocol=protocol)
+
+
 def test_cli_keeps_sae_calibration_training_and_validation_separate() -> None:
     root = argparse.ArgumentParser()
     commands = root.add_subparsers(dest="command")
@@ -141,7 +163,7 @@ def test_cli_keeps_sae_calibration_training_and_validation_separate() -> None:
             "--training-data",
             "clean-a.jsonl",
             "--gpu-id",
-            "1",
+            "0",
             "--wandb-project",
             "typo-sae",
             "--output-dir",
@@ -149,7 +171,7 @@ def test_cli_keeps_sae_calibration_training_and_validation_separate() -> None:
         ]
     )
     assert calibration.training_data == [Path("clean-a.jsonl")]
-    assert calibration.gpu_id == "1"
+    assert calibration.gpu_id == "0"
 
     training = root.parse_args(
         [
@@ -163,7 +185,7 @@ def test_cli_keeps_sae_calibration_training_and_validation_separate() -> None:
             "--l1-selection",
             "l1-selection.json",
             "--gpu-id",
-            "1",
+            "0",
             "--wandb-project",
             "typo-sae",
             "--output-dir",
@@ -186,7 +208,7 @@ def test_cli_keeps_sae_calibration_training_and_validation_separate() -> None:
             "--checkpoint-dir",
             "sae",
             "--gpu-id",
-            "1",
+            "0",
             "--output-dir",
             "validation",
         ]
