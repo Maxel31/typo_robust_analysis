@@ -1,7 +1,7 @@
 # SAE diagnostic track v1
 
 This track is parallel to, and must not alter, the frozen 10M-token robustness
-comparison. GPU 5/6 jobs are protected. SAE work uses GPU 1 and yields whenever
+comparison. GPU 5/6 jobs are protected. SAE work uses the preregistered dedicated GPU and yields whenever
 the frozen robustness evaluation needs the device or operator attention.
 
 ## Scope and order
@@ -29,10 +29,40 @@ renormalized to unit L2 norm after every optimizer step. The expansion factor is
 ReLU features. No top-k constraint is used because L0 and the registered energy
 score require an unconstrained firing count.
 
-Three L1 candidates are compared on the same one-million-token calibration
-stream. Selection first requires median L0 in [30, 150], then chooses the lowest
+Three L1 candidates are compared on the same calibration stream. Selection first
+requires median L0 in [30, 150], then chooses the lowest
 FVU; deterministic coefficient order breaks an exact tie. This selection cannot
 use typo inputs or downstream behavior.
+
+### One-time calibration amendment (2026-08-15)
+
+The original one-million-token calibration completed all 489 optimizer steps on
+clean data, but none of the registered coefficients `[0.0001, 0.0003, 0.001]`
+entered the frozen median-L0 interval. At the strongest coefficient, median L0
+was 4,874 at layer 5 and 3,856 at layer 20, still more than 25 times the upper
+gate. Before any WP-2, WP-3, or WP-5 result was observed, the one adjustment
+allowed by the preregistration was consumed: the grid is now the fixed
+log-spaced bracket `[0.01, 0.1, 1.0]`. A falsification-first review then showed
+that 489 optimizer steps were insufficient for the encoder bias to reach the
+sparse regime: on the product optimizer path, a 1,000-fold coefficient increase
+changed synthetic median L0 by only 1.2%, while ten times as many steps changed
+it materially. The same pre-registered lambda/token amendment therefore raises
+the calibration budget from 1M to 10M activation tokens. Training is streamed in
+exactly ten deterministic 1M-token buffers, and final statistics are computed by
+replaying the identical 10M-token activation stream after optimization. The
+1M-token buffer size, ten-buffer partition, and 2,048-activation optimizer batch
+are frozen in the same registry, fixing the retry at 4,890 optimizer steps.
+The selection rule, clean-only data, and all WP-2/WP-5 gates remain unchanged.
+The failed W&B run ID and all six observed L0 values are recorded in the
+registry; no further coefficient or token adjustment remains authorized. If no
+candidate enters the registered L0 interval, the run stops without a selection,
+but its complete candidate metrics and failure reason remain in the atomic
+`calibration_report.json` diagnostic artifact.
+
+GPU 1 subsequently became occupied by an unrelated workload. The operator
+assigned the waiting retry to GPU 0. This operational reassignment changes no
+data, model, loss, threshold, or evaluation setting and is bound in the same
+registry.
 
 ## Data separation
 

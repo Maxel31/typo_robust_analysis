@@ -22,6 +22,17 @@ _FORBIDDEN_DATA_ROLES = [
     "localization-selection",
     "localization-validation",
 ]
+_PROTECTED_RUNS = [
+    "Output distribution matching (Kojima-style baseline), seed 42, 10M student tokens",
+    "Causal-window localized state distillation, seed 42, 10M student tokens",
+]
+_PROHIBITED_CHANGES = [
+    "training configuration",
+    "rho or lambda_state",
+    "data stream",
+    "restart or termination",
+    "task-accuracy evaluation before completion",
+]
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _DATA_CONTRACT_FIELDS = {
     "allowed",
@@ -50,6 +61,49 @@ _IDENTITY_REPLAY_AMENDMENT_FIELDS = {
     "overlapping_record_ids_observed",
     "model_forward_started",
 }
+_NON_INTERFERENCE_FIELDS = {
+    "protected_gpu_ids",
+    "sae_gpu_id",
+    "gpu_reassignment_amendment",
+    "protected_runs",
+    "prohibited_changes",
+}
+_GPU_REASSIGNMENT_AMENDMENT_FIELDS = {
+    "amended_at",
+    "trigger",
+    "from_gpu_id",
+    "to_gpu_id",
+    "scientific_configuration_changed",
+    "wp2_or_wp5_gate_changed",
+}
+_L1_CALIBRATION_AMENDMENT_FIELDS = {
+    "amended_at",
+    "trigger",
+    "failed_wandb_run_id",
+    "original_coefficients",
+    "observed_median_l0_by_layer",
+    "adjusted_coefficients",
+    "original_calibration_tokens",
+    "adjusted_calibration_tokens",
+    "calibration_shuffle_buffer_activations",
+    "calibration_activation_buffers",
+    "calibration_activation_batch_size",
+    "calibration_tokens_changed",
+    "model_forward_completed",
+    "wp2_or_wp5_gate_changed",
+    "remaining_adjustments",
+}
+_ORIGINAL_L1_COEFFICIENTS = [0.0001, 0.0003, 0.001]
+_ADJUSTED_L1_COEFFICIENTS = [0.01, 0.1, 1.0]
+_ORIGINAL_CALIBRATION_TOKENS = 1_000_000
+_ADJUSTED_CALIBRATION_TOKENS = 10_000_000
+_CALIBRATION_SHUFFLE_BUFFER_ACTIVATIONS = 1_000_000
+_CALIBRATION_ACTIVATION_BUFFERS = 10
+_CALIBRATION_ACTIVATION_BATCH_SIZE = 2_048
+_OBSERVED_MEDIAN_L0 = {
+    "5": [5465.0, 5330.0, 4874.0],
+    "20": [3890.0, 3881.0, 3856.0],
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +121,12 @@ class SaePreregistration:
 def _positive_int(value: object, *, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"SAE preregistration {field} must be a positive integer")
+    return value
+
+
+def _nonnegative_int(value: object, *, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"SAE preregistration {field} must be a non-negative integer")
     return value
 
 
@@ -107,6 +167,7 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
         "registered_at",
         "track",
         "non_interference",
+        "l1_calibration_amendment",
         "data_contract",
         "wp2_gates",
         "wp3_predictions",
@@ -120,13 +181,95 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
     ):
         raise ValueError("SAE preregistration schema or track differs")
     non_interference = payload["non_interference"]
-    if not isinstance(non_interference, Mapping):
-        raise ValueError("SAE non-interference registration differs")
     if (
-        non_interference.get("protected_gpu_ids") != [5, 6]
-        or non_interference.get("sae_gpu_id") != 1
+        not isinstance(non_interference, Mapping)
+        or set(non_interference) != _NON_INTERFERENCE_FIELDS
     ):
+        raise ValueError("SAE non-interference registration differs")
+    if non_interference.get("protected_gpu_ids") != [5, 6]:
         raise ValueError("SAE GPU non-interference registration differs")
+    if (
+        non_interference.get("protected_runs") != _PROTECTED_RUNS
+        or non_interference.get("prohibited_changes") != _PROHIBITED_CHANGES
+    ):
+        raise ValueError("SAE non-interference protection lists differ")
+    sae_gpu_id = _nonnegative_int(non_interference.get("sae_gpu_id"), field="sae_gpu_id")
+    gpu_amendment = non_interference.get("gpu_reassignment_amendment")
+    if (
+        not isinstance(gpu_amendment, Mapping)
+        or set(gpu_amendment) != _GPU_REASSIGNMENT_AMENDMENT_FIELDS
+        or not isinstance(gpu_amendment.get("amended_at"), str)
+        or not gpu_amendment.get("amended_at")
+        or not isinstance(gpu_amendment.get("trigger"), str)
+        or not gpu_amendment.get("trigger")
+        or _nonnegative_int(
+            gpu_amendment.get("from_gpu_id"), field="gpu_reassignment_amendment.from_gpu_id"
+        )
+        != 1
+        or _nonnegative_int(
+            gpu_amendment.get("to_gpu_id"), field="gpu_reassignment_amendment.to_gpu_id"
+        )
+        != sae_gpu_id
+        or sae_gpu_id != 0
+        or sae_gpu_id in non_interference["protected_gpu_ids"]
+        or gpu_amendment.get("scientific_configuration_changed") is not False
+        or gpu_amendment.get("wp2_or_wp5_gate_changed") is not False
+    ):
+        raise ValueError("SAE GPU reassignment amendment differs")
+    calibration_amendment = payload["l1_calibration_amendment"]
+    if (
+        not isinstance(calibration_amendment, Mapping)
+        or set(calibration_amendment) != _L1_CALIBRATION_AMENDMENT_FIELDS
+        or not isinstance(calibration_amendment.get("amended_at"), str)
+        or not calibration_amendment.get("amended_at")
+        or not isinstance(calibration_amendment.get("trigger"), str)
+        or not calibration_amendment.get("trigger")
+        or calibration_amendment.get("failed_wandb_run_id") != "cc36b12ad5150642"
+        or calibration_amendment.get("original_coefficients") != _ORIGINAL_L1_COEFFICIENTS
+        or calibration_amendment.get("observed_median_l0_by_layer") != _OBSERVED_MEDIAN_L0
+        or calibration_amendment.get("adjusted_coefficients") != _ADJUSTED_L1_COEFFICIENTS
+        or list(protocol.l1_coefficients) != _ADJUSTED_L1_COEFFICIENTS
+        or _positive_int(
+            calibration_amendment.get("original_calibration_tokens"),
+            field="l1_calibration_amendment.original_calibration_tokens",
+        )
+        != _ORIGINAL_CALIBRATION_TOKENS
+        or _positive_int(
+            calibration_amendment.get("adjusted_calibration_tokens"),
+            field="l1_calibration_amendment.adjusted_calibration_tokens",
+        )
+        != _ADJUSTED_CALIBRATION_TOKENS
+        or protocol.l1_calibration_tokens != _ADJUSTED_CALIBRATION_TOKENS
+        or _positive_int(
+            calibration_amendment.get("calibration_shuffle_buffer_activations"),
+            field="l1_calibration_amendment.calibration_shuffle_buffer_activations",
+        )
+        != _CALIBRATION_SHUFFLE_BUFFER_ACTIVATIONS
+        or _positive_int(
+            calibration_amendment.get("calibration_activation_buffers"),
+            field="l1_calibration_amendment.calibration_activation_buffers",
+        )
+        != _CALIBRATION_ACTIVATION_BUFFERS
+        or protocol.shuffle_buffer_activations != _CALIBRATION_SHUFFLE_BUFFER_ACTIVATIONS
+        or protocol.l1_calibration_tokens % protocol.shuffle_buffer_activations != 0
+        or protocol.l1_calibration_tokens // protocol.shuffle_buffer_activations
+        != _CALIBRATION_ACTIVATION_BUFFERS
+        or _positive_int(
+            calibration_amendment.get("calibration_activation_batch_size"),
+            field="l1_calibration_amendment.calibration_activation_batch_size",
+        )
+        != _CALIBRATION_ACTIVATION_BATCH_SIZE
+        or protocol.activation_batch_size != _CALIBRATION_ACTIVATION_BATCH_SIZE
+        or calibration_amendment.get("calibration_tokens_changed") is not True
+        or calibration_amendment.get("model_forward_completed") is not True
+        or calibration_amendment.get("wp2_or_wp5_gate_changed") is not False
+        or _nonnegative_int(
+            calibration_amendment.get("remaining_adjustments"),
+            field="l1_calibration_amendment.remaining_adjustments",
+        )
+        != 0
+    ):
+        raise ValueError("SAE L1 calibration amendment differs")
     data = payload["data_contract"]
     if (
         not isinstance(data, Mapping)
@@ -219,7 +362,7 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
         path=resolved,
         sha256=hashlib.sha256(raw).hexdigest(),
         source_manifest_sha256=source_sha,
-        sae_gpu_id=1,
+        sae_gpu_id=sae_gpu_id,
         initial_eligible_records=initial_records,
         initial_eligible_source_tokens=initial_tokens,
         initial_eligible_record_ids_sha256=initial_digest,

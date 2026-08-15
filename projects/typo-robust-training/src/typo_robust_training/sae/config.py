@@ -287,8 +287,6 @@ def load_sae_protocol(path: Path) -> SaeProtocol:
     shuffle_buffer_activations = _positive_int(
         data["shuffle_buffer_activations"], field="data.shuffle_buffer_activations"
     )
-    if l1_calibration_tokens > shuffle_buffer_activations:
-        raise ValueError("SAE L1 calibration must fit in one frozen shuffle buffer")
     seeds_raw = sae["seeds_by_layer"]
     if not isinstance(seeds_raw, Mapping) or set(seeds_raw) != {"5", "20"}:
         raise ValueError("SAE layer seeds differ")

@@ -361,7 +361,7 @@ natural typoを含めます。固定PR前gateは、primary random-2 typo accurac
 [`../typo-cot/docs/robustness_training_plan_v1.md`](../typo-cot/docs/robustness_training_plan_v1.md)
 にあります。
 
-## 7. 並行 SAE 診断トラックを実行する（GPU 1 のみ）
+## 7. 並行 SAE 診断トラックを実行する（GPU 0 のみ）
 
 SAE は診断・将来研究用です。GPU 5/6 で保護している output matching と causal-window run を
 変更・中断しません。凍結済み頑健性評価と GPU または人手が競合した場合は、SAE の新規投入を
@@ -372,7 +372,7 @@ SAE は診断・将来研究用です。GPU 5/6 で保護している output mat
 character 5-gram近重複検査を行います。このデータ準備commandはGPUを使用しません。
 
 ```bash
-GPU_ID="1"
+GPU_ID="0"
 SAE_ROOT="/diskthalys/ssd14tc/sfukuhata/typo_sae_artifacts/gemma4b-v1"
 TRAINING_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-training/results/data/gemma4b-cycle3-64m/training_sources.jsonl"
 EVALUATION_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-training/results/evaluation-data/robustness-v1"

@@ -396,7 +396,7 @@ are retained locally and summarized in the eventual PR.
 The full frozen protocol is in
 [`../typo-cot/docs/robustness_training_plan_v1.md`](../typo-cot/docs/robustness_training_plan_v1.md).
 
-## 7. Run the parallel SAE diagnostic track (GPU 1 only)
+## 7. Run the parallel SAE diagnostic track (GPU 0 only)
 
 The SAE track is diagnostic/future-study work. It must not modify or interrupt
 the protected GPU 5/6 output-matching and causal-window runs. If frozen
@@ -410,7 +410,7 @@ near-duplicate check. This is a separate data-preparation command and uses no
 GPU:
 
 ```bash
-GPU_ID="1"
+GPU_ID="0"
 SAE_ROOT="/diskthalys/ssd14tc/sfukuhata/typo_sae_artifacts/gemma4b-v1"
 TRAINING_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-training/results/data/gemma4b-cycle3-64m/training_sources.jsonl"
 EVALUATION_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-training/results/evaluation-data/robustness-v1"

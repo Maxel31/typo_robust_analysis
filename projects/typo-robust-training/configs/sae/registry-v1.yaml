@@ -4,7 +4,15 @@
   "track": "diagnostic-and-future-study-only",
   "non_interference": {
     "protected_gpu_ids": [5, 6],
-    "sae_gpu_id": 1,
+    "sae_gpu_id": 0,
+    "gpu_reassignment_amendment": {
+      "amended_at": "2026-08-15T04:00:00+09:00",
+      "trigger": "operator reassigned the waiting SAE job to available GPU 0 after GPU 1 became externally occupied",
+      "from_gpu_id": 1,
+      "to_gpu_id": 0,
+      "scientific_configuration_changed": false,
+      "wp2_or_wp5_gate_changed": false
+    },
     "protected_runs": [
       "Output distribution matching (Kojima-style baseline), seed 42, 10M student tokens",
       "Causal-window localized state distillation, seed 42, 10M student tokens"
@@ -16,6 +24,26 @@
       "restart or termination",
       "task-accuracy evaluation before completion"
     ]
+  },
+  "l1_calibration_amendment": {
+    "amended_at": "2026-08-15T04:00:00+09:00",
+    "trigger": "the preregistered one-million-token calibration completed with no in-range candidate; the single lambda/token amendment jointly widens the coefficient grid and raises the budget to ten deterministic one-million-token buffers",
+    "failed_wandb_run_id": "cc36b12ad5150642",
+    "original_coefficients": [0.0001, 0.0003, 0.001],
+    "observed_median_l0_by_layer": {
+      "5": [5465.0, 5330.0, 4874.0],
+      "20": [3890.0, 3881.0, 3856.0]
+    },
+    "adjusted_coefficients": [0.01, 0.1, 1.0],
+    "original_calibration_tokens": 1000000,
+    "adjusted_calibration_tokens": 10000000,
+    "calibration_shuffle_buffer_activations": 1000000,
+    "calibration_activation_buffers": 10,
+    "calibration_activation_batch_size": 2048,
+    "calibration_tokens_changed": true,
+    "model_forward_completed": true,
+    "wp2_or_wp5_gate_changed": false,
+    "remaining_adjustments": 0
   },
   "data_contract": {
     "allowed": "clean FineWeb-Edu train split only",
