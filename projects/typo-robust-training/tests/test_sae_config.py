@@ -103,6 +103,30 @@ def test_sae_registry_rejects_data_role_drift(tmp_path: Path) -> None:
         load_sae_preregistration(path, protocol=protocol)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("protected_runs", []),
+        ("prohibited_changes", []),
+        ("protected_runs", ["nothing is protected"]),
+        ("prohibited_changes", ["anything goes now"]),
+    ],
+)
+def test_sae_registry_rejects_non_interference_list_drift(
+    tmp_path: Path,
+    field: str,
+    value: list[str],
+) -> None:
+    protocol = load_sae_protocol(DEFAULT_CONFIG)
+    payload = json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))
+    payload["non_interference"][field] = value
+    path = tmp_path / f"bad-{field}.json"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="non-interference protection lists differ"):
+        load_sae_preregistration(path, protocol=protocol)
+
+
 def test_sae_registry_rejects_unrecorded_calibration_grid(tmp_path: Path) -> None:
     protocol = load_sae_protocol(DEFAULT_CONFIG)
     payload = json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))

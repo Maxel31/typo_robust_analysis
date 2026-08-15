@@ -22,6 +22,17 @@ _FORBIDDEN_DATA_ROLES = [
     "localization-selection",
     "localization-validation",
 ]
+_PROTECTED_RUNS = [
+    "Output distribution matching (Kojima-style baseline), seed 42, 10M student tokens",
+    "Causal-window localized state distillation, seed 42, 10M student tokens",
+]
+_PROHIBITED_CHANGES = [
+    "training configuration",
+    "rho or lambda_state",
+    "data stream",
+    "restart or termination",
+    "task-accuracy evaluation before completion",
+]
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _DATA_CONTRACT_FIELDS = {
     "allowed",
@@ -175,6 +186,11 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
         raise ValueError("SAE non-interference registration differs")
     if non_interference.get("protected_gpu_ids") != [5, 6]:
         raise ValueError("SAE GPU non-interference registration differs")
+    if (
+        non_interference.get("protected_runs") != _PROTECTED_RUNS
+        or non_interference.get("prohibited_changes") != _PROHIBITED_CHANGES
+    ):
+        raise ValueError("SAE non-interference protection lists differ")
     sae_gpu_id = _nonnegative_int(non_interference.get("sae_gpu_id"), field="sae_gpu_id")
     gpu_amendment = non_interference.get("gpu_reassignment_amendment")
     if (
