@@ -116,7 +116,7 @@ SAEと後継案は [SAE診断トラックと後継proposal候補](sae_and_succes
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | FineWeb localization selection 200 | 使用 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 |
 | FineWeb localization validation 200 | 禁止 | 使用 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 |
-| FineWeb 64M train stream | 禁止 | 禁止 | 使用 | 禁止 | 禁止 | 禁止 | 禁止 | 10M用の先頭30,000 recordだけ除外。残りは重複 |
+| FineWeb 64M train stream | 禁止 | 禁止 | 使用 | 禁止 | 禁止 | 禁止 | 禁止 | 10M用の先頭30,000 recordだけ除外。残り約51.74MはSAE corpusと重複し得る |
 | FineWeb monitor 200 / natural 100 | 禁止 | 禁止 | 禁止 | 使用 | 診断のみ | 禁止 | 禁止 | 禁止 |
 | Task tune 500 | 禁止 | 禁止 | 禁止 | 禁止 | 使用 | 禁止 | 禁止 | 禁止 |
 | Pre-PR task/corpus | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 | 1回 | 禁止 | 禁止 |
@@ -124,7 +124,7 @@ SAEと後継案は [SAE診断トラックと後継proposal候補](sae_and_succes
 
 全poolについて、record ID、source/group ID、exact duplicate、near-duplicateを検査する。Natural typo辞書・repositoryも用途別に分離する。
 
-ここで「Step 2学習」と「SAE train」は完全非重複ではない。SAE用のmachine-readable exclusionは、先行10M runを想定した先頭30,000 record（約12.26M source tokens）だけを保護する。SAEのeligible pool約51.74M source tokensは、その後に定義した64M adapter streamの内側にあり、両者は重複する。この重複を「評価リークなし」や「64M学習から独立」と言い換えない。Localization、monitor、tune、pre-PR、final、WP-3/4/5診断itemはSAE trainから分離されているため、凍結behavior評価と診断itemの非重複契約は維持される。
+ここで「Step 2学習」と「SAE train」は完全非重複ではない。SAE用のmachine-readable exclusionは、先行10M runを想定した先頭30,000 record（約12.26M source tokens）だけを保護する。その直後に得られる初期eligible pool約51.74M source tokensは64M adapter streamの残りと重複し得る。一方、凍結済みSAE corpus budgetは100M training + 10M statistics + 200文書×512、合計110,102,400 source tokensである。従って不足する約58.37M source tokensは、64M stream外の新規FineWeb-Edu recordで補充される。すなわち「SAE corpus全体が64M stream内」でも「両者が完全非重複」でもない。この包含関係を「評価リークなし」や「64M学習から独立」と言い換えない。Localization、monitor、tune、pre-PR、final、WP-3/4/5診断itemはSAE trainから分離されているため、凍結behavior評価と診断itemの非重複契約は維持される。
 
 ## 2. 研究仮説、非主張、成功条件
 

@@ -270,7 +270,7 @@ SAE学習へ使えるのは**training split内のclean FineWeb-Eduだけ**であ
 | 新規diagnostic 200 | 不可 | 不可 | 不可 | 不可 | 可 |
 | tune / pre-PR / final | **全WPで学習・選択禁止** |  |  |  |  |
 
-SAE trainから除外したadapter dataは、先行10M runを想定した先頭30,000 recordだけである。このprefixは約12.26M source tokensであり、64M adapter stream全体を保護しない。SAEのeligible pool約51.74M source tokensは64M streamの内側にあるため、SAE trainと64M adapter trainは重複する。これはtraining split内での重複であり、tune / pre-PR / finalやWP-3/4/5 itemのリークではないが、「64M adapter dataをSAEから除外済み」とは主張しない。Localization selection/validation、全評価tier、monitor/diagnostic item、exact/near-duplicate groupは引き続きSAE trainから除外し、使用IDとcontent hashをregistryへ記録する。
+SAE trainから除外したadapter dataは、先行10M runを想定した先頭30,000 recordだけである。このprefixは約12.26M source tokensであり、64M adapter stream全体を保護しない。Prefix除外後の初期eligible pool約51.74M source tokensは64M streamの残りと重複し得る。一方、凍結済みSAE corpus budgetは100M training + 10M statistics + 200文書×512、合計110,102,400 source tokensである。このため不足する約58.37M source tokensは64M stream外の新規FineWeb-Edu recordから補充される。SAE corpusは64M streamの部分集合ではなく、両者の最大重複部分が約51.74Mである。これはtraining split内での重複であり、tune / pre-PR / finalやWP-3/4/5 itemのリークではないが、「64M adapter dataをSAEから除外済み」または「SAE corpus全体が64M stream内」とは主張しない。Localization selection/validation、全評価tier、monitor/diagnostic item、exact/near-duplicate groupは引き続きSAE trainから除外し、使用IDとcontent hashをregistryへ記録する。
 
 ## 4. Work package依存関係
 
