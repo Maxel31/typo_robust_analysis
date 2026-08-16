@@ -691,7 +691,7 @@ G_{i,m}=1-\frac{P_{i,m}}{U_{i,m}},
 \sum_{i\in I_{\mathrm{common}}}G_{i,m}
 \]
 
-主要な差分量は、BaseからAdapterへの追加patch余地の絶対減少である。
+確証的なmechanistic auditを将来実装するときの主要estimandは、BaseからAdapterへの追加patch余地の絶対減少とする。
 
 \[
 \Delta G_{\mathrm{reduction}}
@@ -706,11 +706,11 @@ PatchGainReductionFraction
        {\overline G_{\mathrm{Base}}}
 \]
 
-\(\overline G_{\mathrm{Base}}\le10^{-6}\) ならrelative fractionはundefinedとして表示せず、
-\(\Delta G_{\mathrm{reduction}}\) だけを報告する。0除算回避のために分母へ任意のepsilonを足してfractionを作らない。
+\(\overline G_{\mathrm{Base}}\le10^{-6}\) ならrelative fractionはundefinedとする。0除算回避のために分母へ任意のepsilonを足してfractionを作らない。
 
-不確実性は、task内でitemを再抽出しtaskを等重み集計するpaired bootstrap 10,000回（seed 42）で計算する。各反復でBaseとAdapterに同じitem indexを使い、
-\(\overline G_m\)、\(\Delta G_{\mathrm{reduction}}\)、定義可能な場合のrelative fractionについてpercentile 95% CIを報告する。現行runnerが保存するのはpoint estimateまでであり、このbootstrap CIはinferentialなmechanistic claimを行う前に実装・回帰testが必要な明示的gapである。実装完了前はpoint estimateを記述的にのみ扱う。
+現行runnerが直接保存するpatch-gain量は、`base_mean_patch_gain`、`adapter_mean_patch_gain`、およびBase平均が (10^{-6}) より大きい場合の `patch_gain_reduction_fraction` である。\(\Delta G_{\mathrm{reduction}}\) 専用fieldはなく、2平均から導出できるだけである。Base平均が閾値以下の場合、runnerはrelative fractionを `None` とし、2平均だけを保存する。従って現行artifactについては2平均とrelative fractionの定義可否をそのまま報告し、絶対差を表示する場合は「保存値から事後導出」と明記する。
+
+不確実性は、task内でitemを再抽出しtaskを等重み集計するpaired bootstrap 10,000回（seed 42）で計算する。各反復でBaseとAdapterに同じitem indexを使い、\(\overline G_m\)、\(\Delta G_{\mathrm{reduction}}\)、定義可能な場合のrelative fractionについてpercentile 95% CIを報告する。このbootstrap CIと絶対差の専用出力は現行runnerに未実装であり、inferentialなmechanistic claimを行う前に実装・回帰testが必要な明示的gapである。実装完了前は既存の2平均とrelative fractionを記述的にのみ扱う。
 
 - Accuracy改善 + reduction: external patchが担った修復を内在化した可能性
 - Accuracy改善 + reductionなし: downstream compensationの可能性
@@ -738,7 +738,7 @@ Output-onlyはfrozen self-teacher、1:1、編集語target mask、output distribu
 
 これは反復可能なtune結果であり、pre-PR/finalの確証結果ではない。
 
-| arm | clean acc | typo acc | \(\Delta\) clean vs Base | \(\Delta\) typo vs Base | patch gain reduction |
+| arm | clean acc | typo acc | \(\Delta\) clean vs Base | \(\Delta\) typo vs Base | relative patch-gain reduction |
 |---|---:|---:|---:|---:|---:|
 | Base | 83.0% | 80.0% | 0 | 0 | 0 |
 | output matching | 82.4% | 82.6% | -0.60pt | +2.60pt | 23.83% |
@@ -746,7 +746,7 @@ Output-onlyはfrozen self-teacher、1:1、編集語target mask、output distribu
 | random 20--25 | 82.2% | 82.6% | -0.80pt | +2.61pt | 31.74% |
 | all-layer 0--33 | 82.4% | 82.0% | -0.60pt | +2.00pt | 40.32% |
 
-Proposalのtypo差はoutput matching比 -0.20pt、random比 -0.20pt、all-layer比 +0.40ptで、すべて95% CIが0を跨いだ。従って10M、seed 42で言えるのは次だけである。
+右端列は現行runnerが保存した補助的なrelative fractionであり、上で定義した絶対 \(\Delta G_{\mathrm{reduction}}\) ではない。Proposalのtypo差はoutput matching比 -0.20pt、random比 -0.20pt、all-layer比 +0.40ptで、すべて95% CIが0を跨いだ。従って10M、seed 42で言えるのは次だけである。
 
 - 大きなclean driftを避けて全armを学習できた。
 - Proposalがoutput matchingやrandom windowを上回る行動的優位は確認できない。
