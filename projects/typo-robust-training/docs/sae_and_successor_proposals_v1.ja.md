@@ -17,10 +17,10 @@
 判定
   ├─ 64M proposalがbehavior controlsに勝つ
   │    └─ 現行proposalを追加seed・凍結評価・cross-modelへ
-  ├─ WP-5 G2+G3でpair-specific suppressionが因果gate合格
-  │    └─ spurious-suppression後継studyを新規登録
-  ├─ WP-5 G1だけ合格
-  │    └─ all-feature十分性まで。固定feature学習には別kill test
+  ├─ WP-5 G1+G2+G3が合格
+  │    └─ 事前registry amendmentがある場合だけsuppression studyを草案化
+  ├─ WP-5 G1+G3だけ合格
+  │    └─ 現registryが許すfeature-targeted study草案まで。学習は未認可
   └─ raw residualもSAE featureも不成立
        └─ Causal Patch Distillationを第一の別proposalとして登録
 
@@ -48,7 +48,7 @@ SAEの現在の役割は二つだけである。
 - \(\mathcal L_{\mathrm{state}}\): Activation Patchingで選んだblock 0--5のraw residual cosine
 - \(\rho=0.05\)から \(\lambda_{\mathrm{state}}\) を一度だけ較正
 
-SAE診断が良く見えても、現行run、凍結評価、現行lossを変更しない。Pair-specific suppressionはWP-5 G2+G3、固定feature-targeted trainingはさらに別のcausal selection / held-out kill testに合格し、別studyとして事前登録された場合だけ実行できる。
+SAE診断が良く見えても、現行run、凍結評価、現行lossを変更しない。現registryはG1+G3だけをfeature-targeted successor-studyの**草案**条件とし、後継学習を一切認可していない。Pair-specific suppressionには、結果計算前のregistry amendmentでG1を維持したG2 routingを追加し、WP-5 G1/G2/G3を全て満たした後、別studyとして新たに事前登録する必要がある。Fixed-feature trainingにはさらに別のcausal selection / held-out kill testが必要である。
 
 ### 1.2 状態snapshot
 
@@ -59,7 +59,7 @@ SAE診断が良く見えても、現行run、凍結評価、現行lossを変更�
 | WP-3 Base統合診断 | **予測・3条件登録済み、集計amendment未完成、runner未実装** | early patchがmid-layer OOD指標を潰すか |
 | WP-4 checkpoint診断 | **予測・data用途登録済み、集計amendment未完成、runner未実装** | 学習に伴う \(L_0\) / energy軌跡 |
 | WP-5 feature kill test | **pre-execution amendment未完成、runner未実装** | core operator・G1--G3数値だけ登録済み。eligible/seed/前提gate/後継許可範囲を結果前に凍結する必要 |
-| WP-6 feature後継study | **文書草案のみ** | G2+G3はpair-specific suppression候補だけを許可。固定feature案には別kill testが必要 |
+| WP-6 feature後継study | **文書草案のみ・現registryでは学習未認可** | suppression routingは事前amendment + G1/G2/G3が必要。固定feature案には別kill testも必要 |
 | 64M residual-state比較 | **現行studyの実行段階** | SAEとは独立した用量検証 |
 | Causal Patch Distillation等 | **未登録案** | 現行studyにもWP-6にも未包含 |
 
@@ -95,7 +95,7 @@ SAEはresidual streamを過完備な疎featureへ分解し、単一neuronより�
 
 - \(L_0\)、energy、再構成品質: 大域的・相関的な診断
 - Feature swap / suppression: feature成分の因果介入
-- Pair-specific feature training: G2+G3合格後だけ許される後継仮説
+- Pair-specific feature training: 事前amendment後にG1/G2/G3が揃った場合だけ草案化できる後継仮説
 - Fixed-feature training: 別のcausal selection / held-out kill test合格後だけ許される後継仮説
 
 ### 2.2 対象activationとarchitecture
@@ -251,7 +251,7 @@ SAE診断
   └─ feature patchが因果修復に十分かkill test
 
 後継study
-  G2+G3合格時だけpair-specific suppressionを新規登録
+  事前amendment + G1/G2/G3合格時だけpair-specific suppressionを草案化
   fixed-feature案は別selection/held-out kill test合格後だけ新規登録
 ~~~
 
@@ -270,7 +270,7 @@ SAE学習へ使えるのは**training split内のclean FineWeb-Eduだけ**であ
 | 新規diagnostic 200 | 不可 | 不可 | 不可 | 不可 | 可 |
 | tune / pre-PR / final | **全WPで学習・選択禁止** |  |  |  |  |
 
-現行adapterが使う保護prefix、localization selection/validation、全評価tier、exact/near-duplicate groupをSAE trainから除外する。使用IDとcontent hashをregistryに記録する。
+SAE trainから除外したadapter dataは、先行10M runを想定した先頭30,000 recordだけである。このprefixは約12.26M source tokensであり、64M adapter stream全体を保護しない。SAEのeligible pool約51.74M source tokensは64M streamの内側にあるため、SAE trainと64M adapter trainは重複する。これはtraining split内での重複であり、tune / pre-PR / finalやWP-3/4/5 itemのリークではないが、「64M adapter dataをSAEから除外済み」とは主張しない。Localization selection/validation、全評価tier、monitor/diagnostic item、exact/near-duplicate groupは引き続きSAE trainから除外し、使用IDとcontent hashをregistryへ記録する。
 
 ## 4. Work package依存関係
 
@@ -283,9 +283,9 @@ WP-1: SAE学習
                                ├─ pass -> WP-4 checkpoint diagnostic
                                └─ pass -> WP-5 feature kill test
                                               │
-                         G2 + G3 pass --------┴─> pair-specific suppression候補
-                         G1 + G3 only ------------> all-feature十分性まで。学習は未認可
-                         G2 fail -----------------> suppression学習を中止
+                         G1 + G2 + G3 pass ----┴─> amendment後だけsuppression草案
+                         G1 + G3 only ------------> 現registryのstudy草案まで。学習未認可
+                         G1 fail / G2 fail --------> suppressionを認可しない
                          fixed C案 ----------------> 別selection/held-out kill testが必要
 ~~~
 
@@ -296,9 +296,9 @@ WP-1: SAE学習
 | WP-3 | early patch→mid OODの因果連鎖 | WP-2 pass | condition curve | 未実装 |
 | WP-4 | checkpointに沿うOOD軌跡 | WP-2 pass | trajectory | 未実装 |
 | WP-5 | feature成分の因果十分性 | WP-2 pass、layer5 2 init seeds | kill/pass判定 | 未実装 |
-| WP-6 | feature後継study | suppression: WP-5 G2+G3、fixed C: 別kill test | preregistration draft | 実行禁止 |
+| WP-6 | feature後継study | suppression: 事前amendment + WP-5 G1/G2/G3、fixed C: 別kill test | preregistration draft | 実行禁止 |
 
-WP-3/4は診断である。WP-5はpair-specific suppressionの生死を決めるが、G1だけで固定feature学習の生死は決めない。
+WP-3/4は診断である。WP-5の現registryはG1+G3で後継studyの草案だけを許し、学習を認可しない。Suppression routingを追加するなら結果計算前のamendmentが必要であり、G1を外してはならない。G1だけで固定feature学習の生死も決めない。
 
 ## 5. WP-1: Data -> activation -> optimization -> statistics
 
@@ -409,9 +409,11 @@ FVUが良くても、modelが利用する小さな方向を失って挙動を壊
 
 WP-2のacceptance単位は、layer 5 seed 42、layer 5 seed 43、layer 20 seed 42を含む**3本一組のtraining bundle**である。3本すべてが合格したときだけbundleをacceptする。
 
-最初のbundleが不合格の場合、現行のmachine-readable configとattempt ledgerが許す救済は、**project全体で最大1回の新しい3本一組full-retrain bundle**だけである。SAEごとに1回ずつではない。救済runで変更できる種類は \(\lambda_{L1}\) **または**SAE training activation-token budgetのどちらか一方だけとし、両方を同時に変えない。変更値はretrain開始前にregistryへ単一値として固定し、複数bundleを走らせて最良を選ばない。Architecture、clean-only data contract、WP-2 gate、splice cohortは変更しない。再学習bundleも不合格なら、3本をWP-3/4/5へ使わず、2回目の救済を与えない。
+最初のbundleが不合格の場合、registry上の方針は**project全体で最大1回の新しい3本一組full-retrain bundle**だけを許す。SAEごとに1回ずつではない。ただし、現runnerのattempt ledgerはconfig / preregistration hashを厳密に固定しているため、\(\lambda_{L1}\) またはtoken budgetを変えた救済bundleを現ledgerのまま検収することはできない。従って、この救済は現時点では**方針上の許可であって実行可能な経路ではない**。
 
-このWP-2 retrain枠は、WP-1前に行ったL1 calibration amendmentとは別である。Calibration amendmentは「全候補のL0が範囲外だったため、gridとcalibration token数を一度だけ変更した」履歴で、残り枠は0である。WP-2 retrainは完成した3-SAE bundleがall-three acceptance gateを外した場合の救済であり、calibration grid再探索、複数runからの選択、gate変更を許可しない。つまり、calibration amendmentはglobalに1回消費済みで、WP-2救済もglobalに最大1 full-retrain bundleである。
+WP-2不合格時は自動再学習せず停止する。救済を使う場合は、結果に応じて複数値を探索せず、開始前に単一変更を固定したregistry amendment、新しいconfig / preregistration hash、失敗bundleを参照する新ledger lineage、およびそのlineageをfail-closedに検証するrunner対応を別PRで先に実装・レビューする。変更できる種類は \(\lambda_{L1}\) **または**SAE training activation-token budgetのどちらか一方だけで、Architecture、clean-only data contract、WP-2 gate、splice cohortは変更しない。再学習bundleも不合格なら、3本をWP-3/4/5へ使わず、2回目の救済を与えない。
+
+このWP-2 retrain枠は、WP-1前に行ったL1 calibration amendmentとは別である。Calibration amendmentは「全候補のL0が範囲外だったため、gridとcalibration token数を一度だけ変更した」履歴で、残り枠は0である。WP-2 retrainは完成した3-SAE bundleがall-three acceptance gateを外した場合の救済であり、calibration grid再探索、複数runからの選択、gate変更を許可しない。つまり、calibration amendmentはglobalに1回消費済み、WP-2救済もglobalに最大1 full-retrain bundleだが、後者は上記hash-bound ledger対応が入るまで実行禁止である。
 
 ## 7. WP-3 / WP-4: 診断
 
@@ -539,17 +541,19 @@ WP-4はcheckpoint選択、学習停止、behavior gateに使わない。中間ch
 
 ## 8. WP-5: feature因果kill test
 
-**状態: pre-execution amendmentが未完成のdraft。operatorとG1--G3のcore数値だけが登録済みで、専用runnerは未実装・結果は未計算**
+**状態: pre-execution amendmentが未完成のdraft。operator、G1--G3のcore数値、bootstrap 10,000回 / seed 42はconfigで固定済み。専用runnerは未実装・結果は未計算**
 
-現時点でmachine-readable registry上に未凍結なのは次の7点である。本節後半にdraft値があっても、amendment commitまでは有効な事前登録ではない。
+現時点でmachine-readable source群に未凍結なのは次の7点である。本節後半にdraft値があっても、amendment commitまでは有効な事前登録ではない。
 
 1. typo生成seed
-2. bootstrap seed
+2. typo操作3種（keyboard-neighbor substitution / deletion / duplication）の混合比、適用順、適格語規則
 3. near-zero denominatorと全operator共通eligible規則
 4. \(R_{\mathrm{full}}\) が正に効くことを確認する前提gate
 5. CIの計算法と境界値での判定
-6. G1/G2から後継学習へ進める範囲（all-feature十分性と固定feature集合の因果性を区別する規則）
+6. G1/G2から後継study草案へ進める範囲（現registryのG1+G3要件を維持したrouting）
 7. 使用するSAE artifact hashとWP-2合格記録
+
+Bootstrapの反復数10,000とseed 42は [gemma4b-sae-v1.yaml](../configs/sae/gemma4b-sae-v1.yaml) の必須fieldとして既に固定済みであり、新しい選択肢ではない。`registry-v1.yaml` の説明欄に重複記載がないことを「未凍結」と解釈しない。
 
 これらを**結果を一切見ずに**machine-readable registry amendmentへcommitし、hashを固定するまでWP-5 runnerを起動しない。以下はそのamendment草案であり、登録済み仕様や実行済み結果として引用してはならない。
 
@@ -559,13 +563,13 @@ WP-4はcheckpoint選択、学習停止、behavior gateに使わない。中間ch
 
 > Layer 5 residualが運ぶ修復情報の十分な部分を、SAE feature成分 \(Dz\) だけで移植・除去できるか。
 
-全既存tierとID非重複の新規FineWeb-Edu 200件を固定し、各例へ1 typoを加える。Seedは役割を分けて記録する。
+全既存tierとID非重複の新規FineWeb-Edu 200件を固定し、各例へ1 typoを加える。操作集合は既存研究と同じkeyboard-neighbor substitution / deletion / duplicationに限定するが、3種の混合比、決定的な適用順、適格語規則は現registryにない。そのため、実行前amendmentでtypo seedと同時に固定する。Seedは役割を分けて記録する。
 
 | seed | 役割 | 再現性の対象 |
 |---|---|---|
 | SAE init seed 42 / 43 | feature基底の初期化 | G3: 基底が変わってもgate方向が同じか |
 | typo seed | 同じ文書に作る実現typo | 両SAEで同一pairを共有し、基底差だけを比較。draft値42、現registryは空 |
-| bootstrap seed | 10,000回のresampling | CI再現用。draft値42、現registryは空。feature基底の再現性とは別 |
+| bootstrap seed | 10,000回のresampling | configで42 / 10,000回に固定済み。feature基底の再現性とは別 |
 
 Layer 5の編集語末で \(h=Dz+\epsilon\) と分解する。
 
@@ -634,12 +638,12 @@ Core G1--G3だけでは、near-zero denominatorやfull-state単層patchが効か
 2. Full-state、feature、error、suppressionの全条件が有限なcommon-eligible subsetを作る。
 3. G3比較では両SAE init seedのcommon-eligible subsetの共通部分を使い、seedごとに有利なpair集合へ変えない。
 4. \(n_{\mathrm{eligible}}\)、除外理由、分母分布をSAE seed別とseed共通subsetの両方で報告する。
-5. \(R_{\mathrm{full}}\) のitem-level medianを主集計とし、common-eligible itemを10,000回再抽出するpercentile paired bootstrap 95% CI（draft seed 42）の下限が0より大きいことを**feature gateの前提**とする。
+5. \(R_{\mathrm{full}}\) のitem-level medianを主集計とし、common-eligible itemを10,000回再抽出するpercentile paired bootstrap 95% CI（configで固定済みのseed 42）の下限が0より大きいことを**feature gateの前提**とする。
 6. 前提不合格なら、単層layer 5に十分な修復余地がないためG1/G2を比率で判定せず、WP-5をinconclusiveとしてfeature学習をkillする。
 
 この前提が必要なのは、\(R_{\mathrm{full}}\) が近零または負のとき、\(R_z/R_{\mathrm{full}}\) 型のgateが不安定または意味を失うためである。
 
-統計はpair単位paired bootstrap 10,000回を使い、draft bootstrap seed 42をregistryへ固定する。各反復では全operatorと両SAE init seedへ同じresample indexを使い、operatorごとのmedianを再計算する。Operatorごとに異なるsubsetを使って見かけの比率を変えない。
+統計はpair単位paired bootstrap 10,000回、seed 42を使う。両値はconfigで固定済みである。各反復では全operatorと両SAE init seedへ同じresample indexを使い、operatorごとのmedianを再計算する。Operatorごとに異なるsubsetを使って見かけの比率を変えない。
 
 ### 8.4 登録済みG1--G3とG3の論理
 
@@ -667,19 +671,21 @@ G3は別の第三指標ではなく、**G1/G2のseed再現要件**である。
 G1の \(R_z\) は全 \(d_{\mathrm{SAE}}=40{,}960\) featureを通した \(Dz\) のswapである。Decoder方向数は
 \(d_{\mathrm{model}}=2{,}560\) を大きく上回り、そのspanのrankはresidual空間全体へ近付く可能性がある。この場合、G1合格はSAE再構成がfull residual swapに近いことの反映でもあり、「少数の意味featureを局在した」証拠にはならない。All-feature subspaceはidentity / raw residualに近いscope controlとして扱う。
 
-従って、後継学習への許可を次のように限定する。
+現registryの凍結済みdecisionは、**G1とG3だけがfeature-targeted successor-studyの草案を許し、後継学習は認可しない**というものである。以下のG2 routingは、共同研究者指示を実装可能な形へ具体化するためのamendment草案であり、結果計算前にregistryへ反映されない限り効力を持たない。Amendmentを行う場合もG1要件を外さない。
 
-- G1 + G3: **全feature成分 \(Dz\) が因果情報を十分含む**ことだけを支持する。固定feature集合 \(C\) の学習、feature-subspace学習、causal feature localizationを許可しない。
-- G2 + G3: clean/typo pairごとに定義する \(S_i\) の除去が介入として効くことを支持する。許可し得るのは、同じpair-specific \(S_i\) を使うspurious-suppression候補だけである。
+従って、後継studyへの許可候補を次のように限定する。
+
+- G1 + G3: **全feature成分 \(Dz\) が因果情報を十分含む**ことだけを支持し、現registryのfeature-targeted study草案条件を満たす。固定feature集合 \(C\) の学習、feature-subspace学習、causal feature localization、実際の後継学習は許可しない。
+- G1 + G2 + G3: 事前amendmentでG2 routingを追加した場合に限り、clean/typo pairごとに定義する \(S_i\) の除去が介入として効くことを支持する。同じpair-specific \(S_i\) を使うspurious-suppression **study草案**だけを追加でき、学習開始には別途完全な事前登録が必要である。
 - 固定集合 \(C\): 別の選択データで \(C\) を選び、独立held-out dataで \(C\)-swapがmatched-random \(C\) より効くことを確認する、別の事前登録causal selection / kill testが必要である。そのtestなしに固定部分空間lossへ進まない。
 
 | 観測 | 解釈 | 次の処理 |
 |---|---|---|
-| G2 + G3 pass | pair-specificなtypo-only feature除去が因果的に有効 | 同じ \(S_i\) を使うspurious suppression案だけを候補化 |
-| G1 + G3 pass、G2 fail | all-feature成分は十分だが片側除去は不足 | 学習へ進まない。固定 \(C\) 用の別preregistered selection / kill testを設計 |
-| G1 fail、G2 + G3 pass | 全成分swapの比率gateは不合格だがpair-specific除去は有効 | suppression候補はG2の直接証拠に基づき候補化し、G1を根拠にしない |
+| G1 + G2 + G3 pass | all-feature成分が十分で、pair-specificなtypo-only feature除去も有効 | 事前amendmentがある場合だけ同じ \(S_i\) を使うsuppression studyを草案化。学習は別登録まで禁止 |
+| G1 + G3 pass、G2 fail | all-feature成分は十分だが片側除去は不足 | 現registryのfeature-targeted study草案まで。固定 \(C\) 用の別preregistered selection / kill testを設計 |
+| G1 fail（G2の向きにかかわらず） | 現registryのsuccessor-study条件を満たさない | suppression / fixed-feature studyを認可しない |
 | \(R_z\approx0, R_\epsilon\approx R_{\mathrm{full}}\) | 因果情報はdark matter側 | feature学習をkill |
-| G2がSAE init seed間で方向不一致 | pair-specific suppressionの結論が不安定 | suppression学習をkill |
+| G2がSAE init seed間で方向不一致 | pair-specific suppressionの結論が不安定 | suppression studyをkill |
 | G1だけがSAE init seed間で方向不一致 | all-feature十分性の結論が不安定 | 固定feature / subspace案をkill。G2の判断とは分離 |
 
 不合格は実験失敗ではなく、無効な教師targetへ高価な学習を行う前に仮説を棄却できたというプロセス上の成功である。
@@ -690,7 +696,7 @@ G1の \(R_z\) は全 \(d_{\mathrm{SAE}}=40{,}960\) featureを通した \(Dz\) �
 
 1. 現行studyへlossを継ぎ足さず、別studyとして一つの仮説だけを変える。
 2. Output matchingを必ず中心baselineにする。
-3. Pair-specific suppressionはWP-5 G2+G3前、fixed-feature案は別のselection / held-out kill test前に学習しない。
+3. Pair-specific suppressionは結果計算前のregistry amendmentとWP-5 G1/G2/G3の全通過前、fixed-feature案は別のselection / held-out kill test前に学習しない。
 4. SAE weights、encoder、decoder、\(p_f,s\) は後継Student学習中にfreezeする。
 5. Diagnostic改善ではなく、凍結済みclean非劣性・typo優越性で成功判定する。
 6. Random、all-feature/all-layer、raw residual controlで「featureを足しただけ」と「因果target」を分離する。
@@ -704,7 +710,7 @@ G1の \(R_z\) は全 \(d_{\mathrm{SAE}}=40{,}960\) featureを通した \(Dz\) �
 |---|---|---|---|---|---|---|---|
 | A. 64M raw residual | 10Mは用量不足 | 手法不変、10M→64M | 追加0 | 既存window validation | 64M/arm、Teacher+Student | 現行gateで監視 | 手続きは可搬、窓は再選択 |
 | B1. Fixed-feature subspace | 因果featureだけなら到達可能 | residual全次元を固定部分空間へ置換 | 補助loss 1、係数1、selection / rank rule | WP-2 + **別の固定 \(C\) causal selection / held-out kill test** | SAE済み + selection test + matched training | all-feature spanがidentity化、selection overfit | layer/SAE/固定 \(C\) をモデルごとに再導出 |
-| B2. Spurious suppression | 余剰除去はclean復元より容易 | typo-only featureを片側抑制 | 補助loss 1、係数1、\(p_f\) clamp | WP-5 G2/G3 | B1相当 | 希少だが有用なfeature抑制 | 定義は可搬、SAE固有 |
+| B2. Spurious suppression | 余剰除去はclean復元より容易 | typo-only featureを片側抑制 | 補助loss 1、係数1、\(p_f\) clamp | 事前amendment + WP-5 G1/G2/G3 | B1相当 | 希少だが有用なfeature抑制 | 定義は可搬、SAE固有 |
 | C. Causal Patch Distillation | patch後のbehaviorはstateより学習可能 | state lossをpatched-output KDへ置換 | output loss 1、rhoなし | window patchの教師品質 | noisy row 3 forwards | 悪いpatch教師 | 高い。windowのみ再選択 |
 | D. SAE energy selection | 高OOD例はdata-efficient | loss不変、noisy dataだけ選別 | quantile 1 | 因果testなし、相関仮説 | candidate scoring + 同token学習 | hard-example過適合 | SAEをモデルごとに必要 |
 | E. Patch-effect selection | patch可能例へ容量集中 | loss不変、restorationで選別 | threshold/quantile 1 | score自体が介入 | 全候補patchで最も高い | easy-to-fix bias | window再選択が必要 |
@@ -715,7 +721,7 @@ G1の \(R_z\) は全 \(d_{\mathrm{SAE}}=40{,}960\) featureを通した \(Dz\) �
 |---|---|---|---|---|---|---|---|
 | A | Base、output-only、後にrandom/all-layer | proposal > output、clean gate、因果主張にはcontrols | patch audit | 64Mでも固有差なし | causal targetの増分価値 | patch可能性≠raw-state学習価値 | 実行段階 / 現在 / 1 |
 | B1 | output、raw residual、matched-random \(C\)、all-feature scope control | output/raw/randomよりPareto優位 | held-out \(R_C\)、feature distance | 固定 \(C\) kill test fail、seed不再現、clean harm | 因果feature選択 | 固定feature集合は学習targetにならない | 未認可 / 別selection test合格 / 2 |
-| B2 | output、raw residual、matched random、all feature | output/randomより優位、clean gate | spurious mass、energy | G2 fail、natural harm | 因果的余剰feature除去 | suppression単独は不十分 | 条件付き / G2+G3 / B内1 |
+| B2 | output、raw residual、matched random、all feature | output/randomより優位、clean gate | spurious mass、energy | G1/G2/G3のいずれかfail、natural harm | 因果的余剰feature除去 | suppression単独は不十分 | 未認可 / amendment + G1/G2/G3 / B内1 |
 | C | output KD、causal/random window teacher、必要ならall-layer | causal teacher > output/random、clean gate | patch gain reduction | teacher悪化、output非優位 | oracle介入のweightsへの償却 | patch teacherは学習targetにならない | 未登録 / A+B fail / 3 |
 | D | severity/length matched random、high/low energy | same tokensでrandomより優位 | energy曲線 | matching後差なし、OOD harm | OOD-aware data efficiency | energyは診断に限定 | 未登録 / 独立 / 4 |
 | E | matched random、high/low restoration | same tokensでrandomより優位 | restoration分布 | biasだけ、natural harm | intervention-aware sampling | patch-positive subsetの境界結果 | 未登録 / 独立 / 5 |
@@ -743,7 +749,7 @@ G1の \(R_z\) は全 \(d_{\mathrm{SAE}}=40{,}960\) featureを通した \(Dz\) �
 
 ## 12. 候補B / WP-6: SAE feature後継study
 
-**状態: suppressionはWP-5のG2+G3合格時だけ、固定feature subspaceは別のcausal selection / held-out kill test合格時だけ許可される文書草案**
+**状態: 現registryでは後継学習未認可。Suppressionは事前amendment後のWP-5 G1/G2/G3合格時だけ草案化でき、fixed-feature subspaceはさらに別のcausal selection / held-out kill test合格時だけ許可される**
 
 ### 12.1 共通training contract
 
@@ -771,7 +777,7 @@ S_i^B=\{f:z_{B,i,f}^p>0\land z_{B,i,f}^c=0\}
 
 同じrealized typoに対する \(S_i^B\) は、offline cacheまたは学習step内のadapter-disabled Base forwardのどちらで得てもよいが、結果は同一でなければならず、provenanceを保存する。Studentの更新に伴って \(S_i\) を再計算するdynamic-target版は、WP-5で検証したoperatorと異なる未検証手法なので、この候補には含めない。
 
-### 12.2 G2 pass: spurious-feature suppression
+### 12.2 G1 / G2 / G3 pass後の草案: spurious-feature suppression
 
 \[
 \mathcal L_{\mathrm{spur}}
@@ -932,12 +938,12 @@ R_i(W^*)
   └─ pass
        ├─ WP-3/4は診断として実行
        └─ WP-5
-            ├─ G2 + G3 pass
-            │    └─ pair-specific spurious suppression studyを候補化
+            ├─ G1 + G2 + G3 pass
+            │    └─ 事前amendmentがある場合だけsuppression studyを草案化
             ├─ G1 + G3 pass、G2 fail
-            │    └─ all-feature十分性まで。学習せず、固定C用の別kill testへ
-            └─ G2 failまたはseed不再現
-                 └─ pair-specific suppression学習をkill
+            │    └─ 現registryのstudy草案まで。固定C用の別kill testへ
+            └─ G1 fail / seed不再現
+                 └─ pair-specific suppression studyをkill
 
 固定C用の別causal selection / held-out kill test
   ├─ matched-randomより優位、SAE seed再現
@@ -957,7 +963,7 @@ raw residual kill + feature kill
 1. SAE結果を見て現行64M runのrho、window、loss、dataを変えない。
 2. Tune / pre-PR / final / localization IDをSAE trainへ混ぜない。
 3. WP-2/5の閾値を結果後に変更しない。
-4. WP-5のG1合格だけで「causal featureを同定した」と表現しない。Pair-specific suppressionはG2+G3、固定 \(C\) は別のcausal selection / held-out kill test合格まで学習しない。
+4. WP-5のG1合格だけで「causal featureを同定した」と表現しない。Pair-specific suppressionは事前amendment + G1/G2/G3、固定 \(C\) は別のcausal selection / held-out kill test合格まで学習しない。
 5. Feature loss、energy selection、patch selectionを一つのstudyへ同時投入しない。
 6. State/feature/L0/energy改善をbehavior gateの代わりにしない。
 7. WP-6の学習を現行decision tree決着と新規事前登録前に開始しない。
@@ -970,7 +976,7 @@ raw residual kill + feature kill
 - \(p_f,s\)、FVU、L0、dead rate、splice KL
 - WP-2判定と許可された再学習履歴
 - WP-3/4/5 data IDと予測登録日時
-- WP-5のSAE init seed、typo seed、bootstrap seed
+- WP-5のSAE init seed、typo seed、typo操作の混合・適用規則、bootstrap seed
 - WP-5 operator、eligible規則、前提gate、主要gate、2-seed結果
 - 各後継studyの事前登録とamendment log
 
@@ -982,8 +988,8 @@ raw residual kill + feature kill
 4. 分離10M cleanで \(p_f,s\) を計算して凍結する。
 5. WP-2の4 gateとartifact completenessを検収する。
 6. PassしたSAEだけでWP-3/4を診断実行する。
-7. WP-5開始前に未登録のtypo seed、bootstrap seed、eligible規則、full-state前提gate、G1/G2の後継許可範囲をamendmentで固定する。
-8. G2+G3 pass時だけpair-specific suppressionを別studyとして登録する。固定 \(C\) は別のselection / held-out kill testを登録・合格してから候補化する。
+7. WP-5開始前に未登録のtypo seed、typo操作3種の混合・適用規則、eligible規則、full-state前提gate、G1要件を維持したG2 routingをamendmentで固定する。Bootstrap 10,000回 / seed 42はconfigの既登録値を使う。
+8. 事前amendmentがありG1/G2/G3が全てpassした場合だけpair-specific suppressionを別studyとして事前登録する。固定 \(C\) は別のselection / held-out kill testを登録・合格してから候補化する。
 
 ### 17.4 Source of truth
 
@@ -1005,6 +1011,6 @@ WP-3/4/5専用runnerは本書更新時点で未実装であり、実装済みと
 - \(L_0\) / energy増加: 「typoと相関する表現逸脱」まで。
 - WP-3 patchで減少: 「early patchがdownstream SAE指標を因果的に抑える」まで。
 - WP-5 G1+G3 pass: 「このSAEの**全feature成分**が単層patch restorationの事前登録割合を運ぶ」まで。疎な固定feature集合の同定とは言わない。
-- WP-5 G2+G3 pass: 「pairごとのtypo-only feature除去が事前登録割合のrestorationを生む」まで。固定feature集合への一般化はしない。
+- WP-5 G1/G2/G3 pass: 「全feature成分が十分で、pairごとのtypo-only feature除去も事前登録割合のrestorationを生む」まで。固定feature集合への一般化はしない。事前amendmentがなければG2 routingを後継認可に使わない。
 - Feature trainingがbehavior controlに勝つ: 初めて「feature-targeted頑健化が有効」と主張可能。
 - WP-5 fail: 「因果情報は今回の疎feature基底では十分に回収されない、またはdark matter側にある」と限定し、SAE一般の否定に拡張しない。

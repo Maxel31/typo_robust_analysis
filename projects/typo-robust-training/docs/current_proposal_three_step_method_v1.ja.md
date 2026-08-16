@@ -104,7 +104,7 @@ SAEと後継案は [SAE診断トラックと後継proposal候補](sae_and_succes
 改善案は文書末尾の [現時点の改善候補](#241-現時点の改善候補) に、優先順位・開始条件・最小比較・kill条件付きで整理した。概要は次の通りである。
 
 1. 現行手法を変えず、64M tokensで用量不足仮説を検証する。
-2. SAEの因果kill testに合格した場合だけ、pair-specific spurious-feature suppressionを別studyとして登録する。
+2. SAEの因果kill testでG1/G2/G3が揃い、かつ結果計算前のregistry amendmentで経路を明示した場合だけ、pair-specific spurious-feature suppressionを別studyとして登録する。
 3. Raw residual整合とSAE feature targetがともに不成立なら、patch後のoutput分布を教師にするCausal Patch Distillationを第一の別proposalとする。
 4. SAE energyまたはpatch restorationによるdata selectionは、学習target変更と混ぜず、独立したデータ効率studyとして扱う。
 
@@ -116,13 +116,15 @@ SAEと後継案は [SAE診断トラックと後継proposal候補](sae_and_succes
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | FineWeb localization selection 200 | 使用 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 |
 | FineWeb localization validation 200 | 禁止 | 使用 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 |
-| FineWeb 64M train stream | 禁止 | 禁止 | 使用 | 禁止 | 禁止 | 禁止 | 禁止 | 保護prefixは除外 |
+| FineWeb 64M train stream | 禁止 | 禁止 | 使用 | 禁止 | 禁止 | 禁止 | 禁止 | 10M用の先頭30,000 recordだけ除外。残りは重複 |
 | FineWeb monitor 200 / natural 100 | 禁止 | 禁止 | 禁止 | 使用 | 診断のみ | 禁止 | 禁止 | 禁止 |
 | Task tune 500 | 禁止 | 禁止 | 禁止 | 禁止 | 使用 | 禁止 | 禁止 | 禁止 |
 | Pre-PR task/corpus | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 | 1回 | 禁止 | 禁止 |
 | Final task/corpus | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 | 1回 | 禁止 |
 
 全poolについて、record ID、source/group ID、exact duplicate、near-duplicateを検査する。Natural typo辞書・repositoryも用途別に分離する。
+
+ここで「Step 2学習」と「SAE train」は完全非重複ではない。SAE用のmachine-readable exclusionは、先行10M runを想定した先頭30,000 record（約12.26M source tokens）だけを保護する。SAEのeligible pool約51.74M source tokensは、その後に定義した64M adapter streamの内側にあり、両者は重複する。この重複を「評価リークなし」や「64M学習から独立」と言い換えない。Localization、monitor、tune、pre-PR、final、WP-3/4/5診断itemはSAE trainから分離されているため、凍結behavior評価と診断itemの非重複契約は維持される。
 
 ## 2. 研究仮説、非主張、成功条件
 
@@ -408,7 +410,8 @@ Noisy rowの編集語末だけで、(W^*=[0,6)) のcomplete block residualを整
 
 \[
 d_{\cos}(a,b)
-=1-\frac{a^\top b}{\max(\lVert a\rVert_2\lVert b\rVert_2,10^{-8})}
+=1-\frac{a^\top b}
+{\max(\lVert a\rVert_2,10^{-8})\,\max(\lVert b\rVert_2,10^{-8})}
 \]
 
 \[
@@ -793,12 +796,12 @@ Baselineのper-record output KLはclean平均0.00215、noisy平均0.01577、nois
 | 順位 | 候補 | 変えるもの | 開始条件 | 最小比較 | 不成立時 |
 |---:|---|---|---|---|---|
 | A | 現行raw-residual法の64M用量検証 | token budgetだけ | 現在実行段階 | output-only vs proposal、後にrandom/all-layer | raw residual cosine形式をkill |
-| B | SAE pair-specific spurious抑制 / 条件付きfixed-feature整合 | state教師target | suppressionはWP-2 + WP-5 G2/G3、fixed featureはさらに別のselection / held-out kill test合格 | output-only、raw residual、matched-random / all-feature scope control | SAEは診断専用へ戻す |
+| B | SAE pair-specific spurious抑制 / 条件付きfixed-feature整合 | state教師target | suppressionはWP-2 + WP-5 G1/G2/G3 + 事前registry amendment、fixed featureはさらに別のselection / held-out kill test合格 | output-only、raw residual、matched-random / all-feature scope control | SAEは診断専用へ戻す |
 | C | Causal Patch Distillation | clean state一致をpatched-output教師へ置換 | A不成立。B不合格または不採用 | 通常output、causal-window teacher、random-window teacher | patch可能性は蒸留可能性を保証しないと報告 |
 | D | SAE energy data selection | noisy training pairの選別 | 別studyとして登録 | high / low / severity-matched random、同token予算 | energyを診断量へ限定 |
 | E | Intervention-restoration data selection | noisy pairの選別 | 別studyとして登録 | high / low restoration / matched random | patch-positive subsetの境界結果へ限定 |
 
-候補Aは新しい学習手法ではなく、10Mで見えなかった差がKojima型の代表規模に近い予算で現れるかを確認する**用量検証**である。新しいproposalの第一候補Bのうち、pair-specific suppressionはWP-5 G2/G3合格時だけ候補化する。WP-5 G1が検証するのはall-feature成分 \(Dz\) の十分性であり、固定causal feature集合の同定ではない。Fixed-feature整合には別のpreregistered selection / held-out kill testが必要である。これらが不成立でraw residualも不成立ならCへ進む。D/Eは学習targetではなくデータ効率を変える独立軸なので、B/Cと同時投入しない。
+候補Aは新しい学習手法ではなく、10Mで見えなかった差がKojima型の代表規模に近い予算で現れるかを確認する**用量検証**である。現registryは「G1とG3だけがfeature-targeted successor-studyの**草案**を許す。学習は許可しない」と凍結している。Pair-specific suppressionを候補化するには、結果計算前のamendmentでG1を維持したままG2 routingを追加し、G1/G2/G3の全てを満たした後に別studyを事前登録する必要がある。WP-5 G1が検証するのはall-feature成分 \(Dz\) の十分性であり、固定causal feature集合の同定ではない。Fixed-feature整合にはさらに別のpreregistered selection / held-out kill testが必要である。これらが不成立でraw residualも不成立ならCへ進む。D/Eは学習targetではなくデータ効率を変える独立軸なので、B/Cと同時投入しない。
 
 追加で必要な実験妥当性の補強は、accumulation batch全体でのoutput/state gradient normとgradient cosineの記録である。これは新しい頑健化手法ではなく、state信号が実際に届いたかを確かめるdose telemetryとして別扱いにする。Causal windowだけへLoRAを置く案もparameter-efficiency ablationであり、主たる性能改善案には数えない。
 
