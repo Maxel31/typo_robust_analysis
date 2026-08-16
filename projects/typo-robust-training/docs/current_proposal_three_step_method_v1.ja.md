@@ -247,7 +247,7 @@ Generic textだけで選択する理由は、behavior benchmarkに窓を直接�
 
 ## 6. 介入operatorと候補window
 
-介入対象はattention headやMLP neuronではなく、各complete decoder blockを通過したresidual outputである。候補window (W) では、typo runの編集語末だけをclean stateで上書きする。
+介入対象はattention headやMLP neuronではなく、各complete decoder blockを通過したresidual outputである。候補window \(W\) では、typo runの編集語末だけをclean stateで上書きする。
 
 \[
 h^{(l)}_{\mathrm{typo},v_i}
@@ -328,6 +328,14 @@ Selectionで得た \(W^*\) だけを、別のFineWeb-Edu 200文書で検証す�
 
 `[0,6)`はvalidation合格後にtask、seed、training cycle、behavior結果で再選択しない。Random windowも、非重複の同幅候補から固定seedとSHA-256規則で一つだけ抽選し凍結した。
 
+ただし、現行のconfirmatory generatorが実装する抽選母集団は「\(W^*\)と非重複の同幅windowすべて」であり、training evidenceが要求するmiddle--late制約
+
+\[
+s_{\mathrm{random}}\ge \lceil 0.4L\rceil
+\]
+
+をgenerator自体は適用していない。Gemmaの凍結値は \(L=34\)、\(s_{\mathrm{random}}=20\ge14\) で制約を満たすため、現行の対照実験は有効である。一方、将来の再localizationで決定的抽選値がこの制約を満たさない場合は、有利な窓が出るまで再抽選せずfail closedとする。Generatorとconsumerの契約は、実験前の別の事前登録済み実装PRで一致させる。
+
 # Step 2: 因果窓へstate教師信号を局在させる学習
 
 ## 9. Teacher / Studentとデータflow
@@ -384,14 +392,14 @@ Natural substitutionは分離済みGitHub typo recordsから得た文字置換�
 Typoによりtoken境界が変わるため、文字spanから次を構築する。
 
 1. exact unchanged token pair
-2. 非編集tokenを予測するcausal-logit位置pair (A_i)
-3. clean/typoの編集語末位置pair (E_i)
+2. 非編集tokenを予測するcausal-logit位置pair \(A_i\)
+3. clean/typoの編集語末位置pair \(E_i\)
 
 編集語そのものを予測するtargetはoutput lossから除外する。誤綴り文字列自体を正解として学習することを防ぐためである。Alignmentを推測で補完せず、不成立pairを棄却する。Runtime alignment errorは学習停止条件である。
 
 ## 11. Loss 1: output distribution matching
 
-Student入力 (x_i^s) はclean rowでは (x_i^c)、noisy rowでは (x_i^p) である。
+Student入力 \(x_i^s\) はclean rowでは \(x_i^c\)、noisy rowでは \(x_i^p\) である。
 
 \[
 \mathcal L_{\mathrm{out}}
@@ -415,7 +423,7 @@ p_{S_\theta}(\cdot\mid x_i^s,v)
 
 ## 12. Loss 2: localized residual-state matching
 
-Noisy rowの編集語末だけで、(W^*=[0,6)) のcomplete block residualを整合する。
+Noisy rowの編集語末だけで、\(W^*=[0,6)\) のcomplete block residualを整合する。
 
 \[
 d_{\cos}(a,b)
@@ -493,7 +501,7 @@ Raw係数が違うのはscopeごとの未加重gradient normが異なるため�
 | text decoder target modules | q/k/v/o、gate/up/down projections |
 | scope保証 | decoder projectionの完全修飾pathをPEFTへ渡し、vision towerを除外 |
 | optimizer | AdamW |
-| learning rate / weight decay | (10^{-4}) / 0.01 |
+| learning rate / weight decay | \(10^{-4}\) / 0.01 |
 | scheduler / warmup | constant-with-warmup / 0.0 |
 | micro batch / accumulation | 1 sequence / 32 micro steps |
 | max gradient norm | 1.0 |
@@ -544,8 +552,8 @@ Vision towerはtext-only runでforwardされないため、そのweightは更新
 
 停止条件は次である。
 
-- clean (KL(Base\parallel Student)>0.03) が2回連続
-- (PPL(Student)/PPL(Base)>1.02) が2回連続
+- clean \(KL(Base\parallel Student)>0.03\) が2回連続
+- \(PPL(Student)/PPL(Base)>1.02\) が2回連続
 - startupでweighted state/output gradient proxyが0.5超を3回連続
 - alignment error
 - NaN/Inf lossまたはnon-finite gradient norm
@@ -569,8 +577,8 @@ Vision towerはtext-only runでforwardされないため、そのweightは更新
 
 | | clean | typo |
 |---|---:|---:|
-| Base | (B_c) | (B_t) |
-| Adapter | (A_c) | (A_t) |
+| Base | \(B_c\) | \(B_t\) |
+| Adapter | \(A_c\) | \(A_t\) |
 
 主要estimandは、
 
@@ -648,7 +656,7 @@ PPL=\exp\left(\frac{\sum_t-\log p(x_t\mid x_{<t})}{N_{tokens}}\right),
 PPL\ ratio=\frac{PPL(Adapter)}{PPL(Base)}
 \]
 
-を計算し、FineWeb clean上の (KL(Base\parallel Adapter)) median/p95も報告する。Natural pairはexact unchanged character spanから非編集next-tokenを対応付け、編集語targetを除外する。
+を計算し、FineWeb clean上の \(KL(Base\parallel Adapter)\) median/p95も報告する。Natural pairはexact unchanged character spanから非編集next-tokenを対応付け、編集語targetを除外する。
 
 ## 19. 凍結gate
 
@@ -708,7 +716,7 @@ PatchGainReductionFraction
 
 \(\overline G_{\mathrm{Base}}\le10^{-6}\) ならrelative fractionはundefinedとする。0除算回避のために分母へ任意のepsilonを足してfractionを作らない。
 
-現行runnerが直接保存するpatch-gain量は、`base_mean_patch_gain`、`adapter_mean_patch_gain`、およびBase平均が (10^{-6}) より大きい場合の `patch_gain_reduction_fraction` である。\(\Delta G_{\mathrm{reduction}}\) 専用fieldはなく、2平均から導出できるだけである。Base平均が閾値以下の場合、runnerはrelative fractionを `None` とし、2平均だけを保存する。従って現行artifactについては2平均とrelative fractionの定義可否をそのまま報告し、絶対差を表示する場合は「保存値から事後導出」と明記する。
+現行runnerが直接保存するpatch-gain量は、`base_mean_patch_gain`、`adapter_mean_patch_gain`、およびBase平均が \(10^{-6}\) より大きい場合の `patch_gain_reduction_fraction` である。\(\Delta G_{\mathrm{reduction}}\) 専用fieldはなく、2平均から導出できるだけである。Base平均が閾値以下の場合、runnerはrelative fractionを `None` とし、2平均だけを保存する。従って現行artifactについては2平均とrelative fractionの定義可否をそのまま報告し、絶対差を表示する場合は「保存値から事後導出」と明記する。
 
 不確実性は、task内でitemを再抽出しtaskを等重み集計するpaired bootstrap 10,000回（seed 42）で計算する。各反復でBaseとAdapterに同じitem indexを使い、\(\overline G_m\)、\(\Delta G_{\mathrm{reduction}}\)、定義可能な場合のrelative fractionについてpercentile 95% CIを報告する。このbootstrap CIと絶対差の専用出力は現行runnerに未実装であり、inferentialなmechanistic claimを行う前に実装・回帰testが必要な明示的gapである。実装完了前は既存の2平均とrelative fractionを記述的にのみ扱う。
 
@@ -828,12 +836,14 @@ Baselineのper-record output KLはclean平均0.00215、noisy平均0.01577、nois
 
 1. Frozen model/data revisionと除外registryを検証する。
 2. Step 1 selection 200を生成し、全29 windowをjoint patchする。
-3. 選択規則で (W^*) を決定し、別200で一度だけvalidationする。
-4. (W^*)、random control、ID hash、typo manifestを凍結する。
-5. 同一source/typo scheduleでoutput-onlyとstate armsを学習する。
-6. T0安全monitorだけを学習中に見る。
-7. Checkpoint hashを固定後、tune -> pre-PR -> finalの開封規則に従う。
-8. Behavior評価とmechanistic auditを別階層で報告する。
+3. 選択規則で \(W^*\) を決定し、別200で一度だけvalidationする。
+4. 固定seedとSHA-256規則で、\(W^*\)と非重複の同幅random controlを1本だけ抽選する。
+5. Random controlが \(s_{\mathrm{random}}\ge\lceil0.4L\rceil\) を満たすか検証する。不合格時は再抽選せずfail closedとし、事前登録済みの別実装PRでgenerator/consumer契約を整合する。
+6. \(W^*\)、検証済みrandom control、ID hash、typo manifestを凍結する。
+7. 同一source/typo scheduleでoutput-onlyとstate armsを学習する。
+8. T0安全monitorだけを学習中に見る。
+9. Checkpoint hashを固定後、tune -> pre-PR -> finalの開封規則に従う。
+10. Behavior評価とmechanistic auditを別階層で報告する。
 
 ### 25.2 Source of truth
 
@@ -849,7 +859,7 @@ Cycle 1以前の文書には4項loss、reasoning mixture、selected-layer LoRA�
 | 3 | Evaluation protocol | [configs/robustness-evaluation-v1.yaml](../configs/robustness-evaluation-v1.yaml)、v1.4 machine-readable source |
 | 4 | Loss implementation | [training/losses.py](../src/typo_robust_training/training/losses.py) / [training/step.py](../src/typo_robust_training/training/step.py) |
 | 4 | Training runtime | [training/runner.py](../src/typo_robust_training/training/runner.py) / [training/adapters.py](../src/typo_robust_training/training/adapters.py) |
-| 4 | Localization runtime | [localization/confirmatory_runner.py](../src/typo_robust_training/localization/confirmatory_runner.py) / [confirmatory_scoring.py](../src/typo_robust_training/localization/confirmatory_scoring.py) |
+| 4 | Localization runtime | [localization/confirmatory_runner.py](../src/typo_robust_training/localization/confirmatory_runner.py) / [confirmatory_scoring.py](../src/typo_robust_training/localization/confirmatory_scoring.py)。現行generatorは非重複同幅候補全体から抽選し、middle--late制約はtraining evidence側で検証されるため、将来の再localizationでは上記fail-closed契約を適用する |
 | 4 | Evaluation runtime | [evaluation/study.py](../src/typo_robust_training/evaluation/study.py) / [evaluation/metrics.py](../src/typo_robust_training/evaluation/metrics.py) |
 | 5 | Narrative | 本書。上記machine-readable sourceと衝突した場合は上記を優先 |
 
