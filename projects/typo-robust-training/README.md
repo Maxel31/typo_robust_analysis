@@ -19,6 +19,15 @@ restoration; downstream answers, clean-harm scores, neuron/head screening, and
 training outcomes cannot alter the target. Neuron/head localization remains an
 exploratory negative-result analysis rather than part of the proposed method.
 
+Detailed Japanese design notes:
+
+- [Current three-step proposal](docs/current_proposal_three_step_method_v1.ja.md)
+- [SAE diagnostics and successor proposals](docs/sae_and_successor_proposals_v1.ja.md)
+
+The first note distinguishes the frozen current method from historical
+ablations. The second distinguishes the parallel SAE diagnostic track from
+future methods that are not yet authorized for training.
+
 ## Environment
 
 Run commands from the repository root. The training project owns its lockfile
