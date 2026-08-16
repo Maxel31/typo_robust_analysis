@@ -83,7 +83,7 @@ Activation Patching は学習前の座標選択と学習後の監査にだけ使
 | arm | state教師 | 役割 | 10M seed42 | 64M |
 |---|---|---|---|---|
 | 学習なしBase | なし | 絶対基準 | 評価済み | 共通参照 |
-| Output matching | なし | 中心baseline | 完了 | 実行中 |
+| Output matching | なし | 中心baseline | 完了 | 3.92M-token checkpointでresume待機 |
 | Proposal | causal [0,6) | 主仮説 | 完了 | 待機 |
 | Random-window | random [20,26) | 座標選択control | 完了 | 段階投入待ち |
 | All-layer | block 0--33 | 局在範囲control | 完了 | 段階投入待ち |
