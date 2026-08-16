@@ -6,7 +6,13 @@ from dataclasses import replace
 from pathlib import Path
 
 import torch
-from transformers import Gemma3ForCausalLM, Gemma3TextConfig
+from transformers import (
+    Gemma3Config,
+    Gemma3ForCausalLM,
+    Gemma3ForConditionalGeneration,
+    Gemma3TextConfig,
+    SiglipVisionConfig,
+)
 
 from typo_robust_training.training.adapters import (
     attach_lora_adapters,
@@ -37,6 +43,41 @@ def _tiny_model() -> Gemma3ForCausalLM:
         eos_token_id=2,
     )
     return Gemma3ForCausalLM(config)
+
+
+def _tiny_multimodal_model() -> Gemma3ForConditionalGeneration:
+    text = Gemma3TextConfig(
+        vocab_size=64,
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=3,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=4,
+        max_position_embeddings=64,
+        sliding_window=32,
+        layer_types=["full_attention"] * 3,
+        pad_token_id=0,
+        bos_token_id=1,
+        eos_token_id=2,
+    )
+    vision = SiglipVisionConfig(
+        hidden_size=16,
+        intermediate_size=32,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        image_size=8,
+        patch_size=4,
+    )
+    config = Gemma3Config(
+        text_config=text,
+        vision_config=vision,
+        mm_tokens_per_image=4,
+        boi_token_index=60,
+        eoi_token_index=61,
+        image_token_index=62,
+    )
+    return Gemma3ForConditionalGeneration(config)
 
 
 def _small_protocol(path: Path):
@@ -115,3 +156,19 @@ def test_all_layer_baseline_inserts_rank_matched_adapters_in_every_decoder_layer
         ),
     )
     assert report.decoder_layers == (0, 1, 2)
+
+
+def test_multimodal_lora_does_not_adapt_the_vision_tower() -> None:
+    adapted = attach_lora_adapters(
+        _tiny_multimodal_model(),
+        protocol=_small_protocol(NOISY_CONFIG),
+        decoder_layers=(0, 1, 2),
+    )
+    trainable_names = tuple(
+        name for name, parameter in adapted.named_parameters() if parameter.requires_grad
+    )
+    assert trainable_names
+    assert not any("vision_tower" in name for name in trainable_names)
+    assert all(
+        ".language_model.layers." in name for name in trainable_names if "lora_" in name
+    )
