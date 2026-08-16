@@ -270,7 +270,11 @@ SAE学習へ使えるのは**training split内のclean FineWeb-Eduだけ**であ
 | 新規diagnostic 200 | 不可 | 不可 | 不可 | 不可 | 可 |
 | tune / pre-PR / final | **全WPで学習・選択禁止** |  |  |  |  |
 
-SAE trainから除外したadapter dataは、先行10M runを想定した先頭30,000 recordだけである。このprefixは約12.26M source tokensであり、64M adapter stream全体を保護しない。Prefix除外後の初期eligible pool約51.74M source tokensは64M streamの残りと重複し得る。一方、凍結済みSAE corpus budgetは100M training + 10M statistics + 200文書×512、合計110,102,400 source tokensである。このため不足する約58.37M source tokensは64M stream外の新規FineWeb-Edu recordから補充される。SAE corpusは64M streamの部分集合ではなく、両者の最大重複部分が約51.74Mである。これはtraining split内での重複であり、tune / pre-PR / finalやWP-3/4/5 itemのリークではないが、「64M adapter dataをSAEから除外済み」または「SAE corpus全体が64M stream内」とは主張しない。Localization selection/validation、全評価tier、monitor/diagnostic item、exact/near-duplicate groupは引き続きSAE trainから除外し、使用IDとcontent hashをregistryへ記録する。
+SAE trainから除外したadapter dataは、先行10M runを想定した先頭30,000 recordだけである。このprefixは概算約12.26M source tokensだが、この値は64M streamと初期eligibleの差から逆算したものでdedup amendment分を含む。64M adapter stream全体を保護する値ではない。Prefix除外後の初期eligible pool約51.74M source tokensは64M streamの残りと重複し得る。
+
+SAE corpus構築時の `--training-budget` は現在registryで一意に凍結されていない。`minimum` では100M training + 10M statistics + 200文書×512 = 110,102,400 source tokensとなり、約58.37Mを64M stream外の新規FineWeb-Eduから補充する。`preferred` では200M trainingを使うため合計210,102,400 source tokens、stream外補充は約158.37Mになる。いずれもSAE corpusは64M streamの部分集合ではなく、最大重複部分が初期eligible約51.74Mである。実行時に選んだbudget operatorと最終corpus hashをregistryへ保存する。
+
+Fail-closedに強制される除外roleは、tune / pre-PR / final / localization selection / localization validationの5種だけである。従ってWP-3はlocalization validationとして保護されるが、monitorを使うWP-4と未抽出のWP-5 diagnostic 200は現registryだけでは非重複が保証されない。各WPの実行前にID/hashをexclusion inventoryへ登録し、SAE train manifestとの非重複をrunnerで検証する。重複時は結果を計算せず、分離済みreplacement cohortを事前登録する。この契約を追加するまでは「monitor/全diagnostic itemをSAE trainから除外済み」と主張しない。
 
 ## 4. Work package依存関係
 
@@ -302,7 +306,7 @@ WP-3/4は診断である。WP-5の現registryはG1+G3で後継studyの草案だ�
 
 ## 5. WP-1: Data -> activation -> optimization -> statistics
 
-**状態: 実装済み・100M activation-token本学習完了**
+**状態: 実装済み・`minimum` operatorによる100M activation-token本学習完了。ただし採用operatorのregistry記録は要補完**
 
 ### 5.1 対象層、初期化seed、budget
 
@@ -329,7 +333,8 @@ Typo textをSAE学習へ入れない。SAEがclean manifoldを学ぶことで、
 
 ### 5.3 Data budgetとartifact
 
-- 本学習: SAEごとに100M clean activation tokens
+- 完了済みbundle: `minimum` operator、SAEごとに100M clean activation tokens
+- Config上の別operator: `preferred`、SAEごとに200M。現bundleには使っていないが、configから削除もされていない
 - Statistics: 本学習と分離したclean 10M activation tokens
 - Activation batch 2,048、shuffle buffer 1M、dead feature resamplingなし
 - Layer 5/11/20/26の再利用用subsampleは別artifactとして扱い、本学習token countと混同しない
@@ -337,7 +342,7 @@ Typo textをSAE学習へ入れない。SAEがclean manifoldを学ぶことで、
 - 必須保存: SAE weights、optimizer/config、\(\lambda_{L1}\)、init seed、model revision、data hash
 - Statistics保存: feature別 \(p_f\)、clean error median \(s\)、L0/FVU/dead分布
 
-\(p_f,s\) を学習mini-batchの都度変えず、完成したSAEに対して分離streamで一度算出して凍結する。
+\(p_f,s\) を学習mini-batchの都度変えず、完成したSAEに対して分離streamで一度算出して凍結する。完了済みbundleをWP-2以降へ渡す前に、採用した `minimum` operatorと最終corpus hashをregistryへ記録し、configが許す `preferred` と区別する。
 
 ### 5.4 \(\lambda_{L1}\) 選択規則
 
@@ -409,11 +414,11 @@ FVUが良くても、modelが利用する小さな方向を失って挙動を壊
 
 WP-2のacceptance単位は、layer 5 seed 42、layer 5 seed 43、layer 20 seed 42を含む**3本一組のtraining bundle**である。3本すべてが合格したときだけbundleをacceptする。
 
-最初のbundleが不合格の場合、registry上の方針は**project全体で最大1回の新しい3本一組full-retrain bundle**だけを許す。SAEごとに1回ずつではない。ただし、現runnerのattempt ledgerはconfig / preregistration hashを厳密に固定しているため、\(\lambda_{L1}\) またはtoken budgetを変えた救済bundleを現ledgerのまま検収することはできない。従って、この救済は現時点では**方針上の許可であって実行可能な経路ではない**。
+最初のbundleが不合格の場合、registry上の研究方針は**project全体で最大1回の新しい3本一組full-retrain bundle**だけを許す。SAEごとに1回ずつではない。ただし現runnerのattempt ledgerはcheckpoint directoryの親へscopeされるため、このproject-global上限を強制しない。新しいrun directoryではledgerが空から始まり、技術的には追加bundleを検収できてしまう。またconfig / preregistration hash検査も同一ledger内だけで有効である。従って、現runnerは救済を「実行不能」にするのではなく、**研究方針違反をfail-closedに防げない**。
 
-WP-2不合格時は自動再学習せず停止する。救済を使う場合は、結果に応じて複数値を探索せず、開始前に単一変更を固定したregistry amendment、新しいconfig / preregistration hash、失敗bundleを参照する新ledger lineage、およびそのlineageをfail-closedに検証するrunner対応を別PRで先に実装・レビューする。変更できる種類は \(\lambda_{L1}\) **または**SAE training activation-token budgetのどちらか一方だけで、Architecture、clean-only data contract、WP-2 gate、splice cohortは変更しない。再学習bundleも不合格なら、3本をWP-3/4/5へ使わず、2回目の救済を与えない。
+WP-2不合格時は自動再学習せず停止する。救済を使う場合は、結果に応じて複数値を探索せず、開始前に単一変更を固定したregistry amendment、新しいconfig / preregistration hash、失敗bundleを参照するproject-global ledger lineage、およびrun directoryを変えても上限をfail-closedに検証するrunner対応を別PRで先に実装・レビューする。この対応なしに新run directoryを使って救済を実行しない。変更できる種類は \(\lambda_{L1}\) **または**SAE training activation-token budgetのどちらか一方だけで、Architecture、clean-only data contract、WP-2 gate、splice cohortは変更しない。再学習bundleも不合格なら、3本をWP-3/4/5へ使わず、2回目の救済を与えない。
 
-このWP-2 retrain枠は、WP-1前に行ったL1 calibration amendmentとは別である。Calibration amendmentは「全候補のL0が範囲外だったため、gridとcalibration token数を一度だけ変更した」履歴で、残り枠は0である。WP-2 retrainは完成した3-SAE bundleがall-three acceptance gateを外した場合の救済であり、calibration grid再探索、複数runからの選択、gate変更を許可しない。つまり、calibration amendmentはglobalに1回消費済み、WP-2救済もglobalに最大1 full-retrain bundleだが、後者は上記hash-bound ledger対応が入るまで実行禁止である。
+このWP-2 retrain枠は、WP-1前に行ったL1 calibration amendmentとは別である。Calibration amendmentは「全候補のL0が範囲外だったため、gridとcalibration token数を一度だけ変更した」履歴で、残り枠は0である。WP-2 retrainは完成した3-SAE bundleがall-three acceptance gateを外した場合の救済であり、calibration grid再探索、複数runからの選択、gate変更を許可しない。つまり、calibration amendmentはglobalに1回消費済み、WP-2救済も研究方針上はglobalに最大1 full-retrain bundleである。ただし、この上限のglobal enforcementは未実装なので、上記runner対応が入るまで実行禁止とする。
 
 ## 7. WP-3 / WP-4: 診断
 
@@ -484,6 +489,8 @@ P2のprimary layerは20である。Layer 5の編集語末そのものはpatchに
 
 使用データはnatural clean/typo 100 pairと、monitor poolから決定的に選ぶsynthetic 100 pairである。2 stratumを混ぜて200件poolせず、stratum内平均を取ってからnatural / syntheticを等重みmacroする。
 
+Monitor roleは現行のfail-closed除外roleに含まれない。従ってWP-4実行前に、この200 pairのID/hashをexclusion inventoryへ登録し、SAE train manifestとの非重複をrunnerで検証する。重複が一件でもあれば結果を計算せず、同じ決定規則で分離済みreplacement cohortを事前登録する。
+
 Arm間のcheckpointはoptimizer stepでなく累積student tokensが完全一致する点だけを対応させる。補間しない。最終判定点は両armに存在する最大の共通student-token checkpointとし、それ以前の共通点はtrajectoryの記述にだけ使う。
 
 各checkpoint \(k\)、arm \(a\)、layer \(\ell\in\{5,20\}\)、指標 \(q\in\{L_0,F\}\) について、WP-3と同じ17位置算術平均を使う。
@@ -543,15 +550,16 @@ WP-4はcheckpoint選択、学習停止、behavior gateに使わない。中間ch
 
 **状態: pre-execution amendmentが未完成のdraft。operator、G1--G3のcore数値、bootstrap 10,000回 / seed 42はconfigで固定済み。専用runnerは未実装・結果は未計算**
 
-現時点でmachine-readable source群に未凍結なのは次の7点である。本節後半にdraft値があっても、amendment commitまでは有効な事前登録ではない。
+現時点でmachine-readable source群に未凍結なのは次の8点である。本節後半にdraft値があっても、amendment commitまでは有効な事前登録ではない。
 
 1. typo生成seed
 2. typo操作3種（keyboard-neighbor substitution / deletion / duplication）の混合比、適用順、適格語規則
-3. near-zero denominatorと全operator共通eligible規則
-4. \(R_{\mathrm{full}}\) が正に効くことを確認する前提gate
-5. CIの計算法と境界値での判定
-6. G1/G2から後継study草案へ進める範囲（現registryのG1+G3要件を維持したrouting）
-7. 使用するSAE artifact hashとWP-2合格記録
+3. diagnostic 200のID/hashとSAE train manifest非重複をfail-closedにするrole / inventory規則
+4. near-zero denominatorと全operator共通eligible規則
+5. \(R_{\mathrm{full}}\) が正に効くことを確認する前提gate
+6. CIの計算法と境界値での判定
+7. G1/G2から後継study草案へ進める範囲（現registryのG1+G3要件を維持したrouting）
+8. 使用するSAE artifact hashとWP-2合格記録
 
 Bootstrapの反復数10,000とseed 42は [gemma4b-sae-v1.yaml](../configs/sae/gemma4b-sae-v1.yaml) の必須fieldとして既に固定済みであり、新しい選択肢ではない。`registry-v1.yaml` の説明欄に重複記載がないことを「未凍結」と解釈しない。
 
@@ -984,11 +992,11 @@ raw residual kill + feature kill
 
 1. Data exclusion registryとmodel revisionを確認する。
 2. Clean calibration 10Mでlayer別 \(\lambda_{L1}\) を規則どおり選ぶ。
-3. 100M clean activation tokensで3 SAEを学習する。
+3. `--training-budget` の `minimum` / `preferred` を実行前にregistryへ固定し、前者なら100M、後者なら200M clean activation tokensで3 SAEを学習する。
 4. 分離10M cleanで \(p_f,s\) を計算して凍結する。
 5. WP-2の4 gateとartifact completenessを検収する。
-6. PassしたSAEだけでWP-3/4を診断実行する。
-7. WP-5開始前に未登録のtypo seed、typo操作3種の混合・適用規則、eligible規則、full-state前提gate、G1要件を維持したG2 routingをamendmentで固定する。Bootstrap 10,000回 / seed 42はconfigの既登録値を使う。
+6. PassしたSAEだけを使い、各diagnostic cohortとSAE train manifestの非重複をfail-closedに確認してからWP-3/4を実行する。
+7. WP-5開始前に未登録のdiagnostic 200のID/hashと非重複規則、typo seed、typo操作3種の混合・適用規則、eligible規則、full-state前提gate、G1要件を維持したG2 routingをamendmentで固定する。Bootstrap 10,000回 / seed 42はconfigの既登録値を使う。
 8. 事前amendmentがありG1/G2/G3が全てpassした場合だけpair-specific suppressionを別studyとして事前登録する。固定 \(C\) は別のselection / held-out kill testを登録・合格してから候補化する。
 
 ### 17.4 Source of truth

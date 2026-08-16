@@ -117,14 +117,16 @@ SAEと後継案は [SAE診断トラックと後継proposal候補](sae_and_succes
 | FineWeb localization selection 200 | 使用 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 |
 | FineWeb localization validation 200 | 禁止 | 使用 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 |
 | FineWeb 64M train stream | 禁止 | 禁止 | 使用 | 禁止 | 禁止 | 禁止 | 禁止 | 10M用の先頭30,000 recordだけ除外。残り約51.74MはSAE corpusと重複し得る |
-| FineWeb monitor 200 / natural 100 | 禁止 | 禁止 | 禁止 | 使用 | 診断のみ | 禁止 | 禁止 | 禁止 |
+| FineWeb monitor 200 / natural 100 | 禁止 | 禁止 | 禁止 | 使用 | 診断のみ | 禁止 | 禁止 | 運用上禁止。fail-closed roleは未登録 |
 | Task tune 500 | 禁止 | 禁止 | 禁止 | 禁止 | 使用 | 禁止 | 禁止 | 禁止 |
 | Pre-PR task/corpus | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 | 1回 | 禁止 | 禁止 |
 | Final task/corpus | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 | 禁止 | 1回 | 禁止 |
 
 全poolについて、record ID、source/group ID、exact duplicate、near-duplicateを検査する。Natural typo辞書・repositoryも用途別に分離する。
 
-ここで「Step 2学習」と「SAE train」は完全非重複ではない。SAE用のmachine-readable exclusionは、先行10M runを想定した先頭30,000 record（約12.26M source tokens）だけを保護する。その直後に得られる初期eligible pool約51.74M source tokensは64M adapter streamの残りと重複し得る。一方、凍結済みSAE corpus budgetは100M training + 10M statistics + 200文書×512、合計110,102,400 source tokensである。従って不足する約58.37M source tokensは、64M stream外の新規FineWeb-Edu recordで補充される。すなわち「SAE corpus全体が64M stream内」でも「両者が完全非重複」でもない。この包含関係を「評価リークなし」や「64M学習から独立」と言い換えない。Localization、monitor、tune、pre-PR、final、WP-3/4/5診断itemはSAE trainから分離されているため、凍結behavior評価と診断itemの非重複契約は維持される。
+ここで「Step 2学習」と「SAE train」は完全非重複ではない。SAE用のmachine-readable exclusionは、先行10M runを想定した先頭30,000 record（概算約12.26M source tokens。ただしdedup amendment分を含む逆算値）を保護する。その直後に得られる初期eligible pool約51.74M source tokensは64M adapter streamの残りと重複し得る。SAE corpus構築時の `--training-budget` は現在registryで一意に凍結されておらず、`minimum` と `preferred` の両方が正当である。`minimum` なら100M training + 10M statistics + 200文書×512 = 110,102,400 source tokensで、約58.37Mを64M stream外から補充する。`preferred` なら合計210,102,400 source tokensで、stream外補充は約158.37Mになる。いずれも最大重複部分は初期eligible約51.74Mであり、「SAE corpus全体が64M stream内」でも「両者が完全非重複」でもない。
+
+Fail-closedに強制されるSAE除外roleは、localization selection / validation、tune、pre-PR、finalの5種である。従ってWP-3はlocalization validationとして保護される一方、monitorとWP-4/5診断itemの非重複は現registryだけでは保証されない。これらは実行前にID/hashをexclusion inventoryへ登録し、SAE train manifestとの非重複をrunnerで検証する。重複があれば結果を計算せず、分離済みreplacement cohortを事前登録する。この対応前に「全診断itemがSAE trainから分離済み」とは主張しない。凍結behavior評価の5 roleに対するfail-closed契約は維持される。
 
 ## 2. 研究仮説、非主張、成功条件
 
@@ -292,7 +294,14 @@ KL\!\left(p_{i,t}^{\mathrm{clean}}\parallel p_{i,t}^{\mathrm{patch}(W)}\right)
 R_i(W)=1-\frac{D_i^{\mathrm{patch}}(W)}{D_i^{\mathrm{typo}}}
 \]
 
-\(R=1\) は完全回復、\(R=0\) は効果なし、\(R<0\) は悪化を表す。\(D_i^{\mathrm{typo}}\le10^{-9}\) は理由と分母を記録して除外し、KL-eligibleが160件未満または80%未満ならfail closedとする。
+\(R=1\) は完全回復、\(R=0\) は効果なし、\(R<0\) は悪化を表す。比率そのものは15位置のsumでもmeanでも同じだが、実装のeligibility判定は
+
+\[
+\overline D_i^{\mathrm{typo}}
+=\frac{1}{15}D_i^{\mathrm{typo}}
+\]
+
+を用いる。\(\overline D_i^{\mathrm{typo}}\le10^{-9}\) は理由と分母を記録して除外し、KL-eligibleが160件未満または80%未満ならfail closedとする。
 
 Window scoreと選択規則は次で一意に定義する。
 
