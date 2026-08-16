@@ -88,8 +88,9 @@ Activation Patchingは学習中や推論時に毎回行うものではない。�
 | residual hidden dimension | 2,560 |
 | 学習・推論dtype | bfloat16 |
 | 総parameter数 | 4,332,867,952 |
-| LoRA学習parameter数 | 32,788,480 |
-| 学習parameter比率 | 約0.757% |
+| checkpointへ登録されるLoRA parameter数 | 32,788,480（約0.757%） |
+| text-only forwardで実際に更新可能なLoRA parameter数 | 29,802,496（上記総parameter数比で約0.688%） |
+| 未使用vision-tower LoRA parameter数 | 2,985,984（text-only runでは`grad=None`） |
 | Teacher | 同じBase、完全freeze、clean入力 |
 | Student | 同じBase + LoRA、cleanまたはtypo入力 |
 
@@ -463,8 +464,9 @@ Raw係数が異なるのはscopeごとの未加重state gradient normが異な�
 | LoRA scaling \(\alpha/r\) | 0.5 |
 | dropout | 0 |
 | bias | none |
-| LoRA配置 | 全34 decoder blocks |
-| target modules | q/k/v/o、gate/up/down projections |
+| 意図したLoRA配置 | 全34 text decoder blocks |
+| text decoder target modules | q/k/v/o、gate/up/down projections |
+| 現行runtimeで追加登録される未使用module | vision towerのencoder layer 0--26にあるq/k/v projections |
 | optimizer | AdamW |
 | learning rate | (10^{-4}) |
 | weight decay | 0.01 |
@@ -481,7 +483,9 @@ Raw係数が異なるのはscopeごとの未加重state gradient normが異な�
 
 ### 19.1 「局在」の正確な意味
 
-LoRAは全layerへ配置される。Output matchingも全ての有効aligned targetで計算され、layer 0--5だけへ制限されない。
+LoRAは全text decoder layerへ配置される。Output matchingも全ての有効aligned targetで計算され、layer 0--5だけへ制限されない。
+
+ただし、現行のmodule選択は`layers`という名前とlayer indexだけでscopeを判定するため、SigLIP vision towerのencoder layer 0--26にあるq/k/v projectionにもLoRAを追加登録する。text-only学習ではvision towerをforwardしないため、これら2,985,984 parameterにはgradientが付かず、AdamWも更新しない。したがって、実際に更新されるtext decoder側は29,802,496 parameterであり、32,788,480はcheckpointへ登録されるLoRA全体の数である。全学習armで同じ現象が起きるため既存のmatched-capacity比較と数値結果は無効化されないが、checkpointには未学習のvision LoRA weightが含まれる。module scope guardの修正は本文書PRと分離して追跡する。
 
 局在するのは、
 
