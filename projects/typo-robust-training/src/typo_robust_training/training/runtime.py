@@ -74,6 +74,127 @@ def _finite_ppl_ratio(log_nll_delta: float) -> float:
     return math.exp(min(max(float(log_nll_delta), minimum_log), maximum_log))
 
 
+_RUNTIME_STATE_SCHEMA = "robustness-adapter-runtime-state/v3"
+_ADAPTER_SCOPE_SCHEMA = "decoder-lora-optimizer-scope/v1"
+
+
+def _optimizer_group_sizes(state: object) -> tuple[int, ...]:
+    """Return checkpoint optimizer group sizes without mutating an optimizer."""
+
+    if not isinstance(state, Mapping):
+        raise ValueError("adapter runtime checkpoint optimizer state differs")
+    groups = state.get("param_groups")
+    if (
+        not isinstance(groups, Sequence)
+        or isinstance(groups, (str, bytes))
+        or not groups
+    ):
+        raise ValueError("adapter runtime checkpoint optimizer groups differ")
+    sizes: list[int] = []
+    for group in groups:
+        if not isinstance(group, Mapping):
+            raise ValueError("adapter runtime checkpoint optimizer group differs")
+        parameters = group.get("params")
+        if not isinstance(parameters, Sequence) or isinstance(parameters, (str, bytes)):
+            raise ValueError("adapter runtime checkpoint optimizer parameters differ")
+        sizes.append(len(parameters))
+    return tuple(sizes)
+
+
+def _adapter_tensor_spec(state: object) -> tuple[tuple[str, tuple[int, ...], str], ...]:
+    """Describe every serialized adapter tensor for fail-closed scope checks."""
+
+    import torch
+
+    if not isinstance(state, Mapping) or not state:
+        raise ValueError("adapter runtime checkpoint adapter state differs")
+    spec: list[tuple[str, tuple[int, ...], str]] = []
+    for name, tensor in state.items():
+        if not isinstance(name, str) or not name or not isinstance(tensor, torch.Tensor):
+            raise ValueError("adapter runtime checkpoint adapter tensors differ")
+        spec.append((name, tuple(int(size) for size in tensor.shape), str(tensor.dtype)))
+    return tuple(sorted(spec))
+
+
+def _adapter_scope_contract(
+    *,
+    adapter_state: object,
+    optimizer_state: object,
+    optimizer_parameter_names: Sequence[str],
+) -> dict[str, object]:
+    """Build the exact adapter/optimizer ordering contract stored in v3 states."""
+
+    names = tuple(optimizer_parameter_names)
+    if (
+        not names
+        or len(set(names)) != len(names)
+        or any(not isinstance(name, str) or not name for name in names)
+    ):
+        raise ValueError("adapter runtime optimizer parameter names differ")
+    group_sizes = _optimizer_group_sizes(optimizer_state)
+    if sum(group_sizes) != len(names):
+        raise ValueError("adapter runtime optimizer parameter order differs")
+    return {
+        "schema_version": _ADAPTER_SCOPE_SCHEMA,
+        "adapter_tensors": _adapter_tensor_spec(adapter_state),
+        "optimizer_group_sizes": group_sizes,
+        "optimizer_parameter_names": names,
+    }
+
+
+def _validate_adapter_scope_before_resume(
+    *,
+    checkpoint_adapter: object,
+    checkpoint_optimizer: object,
+    checkpoint_scope: object | None,
+    current_adapter: object,
+    current_optimizer: object,
+    current_optimizer_parameter_names: Sequence[str],
+) -> None:
+    """Reject incompatible LoRA scopes before PEFT or Torch mutate runtime state."""
+
+    checkpoint_tensors = _adapter_tensor_spec(checkpoint_adapter)
+    current_tensors = _adapter_tensor_spec(current_adapter)
+    checkpoint_group_sizes = _optimizer_group_sizes(checkpoint_optimizer)
+    current_group_sizes = _optimizer_group_sizes(current_optimizer)
+    current_names = tuple(current_optimizer_parameter_names)
+    compatible = (
+        checkpoint_tensors == current_tensors
+        and checkpoint_group_sizes == current_group_sizes
+    )
+    if checkpoint_scope is not None:
+        if not isinstance(checkpoint_scope, Mapping) or set(checkpoint_scope) != {
+            "schema_version",
+            "adapter_tensors",
+            "optimizer_group_sizes",
+            "optimizer_parameter_names",
+        }:
+            raise ValueError("adapter runtime checkpoint scope fields differ")
+        recorded_scope = {
+            "schema_version": checkpoint_scope["schema_version"],
+            "adapter_tensors": tuple(checkpoint_scope["adapter_tensors"]),
+            "optimizer_group_sizes": tuple(checkpoint_scope["optimizer_group_sizes"]),
+            "optimizer_parameter_names": tuple(
+                checkpoint_scope["optimizer_parameter_names"]
+            ),
+        }
+        derived_checkpoint = {
+            "schema_version": _ADAPTER_SCOPE_SCHEMA,
+            "adapter_tensors": checkpoint_tensors,
+            "optimizer_group_sizes": checkpoint_group_sizes,
+            "optimizer_parameter_names": recorded_scope["optimizer_parameter_names"],
+        }
+        if recorded_scope != derived_checkpoint:
+            raise ValueError("adapter runtime checkpoint scope metadata differs")
+        compatible = compatible and recorded_scope["optimizer_parameter_names"] == current_names
+    if not compatible:
+        raise ValueError(
+            "adapter runtime checkpoint LoRA/optimizer scope differs from the current "
+            "decoder-only scope; resume with the checkpoint-producing code revision "
+            "instead of silently dropping adapter tensors"
+        )
+
+
 def next_gradient_ratio_violations(
     violations: int,
     *,
@@ -219,9 +340,13 @@ class HuggingFaceAdapterTrainingRuntime:
         if getattr(self.tokenizer, "is_fast", False) is not True:
             raise ValueError("adapter training requires a fast tokenizer with offsets")
         self.tokenizer.padding_side = "left"
-        trainable = [
-            parameter for parameter in self.student.parameters() if parameter.requires_grad
-        ]
+        trainable_items = tuple(
+            (name, parameter)
+            for name, parameter in self.student.named_parameters()
+            if parameter.requires_grad
+        )
+        self._optimizer_parameter_names = tuple(name for name, _ in trainable_items)
+        trainable = [parameter for _, parameter in trainable_items]
         self.parameter_report: TrainableParameterReport = trainable_parameter_report(
             self.student,
             expected_layers=adapter_layers,
@@ -694,14 +819,21 @@ class HuggingFaceAdapterTrainingRuntime:
 
         state_path = Path(path).resolve()
         state_path.parent.mkdir(parents=True, exist_ok=True)
+        adapter_state = get_peft_model_state_dict(self.student)
+        optimizer_state = self.optimizer.state_dict()
         payload = {
-            "schema_version": "robustness-adapter-runtime-state/v2",
+            "schema_version": _RUNTIME_STATE_SCHEMA,
             "condition": self.protocol.condition,
             "config_sha256": self.protocol.config_sha256,
             "seed": self.seed,
             "optimizer_steps": self._optimizer_steps,
-            "adapter": get_peft_model_state_dict(self.student),
-            "optimizer": self.optimizer.state_dict(),
+            "adapter": adapter_state,
+            "optimizer": optimizer_state,
+            "adapter_scope": _adapter_scope_contract(
+                adapter_state=adapter_state,
+                optimizer_state=optimizer_state,
+                optimizer_parameter_names=self._optimizer_parameter_names,
+            ),
             "scheduler": self.scheduler.state_dict(),
             "state_weight": self.state_weight,
             "state_calibration": self.state_calibration,
@@ -719,7 +851,7 @@ class HuggingFaceAdapterTrainingRuntime:
             temporary.unlink(missing_ok=True)
 
     def load_state(self, path: Path) -> None:
-        from peft import set_peft_model_state_dict
+        from peft import get_peft_model_state_dict, set_peft_model_state_dict
 
         payload = self._torch.load(
             Path(path).resolve(),
@@ -745,15 +877,24 @@ class HuggingFaceAdapterTrainingRuntime:
             "state_calibration",
             "gradient_ratio_violations",
         }
+        expected_v3 = expected_v2 | {"adapter_scope"}
+        schema_version = payload.get("schema_version") if isinstance(payload, dict) else None
+        expected_fields = (
+            expected_v3
+            if schema_version == _RUNTIME_STATE_SCHEMA
+            else expected_v2
+            if isinstance(schema_version, str) and schema_version.endswith("/v2")
+            else expected_v1
+        )
         if (
             not isinstance(payload, dict)
-            or payload.get("schema_version")
+            or schema_version
             not in {
                 "robustness-adapter-runtime-state/v1",
                 "robustness-adapter-runtime-state/v2",
+                _RUNTIME_STATE_SCHEMA,
             }
-            or set(payload)
-            != (expected_v2 if payload.get("schema_version", "").endswith("/v2") else expected_v1)
+            or set(payload) != expected_fields
         ):
             raise ValueError("adapter runtime checkpoint fields differ")
         if (
@@ -762,11 +903,19 @@ class HuggingFaceAdapterTrainingRuntime:
             or payload["seed"] != self.seed
         ):
             raise ValueError("adapter runtime checkpoint identity differs")
+        _validate_adapter_scope_before_resume(
+            checkpoint_adapter=payload["adapter"],
+            checkpoint_optimizer=payload["optimizer"],
+            checkpoint_scope=payload.get("adapter_scope"),
+            current_adapter=get_peft_model_state_dict(self.student),
+            current_optimizer=self.optimizer.state_dict(),
+            current_optimizer_parameter_names=self._optimizer_parameter_names,
+        )
         set_peft_model_state_dict(self.student, payload["adapter"])
         self.optimizer.load_state_dict(payload["optimizer"])
         self.scheduler.load_state_dict(payload["scheduler"])
         self._optimizer_steps = int(payload["optimizer_steps"])
-        if payload["schema_version"].endswith("/v2"):
+        if payload["schema_version"].endswith(("/v2", "/v3")):
             state_weight = payload["state_weight"]
             if (
                 isinstance(state_weight, bool)

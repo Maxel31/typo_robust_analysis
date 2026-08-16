@@ -9,7 +9,9 @@ from typing import Any
 from typo_robust_training.training.config import AdapterTrainingProtocol
 
 
-_LAYER = re.compile(r"(?:^|\.)layers\.(\d+)(?:\.|$)")
+_DECODER_LAYER = re.compile(
+    r"(?:^|\.)(?:language_model|model)\.layers\.(\d+)(?:\.|$)"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +35,45 @@ def _layers(value: tuple[int, ...]) -> tuple[int, ...]:
     return value
 
 
+def _modules(value: tuple[str, ...]) -> tuple[str, ...]:
+    if (
+        not value
+        or len(set(value)) != len(value)
+        or any(not isinstance(module, str) or not module or "." in module for module in value)
+    ):
+        raise ValueError("expected LoRA modules must be non-empty, unique leaf names")
+    return value
+
+
+def _decoder_target_module_names(
+    model: Any,
+    *,
+    decoder_layers: tuple[int, ...],
+    target_modules: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Resolve exact decoder projection paths before PEFT mutates the model."""
+
+    layers = _layers(decoder_layers)
+    modules = _modules(target_modules)
+    expected = {(layer, module) for layer in layers for module in modules}
+    observed: dict[tuple[int, str], str] = {}
+    for name, _module in model.named_modules():
+        match = _DECODER_LAYER.search(name)
+        leaf = name.rsplit(".", 1)[-1]
+        if match is None or leaf not in modules:
+            continue
+        coordinate = (int(match.group(1)), leaf)
+        if coordinate not in expected:
+            continue
+        if coordinate in observed:
+            raise ValueError(f"multiple decoder modules resolve to {coordinate}: {name}")
+        observed[coordinate] = name
+    if set(observed) != expected:
+        missing = sorted(expected - set(observed))
+        raise ValueError(f"decoder LoRA target modules are missing: {missing}")
+    return tuple(observed[coordinate] for coordinate in sorted(observed))
+
+
 def attach_lora_adapters(
     model: Any,
     *,
@@ -48,6 +89,12 @@ def attach_lora_adapters(
         raise TypeError("LoRA model must expose torch module parameters")
     from peft import LoraConfig, TaskType, get_peft_model
 
+    modules = _modules(protocol.lora_target_modules)
+    target_names = _decoder_target_module_names(
+        model,
+        decoder_layers=layers,
+        target_modules=modules,
+    )
     model.requires_grad_(False)
     if hasattr(model, "config"):
         model.config.use_cache = False
@@ -57,9 +104,7 @@ def attach_lora_adapters(
         lora_dropout=protocol.lora_dropout,
         bias=protocol.adapter_bias,
         task_type=TaskType.CAUSAL_LM,
-        target_modules=list(protocol.lora_target_modules),
-        layers_to_transform=list(layers),
-        layers_pattern="layers",
+        target_modules=list(target_names),
     )
     adapted = get_peft_model(model, config)
     if protocol.gradient_checkpointing:
@@ -72,7 +117,7 @@ def attach_lora_adapters(
     trainable_parameter_report(
         adapted,
         expected_layers=layers,
-        expected_modules=protocol.lora_target_modules,
+        expected_modules=modules,
     )
     return adapted
 
@@ -86,11 +131,11 @@ def trainable_parameter_report(
     """Prove that every and only LoRA parameters are trainable in scope."""
 
     layers = _layers(expected_layers)
-    if not expected_modules or len(set(expected_modules)) != len(expected_modules):
-        raise ValueError("expected LoRA modules must be non-empty and unique")
+    modules = _modules(expected_modules)
     names: list[str] = []
     observed_layers: set[int] = set()
     observed_modules: set[str] = set()
+    observed_coordinates: set[tuple[int, str]] = set()
     trainable = total = 0
     for name, parameter in model.named_parameters():
         count = int(parameter.numel())
@@ -101,20 +146,26 @@ def trainable_parameter_report(
         trainable += count
         if "lora_" not in name:
             raise ValueError(f"non-LoRA parameter is trainable: {name}")
-        match = _LAYER.search(name)
+        match = _DECODER_LAYER.search(name)
         if match is None:
             raise ValueError(f"trainable LoRA parameter has no decoder-layer coordinate: {name}")
-        observed_layers.add(int(match.group(1)))
-        matches = [module for module in expected_modules if f".{module}." in name]
+        layer = int(match.group(1))
+        observed_layers.add(layer)
+        matches = [module for module in modules if f".{module}." in name]
         if len(matches) != 1:
             raise ValueError(f"trainable LoRA parameter has an unexpected module: {name}")
-        observed_modules.add(matches[0])
+        module = matches[0]
+        observed_modules.add(module)
+        observed_coordinates.add((layer, module))
     if not names or trainable <= 0:
         raise ValueError("adapter exposes no trainable parameters")
     if tuple(sorted(observed_layers)) != layers:
         raise ValueError("trainable LoRA decoder layers differ from the intended scope")
-    if observed_modules != set(expected_modules):
+    if observed_modules != set(modules):
         raise ValueError("trainable LoRA modules differ from the intended scope")
+    expected_coordinates = {(layer, module) for layer in layers for module in modules}
+    if observed_coordinates != expected_coordinates:
+        raise ValueError("trainable LoRA decoder coordinates differ from the intended scope")
     return TrainableParameterReport(
         trainable_parameters=trainable,
         total_parameters=total,

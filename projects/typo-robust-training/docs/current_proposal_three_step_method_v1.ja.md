@@ -193,8 +193,11 @@ Step 3: frozen paired evaluation
 | revision | `093f9f388b31de276ce2de164bdc2081324b9767` |
 | decoder block数 | 34 |
 | residual hidden dimension | 2,560 |
-| model dtype | bfloat16 |
-| 総parameter数 | 4,332,867,952 |
+| 学習・推論dtype | bfloat16 |
+| Base model parameter数 | 4,300,079,472 |
+| 現行adapter modelの登録総parameter数 | 4,329,881,968 |
+| 現行コードで登録・更新可能なLoRA parameter数 | 29,802,496（adapter model総数比で約0.688%） |
+| scope修正前のCycle 3 adapter登録数 | 32,788,480（うち未使用vision-tower LoRA 2,985,984） |
 | Teacher | 同じBase、完全freeze、clean入力 |
 | Student | 同じBase + LoRA、cleanまたはtypo入力 |
 
@@ -469,9 +472,14 @@ Raw係数が違うのはscopeごとの未加重gradient normが異なるため�
 
 | 項目 | 値 |
 |---|---:|
-| LoRA rank / alpha / scaling | 16 / 8 / 0.5 |
-| dropout / bias | 0 / none |
-| 意図した対象 | 全34 text decoder blocksのq/k/v/o、gate/up/down |
+| LoRA rank | 16 |
+| LoRA alpha | 8 |
+| LoRA scaling \(\alpha/r\) | 0.5 |
+| dropout | 0 |
+| bias | none |
+| 意図したLoRA配置 | 全34 text decoder blocks |
+| text decoder target modules | q/k/v/o、gate/up/down projections |
+| scope保証 | decoder projectionの完全修飾pathをPEFTへ渡し、vision towerを除外 |
 | optimizer | AdamW |
 | learning rate / weight decay | (10^{-4}) / 0.01 |
 | scheduler / warmup | constant-with-warmup / 0.0 |
@@ -487,7 +495,11 @@ Raw係数が違うのはscopeごとの未加重gradient normが異なるため�
 
 ### 14.1 歴史的runのmodule-scope注記
 
-既存の10M/64M歴史的runでは、module名だけに基づく選択によりtext decoderに加えて未使用vision towerのq/k/vにもLoRAが登録された。
+scope修正前に開始したCycle 3 runでは、module名`layers`とlayer indexだけでscopeを判定していたため、SigLIP vision towerのencoder layer 0--26にあるq/k/v projectionにもLoRAを追加登録していた。text-only学習ではvision towerをforwardしないため、これら2,985,984 parameterにはgradientが付かず、AdamWも更新しない。したがって、既存runで実際に更新されたtext decoder側は29,802,496 parameterであり、全armのmatched-capacity比較と数値結果は無効化されない。一方、当該checkpointの登録総数32,788,480には未学習のvision LoRA weightが含まれる。
+
+現行コードは、modelのdecoder projectionを完全修飾pathで先に解決し、そのpathだけをPEFTへ渡す。さらにtrainable parameter reportもdecoder pathとlayer×moduleの直積を検証するため、新規runではvision towerへLoRAを登録しない。
+
+Runtime checkpointはscope契約を含むschema v3で保存する。scope修正前のcheckpointはoptimizer parameter groupも異なるため、現行コードへ暗黙変換してresumeしない。Adapter tensor集合とoptimizer groupを読み込み前に照合し、不一致なら「checkpointを生成したcode revisionでresumeする」よう明示して停止する。これにより、未使用vision tensorだけを無言で捨てた後にoptimizer stateを別parameterへ対応づける事故を防ぐ。進行中のscope修正前runは、そのrunを開始したworktree・revisionを変更せず完走またはresumeする。
 
 | 数 | parameter数 |
 |---|---:|
