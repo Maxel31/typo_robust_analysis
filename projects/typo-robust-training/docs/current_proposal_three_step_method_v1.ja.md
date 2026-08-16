@@ -87,10 +87,10 @@ Activation Patchingは学習中や推論時に毎回行うものではない。�
 | decoder block数 | 34 |
 | residual hidden dimension | 2,560 |
 | 学習・推論dtype | bfloat16 |
-| 総parameter数 | 4,332,867,952 |
-| checkpointへ登録されるLoRA parameter数 | 32,788,480（約0.757%） |
-| text-only forwardで実際に更新可能なLoRA parameter数 | 29,802,496（上記総parameter数比で約0.688%） |
-| 未使用vision-tower LoRA parameter数 | 2,985,984（text-only runでは`grad=None`） |
+| Base model parameter数 | 4,300,079,472 |
+| 現行adapter modelの登録総parameter数 | 4,329,881,968 |
+| 現行コードで登録・更新可能なLoRA parameter数 | 29,802,496（adapter model総数比で約0.688%） |
+| scope修正前のCycle 3 adapter登録数 | 32,788,480（うち未使用vision-tower LoRA 2,985,984） |
 | Teacher | 同じBase、完全freeze、clean入力 |
 | Student | 同じBase + LoRA、cleanまたはtypo入力 |
 
@@ -466,7 +466,7 @@ Raw係数が異なるのはscopeごとの未加重state gradient normが異な�
 | bias | none |
 | 意図したLoRA配置 | 全34 text decoder blocks |
 | text decoder target modules | q/k/v/o、gate/up/down projections |
-| 現行runtimeで追加登録される未使用module | vision towerのencoder layer 0--26にあるq/k/v projections |
+| scope保証 | decoder projectionの完全修飾pathをPEFTへ渡し、vision towerを除外 |
 | optimizer | AdamW |
 | learning rate | (10^{-4}) |
 | weight decay | 0.01 |
@@ -485,7 +485,9 @@ Raw係数が異なるのはscopeごとの未加重state gradient normが異な�
 
 LoRAは全text decoder layerへ配置される。Output matchingも全ての有効aligned targetで計算され、layer 0--5だけへ制限されない。
 
-ただし、現行のmodule選択は`layers`という名前とlayer indexだけでscopeを判定するため、SigLIP vision towerのencoder layer 0--26にあるq/k/v projectionにもLoRAを追加登録する。text-only学習ではvision towerをforwardしないため、これら2,985,984 parameterにはgradientが付かず、AdamWも更新しない。したがって、実際に更新されるtext decoder側は29,802,496 parameterであり、32,788,480はcheckpointへ登録されるLoRA全体の数である。全学習armで同じ現象が起きるため既存のmatched-capacity比較と数値結果は無効化されないが、checkpointには未学習のvision LoRA weightが含まれる。module scope guardの修正は本文書PRと分離して追跡する。
+scope修正前に開始したCycle 3 runでは、module名`layers`とlayer indexだけでscopeを判定していたため、SigLIP vision towerのencoder layer 0--26にあるq/k/v projectionにもLoRAを追加登録していた。text-only学習ではvision towerをforwardしないため、これら2,985,984 parameterにはgradientが付かず、AdamWも更新しない。したがって、既存runで実際に更新されたtext decoder側は29,802,496 parameterであり、全armのmatched-capacity比較と数値結果は無効化されない。一方、当該checkpointの登録総数32,788,480には未学習のvision LoRA weightが含まれる。
+
+現行コードは、modelのdecoder projectionを完全修飾pathで先に解決し、そのpathだけをPEFTへ渡す。さらにtrainable parameter reportもdecoder pathとlayer×moduleの直積を検証するため、新規runではvision towerへLoRAを登録しない。
 
 局在するのは、
 
