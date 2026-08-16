@@ -489,6 +489,8 @@ scope修正前に開始したCycle 3 runでは、module名`layers`とlayer index
 
 現行コードは、modelのdecoder projectionを完全修飾pathで先に解決し、そのpathだけをPEFTへ渡す。さらにtrainable parameter reportもdecoder pathとlayer×moduleの直積を検証するため、新規runではvision towerへLoRAを登録しない。
 
+Runtime checkpointはscope契約を含むschema v3で保存する。scope修正前のcheckpointはoptimizer parameter groupも異なるため、現行コードへ暗黙変換してresumeしない。Adapter tensor集合とoptimizer groupを読み込み前に照合し、不一致なら「checkpointを生成したcode revisionでresumeする」よう明示して停止する。これにより、未使用vision tensorだけを無言で捨てた後にoptimizer stateを別parameterへ対応づける事故を防ぐ。進行中のscope修正前runは、そのrunを開始したworktree・revisionを変更せず完走またはresumeする。
+
 局在するのは、
 
 - state lossを計算するlayer
