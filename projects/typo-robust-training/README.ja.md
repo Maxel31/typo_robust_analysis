@@ -443,9 +443,19 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --output-dir "${SAE_ROOT}/validation"
 ```
 
-WP-2 validationは異なるcheckpointごとの試行を`${SAE_ROOT}/wp2_attempts.json`へ記録し、
-初回validationと、失敗後に許された最大1回の再学習だけを、新しいvalidation出力directory間でも
-強制します。
+初回WP-2 validationは、変更不能な失敗bundle lineageを
+`${SAE_ROOT}/wp2_attempts.json`へ記録します。救済runは、元のconfig、事前登録、training、
+validation、acceptance、ledgerの各hashと、単一の改訂config / 事前登録hashを結ぶauthorizationが
+別レビューで承認されるまで禁止です。救済のtrainingとvalidationはいずれも
+`--wp2-retry-authorization`、`--wp2-initial-attempt-ledger`、
+`--wp2-initial-training-dir`の3引数をすべて指定する必要があります。
+
+救済trainingはruntime/model初期化より前に、排他的なfilesystem claimとして
+`${SAE_ROOT}/wp2_retry_claim.json`を作成します。training/validationの出力親directoryを変えても、
+project-globalな枠はリセットされません。`--resume`は既存claimと出力directory・bindingsが完全一致
+する場合だけ許可され、validationはclaimが記録したtraining `run.json` SHAと完全一致する
+checkpointだけを受理します。2件目のclaimまたはvalidationは拒否します。現時点では科学的な救済
+authorizationや改訂値はrepositoryへ追加しておらず、このlineage機構そのものは再学習を許可しません。
 
 `--resume`は対象 command 自身の hash-bound checkpoint が既にある場合だけ追加します。固定した
 手法とgateは [`docs/sae_track_plan_v1.ja.md`](docs/sae_track_plan_v1.ja.md) にあります。

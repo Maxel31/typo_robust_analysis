@@ -26,6 +26,16 @@ from typo_robust_training.sae.registry import (
     load_sae_preregistration,
     validate_sae_prepared_sources,
 )
+from typo_robust_training.sae.retry import (
+    Wp2RetryClaim,
+    Wp2RetryInputs,
+    Wp2RetryLineage,
+    claim_wp2_retry_training,
+    load_wp2_retry_lineage,
+    record_wp2_retry_training_completion,
+    record_wp2_retry_validation_completion,
+    require_claimed_wp2_retry_training,
+)
 from typo_robust_training.sae.runtime import HuggingFaceSaeRuntime
 from typo_robust_training.training.tracking import (
     WandbRunPresentation,
@@ -60,6 +70,7 @@ class SaeTrainingRunConfig:
     wandb_entity: str | None
     output_dir: Path
     resume: bool = False
+    retry_inputs: Wp2RetryInputs | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +81,7 @@ class SaeValidationRunConfig:
     checkpoint_dir: Path
     gpu_id: str
     output_dir: Path
+    retry_inputs: Wp2RetryInputs | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -835,6 +847,21 @@ def run_train_saes(
             "activation_budget": protocol.minimum_training_tokens,
         },
     )
+    retry_lineage: Wp2RetryLineage | None = None
+    retry_claim: Wp2RetryClaim | None = None
+    if config.retry_inputs is not None:
+        retry_lineage = load_wp2_retry_lineage(
+            config.retry_inputs,
+            retry_config_sha256=protocol.config_sha256,
+            retry_preregistration_sha256=preregistration.sha256,
+        )
+        retry_claim = claim_wp2_retry_training(
+            retry_lineage,
+            output_dir=output,
+            training_bindings=bindings,
+            resume=config.resume,
+        )
+        bindings = {**bindings, "wp2_retry_claim_sha256": retry_claim.sha256}
     if config.resume:
         completed = _completed_training_result(
             output=output,
@@ -842,6 +869,12 @@ def run_train_saes(
             protocol=protocol,
         )
         if completed is not None:
+            if retry_lineage is not None and retry_claim is not None:
+                record_wp2_retry_training_completion(
+                    retry_lineage,
+                    claim=retry_claim,
+                    training_run_path=completed.run_path,
+                )
             return completed
     runtime = runtime_factory(protocol=protocol, gpu_id=str(config.gpu_id))
     import torch
@@ -982,6 +1015,12 @@ def run_train_saes(
                 "wandb": dict(tracker.provenance()),
             },
         )
+        if retry_lineage is not None and retry_claim is not None:
+            record_wp2_retry_training_completion(
+                retry_lineage,
+                claim=retry_claim,
+                training_run_path=run_path,
+            )
         tracker.finish(
             status="completed",
             summary={
@@ -1196,11 +1235,27 @@ def run_validate_saes(
     preregistration = load_sae_preregistration(config.registry_path, protocol=protocol)
     if str(config.gpu_id) != str(preregistration.sae_gpu_id):
         raise ValueError(f"SAE validation must use preregistered GPU {preregistration.sae_gpu_id}")
-    ledger_path, prior_attempts, checkpoint_run_sha256 = _load_wp2_attempts(
-        checkpoint_dir=config.checkpoint_dir,
-        protocol=protocol,
-        preregistration=preregistration,
-    )
+    retry_lineage: Wp2RetryLineage | None = None
+    retry_claim: Wp2RetryClaim | None = None
+    ledger_path: Path | None = None
+    prior_attempts: list[Mapping[str, object]] = []
+    checkpoint_run_sha256: str | None = None
+    if config.retry_inputs is None:
+        ledger_path, prior_attempts, checkpoint_run_sha256 = _load_wp2_attempts(
+            checkpoint_dir=config.checkpoint_dir,
+            protocol=protocol,
+            preregistration=preregistration,
+        )
+    else:
+        retry_lineage = load_wp2_retry_lineage(
+            config.retry_inputs,
+            retry_config_sha256=protocol.config_sha256,
+            retry_preregistration_sha256=preregistration.sha256,
+        )
+        retry_claim = require_claimed_wp2_retry_training(
+            retry_lineage,
+            checkpoint_dir=config.checkpoint_dir,
+        )
     output = _prepare_output(config.output_dir, resume=False)
     sources = _load_inputs(
         protocol=protocol,
@@ -1339,16 +1394,27 @@ def run_validate_saes(
             "training_run_sha256": sha256_file(Path(config.checkpoint_dir) / "run.json"),
         },
     )
-    _record_wp2_attempt(
-        ledger_path=ledger_path,
-        prior_attempts=prior_attempts,
-        checkpoint_run_sha256=checkpoint_run_sha256,
-        output_dir=output,
-        passed=all_passed,
-        acceptance_sha256=sha256_file(acceptance_path),
-        protocol=protocol,
-        preregistration=preregistration,
-    )
+    if retry_lineage is not None and retry_claim is not None:
+        record_wp2_retry_validation_completion(
+            retry_lineage,
+            claim=retry_claim,
+            output_dir=output,
+            validation_run_path=run_path,
+            acceptance_path=acceptance_path,
+        )
+    else:
+        if ledger_path is None or checkpoint_run_sha256 is None:
+            raise AssertionError("initial WP-2 ledger state was not loaded")
+        _record_wp2_attempt(
+            ledger_path=ledger_path,
+            prior_attempts=prior_attempts,
+            checkpoint_run_sha256=checkpoint_run_sha256,
+            output_dir=output,
+            passed=all_passed,
+            acceptance_sha256=sha256_file(acceptance_path),
+            protocol=protocol,
+            preregistration=preregistration,
+        )
     return SaeValidationResult(
         acceptance_path=acceptance_path,
         run_path=run_path,

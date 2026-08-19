@@ -113,6 +113,15 @@ where dead means `p_i < 1e-5`, median splice KL <= 0.15 nats/token, and saved
 `p_i` plus median reconstruction error `s`. One documented lambda/token adjustment
 is allowed; a second failure stops the track.
 
+The initial failed WP-2 ledger is immutable. A full-bundle retry is not
+authorized by the runner alone: a separately reviewed authorization must bind
+the complete initial config/preregistration/training/validation/acceptance/ledger
+hash chain to one amended config and preregistration hash. Retry training uses
+an `O_EXCL` project-root claim before runtime/model initialization. Exact resume
+must match that claim, retry validation must use its recorded training-run SHA,
+and changing any output parent cannot create a third bundle. No retry
+authorization or scientific retry value is added by this implementation.
+
 WP-5 is not authorized until two accepted layer-5 seeds exist. Its thresholds
 are frozen at `median(R_z) >= 0.5 * median(R_full)` and
 `median(R_sup) >= 0.25 * median(R_full)`, with direction replication across the

@@ -9,6 +9,31 @@ from pathlib import Path
 from typo_robust_training.data.builder import BuildTrainingDataConfig, run_build_training_data
 
 
+def _wp2_retry_inputs(args: argparse.Namespace):
+    from typo_robust_training.sae.retry import Wp2RetryInputs
+
+    values = (
+        args.wp2_retry_authorization,
+        args.wp2_initial_attempt_ledger,
+        args.wp2_initial_training_dir,
+    )
+    if all(value is None for value in values):
+        return None
+    if any(value is None for value in values):
+        raise ValueError("all WP-2 retry lineage arguments are required together")
+    return Wp2RetryInputs(
+        authorization_path=args.wp2_retry_authorization,
+        initial_attempt_ledger_path=args.wp2_initial_attempt_ledger,
+        initial_training_dir=args.wp2_initial_training_dir,
+    )
+
+
+def _add_wp2_retry_lineage_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--wp2-retry-authorization", type=Path)
+    parser.add_argument("--wp2-initial-attempt-ledger", type=Path)
+    parser.add_argument("--wp2-initial-training-dir", type=Path)
+
+
 def _run_build_data(args: argparse.Namespace) -> int:
     try:
         result = run_build_training_data(
@@ -268,6 +293,7 @@ def _run_train_sparse_autoencoders(args: argparse.Namespace) -> int:
                 wandb_entity=args.wandb_entity,
                 output_dir=args.output_dir,
                 resume=args.resume,
+                retry_inputs=_wp2_retry_inputs(args),
             )
         )
     except (FileExistsError, RuntimeError, ValueError) as exc:
@@ -296,6 +322,7 @@ def _run_validate_sparse_autoencoders(args: argparse.Namespace) -> int:
                 checkpoint_dir=args.checkpoint_dir,
                 gpu_id=args.gpu_id,
                 output_dir=args.output_dir,
+                retry_inputs=_wp2_retry_inputs(args),
             )
         )
     except (FileExistsError, RuntimeError, ValueError) as exc:
@@ -505,6 +532,7 @@ def register_commands(
     sae_training.add_argument("--wandb-entity")
     sae_training.add_argument("--output-dir", required=True, type=Path)
     sae_training.add_argument("--resume", action="store_true")
+    _add_wp2_retry_lineage_arguments(sae_training)
     sae_training.set_defaults(_typo_cot_plugin_handler=_run_train_sparse_autoencoders)
 
     sae_validation = commands.add_parser(
@@ -517,6 +545,7 @@ def register_commands(
     sae_validation.add_argument("--checkpoint-dir", required=True, type=Path)
     sae_validation.add_argument("--gpu-id", required=True)
     sae_validation.add_argument("--output-dir", required=True, type=Path)
+    _add_wp2_retry_lineage_arguments(sae_validation)
     sae_validation.set_defaults(_typo_cot_plugin_handler=_run_validate_sparse_autoencoders)
 
     selection = commands.add_parser(

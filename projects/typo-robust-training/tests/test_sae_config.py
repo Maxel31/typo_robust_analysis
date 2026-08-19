@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from typo_robust_training.cli import register_commands
+from typo_robust_training.cli import _wp2_retry_inputs, register_commands
 from typo_robust_training.sae.config import load_sae_protocol
 from typo_robust_training.sae.registry import load_sae_preregistration
 
@@ -286,10 +286,19 @@ def test_cli_keeps_sae_calibration_training_and_validation_separate() -> None:
             "--output-dir",
             "sae",
             "--resume",
+            "--wp2-retry-authorization",
+            "retry-authorization.json",
+            "--wp2-initial-attempt-ledger",
+            "failed/wp2_attempts.json",
+            "--wp2-initial-training-dir",
+            "failed/training",
         ]
     )
     assert training.resume is True
     assert training.l1_selection == Path("l1-selection.json")
+    assert training.wp2_retry_authorization == Path("retry-authorization.json")
+    assert training.wp2_initial_attempt_ledger == Path("failed/wp2_attempts.json")
+    assert training.wp2_initial_training_dir == Path("failed/training")
 
     validation = root.parse_args(
         [
@@ -309,3 +318,14 @@ def test_cli_keeps_sae_calibration_training_and_validation_separate() -> None:
         ]
     )
     assert validation.validation_data == [Path("held-in.jsonl")]
+
+
+def test_cli_requires_all_wp2_retry_lineage_arguments_together() -> None:
+    partial = argparse.Namespace(
+        wp2_retry_authorization=Path("retry-authorization.json"),
+        wp2_initial_attempt_ledger=None,
+        wp2_initial_training_dir=None,
+    )
+
+    with pytest.raises(ValueError, match="required together"):
+        _wp2_retry_inputs(partial)

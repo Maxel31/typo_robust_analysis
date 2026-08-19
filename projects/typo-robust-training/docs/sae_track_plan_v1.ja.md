@@ -62,3 +62,10 @@ WP-2 は FVU <= 0.35、median L0 in [30,150]、dead feature 率 <= 20%、splice 
 <= 0.15 nats/token、`p_i` と再構成誤差中央値 `s` の保存を要求します。WP-5 は層 5 の 2 seed で
 `median(R_z) >= 0.5 median(R_full)` と因果方向の再現を必須とします。合格前に neuron/head/feature
 を因果 component として対外的に主張しません。
+
+初回の失敗WP-2 ledgerは変更不能です。runnerを実装しただけではfull-bundle救済は許可されません。
+別レビュー済みauthorizationが、初回config・事前登録・training・validation・acceptance・ledgerの
+完全なhash chainと、単一の改訂config / 事前登録hashを結ぶ必要があります。救済trainingは
+runtime/model初期化前にproject rootへ`O_EXCL` claimを作成し、完全一致するclaimだけをresumeできます。
+救済validationはclaimに記録されたtraining-run SHAだけを受理し、出力親directoryを変えても3本目の
+bundleは作れません。本実装は救済authorizationや科学的な改訂値を追加しません。

@@ -414,11 +414,11 @@ FVUが良くても、modelが利用する小さな方向を失って挙動を壊
 
 WP-2のacceptance単位は、layer 5 seed 42、layer 5 seed 43、layer 20 seed 42を含む**3本一組のtraining bundle**である。3本すべてが合格したときだけbundleをacceptする。
 
-最初のbundleが不合格の場合、registry上の研究方針は**project全体で最大1回の新しい3本一組full-retrain bundle**だけを許す。SAEごとに1回ずつではない。ただし現runnerのattempt ledgerはcheckpoint directoryの親へscopeされるため、このproject-global上限を強制しない。新しいrun directoryではledgerが空から始まり、技術的には追加bundleを検収できてしまう。またconfig / preregistration hash検査も同一ledger内だけで有効である。従って、現runnerは救済を「実行不能」にするのではなく、**研究方針違反をfail-closedに防げない**。
+最初のbundleが不合格の場合、registry上の研究方針は**project全体で最大1回の新しい3本一組full-retrain bundle**だけを許す。SAEごとに1回ずつではない。初回ledgerだけでは新しい親directoryで履歴をリセットできたため、runnerへproject-global claimを追加した。別レビュー済みauthorizationが初回config・事前登録・training・validation・acceptance・ledgerのhash chainと単一の改訂config / 事前登録hashを結び、救済trainingはruntime/model初期化前に`O_EXCL` claimを取得する。完全一致するclaimだけをresumeでき、validationはclaim済みtraining-run SHAだけを受理するため、親directoryを変えても追加bundleを検収できない。
 
-WP-2不合格時は自動再学習せず停止する。救済を使う場合は、結果に応じて複数値を探索せず、開始前に単一変更を固定したregistry amendment、新しいconfig / preregistration hash、失敗bundleを参照するproject-global ledger lineage、およびrun directoryを変えても上限をfail-closedに検証するrunner対応を別PRで先に実装・レビューする。この対応なしに新run directoryを使って救済を実行しない。変更できる種類は \(\lambda_{L1}\) **または**SAE training activation-token budgetのどちらか一方だけで、Architecture、clean-only data contract、WP-2 gate、splice cohortは変更しない。再学習bundleも不合格なら、3本をWP-3/4/5へ使わず、2回目の救済を与えない。
+WP-2不合格時は自動再学習せず停止する。救済を使う場合は、結果に応じて複数値を探索せず、開始前に単一変更を固定したregistry amendment、新しいconfig / preregistration hash、失敗bundleを参照するauthorizationを別PRでレビューする。project-global lineage enforcementは実装済みだが、科学的な救済authorizationや改訂値はまだ追加していないため、現時点では救済runを実行しない。変更できる種類は \(\lambda_{L1}\) **または**SAE training activation-token budgetのどちらか一方だけで、Architecture、clean-only data contract、WP-2 gate、splice cohortは変更しない。再学習bundleも不合格なら、3本をWP-3/4/5へ使わず、2回目の救済を与えない。
 
-このWP-2 retrain枠は、WP-1前に行ったL1 calibration amendmentとは別である。Calibration amendmentは「全候補のL0が範囲外だったため、gridとcalibration token数を一度だけ変更した」履歴で、残り枠は0である。WP-2 retrainは完成した3-SAE bundleがall-three acceptance gateを外した場合の救済であり、calibration grid再探索、複数runからの選択、gate変更を許可しない。つまり、calibration amendmentはglobalに1回消費済み、WP-2救済も研究方針上はglobalに最大1 full-retrain bundleである。ただし、この上限のglobal enforcementは未実装なので、上記runner対応が入るまで実行禁止とする。
+このWP-2 retrain枠は、WP-1前に行ったL1 calibration amendmentとは別である。Calibration amendmentは「全候補のL0が範囲外だったため、gridとcalibration token数を一度だけ変更した」履歴で、残り枠は0である。WP-2 retrainは完成した3-SAE bundleがall-three acceptance gateを外した場合の救済であり、calibration grid再探索、複数runからの選択、gate変更を許可しない。つまり、calibration amendmentはglobalに1回消費済み、WP-2救済も研究方針上はglobalに最大1 full-retrain bundleである。Global enforcementは実装済みだがauthorizationは未作成なので、別PRで科学的変更とhash chainが承認されるまで実行禁止である。
 
 ## 7. WP-3 / WP-4: 診断
 
