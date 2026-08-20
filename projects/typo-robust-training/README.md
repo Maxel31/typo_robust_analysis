@@ -272,21 +272,21 @@ checkpoint contents are never sent.
 bindings/presentation, URL, status, and the resume boundary so `--resume`
 continues the same W&B run without duplicating the loss curve.
 
-W&B names expose the scientific role directly; opaque arm abbreviations are
-not used. The adapter configs published in this feature are the version-1
-Cycle 1 reproduction suite, so their historical status is explicit:
+W&B names avoid opaque arm abbreviations. The version-1 Cycle 1 reproduction
+suite uses the broad `Legacy` role and distinguishes conditions by the exact
+operation name, job type, and condition tag:
 
 | Role shown in W&B | Operation | Meaning |
 |---|---|---|
-| `Historical baseline` | `Noisy-language-model training` | Cycle 1 ordinary causal-language-model baseline on noisy text |
-| `Historical pilot` | `Output/answer/clean-loss training` | Cycle 1 multi-loss output-matching pilot |
-| `Historical control` | `Global relative-MSE state alignment` | Cycle 1 all-layer/all-token state control |
-| `Historical ablation` | `Component-level relative-MSE state distillation` | Failed Cycle 1 neuron/head experiment; not the confirmatory method |
+| `Legacy` | `Noisy language-model training` | Cycle 1 ordinary causal-language-model baseline on noisy text |
+| `Legacy` | `Output/answer/clean-loss pilot` | Cycle 1 multi-loss output-matching pilot |
+| `Legacy` | `Global relative-MSE state pilot` | Cycle 1 all-layer/all-token state control |
+| `Legacy` | `Component-level state distillation` | Failed Cycle 1 neuron/head experiment; not the confirmatory method |
 
-The suffix records state layers, model, optimizer-step budget, and seed. All
-of these version-1 runs are placed in the separate `Historical Cycle 1` group,
-so they cannot be mistaken for the bounded residual-window comparison, whose
-config and W&B mapping are introduced with that later training feature.
+The suffix records state layers, model, optimizer-step budget, and seed. These
+version-1 runs use the runtime group `Cycle 1 · <model> · <budget>`; their
+operation, job type, and condition tags keep them distinct from the bounded
+residual-window comparison.
 
 ### Confirmatory Cycle 3 training and controls
 
@@ -298,6 +298,18 @@ selected causal window. The random-window and all-layer controls change only
 the state-loss layer scope.
 
 ```bash
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-localized-state-distillation \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-causal-window-10m.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --monitor-data "${TRAIN_ROOT}/evaluation-data/robustness-v1" \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --output-dir "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-42"
+
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-random-window-state-distillation \
   --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-random-window-10m.yaml" \
@@ -321,11 +333,11 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --output-dir "${TRAIN_ROOT}/training/cycle3/all-layer-state-distillation/seed-42"
 ```
 
-Run the two controls serially when only one GPU is available. Add `--resume`
+Run the three conditions serially when only one GPU is available. Add `--resume`
 only when the same output directory already contains an exact compatible
-checkpoint. W&B uses descriptive names beginning with `Random-window control`
-and `All-layer control`; each name also includes the operation, layer range,
-model, token budget, and seed.
+checkpoint. W&B uses descriptive names beginning with `Proposed method`,
+`Random-window control`, and `All-layer control`; each name also includes the
+operation, layer range, model, token budget, and seed.
 
 ## 5. Freeze the independent evaluation study
 

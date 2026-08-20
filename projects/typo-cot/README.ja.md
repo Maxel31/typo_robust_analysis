@@ -336,15 +336,22 @@ PEFTを追加しても論文再現環境を変更しないよう、学習には�
 使用します。datasetの役割、leakage防止、layerからcomponentへ進む局所化、loss、
 baseline、PR前の実測gateは
 [`docs/robustness_training_plan_v1.md`](docs/robustness_training_plan_v1.md) で固定しています。
-以下も `interface-frozen` であり、**まだ実行できません**。特に学習実装は、held-out
-評価でclean性能を維持しながらtypo頑健性が向上するまでPRを作成しません。
-ここでの `interface-frozen` はREADME上の実装前ラベル（prose-only label）であり、
-実測gateを満たすまで学習commandを実行可能なexperiment catalogには登録しません。
+以下のcommandは、別lockfileを持つ学習projectが実装・登録済みです。このblockは
+**逐次実行できる自己完結pipelineではなく、複数のstudy cycleを含むinterface catalog**
+です。各前提資産に必要なprovenanceとinterfaceは
+[`projects/typo-robust-training/README.ja.md`](../typo-robust-training/README.ja.md)
+で定義します。事前構築済みの64M training-data artifactや外部で凍結されたdataなど、
+一部の前提資産は別途供給されるため、このrunbookが必ずしもすべての前提資産を
+生成するわけではありません。
+manifest、corpus、localization record、checkpointが不足している場合は、暗黙に生成せず
+明示的に失敗します。実測runでは、評価tierとsealed dataの開封規則を引き続き遵守してください。
 
 ```bash
 GPU_ID=0
 TRAIN_PROJECT=projects/typo-robust-training
 TRAIN_ROOT=projects/typo-robust-training/results
+EVALUATION_DATA="${TRAIN_ROOT}/evaluation-data/robustness-v1"
+WANDB_PROJECT=typo-robust-training
 
 uv sync --project "${TRAIN_PROJECT}" --locked
 
@@ -374,6 +381,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-noisy-language-model \
   --config "${TRAIN_PROJECT}/configs/baselines/noisy-language-model.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --wandb-project "${WANDB_PROJECT}" \
   --seed 42 --gpu-id "${GPU_ID}" \
   --output-dir "${TRAIN_ROOT}/training/noisy-language-model/seed-42"
 
@@ -381,6 +389,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-output-matching \
   --config "${TRAIN_PROJECT}/configs/baselines/output-matching.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --wandb-project "${WANDB_PROJECT}" \
   --seed 42 --gpu-id "${GPU_ID}" \
   --output-dir "${TRAIN_ROOT}/training/output-matching/seed-42"
 
@@ -388,6 +397,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-global-state-alignment \
   --config "${TRAIN_PROJECT}/configs/baselines/global-state-alignment.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --wandb-project "${WANDB_PROJECT}" \
   --seed 42 --gpu-id "${GPU_ID}" \
   --output-dir "${TRAIN_ROOT}/training/global-state-alignment/seed-42"
 
@@ -397,18 +407,23 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --layer-selection "${TRAIN_ROOT}/localization/layers/layer_selection.json" \
   --component-selection "${TRAIN_ROOT}/localization/components/component_selection.json" \
+  --wandb-project "${WANDB_PROJECT}" \
   --seed 42 --gpu-id "${GPU_ID}" \
   --output-dir "${TRAIN_ROOT}/training/localized-state-distillation/seed-42"
 
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot evaluate-typo-robustness \
   --config "${TRAIN_PROJECT}/configs/gemma4b-evaluation.yaml" \
-  --data-manifest "${TRAIN_ROOT}/data/gemma4b-sanity/evaluation_manifest.json" \
-  --base-model google/gemma-3-4b-it \
-  --checkpoints "${TRAIN_ROOT}/training" \
-  --splits same-task unseen-task unseen-typo \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --evaluation-data "${EVALUATION_DATA}" \
+  --evaluation-role tune \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-42/adapter" \
+  --splits same-task unseen-task unseen-content unseen-typo \
   --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/evaluation/gemma4b"
+  --output-dir "${TRAIN_ROOT}/evaluation/tune/targeted-seed-42"
 ```
 
 ## clean/editedペアを生成する

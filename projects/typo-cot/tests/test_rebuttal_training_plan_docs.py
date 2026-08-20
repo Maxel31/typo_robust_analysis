@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import re
 from pathlib import Path
 
@@ -52,11 +53,17 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
 
     for contents in (project_english, project_japanese):
         examples = _bash_blocks(contents)
-        assert "interface-frozen" in contents
         for command in (*REBUTTAL_COMMANDS, *TRAINING_COMMANDS):
             assert f"typo-cot {command}" in examples
 
-    assert "not yet runnable" in project_english
+    assert "implements and registers the commands" in project_english
+    assert "interface catalog, not a sequential or self-contained" in project_english
+    assert "projects/typo-robust-training/README.md" in project_english
+    assert "required provenance and interface" in project_english
+    assert "prebuilt 64M training-data artifact" in project_english
+    assert "does not necessarily materialize every prerequisite" in project_english
+    assert "to materialize each prerequisite" not in project_english
+    assert "fails explicitly rather than being" in project_english
     assert "`build-rebuttal-manifest` is implemented and CPU-only" in project_english
     assert "`six-setting-patch-controls` is implemented and GPU-only" in project_english
     assert "`source-write-coordinate-grid` is implemented and GPU-only" in project_english
@@ -65,8 +72,13 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
     assert "`tokenization-severity-analysis` is implemented and CPU-only" in project_english
     assert "`subword-position-patching` is implemented and GPU-only" in project_english
     assert "`held-out-window-evaluation` is implemented and GPU-only" in project_english
-    assert "prose-only pre-implementation label" in project_english
-    assert "まだ実行できません" in project_japanese
+    assert "学習projectが実装・登録済み" in project_japanese
+    assert "自己完結pipelineではなく、複数のstudy cycleを含むinterface catalog" in project_japanese
+    assert "projects/typo-robust-training/README.ja.md" in project_japanese
+    assert "必要なprovenanceとinterface" in project_japanese
+    assert "事前構築済みの64M training-data artifact" in project_japanese
+    assert "必ずしもすべての前提資産を" in project_japanese
+    assert "各前提資産の作成手順" not in project_japanese
     assert "`build-rebuttal-manifest` は実装済みのCPU専用コマンド" in project_japanese
     assert "`six-setting-patch-controls` は実装済みのGPU専用コマンド" in project_japanese
     assert "`source-write-coordinate-grid` は実装済みのGPU専用コマンド" in project_japanese
@@ -75,7 +87,6 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
     assert "`tokenization-severity-analysis` は実装済みのCPU専用コマンド" in project_japanese
     assert "`subword-position-patching` は実装済みのGPU専用コマンド" in project_japanese
     assert "`held-out-window-evaluation` は実装済みのGPU専用コマンド" in project_japanese
-    assert "README上の実装前ラベル" in project_japanese
 
     english_examples = _bash_blocks(project_english)
     japanese_examples = _bash_blocks(project_japanese)
@@ -110,7 +121,14 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
         "subword-position-patching",
         "held-out-window-evaluation",
     }
-    assert set(TRAINING_COMMANDS) <= registered
+    plugin_names = {
+        entry_point.name
+        for entry_point in importlib.metadata.entry_points(group="typo_cot.commands")
+    }
+    expected_training_commands = (
+        set(TRAINING_COMMANDS) if "robustness-training" in plugin_names else set()
+    )
+    assert set(TRAINING_COMMANDS).intersection(registered) == expected_training_commands
     assert get_experiment("build-rebuttal-manifest").status == "implemented"
     assert get_experiment("six-setting-patch-controls").status == "implemented"
     assert get_experiment("source-write-coordinate-grid").status == "implemented"

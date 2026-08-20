@@ -240,19 +240,19 @@ API key、checkpoint内容は送信しません。
 status、resume境界だけを保存し、`--resume`時は同一W&B runへ継続してloss curveを
 重複させません。
 
-W&B名には、略称ではなく科学的な役割を直接表示します。この機能で公開するadapter
-configはversion 1のCycle 1再現一式なので、過去のrunであることも名前に明示します。
+W&B名では不透明な略称を使いません。version 1のCycle 1再現一式では、共通の`Legacy`
+roleを使い、正確なoperation名、job type、condition tagで各条件を区別します。
 
 | W&Bに表示する役割 | 操作 | 意味 |
 |---|---|---|
-| `Historical baseline` | `Noisy-language-model training` | Cycle 1の通常のnoisy-text causal language-model baseline |
-| `Historical pilot` | `Output/answer/clean-loss training` | Cycle 1の複数lossによるoutput-matching pilot |
-| `Historical control` | `Global relative-MSE state alignment` | Cycle 1の全layer・全token state control |
-| `Historical ablation` | `Component-level relative-MSE state distillation` | 失敗したCycle 1 neuron/head実験。確証手法ではない |
+| `Legacy` | `Noisy language-model training` | Cycle 1の通常のnoisy-text causal language-model baseline |
+| `Legacy` | `Output/answer/clean-loss pilot` | Cycle 1の複数lossによるoutput-matching pilot |
+| `Legacy` | `Global relative-MSE state pilot` | Cycle 1の全layer・全token state control |
+| `Legacy` | `Component-level state distillation` | 失敗したCycle 1 neuron/head実験。確証手法ではない |
 
-後半にはstate対象層、model、optimizer-step予算、seedを記録します。version 1のrunはすべて
-`Historical Cycle 1`という別groupに分けます。有界residual-window比較のconfigとW&B mappingは
-その学習機能と同じ変更で導入するため、未実装の確証用runと取り違えません。
+後半にはstate対象層、model、optimizer-step予算、seedを記録します。version 1のrunはruntimeの
+`Cycle 1 · <model> · <budget>` groupを使い、operation、job type、condition tagによって
+有界residual-window比較と区別します。
 
 ### 確証用Cycle 3の学習と対照条件
 
@@ -262,6 +262,18 @@ clean:noisy交互列、10M student-token予算を固定します。提案条件�
 ランダム窓対照と全層対照では、state lossを測るlayer範囲だけを変更します。
 
 ```bash
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-localized-state-distillation \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-causal-window-10m.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --monitor-data "${TRAIN_ROOT}/evaluation-data/robustness-v1" \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --output-dir "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-42"
+
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-random-window-state-distillation \
   --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-random-window-10m.yaml" \
@@ -285,9 +297,9 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --output-dir "${TRAIN_ROOT}/training/cycle3/all-layer-state-distillation/seed-42"
 ```
 
-利用可能なGPUが1枚の場合は2条件を直列に実行します。同じoutput directoryに互換性のある
+利用可能なGPUが1枚の場合は3条件を直列に実行します。同じoutput directoryに互換性のある
 exact checkpointがある場合だけ`--resume`を追加します。W&Bでは
-`Random-window control`または`All-layer control`から始まり、
+`Proposed method`、`Random-window control`、または`All-layer control`から始まり、
 操作、層範囲、モデル、token budget、seedを含む説明的な名前を使用します。
 
 ## 5. 独立した評価studyを凍結する
