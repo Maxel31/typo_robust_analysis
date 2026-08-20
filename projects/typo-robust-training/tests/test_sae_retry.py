@@ -18,6 +18,7 @@ from typo_robust_training.sae import retry as retry_module
 from typo_robust_training.sae.retry import (
     Wp2RetryInputs,
     claim_wp2_retry_training,
+    completed_wp2_retry_training_if_recorded,
     hold_wp2_retry_training_lease,
     load_wp2_retry_lineage,
     record_wp2_retry_training_completion,
@@ -601,6 +602,38 @@ def test_training_completion_idempotence_rejects_an_exact_payload_symlink(
             lineage,
             claim=claim,
             training_run_path=run_path,
+        )
+
+
+def test_recorded_training_completion_rejects_deleted_output(tmp_path: Path) -> None:
+    """Deletion after completion must not turn resume into another full retrain."""
+
+    lineage = _lineage(tmp_path)
+    checkpoint = tmp_path / "retry" / "training"
+    base_bindings = _retry_bindings(lineage, source_record_sha256="e" * 64)
+    claim = claim_wp2_retry_training(
+        lineage,
+        output_dir=checkpoint,
+        training_bindings=base_bindings,
+        resume=False,
+    )
+    run_path = checkpoint / "run.json"
+    _write(
+        run_path,
+        {"bindings": {**base_bindings, "wp2_retry_claim_sha256": claim.sha256}},
+    )
+    record_wp2_retry_training_completion(
+        lineage,
+        claim=claim,
+        training_run_path=run_path,
+    )
+    shutil.rmtree(checkpoint)
+
+    with pytest.raises(ValueError, match="consumed retry cannot be re-executed"):
+        completed_wp2_retry_training_if_recorded(
+            lineage,
+            claim=claim,
+            checkpoint_dir=checkpoint,
         )
 
 

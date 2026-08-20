@@ -418,6 +418,11 @@ rejects exact identity/content overlap, and applies the frozen character-5gram
 near-duplicate check. This is a separate data-preparation command and uses no
 GPU:
 
+Use one separately reviewed `ROOTED_REGISTRY` containing `wp2_project_root`
+and `wp2_project_root_identity` for all four commands below. The checked-in
+legacy registry-v1 is evidence only. Mixing the two changes the bound
+preregistration SHA, so validation rejects that training run.
+
 ```bash
 GPU_ID="0"
 SAE_ROOT="/diskthalys/ssd14tc/sfukuhata/typo_sae_artifacts/gemma4b-v1"
@@ -426,10 +431,11 @@ EVALUATION_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-tr
 LOCALIZATION_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-training/results/localization/generic-joint-window-v1/pairs"
 SUPPLEMENT_DATA="${SAE_ROOT}/clean-corpus/sae_clean_supplement.jsonl"
 WANDB_PROJECT="typo-robustness-sae"
+ROOTED_REGISTRY="/absolute/path/to/reviewed/rooted-sae-preregistration.yaml"
 
 uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-sae-clean-corpus \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
-  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --registry "${ROOTED_REGISTRY}" \
   --existing-data "${TRAINING_DATA}" \
   --exclude-data "${EVALUATION_DATA}" \
   --exclude-data "${LOCALIZATION_DATA}" \
@@ -444,7 +450,7 @@ clean stream:
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot calibrate-sparse-autoencoder-l1 \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
-  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --registry "${ROOTED_REGISTRY}" \
   --training-data "${TRAINING_DATA}" \
   --training-data "${SUPPLEMENT_DATA}" \
   --gpu-id "${GPU_ID}" \
@@ -462,7 +468,7 @@ unique source tokens.
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-sparse-autoencoders \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
-  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --registry "${ROOTED_REGISTRY}" \
   --training-data "${TRAINING_DATA}" \
   --training-data "${SUPPLEMENT_DATA}" \
   --l1-selection "${SAE_ROOT}/l1-calibration/l1_selection.json" \
@@ -485,7 +491,7 @@ it does not run task accuracy or open any evaluation tier.
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot validate-sparse-autoencoders \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
-  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --registry "${ROOTED_REGISTRY}" \
   --validation-data "${TRAINING_DATA}" \
   --validation-data "${SUPPLEMENT_DATA}" \
   --checkpoint-dir "${SAE_ROOT}/training" \
@@ -541,6 +547,10 @@ Training and validation output paths likewise reject final symlinks.
 Existing claim/reservation/completion authorities are read through the same
 anchored parent with a nonblocking `O_NOFOLLOW` descriptor and must be
 same-owner, singly linked regular files; equal-payload aliases are not accepted.
+On retry `--resume`, the training-completion authority is checked before
+runtime/model initialization. If its exact hash-bound run and model artifacts
+still exist, the completed result is returned without training; if any recorded
+output is missing or differs, resume fails closed and cannot spend the retry again.
 
 If the process dies after the claim but before a training checkpoint, exact
 `--resume` is allowed only when the output is absent/empty or contains the exact

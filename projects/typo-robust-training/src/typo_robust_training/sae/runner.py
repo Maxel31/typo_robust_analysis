@@ -36,6 +36,7 @@ from typo_robust_training.sae.retry import (
     Wp2RetryLineage,
     Wp2ValidationReservation,
     claim_wp2_retry_training,
+    completed_wp2_retry_training_if_recorded,
     hold_wp2_retry_training_lease,
     load_wp2_retry_lineage,
     record_wp2_retry_training_completion,
@@ -1199,6 +1200,30 @@ def _run_train_saes_loaded(
         bindings = {**bindings, "wp2_retry_claim_sha256": retry_claim.sha256}
         if retry_implementation_sha256() != retry_implementation_digest:
             raise ValueError("SAE WP-2 retry implementation changed after the global claim")
+        if config.resume:
+            recorded_completion = completed_wp2_retry_training_if_recorded(
+                retry_lineage,
+                claim=retry_claim,
+                checkpoint_dir=output,
+            )
+            if recorded_completion is not None:
+                completed = _completed_training_result(
+                    output=output,
+                    bindings=bindings,
+                    protocol=protocol,
+                )
+                if completed is None:
+                    raise ValueError(
+                        "WP-2 recorded retry training output is incomplete; the consumed "
+                        "retry cannot be re-executed"
+                    )
+                if (
+                    completed.run_path != recorded_completion.training_run_path
+                    or sha256_file(completed.run_path)
+                    != recorded_completion.training_run_sha256
+                ):
+                    raise ValueError("WP-2 recorded retry training result differs")
+                return completed
         # Only the exact preexisting claim may authorize resume. No output
         # artifact is created or rewritten before that comparison succeeds.
         if config.resume and (output / "checkpoint.json").is_file():

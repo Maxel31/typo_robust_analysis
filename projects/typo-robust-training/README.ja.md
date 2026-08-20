@@ -371,6 +371,10 @@ SAE は診断・将来研究用です。GPU 5/6 で保護している output mat
 凍結済み評価とlocalizationの全roleを渡す必要があり、ID・contentの完全一致に加えて、固定した
 character 5-gram近重複検査を行います。このデータ準備commandはGPUを使用しません。
 
+以下4 commandでは、`wp2_project_root`と`wp2_project_root_identity`を持つ、別途レビュー済みの
+同一`ROOTED_REGISTRY`を使用します。repository内のlegacy registry-v1はlineage証拠専用です。
+両者を混在させるとbindされたpreregistration SHAが変わり、validationがtraining runを拒否します。
+
 ```bash
 GPU_ID="0"
 SAE_ROOT="/diskthalys/ssd14tc/sfukuhata/typo_sae_artifacts/gemma4b-v1"
@@ -379,10 +383,11 @@ EVALUATION_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-tr
 LOCALIZATION_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-training/results/localization/generic-joint-window-v1/pairs"
 SUPPLEMENT_DATA="${SAE_ROOT}/clean-corpus/sae_clean_supplement.jsonl"
 WANDB_PROJECT="typo-robustness-sae"
+ROOTED_REGISTRY="/absolute/path/to/reviewed/rooted-sae-preregistration.yaml"
 
 uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-sae-clean-corpus \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
-  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --registry "${ROOTED_REGISTRY}" \
   --existing-data "${TRAINING_DATA}" \
   --exclude-data "${EVALUATION_DATA}" \
   --exclude-data "${LOCALIZATION_DATA}" \
@@ -396,7 +401,7 @@ uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-sae-clean-corpus \
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot calibrate-sparse-autoencoder-l1 \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
-  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --registry "${ROOTED_REGISTRY}" \
   --training-data "${TRAINING_DATA}" \
   --training-data "${SUPPLEMENT_DATA}" \
   --gpu-id "${GPU_ID}" \
@@ -413,7 +418,7 @@ manifestを `--training-data` の繰り返しで追加します。
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-sparse-autoencoders \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
-  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --registry "${ROOTED_REGISTRY}" \
   --training-data "${TRAINING_DATA}" \
   --training-data "${SUPPLEMENT_DATA}" \
   --l1-selection "${SAE_ROOT}/l1-calibration/l1_selection.json" \
@@ -435,7 +440,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot validate-sparse-autoencoders \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
-  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --registry "${ROOTED_REGISTRY}" \
   --validation-data "${TRAINING_DATA}" \
   --validation-data "${SUPPLEMENT_DATA}" \
   --checkpoint-dir "${SAE_ROOT}/training" \
@@ -476,6 +481,9 @@ open済みdirectoryのidentity一致を検証します。改名したproject roo
 training/validationのoutput pathも最終symlinkを拒否します。
 既存のclaim/reservation/completion authorityも同じ固定済み親に対するnonblocking `O_NOFOLLOW` descriptorから読み、
 同一user所有・single-linkの通常fileだけを受理します。payloadが同一でもaliasは受理しません。
+救済trainingの`--resume`ではruntime/model初期化より前にtraining completion authorityを確認します。
+hashでbindされたrun/model artifactが完全一致して残る場合は再学習せず完了結果を返し、記録済みoutputの
+一部でも欠損・不一致ならfail closedとして、消費済みの救済枠を再度使うことを禁止します。
 
 claim後かつtraining checkpoint作成前にprocessが停止した場合、同一claimの`--resume`は、outputが
 未作成/空、または完全一致するcanonical source registry（および未完了のatomic checkpoint一時file、

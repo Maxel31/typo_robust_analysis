@@ -175,6 +175,11 @@ def _install_minimal_training_fixture(
             "record_wp2_retry_training_completion",
             lambda *_args, **_kwargs: None,
         )
+        monkeypatch.setattr(
+            runner_module,
+            "completed_wp2_retry_training_if_recorded",
+            lambda *_args, **_kwargs: None,
+        )
     else:
         monkeypatch.setattr(runner_module, "_load_inputs", write_sources)
     monkeypatch.setattr(
@@ -724,6 +729,10 @@ def test_wp2_retry_claim_precedes_runtime_and_model_initialization(
         "typo_robust_training.sae.runner.record_wp2_retry_training_completion",
         lambda *_args, **_kwargs: None,
     )
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner.completed_wp2_retry_training_if_recorded",
+        lambda *_args, **_kwargs: None,
+    )
     selection = tmp_path / "l1.json"
     selection.write_text("{}\n", encoding="utf-8")
 
@@ -1172,6 +1181,45 @@ def test_retry_resume_with_missing_output_checks_claim_before_creating_output(
             tracker_factory=lambda **_kwargs: _Tracker(),
         )
 
+    assert not output.exists()
+
+
+def test_retry_resume_rejects_recorded_completion_with_deleted_output_before_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completion authority consumes the retry even if its output was deleted."""
+
+    base = _install_minimal_training_fixture(tmp_path, monkeypatch, retry=True)
+    output = tmp_path / "deleted-retry-training"
+    runtime_reached = False
+
+    monkeypatch.setattr(
+        runner_module,
+        "claim_wp2_retry_training",
+        lambda *_args, **_kwargs: SimpleNamespace(sha256="f" * 64),
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "completed_wp2_retry_training_if_recorded",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("recorded retry training output is missing")
+        ),
+    )
+
+    def runtime_factory(**_kwargs):
+        nonlocal runtime_reached
+        runtime_reached = True
+        return _Runtime(**_kwargs)
+
+    with pytest.raises(ValueError, match="recorded retry training output is missing"):
+        run_train_saes(
+            SaeTrainingRunConfig(**base, output_dir=output, resume=True),
+            runtime_factory=runtime_factory,
+            tracker_factory=lambda **_kwargs: _Tracker(),
+        )
+
+    assert runtime_reached is False
     assert not output.exists()
 
 

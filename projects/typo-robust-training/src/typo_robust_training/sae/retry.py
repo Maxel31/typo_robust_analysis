@@ -329,13 +329,13 @@ def _load_object(path: Path, *, description: str) -> Mapping[str, object]:
     return payload
 
 
-def _load_exclusive_object(
+def _load_optional_exclusive_object(
     path: Path,
     *,
     description: str,
     expected_parent_identity: tuple[int, int],
-) -> tuple[Mapping[str, object], str]:
-    """Read one authority record without following either final symlinks or FIFOs."""
+) -> tuple[Mapping[str, object], str] | None:
+    """Read an authority record strictly, returning ``None`` only for ENOENT."""
 
     requested = Path(path)
     if not requested.is_absolute():
@@ -348,6 +348,20 @@ def _load_exclusive_object(
             expected_identity=expected_parent_identity,
             description=f"WP-2 retry {description} parent",
         )
+        try:
+            entry_metadata = os.stat(
+                requested.name,
+                dir_fd=directory_descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return None
+        if (
+            not stat.S_ISREG(entry_metadata.st_mode)
+            or entry_metadata.st_nlink != 1
+            or entry_metadata.st_uid != os.geteuid()
+        ):
+            raise ValueError(f"WP-2 retry {description} is missing or unsafe: {requested}")
         descriptor = os.open(
             requested.name,
             os.O_RDONLY
@@ -360,8 +374,10 @@ def _load_exclusive_object(
             not stat.S_ISREG(metadata.st_mode)
             or metadata.st_nlink != 1
             or metadata.st_uid != os.geteuid()
+            or metadata.st_dev != entry_metadata.st_dev
+            or metadata.st_ino != entry_metadata.st_ino
         ):
-            raise ValueError(f"WP-2 retry {description} is unsafe")
+            raise ValueError(f"WP-2 retry {description} is missing or unsafe: {requested}")
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
             raw = handle.read()
     except OSError as error:
@@ -375,6 +391,24 @@ def _load_exclusive_object(
     if not isinstance(payload, Mapping):
         raise ValueError(f"WP-2 retry {description} must be an object")
     return payload, hashlib.sha256(raw).hexdigest()
+
+
+def _load_exclusive_object(
+    path: Path,
+    *,
+    description: str,
+    expected_parent_identity: tuple[int, int],
+) -> tuple[Mapping[str, object], str]:
+    """Read one required authority record without following unsafe final entries."""
+
+    result = _load_optional_exclusive_object(
+        path,
+        description=description,
+        expected_parent_identity=expected_parent_identity,
+    )
+    if result is None:
+        raise ValueError(f"WP-2 retry {description} is missing or unsafe: {path}")
+    return result
 
 
 def load_wp2_retry_lineage(
@@ -712,21 +746,37 @@ def record_wp2_retry_training_completion(
             raise ValueError("WP-2 retry training completion differs") from None
 
 
-def require_claimed_wp2_retry_training(
+def completed_wp2_retry_training_if_recorded(
     lineage: Wp2RetryLineage,
     *,
+    claim: Wp2RetryClaim,
     checkpoint_dir: Path,
-) -> Wp2ClaimedRetryTraining:
-    claim = _verified_claim(lineage)
+) -> Wp2ClaimedRetryTraining | None:
+    """Return the exact completed retry, or fail closed if its authority is broken.
+
+    Absence means that training has not completed.  Once the exclusive
+    completion authority exists, a missing or changed output is terminal and
+    must never be interpreted as permission to run the full retry again.
+    """
+
+    observed_claim = _verified_claim(lineage)
+    if claim.sha256 != observed_claim.sha256 or claim.payload != observed_claim.payload:
+        raise ValueError("WP-2 retry training claim differs from the global claim")
     claim_payload = claim.payload
-    completion, _completion_sha256 = _load_exclusive_object(
+    loaded_completion = _load_optional_exclusive_object(
         lineage.training_completion_path,
         description="retry training completion",
         expected_parent_identity=_lineage_identity(lineage),
     )
+    if loaded_completion is None:
+        return None
+    completion, _completion_sha256 = loaded_completion
     run_path = Path(checkpoint_dir).resolve() / "run.json"
     if not run_path.is_file():
-        raise ValueError(f"WP-2 retry training run is missing: {run_path}")
+        raise ValueError(
+            "WP-2 recorded retry training output is missing; the consumed retry "
+            f"cannot be re-executed: {run_path}"
+        )
     completion_keys = {
         "schema_version",
         "project_id",
@@ -759,6 +809,24 @@ def require_claimed_wp2_retry_training(
         training_run_path=run_path,
         training_run_sha256=str(completion["training_run_sha256"]),
     )
+
+
+def require_claimed_wp2_retry_training(
+    lineage: Wp2RetryLineage,
+    *,
+    checkpoint_dir: Path,
+) -> Wp2ClaimedRetryTraining:
+    claim = _verified_claim(lineage)
+    completed = completed_wp2_retry_training_if_recorded(
+        lineage,
+        claim=claim,
+        checkpoint_dir=checkpoint_dir,
+    )
+    if completed is None:
+        raise ValueError(
+            "WP-2 retry training completion is missing; validation cannot start"
+        )
+    return completed
 
 
 def revalidate_claimed_wp2_retry_training(
@@ -1030,6 +1098,7 @@ __all__ = [
     "Wp2RetryLineage",
     "Wp2ValidationReservation",
     "claim_wp2_retry_training",
+    "completed_wp2_retry_training_if_recorded",
     "hold_wp2_retry_training_lease",
     "load_wp2_retry_authorization",
     "load_wp2_retry_lineage",
