@@ -63,16 +63,21 @@ WP-2 は FVU <= 0.35、median L0 in [30,150]、dead feature 率 <= 20%、splice 
 `median(R_z) >= 0.5 median(R_full)` と因果方向の再現を必須とします。合格前に neuron/head/feature
 を因果 component として対外的に主張しません。
 
-初回の失敗WP-2 ledgerは変更不能です。runnerを実装しただけではfull-bundle救済は許可されません。
-別レビュー済みauthorizationが、初回config・事前登録・training・validation・acceptance・ledgerの
-完全なhash chainと、単一の改訂config / 事前登録hashを結ぶ必要があります。改訂事前登録v2自体が
-trusted retry markerであり、救済modeはCLIから選択も回避もできず自動的に強制されます。
-authorizationはv2事前登録全体のdigestをbindします。
+初回の失敗WP-2 ledgerは変更不能です。新規の初回v1事前登録は絶対pathかつ作成済みdirectoryの
+`wp2_project_root`を含めます。既存のrepository内unrooted v1はbyte単位で不変に保ち、既存救済chainの
+証拠としてのみ読み込めます。runnerを実装しただけではfull-bundle救済は許可されません。別レビュー済み
+authorizationが、初回config・事前登録・training・validation・acceptance・ledgerの完全なhash chainと、
+単一の改訂config / 事前登録hashを結ぶ必要があります。改訂事前登録v2自体が同じproject rootを持つ
+trusted retry markerであり、`initial_attempt_ledger_path`は厳密に
+`wp2_project_root/wp2_attempts.json`と一致させます。救済modeはCLIから選択も回避もできず自動的に
+強制され、authorizationはv2事前登録全体のdigestをbindします。
 
 初回と救済のvalidationはいずれも、output作成やGPU/runtime workより前にproject rootへ`O_EXCL`
-予約を作成します。救済trainingもruntime/model初期化前に唯一のclaimを作成し、resume時はoutputを
+予約を作成します。各排他recordはfile本体をfsyncした後、事前作成済みの親directoryもfsyncします。
+救済trainingもruntime/model初期化前に唯一のclaimを作成し、resume時はoutputを
 一切変更する前にclaimを完全照合します。救済validationはclaim済みtraining-run SHAをmodel load直前と
 最終completion記録直前に再検証し、completionへattempt番号、pass/fail、親ledger、training、予約、
 validation、acceptanceのhashを保存します。crash後も予約を暗黙再利用しないfail-closed設計です。
-出力親directoryを変えても追加bundleは作れません。本実装は救済authorization、v2救済事前登録、
-科学的な改訂値を追加しません。
+出力親directoryを変えても追加bundleは作れません。初回validation outputはproject root外でもよく、
+ledgerが絶対pathを、authorizationがartifact hashをbindし、project-root ledgerだけがbudgetのauthorityに
+なります。本実装は救済authorization、v2救済事前登録、科学的な改訂値を追加しません。

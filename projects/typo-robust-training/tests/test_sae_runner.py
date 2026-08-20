@@ -165,7 +165,11 @@ def test_sae_calibration_closes_tracker_when_runtime_initialization_fails(
         expansion_factor=2,
         l1_calibration_tokens=4,
     )
-    preregistration = SimpleNamespace(sha256="c" * 64, sae_gpu_id=1)
+    preregistration = SimpleNamespace(
+        sha256="c" * 64,
+        sae_gpu_id=1,
+        retry_inputs=None,
+    )
     prepared = PreparedSaeSources(
         sources=(SimpleNamespace(),),
         reserved=(SimpleNamespace(),),
@@ -404,7 +408,11 @@ def test_sae_training_writes_hash_bound_models_and_resumes_exactly(
         activation_subsample_tokens=2,
         activation_batch_size=2,
     )
-    preregistration = SimpleNamespace(sha256="c" * 64, sae_gpu_id=1)
+    preregistration = SimpleNamespace(
+        sha256="c" * 64,
+        sae_gpu_id=1,
+        retry_inputs=None,
+    )
     prepared = PreparedSaeSources(
         sources=(SimpleNamespace(),),
         reserved=(SimpleNamespace(),),
@@ -757,7 +765,11 @@ def test_sae_checkpoint_metadata_failure_preserves_previous_generation(
 
 def test_wp2_attempt_ledger_enforces_one_preregistered_retrain(tmp_path: Path) -> None:
     protocol = SimpleNamespace(config_sha256="a" * 64, maximum_gate_retrains=1)
-    preregistration = SimpleNamespace(sha256="b" * 64)
+    (tmp_path / "fixed-project-root").mkdir()
+    preregistration = SimpleNamespace(
+        sha256="b" * 64,
+        wp2_project_root=(tmp_path / "fixed-project-root").resolve(),
+    )
 
     def checkpoint(name: str, value: int) -> Path:
         root = tmp_path / name
@@ -809,9 +821,84 @@ def test_wp2_attempt_ledger_enforces_one_preregistered_retrain(tmp_path: Path) -
         )
 
 
+def test_relocated_checkpoint_parent_cannot_reset_initial_wp2_budget(tmp_path: Path) -> None:
+    """Falsify checkpoint-parent scoped ledgers by moving every full bundle."""
+
+    protocol = SimpleNamespace(config_sha256="a" * 64, maximum_gate_retrains=1)
+    (tmp_path / "fixed-project-root").mkdir()
+    preregistration = SimpleNamespace(
+        sha256="b" * 64,
+        wp2_project_root=(tmp_path / "fixed-project-root").resolve(),
+    )
+    accepted = 0
+    for index in range(4):
+        checkpoint = tmp_path / f"run-{index}" / "training"
+        checkpoint.mkdir(parents=True)
+        (checkpoint / "run.json").write_text(
+            json.dumps({"value": index}) + "\n",
+            encoding="utf-8",
+        )
+        output = tmp_path / f"external-results-{index}" / "validation"
+        try:
+            ledger, attempts, digest = _load_wp2_attempts(
+                checkpoint_dir=checkpoint,
+                protocol=protocol,
+                preregistration=preregistration,
+            )
+            reservation = reserve_initial_wp2_validation(
+                project_root=ledger.parent,
+                config_sha256=protocol.config_sha256,
+                preregistration_sha256=preregistration.sha256,
+                checkpoint_dir=checkpoint,
+                checkpoint_run_sha256=digest,
+                output_dir=output,
+            )
+            _record_wp2_attempt(
+                ledger_path=ledger,
+                prior_attempts=attempts,
+                checkpoint_run_sha256=digest,
+                output_dir=output,
+                passed=False,
+                acceptance_sha256="c" * 64,
+                protocol=protocol,
+                preregistration=preregistration,
+                reservation=reservation,
+                checkpoint_dir=checkpoint,
+            )
+        except ValueError:
+            break
+        accepted += 1
+
+    assert accepted == 1
+
+
+def test_legacy_unrooted_v1_cannot_start_a_new_initial_validation(tmp_path: Path) -> None:
+    """Old immutable artifacts stay readable, but cannot mint a fresh budget."""
+
+    checkpoint = tmp_path / "training"
+    checkpoint.mkdir()
+    (checkpoint / "run.json").write_text("{}\n", encoding="utf-8")
+    protocol = SimpleNamespace(config_sha256="a" * 64, maximum_gate_retrains=1)
+    preregistration = SimpleNamespace(
+        sha256="b" * 64,
+        wp2_project_root=None,
+    )
+
+    with pytest.raises(ValueError, match="explicit absolute wp2_project_root"):
+        _load_wp2_attempts(
+            checkpoint_dir=checkpoint,
+            protocol=protocol,
+            preregistration=preregistration,
+        )
+
+
 def test_initial_validation_rejects_retry_claimed_checkpoint(tmp_path: Path) -> None:
     protocol = SimpleNamespace(config_sha256="a" * 64, maximum_gate_retrains=1)
-    preregistration = SimpleNamespace(sha256="b" * 64)
+    (tmp_path / "fixed-project-root").mkdir()
+    preregistration = SimpleNamespace(
+        sha256="b" * 64,
+        wp2_project_root=(tmp_path / "fixed-project-root").resolve(),
+    )
     checkpoint = tmp_path / "training"
     checkpoint.mkdir()
     (checkpoint / "run.json").write_text(

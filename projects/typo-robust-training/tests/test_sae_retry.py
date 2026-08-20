@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
+import stat
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -26,7 +28,11 @@ def _write(path: Path, payload: object) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _failed_project(tmp_path: Path) -> tuple[Wp2RetryInputs, str, str]:
+def _failed_project(
+    tmp_path: Path,
+    *,
+    validation_dir: Path | None = None,
+) -> tuple[Wp2RetryInputs, str, str]:
     project = tmp_path / "project"
     initial_config = "a" * 64
     initial_registry = "b" * 64
@@ -43,7 +49,7 @@ def _failed_project(tmp_path: Path) -> tuple[Wp2RetryInputs, str, str]:
             }
         },
     )
-    validation_dir = project / "validation"
+    validation_dir = validation_dir or project / "validation"
     acceptance_sha = _write(
         validation_dir / "wp2_acceptance.json",
         {
@@ -102,6 +108,7 @@ def _failed_project(tmp_path: Path) -> tuple[Wp2RetryInputs, str, str]:
     )
     return (
         Wp2RetryInputs(
+            project_root=project,
             authorization_path=authorization_path,
             initial_attempt_ledger_path=ledger_path,
             initial_training_dir=training_dir,
@@ -247,6 +254,52 @@ def test_retry_lineage_rejects_tampered_initial_failure(tmp_path: Path) -> None:
         )
 
 
+def test_retry_lineage_accepts_hash_bound_validation_output_outside_project_root(
+    tmp_path: Path,
+) -> None:
+    """A legal absolute validation output must not make the authorized retry unusable."""
+
+    external_validation = tmp_path / "shared-results" / "sae-validation"
+    inputs, config_sha, registry_sha = _failed_project(
+        tmp_path,
+        validation_dir=external_validation,
+    )
+
+    lineage = load_wp2_retry_lineage(
+        inputs,
+        retry_config_sha256=config_sha,
+        retry_preregistration_sha256=registry_sha,
+    )
+    assert lineage.project_root == inputs.initial_attempt_ledger_path.parent.resolve()
+
+
+def test_copied_initial_bundle_and_new_authorization_cannot_mint_another_claim(
+    tmp_path: Path,
+) -> None:
+    """The reviewed v2 project root, not a copied ledger, owns the retry claim."""
+
+    inputs, config_sha, registry_sha = _failed_project(tmp_path)
+    copied_project = tmp_path / "copied-project"
+    shutil.copytree(inputs.project_root, copied_project)
+    copied_authorization = tmp_path / "copied-authorization.json"
+    authorization = json.loads(inputs.authorization_path.read_text(encoding="utf-8"))
+    authorization["project_id"] = "copied-project"
+    _write(copied_authorization, authorization)
+    copied_inputs = Wp2RetryInputs(
+        project_root=inputs.project_root,
+        authorization_path=copied_authorization,
+        initial_attempt_ledger_path=copied_project / "wp2_attempts.json",
+        initial_training_dir=copied_project / "training",
+    )
+
+    with pytest.raises(ValueError, match="outside the preregistered project root"):
+        load_wp2_retry_lineage(
+            copied_inputs,
+            retry_config_sha256=config_sha,
+            retry_preregistration_sha256=registry_sha,
+        )
+
+
 def _completed_retry_training(tmp_path: Path):
     lineage = _lineage(tmp_path)
     checkpoint = tmp_path / "retry" / "training"
@@ -322,6 +375,92 @@ def test_initial_validation_reservation_is_exclusive_before_any_output(tmp_path:
     assert sorted(outcomes) == ["rejected", "reserved"]
     assert not (tmp_path / "validation-1").exists()
     assert not (tmp_path / "validation-2").exists()
+
+
+def test_exclusive_reservation_fsyncs_the_project_root_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A file-only fsync must not leave the consumed slot vulnerable to a crash."""
+
+    checkpoint = tmp_path / "training"
+    checkpoint.mkdir()
+    run_sha = _write(checkpoint / "run.json", {"bindings": {}})
+    observed_modes: list[int] = []
+    real_fsync = retry_module.os.fsync
+
+    def record_fsync(descriptor: int) -> None:
+        observed_modes.append(retry_module.os.fstat(descriptor).st_mode)
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(retry_module.os, "fsync", record_fsync)
+    retry_module.reserve_initial_wp2_validation(
+        project_root=tmp_path,
+        config_sha256="a" * 64,
+        preregistration_sha256="b" * 64,
+        checkpoint_dir=checkpoint,
+        checkpoint_run_sha256=run_sha,
+        output_dir=tmp_path / "validation",
+    )
+
+    assert any(stat.S_ISDIR(mode) for mode in observed_modes)
+
+
+def test_exclusive_reservation_refuses_to_create_a_missing_project_root(
+    tmp_path: Path,
+) -> None:
+    """The reviewed project identity must pre-exist; a writer cannot mint it."""
+
+    checkpoint = tmp_path / "training"
+    checkpoint.mkdir()
+    run_sha = _write(checkpoint / "run.json", {"bindings": {}})
+    missing_root = tmp_path / "not-preregistered-on-disk"
+
+    with pytest.raises(ValueError, match="pre-existing directory"):
+        retry_module.reserve_initial_wp2_validation(
+            project_root=missing_root,
+            config_sha256="a" * 64,
+            preregistration_sha256="b" * 64,
+            checkpoint_dir=checkpoint,
+            checkpoint_run_sha256=run_sha,
+            output_dir=tmp_path / "validation",
+        )
+
+    assert not missing_root.exists()
+
+
+def test_directory_fsync_failure_leaves_the_validation_slot_consumed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A post-write durability error must fail closed instead of deleting the claim."""
+
+    checkpoint = tmp_path / "training"
+    checkpoint.mkdir()
+    run_sha = _write(checkpoint / "run.json", {"bindings": {}})
+    real_fsync = retry_module.os.fsync
+
+    def fail_directory_fsync(descriptor: int) -> None:
+        if stat.S_ISDIR(retry_module.os.fstat(descriptor).st_mode):
+            raise OSError("simulated directory fsync failure")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(retry_module.os, "fsync", fail_directory_fsync)
+    kwargs = {
+        "project_root": tmp_path,
+        "config_sha256": "a" * 64,
+        "preregistration_sha256": "b" * 64,
+        "checkpoint_dir": checkpoint,
+        "checkpoint_run_sha256": run_sha,
+        "output_dir": tmp_path / "validation",
+    }
+    with pytest.raises(OSError, match="simulated directory fsync failure"):
+        retry_module.reserve_initial_wp2_validation(**kwargs)
+
+    reservation_path = tmp_path / "wp2_initial_validation_reservation.json"
+    assert reservation_path.is_file()
+    with pytest.raises(ValueError, match="initial validation slot is already reserved"):
+        retry_module.reserve_initial_wp2_validation(**kwargs)
 
 
 def test_retry_training_run_is_revalidated_after_the_initial_claim_check(

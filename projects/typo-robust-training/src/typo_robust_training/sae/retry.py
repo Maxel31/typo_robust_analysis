@@ -24,6 +24,7 @@ _VALIDATION_COMPLETION_NAME = "wp2_retry_validation_completion.json"
 
 @dataclass(frozen=True, slots=True)
 class Wp2RetryInputs:
+    project_root: Path
     authorization_path: Path
     initial_attempt_ledger_path: Path
     initial_training_dir: Path
@@ -178,7 +179,17 @@ def load_wp2_retry_lineage(
     ):
         raise ValueError("WP-2 retry config/preregistration differs from authorization")
 
+    project_root = Path(inputs.project_root).resolve()
+    if not project_root.is_dir():
+        raise ValueError(
+            "WP-2 retry project root must be a pre-existing directory: "
+            f"{project_root}"
+        )
     ledger_path = Path(inputs.initial_attempt_ledger_path).resolve()
+    if ledger_path != project_root / "wp2_attempts.json":
+        raise ValueError(
+            "WP-2 retry initial attempt ledger is outside the preregistered project root"
+        )
     if not ledger_path.is_file():
         raise ValueError(f"WP-2 retry initial attempt ledger is missing: {ledger_path}")
     if sha256_file(ledger_path) != authorization.initial_attempt_ledger_sha256:
@@ -207,10 +218,7 @@ def load_wp2_retry_lineage(
     ):
         raise ValueError("WP-2 retry parent attempt is not the authorized failed bundle")
 
-    project_root = ledger_path.parent
     validation_dir = Path(str(attempt["output_dir"])).resolve()
-    if validation_dir.parent != project_root:
-        raise ValueError("WP-2 initial ledger is outside its recorded project root")
     acceptance_path = validation_dir / "wp2_acceptance.json"
     validation_run_path = validation_dir / "run.json"
     initial_training_run_path = Path(inputs.initial_training_dir).resolve() / "run.json"
@@ -265,16 +273,44 @@ def _canonical_json_bytes(payload: object) -> bytes:
 
 def _write_exclusive(path: Path, payload: object) -> None:
     data = _canonical_json_bytes(payload)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    resolved = Path(path).resolve()
+    parent = resolved.parent
+    if not parent.is_dir():
+        raise ValueError(
+            "SAE WP-2 exclusive record requires a pre-existing directory: "
+            f"{parent}"
+        )
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_descriptor = os.open(parent, directory_flags)
     try:
-        with os.fdopen(descriptor, "wb", closefd=True) as handle:
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-    except Exception:
-        path.unlink(missing_ok=True)
-        raise
+        descriptor = os.open(
+            resolved.name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+            dir_fd=directory_descriptor,
+        )
+        file_is_durable = False
+        try:
+            with os.fdopen(descriptor, "wb", closefd=True) as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+                file_is_durable = True
+        except Exception:
+            if not file_is_durable:
+                try:
+                    os.unlink(resolved.name, dir_fd=directory_descriptor)
+                    os.fsync(directory_descriptor)
+                except OSError:
+                    # A residual entry consumes the slot: the fail-closed outcome.
+                    pass
+            raise
+        # Persist the directory entry. Once the file has been fsynced, a directory
+        # fsync failure deliberately leaves it in place so a crash cannot reopen
+        # the already-consumed validation/retry slot.
+        os.fsync(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
 
 
 def claim_wp2_retry_training(

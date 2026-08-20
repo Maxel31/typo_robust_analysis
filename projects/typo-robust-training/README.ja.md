@@ -445,13 +445,21 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 
 初回WP-2 validationは、output作成やGPU/runtime初期化より前にproject rootへ排他的な予約fileを
 作成し、その後に変更不能な失敗bundle lineageを`${SAE_ROOT}/wp2_attempts.json`へ記録します。
-予約後にcrashした場合もそのattemptは消費され、validationの暗黙resumeは行いません。
+新たにレビューする初回v1事前登録は絶対pathの`wp2_project_root`を明記し、そのdirectoryを実行前に
+作成済みにする必要があります。既存の初回実行に使用したrepository内v1事前登録はbyte単位で不変に
+保ち、救済lineageの証拠としては読み込めますが、新たな初回validationの開始には使えません。予約file
+本体に加えて親directoryもfsyncするため、crash後もそのattemptは消費済みとなり、validationの暗黙
+resumeは行いません。
 
 救済runは、元のconfig、事前登録、training、validation、acceptance、ledgerの各hashと、単一の
 改訂config / 事前登録hashを結ぶauthorizationが別レビューで承認されるまで禁止です。改訂事前登録は
-schema v2の`wp2_retry` lineage markerを持ちます。trainingとvalidationの救済modeはCLI optionでは
-なく、このレビュー済みmarkerから自動かつ強制的に決まり、authorizationはv2事前登録全体のSHA-256を
-逆向きにbindします。このためCLI引数の省略で初回validation経路へfallbackできません。
+同じ絶対pathの`wp2_project_root`とschema v2の`wp2_retry` lineage markerを持ち、
+`initial_attempt_ledger_path`は厳密に`wp2_project_root/wp2_attempts.json`でなければなりません。
+trainingとvalidationの救済modeはCLI optionではなく、このレビュー済みmarkerから自動かつ強制的に
+決まり、authorizationはv2事前登録全体のSHA-256を逆向きにbindします。このためCLI引数の省略で
+初回validation経路へfallbackできません。初回validation outputはproject root外でも構いません。
+ledgerがその絶対pathを、authorizationが全artifact hashをbindするため、outputの移動や複製で新しい
+救済budgetを作ることはできません。
 
 救済trainingはruntime/model初期化より前に、排他的なfilesystem claimとして
 `${SAE_ROOT}/wp2_retry_claim.json`を作成します。`--resume`時はoutput artifactや

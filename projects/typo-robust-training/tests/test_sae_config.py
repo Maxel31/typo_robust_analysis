@@ -225,7 +225,9 @@ def test_retry_preregistration_is_a_trusted_automatic_mode_marker(tmp_path: Path
 
     protocol = load_sae_protocol(DEFAULT_CONFIG)
     payload = json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))
+    (tmp_path / "lineage").mkdir()
     payload["schema_version"] = "robustness-sae-preregistry/v2"
+    payload["wp2_project_root"] = str((tmp_path / "lineage").resolve())
     payload["wp2_retry"] = {
         "authorization_path": "lineage/retry-authorization.json",
         "initial_attempt_ledger_path": "lineage/wp2_attempts.json",
@@ -235,7 +237,9 @@ def test_retry_preregistration_is_a_trusted_automatic_mode_marker(tmp_path: Path
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
     registration = load_sae_preregistration(path, protocol=protocol)
+    assert registration.wp2_project_root == (tmp_path / "lineage").resolve()
     assert registration.retry_inputs is not None
+    assert registration.retry_inputs.project_root == (tmp_path / "lineage").resolve()
     assert registration.retry_inputs.authorization_path == (
         tmp_path / "lineage/retry-authorization.json"
     ).resolve()
@@ -245,6 +249,63 @@ def test_retry_preregistration_is_a_trusted_automatic_mode_marker(tmp_path: Path
     assert registration.retry_inputs.initial_training_dir == (
         tmp_path / "lineage/training"
     ).resolve()
+
+
+def test_retry_preregistration_ledger_must_be_under_the_fixed_project_root(
+    tmp_path: Path,
+) -> None:
+    protocol = load_sae_protocol(DEFAULT_CONFIG)
+    payload = json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))
+    (tmp_path / "fixed-project").mkdir()
+    payload["schema_version"] = "robustness-sae-preregistry/v2"
+    payload["wp2_project_root"] = str((tmp_path / "fixed-project").resolve())
+    payload["wp2_retry"] = {
+        "authorization_path": str((tmp_path / "authorization.json").resolve()),
+        "initial_attempt_ledger_path": str(
+            (tmp_path / "copied-project/wp2_attempts.json").resolve()
+        ),
+        "initial_training_dir": str((tmp_path / "copied-project/training").resolve()),
+    }
+    path = tmp_path / "retry-registry.json"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="must equal wp2_project_root"):
+        load_sae_preregistration(path, protocol=protocol)
+
+
+def test_initial_preregistration_requires_an_explicit_absolute_project_root(
+    tmp_path: Path,
+) -> None:
+    """A reviewed identity, not a movable checkpoint parent, owns the WP-2 budget."""
+
+    protocol = load_sae_protocol(DEFAULT_CONFIG)
+    payload = json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))
+    project_root = (tmp_path / "wp2-project").resolve()
+    project_root.mkdir()
+    payload["wp2_project_root"] = str(project_root)
+    path = tmp_path / "rooted-registry.json"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    registration = load_sae_preregistration(path, protocol=protocol)
+    assert registration.wp2_project_root == project_root
+
+    payload["wp2_project_root"] = "relative/project"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="absolute"):
+        load_sae_preregistration(path, protocol=protocol)
+
+    payload["wp2_project_root"] = str((tmp_path / "missing-project-root").resolve())
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="pre-existing directory"):
+        load_sae_preregistration(path, protocol=protocol)
+
+
+def test_legacy_initial_preregistration_remains_readable_but_unrooted() -> None:
+    """The immutable production v1 hash remains loadable for authorized retry lineage."""
+
+    protocol = load_sae_protocol(DEFAULT_CONFIG)
+    registration = load_sae_preregistration(DEFAULT_REGISTRY, protocol=protocol)
+    assert registration.wp2_project_root is None
 
 
 def test_cli_keeps_sae_calibration_training_and_validation_separate() -> None:

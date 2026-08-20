@@ -495,17 +495,28 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 
 The first WP-2 validation reserves its attempt with an exclusive project-root
 file before creating output or initializing GPU/runtime work, then records its
-immutable failed-bundle lineage in `${SAE_ROOT}/wp2_attempts.json`. A crash after
-reservation consumes that attempt; there is no implicit validation resume.
+immutable failed-bundle lineage in `${SAE_ROOT}/wp2_attempts.json`. A newly
+reviewed initial v1 preregistration must declare an absolute `wp2_project_root`,
+and that directory must already exist. The checked-in legacy v1 preregistration
+is intentionally byte-identical to the artifact used by the completed initial
+run: it remains readable as retry-lineage evidence, but cannot start another
+initial validation. The exclusive record is file-fsynced and its parent
+directory is then fsynced; a crash after reservation consumes that attempt and
+there is no implicit validation resume.
 
 A retry remains prohibited until a separately reviewed authorization binds the
 original config, preregistration, training, validation, acceptance, and ledger
 hashes to exactly one amended config and preregistration hash. The amended
-preregistration uses schema v2 and contains a `wp2_retry` lineage marker. That
-reviewed marker, not a CLI option, automatically and unavoidably selects retry
-mode for both training and validation; the authorization in turn binds the full
-v2 preregistration SHA-256. CLI omission therefore cannot fall back to an initial
-validation path.
+preregistration uses schema v2 and contains the same absolute
+`wp2_project_root` plus a `wp2_retry` lineage marker. Its
+`initial_attempt_ledger_path` must be exactly
+`wp2_project_root/wp2_attempts.json`. That reviewed marker, not a CLI option,
+automatically and unavoidably selects retry mode for both training and
+validation; the authorization in turn binds the full v2 preregistration
+SHA-256. CLI omission therefore cannot fall back to an initial validation path.
+The initial validation output itself may be outside the project root because
+the ledger binds its absolute path and the authorization binds every artifact
+hash; relocating or copying that output does not create a new retry budget.
 
 Retry training creates `${SAE_ROOT}/wp2_retry_claim.json` with an exclusive
 filesystem claim before runtime or model initialization. Exact resume compares

@@ -113,16 +113,21 @@ where dead means `p_i < 1e-5`, median splice KL <= 0.15 nats/token, and saved
 `p_i` plus median reconstruction error `s`. One documented lambda/token adjustment
 is allowed; a second failure stops the track.
 
-The initial failed WP-2 ledger is immutable. A full-bundle retry is not
-authorized by the runner alone: a separately reviewed authorization must bind
-the complete initial config/preregistration/training/validation/acceptance/ledger
-hash chain to one amended config and preregistration hash. The amended
-preregistration v2 is itself the trusted retry marker; retry mode is automatic
-and cannot be selected or bypassed by CLI arguments. The authorization binds
-the complete v2 preregistration digest.
+The initial failed WP-2 ledger is immutable. New initial v1 registrations must
+include an absolute, pre-existing `wp2_project_root`; the historical checked-in
+unrooted v1 remains byte-identical and readable only as evidence for its
+existing retry chain. A full-bundle retry is not authorized by the runner
+alone: a separately reviewed authorization must bind the complete initial
+config/preregistration/training/validation/acceptance/ledger hash chain to one
+amended config and preregistration hash. The amended preregistration v2 is
+itself the trusted retry marker, includes the same project root, and requires
+`initial_attempt_ledger_path == wp2_project_root/wp2_attempts.json`; retry mode
+is automatic and cannot be selected or bypassed by CLI arguments. The
+authorization binds the complete v2 preregistration digest.
 
 Initial and retry validation each consume an `O_EXCL` project-root reservation
-before output creation or GPU/runtime work. Retry training likewise claims its
+before output creation or GPU/runtime work. Each exclusive record is fsynced,
+then its pre-existing parent directory is fsynced. Retry training likewise claims its
 one slot before runtime/model initialization, and exact resume verifies that
 claim before any output mutation. Retry validation rechecks the claimed
 training-run SHA immediately before model loading and before its final immutable
@@ -131,7 +136,9 @@ training, reservation, validation, and acceptance hashes. Crash recovery is
 deliberately fail-closed: a consumed validation reservation is not silently
 reused. Changing an output parent cannot create another bundle. No retry
 authorization, v2 retry preregistration, or scientific retry value is added by
-this implementation.
+this implementation. Initial validation outputs may live outside the project
+root: their absolute path is recorded in the ledger and their contents are
+hash-bound, while the project-root ledger remains the sole budget authority.
 
 WP-5 is not authorized until two accepted layer-5 seeds exist. Its thresholds
 are frozen at `median(R_z) >= 0.5 * median(R_full)` and

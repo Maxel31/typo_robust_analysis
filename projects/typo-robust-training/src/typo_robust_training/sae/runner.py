@@ -854,7 +854,7 @@ def run_train_saes(
     preregistration = load_sae_preregistration(config.registry_path, protocol=protocol)
     if str(config.gpu_id) != str(preregistration.sae_gpu_id):
         raise ValueError(f"SAE training must use preregistered GPU {preregistration.sae_gpu_id}")
-    retry_inputs = getattr(preregistration, "retry_inputs", None)
+    retry_inputs = preregistration.retry_inputs
     if retry_inputs is None:
         output = _prepare_output(config.output_dir, resume=config.resume)
         sources = _load_inputs(
@@ -1177,8 +1177,20 @@ def _load_final_saes(
     return models, run
 
 
-def _wp2_attempt_ledger_path(checkpoint_dir: Path) -> Path:
-    return Path(checkpoint_dir).resolve().parent / "wp2_attempts.json"
+def _wp2_attempt_ledger_path(preregistration: SaePreregistration) -> Path:
+    project_root = preregistration.wp2_project_root
+    if project_root is None:
+        raise ValueError(
+            "SAE WP-2 initial validation requires an explicit absolute "
+            "wp2_project_root in the reviewed preregistration; legacy unrooted v1 "
+            "registries are retry-lineage inputs only"
+        )
+    if not project_root.is_dir():
+        raise ValueError(
+            "SAE WP-2 project root must be a pre-existing directory: "
+            f"{project_root}"
+        )
+    return project_root / "wp2_attempts.json"
 
 
 def _load_wp2_attempts(
@@ -1187,6 +1199,7 @@ def _load_wp2_attempts(
     protocol: SaeProtocol,
     preregistration: SaePreregistration,
 ) -> tuple[Path, list[Mapping[str, object]], str]:
+    ledger_path = _wp2_attempt_ledger_path(preregistration)
     checkpoint_run = Path(checkpoint_dir).resolve() / "run.json"
     if not checkpoint_run.is_file():
         raise ValueError("SAE validation requires a completed training run.json")
@@ -1200,7 +1213,6 @@ def _load_wp2_attempts(
     if isinstance(checkpoint_bindings, Mapping) and "wp2_retry_claim_sha256" in checkpoint_bindings:
         raise ValueError("SAE WP-2 retry checkpoint requires retry preregistration")
     checkpoint_sha256 = sha256_file(checkpoint_run)
-    ledger_path = _wp2_attempt_ledger_path(checkpoint_dir)
     attempts: list[Mapping[str, object]] = []
     if ledger_path.is_file():
         payload = strict_loads(ledger_path.read_text(encoding="utf-8"), context=str(ledger_path))
@@ -1313,7 +1325,7 @@ def run_validate_saes(
     preregistration = load_sae_preregistration(config.registry_path, protocol=protocol)
     if str(config.gpu_id) != str(preregistration.sae_gpu_id):
         raise ValueError(f"SAE validation must use preregistered GPU {preregistration.sae_gpu_id}")
-    retry_inputs = getattr(preregistration, "retry_inputs", None)
+    retry_inputs = preregistration.retry_inputs
     retry_lineage: Wp2RetryLineage | None = None
     claimed_retry_training: Wp2ClaimedRetryTraining | None = None
     validation_reservation: Wp2ValidationReservation | None = None
