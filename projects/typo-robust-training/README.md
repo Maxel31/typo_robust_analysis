@@ -470,7 +470,7 @@ The first block fails before data preparation or any GPU command when either
 external contract or any preceding repository artifact is missing.
 
 ```bash
-GPU_ID="${GPU_ID:-0}"
+GPU_ID="0"
 : "${SAE_ROOT:?Set SAE_ROOT to a provisioned absolute external artifact directory}"
 : "${ROOTED_REGISTRY:?Set ROOTED_REGISTRY to the separately reviewed absolute registry path}"
 case "${SAE_ROOT}" in /*) ;; *) echo "SAE_ROOT must be absolute" >&2; exit 2 ;; esac
