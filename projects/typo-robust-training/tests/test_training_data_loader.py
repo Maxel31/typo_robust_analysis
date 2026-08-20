@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -123,6 +124,61 @@ def test_training_data_bundle_revalidates_hashes_and_builds_seeded_generator(
     assert bundle.generator.seed == 43
     assert bundle.generator.explicit_clean_pair_probability == pytest.approx(0.10)
     assert "adjacent-transposition" not in bundle.generator.operation_weights
+
+
+def test_equal_data_hashes_produce_identical_pairs_despite_run_mapping_order(
+    tmp_path: Path,
+) -> None:
+    canonical_root = _fixture(tmp_path)
+    reordered_root = tmp_path / "reordered"
+    shutil.copytree(canonical_root, reordered_root)
+    reordered_run_path = reordered_root / "run.json"
+    reordered_run = json.loads(reordered_run_path.read_text(encoding="utf-8"))
+    operation_probabilities = reordered_run["protocol"]["typos"]["operation_probabilities"]
+    reordered_run["protocol"]["typos"]["operation_probabilities"] = {
+        name: operation_probabilities[name] for name in reversed(operation_probabilities)
+    }
+    reordered_run_path.write_text(
+        json.dumps(reordered_run, sort_keys=False) + "\n",
+        encoding="utf-8",
+    )
+
+    canonical = load_training_data_bundle(
+        canonical_root,
+        protocol=load_adapter_training_config(CONFIG),
+        seed=42,
+    )
+    reordered = load_training_data_bundle(
+        reordered_root,
+        protocol=load_adapter_training_config(CONFIG),
+        seed=42,
+    )
+
+    assert reordered.data_identity_sha256 == canonical.data_identity_sha256
+    assert reordered.training_data_sha256 == canonical.training_data_sha256
+    canonical_record = canonical.sources[0].clean_record()
+    reordered_record = reordered.sources[0].clean_record()
+    canonical_pairs = tuple(
+        canonical.generator.generate(
+            canonical_record,
+            epoch=epoch,
+            variant=variant,
+            force_edit_count=1,
+        )
+        for epoch in range(4)
+        for variant in range(16)
+    )
+    reordered_pairs = tuple(
+        reordered.generator.generate(
+            reordered_record,
+            epoch=epoch,
+            variant=variant,
+            force_edit_count=1,
+        )
+        for epoch in range(4)
+        for variant in range(16)
+    )
+    assert reordered_pairs == canonical_pairs
 
 
 def test_training_data_provenance_validates_identity_without_a_training_protocol(

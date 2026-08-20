@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from itertools import permutations
+
 import pytest
 
 from typo_robust_training.data.natural_typos import parse_github_typo_commit
@@ -16,6 +18,12 @@ from typo_robust_training.data.records import CleanRecord
 
 NATURAL_SUBSTITUTIONS = {
     character: {"z" if character != "z" else "x": 1} for character in "abcdefghijklmnopqrstuvwxyz"
+}
+FOUR_OPERATION_WEIGHTS = {
+    "deletion": 0.25,
+    "duplication": 0.25,
+    "insertion": 0.25,
+    "keyboard-neighbor-substitution": 0.25,
 }
 
 
@@ -91,6 +99,89 @@ def test_counter_based_generation_is_independent_of_iteration_and_resume_order()
     }
     assert resumed == forward
     assert generator.generate(records[0], epoch=3) != forward[records[0].source_id]
+
+
+def test_weighted_operation_choice_is_independent_of_all_mapping_permutations() -> None:
+    record = _record(
+        "weighted-order",
+        "The airport supports reliable international travel and educational context.",
+    )
+    expected = tuple(
+        TypoGenerator(seed=42, operation_weights=FOUR_OPERATION_WEIGHTS).generate(
+            record,
+            epoch=3,
+            variant=variant,
+            force_edit_count=1,
+        )
+        for variant in range(128)
+    )
+    assert {pair.edits[0].operation for pair in expected} == set(FOUR_OPERATION_WEIGHTS)
+
+    for order in permutations(FOUR_OPERATION_WEIGHTS):
+        weights = {operation: FOUR_OPERATION_WEIGHTS[operation] for operation in order}
+        actual = tuple(
+            TypoGenerator(seed=42, operation_weights=weights).generate(
+                record,
+                epoch=3,
+                variant=variant,
+                force_edit_count=1,
+            )
+            for variant in range(128)
+        )
+        assert actual == expected
+
+
+def test_canonical_weighted_operation_stream_remains_backward_compatible() -> None:
+    record = _record(
+        "canonical-stream",
+        "The airport supports reliable international travel and educational context.",
+    )
+    generator = TypoGenerator(seed=42, operation_weights=FOUR_OPERATION_WEIGHTS)
+    pairs = tuple(
+        generator.generate(
+            record,
+            epoch=3,
+            variant=variant,
+            force_edit_count=1,
+        )
+        for variant in range(8)
+    )
+    actual = tuple((pair.edits[0].operation, pair.typo_text) for pair in pairs)
+
+    assert actual == (
+        (
+            "insertion",
+            "The airport supports reliable international trdavel and educational context.",
+        ),
+        (
+            "insertion",
+            "The airport supports reliable international travel and educational cokntext.",
+        ),
+        (
+            "duplication",
+            "The airpoort supports reliable international travel and educational context.",
+        ),
+        (
+            "keyboard-neighbor-substitution",
+            "The airport suppotts reliable international travel and educational context.",
+        ),
+        (
+            "keyboard-neighbor-substitution",
+            "The airporr supports reliable international travel and educational context.",
+        ),
+        (
+            "insertion",
+            "The airport supports reliable international travel and educatiobnal context.",
+        ),
+        (
+            "keyboard-neighbor-substitution",
+            "The airport supports reliable international travel and educationao context.",
+        ),
+        (
+            "insertion",
+            "Tuhe airport supports reliable international travel and educational context.",
+        ),
+    )
 
 
 def test_adjacent_transposition_is_rejected_from_training_but_classified_for_evaluation() -> None:
