@@ -451,7 +451,7 @@ def _method_paired_metrics(
         adapter_by_id = {row.record_id: row for row in adapter}
         answer_pairs = tuple(
             (base_by_id[record_id], adapter_by_id[record_id])
-            for record_id in base_by_id
+            for record_id in sorted(base_by_id)
             if base_by_id[record_id].clean_correct is not None
         )
         typo_differences[seed] = _answer_differences_by_task(

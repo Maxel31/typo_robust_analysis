@@ -9,7 +9,10 @@ from pathlib import Path
 import pytest
 
 from typo_robust_training.evaluation.config import load_robustness_evaluation_config
-from typo_robust_training.evaluation.metrics import build_evaluation_report
+from typo_robust_training.evaluation.metrics import (
+    _method_paired_metrics,
+    build_evaluation_report,
+)
 from typo_robust_training.evaluation.records import (
     CorpusEvaluationObservation,
     EvaluationObservation,
@@ -250,6 +253,67 @@ def test_report_computes_paired_transitions_strata_patch_reliance_and_gate() -> 
     assert corpus["clean_base_forward_kl_median"] == pytest.approx(0.001)
     assert corpus["base_natural_typo_perplexity"] == pytest.approx(2.718281828459045)
     assert corpus["adapter_natural_typo_perplexity"] == pytest.approx(2.718281828459045)
+
+
+def test_method_bootstrap_is_invariant_to_observation_order() -> None:
+    """The same paired cohort must produce one canonical finite bootstrap draw."""
+
+    protocol = replace(
+        PROTOCOL,
+        bootstrap_replicates=400,
+        bootstrap_seed=12_345,
+        seed_inventory=(42,),
+    )
+    outcome_pairs = (
+        (True, False),
+        (True, False),
+        (True, False),
+        (False, True),
+        (False, False),
+        (False, True),
+    )
+    base = tuple(
+        _observation(
+            index,
+            condition="base",
+            seed=None,
+            clean_correct=index % 2 == 0,
+            typo_correct=base_typo,
+            patch_gain=0.0,
+            task="gsm8k",
+            mechanistic_audit=False,
+        )
+        for index, (base_typo, _adapter_typo) in enumerate(outcome_pairs)
+    )
+    adapter = tuple(
+        _observation(
+            index,
+            condition="localized-state-distillation",
+            seed=42,
+            clean_correct=index % 3 == 0,
+            typo_correct=adapter_typo,
+            patch_gain=0.0,
+            task="gsm8k",
+            mechanistic_audit=False,
+        )
+        for index, (_base_typo, adapter_typo) in enumerate(outcome_pairs)
+    )
+
+    forward = _method_paired_metrics(
+        base,
+        {42: adapter},
+        condition="localized-state-distillation",
+        protocol=protocol,
+    )
+    backward = _method_paired_metrics(
+        tuple(reversed(base)),
+        {42: tuple(reversed(adapter))},
+        condition="localized-state-distillation",
+        protocol=protocol,
+    )
+
+    assert forward["typo_accuracy_gain_points_mean"] == backward["typo_accuracy_gain_points_mean"]
+    assert forward == backward
 
 
 def test_report_rejects_unpaired_conditions_and_detects_clean_harm() -> None:
