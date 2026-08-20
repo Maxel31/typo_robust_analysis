@@ -178,13 +178,18 @@ def cluster_near_duplicates(
     text_by_id = {record.source_id: record.text for record in ordered}
 
     exact: dict[str, str] = {}
+    representatives: list[CleanRecord] = []
     for record in ordered:
         digest = normalized_content_sha256(record.text)
-        previous = exact.setdefault(digest, record.source_id)
-        union.union(previous, record.source_id)
+        previous = exact.get(digest)
+        if previous is None:
+            exact[digest] = record.source_id
+            representatives.append(record)
+        else:
+            union.union(previous, record.source_id)
 
     candidate_buckets: dict[tuple[int, tuple[int, ...]], list[str]] = defaultdict(list)
-    for record in ordered:
+    for record in representatives:
         signature = _minhash_signature(_shingles(record.text, shingle_size))
         for band_index in range(8):
             start = band_index * 4
