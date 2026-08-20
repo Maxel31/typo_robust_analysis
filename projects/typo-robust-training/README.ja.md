@@ -240,19 +240,19 @@ API key、checkpoint内容は送信しません。
 status、resume境界だけを保存し、`--resume`時は同一W&B runへ継続してloss curveを
 重複させません。
 
-W&B名には、略称ではなく科学的な役割を直接表示します。この機能で公開するadapter
-configはversion 1のCycle 1再現一式なので、過去のrunであることも名前に明示します。
+W&B名では不透明な略称を使いません。version 1のCycle 1再現一式では、共通の`Legacy`
+roleを使い、正確なoperation名、job type、condition tagで各条件を区別します。
 
 | W&Bに表示する役割 | 操作 | 意味 |
 |---|---|---|
-| `Historical baseline` | `Noisy-language-model training` | Cycle 1の通常のnoisy-text causal language-model baseline |
-| `Historical pilot` | `Output/answer/clean-loss training` | Cycle 1の複数lossによるoutput-matching pilot |
-| `Historical control` | `Global relative-MSE state alignment` | Cycle 1の全layer・全token state control |
-| `Historical ablation` | `Component-level relative-MSE state distillation` | 失敗したCycle 1 neuron/head実験。確証手法ではない |
+| `Legacy` | `Noisy language-model training` | Cycle 1の通常のnoisy-text causal language-model baseline |
+| `Legacy` | `Output/answer/clean-loss pilot` | Cycle 1の複数lossによるoutput-matching pilot |
+| `Legacy` | `Global relative-MSE state pilot` | Cycle 1の全layer・全token state control |
+| `Legacy` | `Component-level state distillation` | 失敗したCycle 1 neuron/head実験。確証手法ではない |
 
-後半にはstate対象層、model、optimizer-step予算、seedを記録します。version 1のrunはすべて
-`Historical Cycle 1`という別groupに分けます。有界residual-window比較のconfigとW&B mappingは
-その学習機能と同じ変更で導入するため、未実装の確証用runと取り違えません。
+後半にはstate対象層、model、optimizer-step予算、seedを記録します。version 1のrunはruntimeの
+`Cycle 1 · <model> · <budget>` groupを使い、operation、job type、condition tagによって
+有界residual-window比較と区別します。
 
 ### 確証用Cycle 3の学習と対照条件
 

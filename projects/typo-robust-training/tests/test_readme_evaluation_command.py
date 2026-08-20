@@ -9,11 +9,82 @@ from pathlib import Path
 
 import pytest
 
+import typo_cot.cli as typo_cot_cli
 from typo_robust_training.cli import register_commands
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TYPO_COT_ROOT = PROJECT_ROOT.parent / "typo-cot"
+
+CORE_COMMANDS = frozenset(
+    {
+        "answer-line-deletion",
+        "build-input-corrector-summary",
+        "build-one-token-tables",
+        "build-rebuttal-manifest",
+        "build-restoration-order-table",
+        "build-typo-warning-summary",
+        "clean-prefix-scan",
+        "cot-swap",
+        "edit-count-sensitivity",
+        "experiments",
+        "fixed-window-answer-patching",
+        "held-out-window-evaluation",
+        "input-corrector-audit",
+        "layerwise-answer-patching",
+        "layerwise-kl-patching",
+        "model-scale-cot-swap",
+        "multitoken-kl-readout",
+        "one-token-prefix-replacement",
+        "patch-coordinate-controls",
+        "patch-harm-audit",
+        "patch-position-controls",
+        "patch-text-combination",
+        "prepare-edited-pairs",
+        "restoration-order-accuracy",
+        "six-setting-patch-controls",
+        "source-write-coordinate-grid",
+        "subword-position-patching",
+        "targeting-fidelity-audit",
+        "tokenization-severity-analysis",
+        "typo-warning-prompt",
+    }
+)
+
+TRAINING_PLUGIN_COMMANDS = frozenset(
+    {
+        "build-robustness-training-data",
+        "build-sae-clean-corpus",
+        "calibrate-sparse-autoencoder-l1",
+        "evaluate-typo-robustness",
+        "freeze-generic-localization-pairs",
+        "freeze-robustness-evaluation",
+        "localize-robustness-components",
+        "select-distillation-layers",
+        "select-generic-joint-patch-window",
+        "train-global-state-alignment",
+        "train-localized-state-distillation",
+        "train-noisy-language-model",
+        "train-output-matching",
+        "train-random-window-state-distillation",
+        "train-sparse-autoencoders",
+        "validate-generic-joint-patch-window",
+        "validate-sparse-autoencoders",
+    }
+)
+
+DOCUMENTED_TRAINING_COMMANDS = frozenset(
+    {
+        "build-robustness-training-data",
+        "evaluate-typo-robustness",
+        "localize-robustness-components",
+        "select-distillation-layers",
+        "train-global-state-alignment",
+        "train-localized-state-distillation",
+        "train-noisy-language-model",
+        "train-output-matching",
+    }
+)
 
 
 def _documented_plugin_invocations(readme: str) -> tuple[list[str], ...]:
@@ -38,7 +109,7 @@ def _plugin_parser() -> argparse.ArgumentParser:
 
 def test_documented_invocation_extractor_ignores_project_path_prefix() -> None:
     readme = """```bash
-uv run --project projects/typo-cot --locked \\
+uv run --project projects/typo-cot \\
   typo-cot train-output-matching \\
   --config config.yaml --training-data data --seed 42 --gpu-id 0 \\
   --output-dir output
@@ -50,6 +121,30 @@ uv run --project projects/typo-cot --locked \\
     assert "projects/typo-cot" not in tokens
     with pytest.raises(SystemExit):
         _plugin_parser().parse_args(tokens)
+
+
+def test_real_cli_registers_the_exact_core_and_training_plugin_commands() -> None:
+    plugin_parser = _plugin_parser()
+    plugin_subparsers = next(
+        action
+        for action in plugin_parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+    plugin_commands = set(plugin_subparsers.choices)
+
+    combined_parser = typo_cot_cli._parser()
+    combined_subparsers = next(
+        action
+        for action in combined_parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+    combined_commands = set(combined_subparsers.choices)
+
+    assert plugin_commands == TRAINING_PLUGIN_COMMANDS
+    assert CORE_COMMANDS.isdisjoint(TRAINING_PLUGIN_COMMANDS)
+    assert combined_commands - plugin_commands == CORE_COMMANDS
+    assert combined_commands == CORE_COMMANDS | TRAINING_PLUGIN_COMMANDS
+    assert len(combined_commands) == 47
 
 
 @pytest.mark.parametrize("readme_name", ["README.md", "README.ja.md"])
@@ -152,7 +247,8 @@ def test_typo_cot_readme_training_catalog_matches_the_installed_plugin_cli(
         if tokens and tokens[0] in plugin_commands
     ]
 
-    assert documented
+    assert len(documented) == len(DOCUMENTED_TRAINING_COMMANDS)
+    assert {tokens[0] for tokens in documented} == DOCUMENTED_TRAINING_COMMANDS
     for tokens in documented:
         parsed = parser.parse_args(tokens)
         assert parsed.command == tokens[0]

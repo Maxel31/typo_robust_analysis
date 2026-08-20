@@ -13,6 +13,9 @@ from typo_robust_training.training.tracking import (
 )
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
 class _Run:
     def __init__(self, run_id: str) -> None:
         self.id = run_id
@@ -135,6 +138,36 @@ def test_wandb_presentation_names_the_scientific_arm_and_operation() -> None:
     assert "arm:Legacy" in legacy.tags
     assert "condition:localized-state-distillation" in legacy.tags
     assert "relative-MSE" in legacy.notes
+
+
+@pytest.mark.parametrize("readme_name", ["README.md", "README.ja.md"])
+def test_cycle1_readme_uses_the_runtime_wandb_presentations(readme_name: str) -> None:
+    readme = (PROJECT_ROOT / readme_name).read_text(encoding="utf-8")
+    presentations = [
+        build_wandb_run_presentation(
+            condition=condition,
+            schema_version="robustness-adapter-training-config/v1",
+            model="google/gemma-3-4b-it",
+            seed=42,
+            max_optimizer_steps=100,
+            state_gradient_ratio=None,
+            state_layers=(),
+        )
+        for condition in (
+            "noisy-language-model",
+            "output-matching",
+            "global-state-alignment",
+            "localized-state-distillation",
+        )
+    ]
+
+    for presentation in presentations:
+        role, operation, *_ = presentation.name.split(" · ")
+        assert f"| `{role}` | `{operation}` |" in readme
+        assert presentation.group == "Cycle 1 · Gemma-3-4B-IT · 100 steps"
+    assert "`Cycle 1 · <model> · <budget>`" in readme
+    assert "`Historical Cycle 1`" not in readme
+    assert "`Historical baseline`" not in readme
 
 
 def test_legacy_wandb_tags_identify_each_condition() -> None:

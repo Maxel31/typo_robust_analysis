@@ -272,21 +272,21 @@ checkpoint contents are never sent.
 bindings/presentation, URL, status, and the resume boundary so `--resume`
 continues the same W&B run without duplicating the loss curve.
 
-W&B names expose the scientific role directly; opaque arm abbreviations are
-not used. The adapter configs published in this feature are the version-1
-Cycle 1 reproduction suite, so their historical status is explicit:
+W&B names avoid opaque arm abbreviations. The version-1 Cycle 1 reproduction
+suite uses the broad `Legacy` role and distinguishes conditions by the exact
+operation name, job type, and condition tag:
 
 | Role shown in W&B | Operation | Meaning |
 |---|---|---|
-| `Historical baseline` | `Noisy-language-model training` | Cycle 1 ordinary causal-language-model baseline on noisy text |
-| `Historical pilot` | `Output/answer/clean-loss training` | Cycle 1 multi-loss output-matching pilot |
-| `Historical control` | `Global relative-MSE state alignment` | Cycle 1 all-layer/all-token state control |
-| `Historical ablation` | `Component-level relative-MSE state distillation` | Failed Cycle 1 neuron/head experiment; not the confirmatory method |
+| `Legacy` | `Noisy language-model training` | Cycle 1 ordinary causal-language-model baseline on noisy text |
+| `Legacy` | `Output/answer/clean-loss pilot` | Cycle 1 multi-loss output-matching pilot |
+| `Legacy` | `Global relative-MSE state pilot` | Cycle 1 all-layer/all-token state control |
+| `Legacy` | `Component-level state distillation` | Failed Cycle 1 neuron/head experiment; not the confirmatory method |
 
-The suffix records state layers, model, optimizer-step budget, and seed. All
-of these version-1 runs are placed in the separate `Historical Cycle 1` group,
-so they cannot be mistaken for the bounded residual-window comparison, whose
-config and W&B mapping are introduced with that later training feature.
+The suffix records state layers, model, optimizer-step budget, and seed. These
+version-1 runs use the runtime group `Cycle 1 · <model> · <budget>`; their
+operation, job type, and condition tags keep them distinct from the bounded
+residual-window comparison.
 
 ### Confirmatory Cycle 3 training and controls
 
