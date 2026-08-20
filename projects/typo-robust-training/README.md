@@ -299,6 +299,18 @@ the state-loss layer scope.
 
 ```bash
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-localized-state-distillation \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-causal-window-10m.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --monitor-data "${TRAIN_ROOT}/evaluation-data/robustness-v1" \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --output-dir "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-42"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-random-window-state-distillation \
   --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-random-window-10m.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
@@ -321,11 +333,11 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --output-dir "${TRAIN_ROOT}/training/cycle3/all-layer-state-distillation/seed-42"
 ```
 
-Run the two controls serially when only one GPU is available. Add `--resume`
+Run the three conditions serially when only one GPU is available. Add `--resume`
 only when the same output directory already contains an exact compatible
-checkpoint. W&B uses descriptive names beginning with `Random-window control`
-and `All-layer control`; each name also includes the operation, layer range,
-model, token budget, and seed.
+checkpoint. W&B uses descriptive names beginning with `Causal-window proposal`,
+`Random-window control`, and `All-layer control`; each name also includes the
+operation, layer range, model, token budget, and seed.
 
 ## 5. Freeze the independent evaluation study
 

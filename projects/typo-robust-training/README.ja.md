@@ -263,6 +263,18 @@ clean:noisy交互列、10M student-token予算を固定します。提案条件�
 
 ```bash
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-localized-state-distillation \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-causal-window-10m.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --monitor-data "${TRAIN_ROOT}/evaluation-data/robustness-v1" \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --output-dir "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-42"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-random-window-state-distillation \
   --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-random-window-10m.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
@@ -285,9 +297,9 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --output-dir "${TRAIN_ROOT}/training/cycle3/all-layer-state-distillation/seed-42"
 ```
 
-利用可能なGPUが1枚の場合は2条件を直列に実行します。同じoutput directoryに互換性のある
+利用可能なGPUが1枚の場合は3条件を直列に実行します。同じoutput directoryに互換性のある
 exact checkpointがある場合だけ`--resume`を追加します。W&Bでは
-`Random-window control`または`All-layer control`から始まり、
+`Causal-window proposal`、`Random-window control`、または`All-layer control`から始まり、
 操作、層範囲、モデル、token budget、seedを含む説明的な名前を使用します。
 
 ## 5. 独立した評価studyを凍結する

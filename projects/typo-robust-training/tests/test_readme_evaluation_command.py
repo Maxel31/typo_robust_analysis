@@ -20,10 +20,36 @@ def _documented_plugin_invocations(readme: str) -> tuple[list[str], ...]:
     invocations: list[list[str]] = []
     for block in re.findall(r"```bash\n(.*?)\n```", readme, flags=re.DOTALL):
         for statement in block.replace("\\\n", " ").splitlines():
-            marker = statement.find("typo-cot ")
-            if marker >= 0:
-                invocations.append(shlex.split(statement[marker:])[1:])
+            command = re.search(
+                r"(?<![\w/-])typo-cot\s+([a-z0-9][a-z0-9-]*)",
+                statement,
+            )
+            if command is not None:
+                invocations.append(shlex.split(statement[command.start() :])[1:])
     return tuple(invocations)
+
+
+def _plugin_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    commands = parser.add_subparsers(dest="command", required=True)
+    register_commands(commands)
+    return parser
+
+
+def test_documented_invocation_extractor_ignores_project_path_prefix() -> None:
+    readme = """```bash
+uv run --project projects/typo-cot --locked \\
+  typo-cot train-output-matching \\
+  --config config.yaml --training-data data --seed 42 --gpu-id 0 \\
+  --output-dir output
+```"""
+
+    (tokens,) = _documented_plugin_invocations(readme)
+
+    assert tokens[0] == "train-output-matching"
+    assert "projects/typo-cot" not in tokens
+    with pytest.raises(SystemExit):
+        _plugin_parser().parse_args(tokens)
 
 
 @pytest.mark.parametrize("readme_name", ["README.md", "README.ja.md"])
@@ -60,10 +86,7 @@ def test_documented_evaluation_command_matches_the_installed_plugin_cli(
     )[0]
     tokens = shlex.split(("evaluate-typo-robustness" + tail).replace("\\\n", " "))
 
-    parser = argparse.ArgumentParser()
-    commands = parser.add_subparsers(dest="command", required=True)
-    register_commands(commands)
-    parsed = parser.parse_args(tokens)
+    parsed = _plugin_parser().parse_args(tokens)
 
     assert parsed.command == "evaluate-typo-robustness"
     assert parsed.evaluation_role == "tune"
@@ -72,6 +95,37 @@ def test_documented_evaluation_command_matches_the_installed_plugin_cli(
     assert "--data-manifest" not in tail
     assert "--base-model" not in tail
     assert "--checkpoints" not in tail
+
+
+@pytest.mark.parametrize("readme_name", ["README.md", "README.ja.md"])
+def test_evaluated_checkpoint_has_a_documented_training_producer(
+    readme_name: str,
+) -> None:
+    readme = (PROJECT_ROOT / readme_name).read_text(encoding="utf-8")
+    invocations = _documented_plugin_invocations(readme)
+    parser = _plugin_parser()
+
+    evaluation_tokens = [
+        tokens for tokens in invocations if tokens[0] == "evaluate-typo-robustness"
+    ]
+    assert len(evaluation_tokens) == 1
+    evaluation = parser.parse_args(evaluation_tokens[0])
+    assert len(evaluation.checkpoints) == 1
+    (checkpoint,) = evaluation.checkpoints
+    assert checkpoint.name == "adapter"
+
+    producers = []
+    for tokens in invocations:
+        if tokens[0] != "train-localized-state-distillation":
+            continue
+        parsed = parser.parse_args(tokens)
+        if parsed.output_dir == checkpoint.parent:
+            producers.append(parsed)
+
+    assert len(producers) == 1
+    assert producers[0]._training_condition == "localized-state-distillation"
+    assert producers[0].wandb_project == "${WANDB_PROJECT}"
+    assert producers[0].window_validation is not None
 
 
 @pytest.mark.parametrize("readme_name", ["README.md", "README.ja.md"])
