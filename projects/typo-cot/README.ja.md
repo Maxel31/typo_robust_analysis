@@ -336,16 +336,20 @@ PEFTを追加しても論文再現環境を変更しないよう、学習には�
 使用します。datasetの役割、leakage防止、layerからcomponentへ進む局所化、loss、
 baseline、PR前の実測gateは
 [`docs/robustness_training_plan_v1.md`](docs/robustness_training_plan_v1.md) で固定しています。
-以下のcommandは、別lockfileを持つ学習projectが実装・登録済みです。必要なmanifest、
-corpus、localization record、checkpointを準備した後に実行でき、不足している前提資産を
-暗黙に生成せず明示的に失敗します。実測runでは、評価tierとsealed dataの開封規則を
-引き続き遵守してください。
+以下のcommandは、別lockfileを持つ学習projectが実装・登録済みです。このblockは
+**逐次実行できる自己完結pipelineではなく、複数のstudy cycleを含むinterface catalog**
+です。各前提資産の作成手順は
+[`projects/typo-robust-training/README.ja.md`](../typo-robust-training/README.ja.md)
+を参照してください。manifest、corpus、localization record、checkpointが不足している
+場合は、暗黙に生成せず明示的に失敗します。実測runでは、評価tierとsealed dataの
+開封規則を引き続き遵守してください。
 
 ```bash
 GPU_ID=0
 TRAIN_PROJECT=projects/typo-robust-training
 TRAIN_ROOT=projects/typo-robust-training/results
 EVALUATION_DATA="${TRAIN_ROOT}/evaluation-data/robustness-v1"
+WANDB_PROJECT=typo-robust-training
 
 uv sync --project "${TRAIN_PROJECT}" --locked
 
@@ -375,6 +379,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-noisy-language-model \
   --config "${TRAIN_PROJECT}/configs/baselines/noisy-language-model.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --wandb-project "${WANDB_PROJECT}" \
   --seed 42 --gpu-id "${GPU_ID}" \
   --output-dir "${TRAIN_ROOT}/training/noisy-language-model/seed-42"
 
@@ -382,6 +387,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-output-matching \
   --config "${TRAIN_PROJECT}/configs/baselines/output-matching.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --wandb-project "${WANDB_PROJECT}" \
   --seed 42 --gpu-id "${GPU_ID}" \
   --output-dir "${TRAIN_ROOT}/training/output-matching/seed-42"
 
@@ -389,6 +395,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-global-state-alignment \
   --config "${TRAIN_PROJECT}/configs/baselines/global-state-alignment.yaml" \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --wandb-project "${WANDB_PROJECT}" \
   --seed 42 --gpu-id "${GPU_ID}" \
   --output-dir "${TRAIN_ROOT}/training/global-state-alignment/seed-42"
 
@@ -398,6 +405,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
   --layer-selection "${TRAIN_ROOT}/localization/layers/layer_selection.json" \
   --component-selection "${TRAIN_ROOT}/localization/components/component_selection.json" \
+  --wandb-project "${WANDB_PROJECT}" \
   --seed 42 --gpu-id "${GPU_ID}" \
   --output-dir "${TRAIN_ROOT}/training/localized-state-distillation/seed-42"
 

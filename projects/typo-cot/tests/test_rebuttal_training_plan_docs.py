@@ -57,7 +57,9 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
             assert f"typo-cot {command}" in examples
 
     assert "implements and registers the commands" in project_english
-    assert "a missing prerequisite fails" in project_english
+    assert "interface catalog, not a sequential or self-contained" in project_english
+    assert "projects/typo-robust-training/README.md" in project_english
+    assert "fails explicitly rather than being" in project_english
     assert "`build-rebuttal-manifest` is implemented and CPU-only" in project_english
     assert "`six-setting-patch-controls` is implemented and GPU-only" in project_english
     assert "`source-write-coordinate-grid` is implemented and GPU-only" in project_english
@@ -67,7 +69,8 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
     assert "`subword-position-patching` is implemented and GPU-only" in project_english
     assert "`held-out-window-evaluation` is implemented and GPU-only" in project_english
     assert "学習projectが実装・登録済み" in project_japanese
-    assert "不足している前提資産を" in project_japanese
+    assert "自己完結pipelineではなく、複数のstudy cycleを含むinterface catalog" in project_japanese
+    assert "projects/typo-robust-training/README.ja.md" in project_japanese
     assert "`build-rebuttal-manifest` は実装済みのCPU専用コマンド" in project_japanese
     assert "`six-setting-patch-controls` は実装済みのGPU専用コマンド" in project_japanese
     assert "`source-write-coordinate-grid` は実装済みのGPU専用コマンド" in project_japanese
