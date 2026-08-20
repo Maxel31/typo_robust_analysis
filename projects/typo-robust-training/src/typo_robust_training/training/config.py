@@ -363,6 +363,18 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     warmup = _number(optimization["warmup_ratio"], field="optimization.warmup_ratio")
     if warmup > 1.0:
         raise ValueError("optimization.warmup_ratio must be at most one")
+    micro_batch_size = _integer(
+        optimization["micro_batch_size"],
+        field="optimization.micro_batch_size",
+        minimum=1,
+    )
+    if micro_batch_size != 1:
+        raise ValueError("optimization.micro_batch_size must equal 1")
+    gradient_accumulation_steps = _integer(
+        optimization["gradient_accumulation_steps"],
+        field="optimization.gradient_accumulation_steps",
+        minimum=1,
+    )
 
     objective = _mapping(
         root["objective"],
@@ -423,6 +435,18 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         gradient_ratio = None
         calibration = 0
 
+    pairing_policy = str(sequence.get("pairing_policy", "generator-probability/v1"))
+    state_active = weights["state"] > 0.0 and state_scope != "none"
+    if (
+        state_active
+        and pairing_policy == "exact-alternating-clean-noisy/v1"
+        and (gradient_accumulation_steps < 2 or gradient_accumulation_steps % 2 != 0)
+    ):
+        raise ValueError(
+            "state training with exact alternating pairs requires an even "
+            "gradient_accumulation_steps >= 2"
+        )
+
     return AdapterTrainingProtocol(
         schema_version=str(schema_version),
         condition=condition,
@@ -440,7 +464,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         on_the_fly_typo=str(sequence["on_the_fly_typo"]),
         natural_pairs=str(sequence["natural_pairs"]),
         answer_format=str(sequence["answer_format"]),
-        pairing_policy=str(sequence.get("pairing_policy", "generator-probability/v1")),
+        pairing_policy=pairing_policy,
         adapter_method="lora",
         lora_rank=_integer(adapter["rank"], field="adapter.rank", minimum=1),
         lora_alpha=_number(adapter["alpha"], field="adapter.alpha"),
@@ -455,16 +479,8 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         warmup_ratio=warmup,
         scheduler=str(optimization["scheduler"]),
         gradient_checkpointing=gradient_checkpointing,
-        micro_batch_size=_integer(
-            optimization["micro_batch_size"],
-            field="optimization.micro_batch_size",
-            minimum=1,
-        ),
-        gradient_accumulation_steps=_integer(
-            optimization["gradient_accumulation_steps"],
-            field="optimization.gradient_accumulation_steps",
-            minimum=1,
-        ),
+        micro_batch_size=micro_batch_size,
+        gradient_accumulation_steps=gradient_accumulation_steps,
         max_optimizer_steps=_integer(
             optimization["max_optimizer_steps"],
             field="optimization.max_optimizer_steps",

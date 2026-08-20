@@ -29,6 +29,29 @@ def test_streaming_statistics_compute_fvu_l0_firing_rates_and_scale() -> None:
     assert result.reconstruction_error_median == pytest.approx(0.25)
 
 
+def test_streaming_fvu_is_stable_for_large_offset_activations() -> None:
+    accumulator = SaeStatisticsAccumulator(d_sae=1)
+    inputs = torch.tensor(
+        [
+            [100_000.0, 100_000.0],
+            [100_001.0, 99_999.0],
+            [100_002.0, 99_998.0],
+            [100_003.0, 99_997.0],
+        ],
+        dtype=torch.float32,
+    )
+    reconstruction = inputs + 0.5
+    features = torch.ones((4, 1))
+
+    accumulator.update(inputs[:2], reconstruction[:2], features[:2])
+    accumulator.update(inputs[2:], reconstruction[2:], features[2:])
+    result = accumulator.finalize()
+
+    expected_error = ((inputs.double() - reconstruction.double()) ** 2).sum().item()
+    expected_variance = ((inputs.double() - inputs.double().mean(dim=0)) ** 2).sum().item()
+    assert result.fvu == pytest.approx(expected_error / expected_variance)
+
+
 def test_energy_score_penalizes_rare_feature_more_than_common_feature() -> None:
     common = energy_score(
         reconstruction_error=torch.tensor([1.0]),

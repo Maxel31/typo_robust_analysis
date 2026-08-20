@@ -132,6 +132,34 @@ def test_training_config_rejects_condition_or_field_drift(tmp_path: Path) -> Non
         load_adapter_training_config(unknown)
 
 
+def test_training_config_rejects_unsupported_micro_batch_size(tmp_path: Path) -> None:
+    payload = json.loads(CYCLE2_CONFIGS["output-matching"].read_text(encoding="utf-8"))
+    payload["optimization"]["micro_batch_size"] = 2
+    path = tmp_path / "micro-batch-size-two.yaml"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="micro_batch_size must equal 1"):
+        load_adapter_training_config(path)
+
+
+@pytest.mark.parametrize("gradient_accumulation_steps", [1, 3])
+def test_state_training_rejects_accumulation_that_cannot_pair_clean_and_noisy(
+    tmp_path: Path,
+    gradient_accumulation_steps: int,
+) -> None:
+    payload = json.loads(CYCLE2_CONFIGS["localized-state-distillation"].read_text(encoding="utf-8"))
+    payload["optimization"]["gradient_accumulation_steps"] = gradient_accumulation_steps
+    path = tmp_path / f"state-accumulation-{gradient_accumulation_steps}.yaml"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="state training with exact alternating pairs requires an even "
+        "gradient_accumulation_steps >= 2",
+    ):
+        load_adapter_training_config(path)
+
+
 def test_cycle2_configs_share_capacity_data_schedule_and_output_objective() -> None:
     protocols = {name: load_adapter_training_config(path) for name, path in CYCLE2_CONFIGS.items()}
     for name, protocol in protocols.items():
