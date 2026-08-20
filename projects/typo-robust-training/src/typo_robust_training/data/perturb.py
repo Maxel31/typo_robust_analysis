@@ -227,13 +227,14 @@ def _derived_rng(*, seed: int, epoch: int, variant: int, record_id: str) -> rand
 
 
 def _weighted_choice(rng: random.Random, weights: Mapping[str, float]) -> str:
+    ordered_weights = tuple(sorted(weights.items()))
     value = rng.random()
     cumulative = 0.0
-    for name, weight in weights.items():
+    for name, weight in ordered_weights:
         cumulative += float(weight)
         if value < cumulative:
             return name
-    return next(reversed(weights))
+    return ordered_weights[-1][0]
 
 
 class TypoGenerator:
