@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -31,7 +32,9 @@ def test_readmes_document_separate_wp1_and_wp2_commands_and_gpu_zero() -> None:
         assert '--validation-data "${SAE_SUPPLEMENT_DATA}"' in text
 
 
-def test_sae_subshell_pins_gpu_zero_without_clobbering_caller_state() -> None:
+def test_sae_subshell_pins_gpu_zero_without_clobbering_caller_state(
+    tmp_path: Path,
+) -> None:
     for filename in README_NAMES:
         text = (PROJECT_ROOT / filename).read_text(encoding="utf-8")
         blocks = _bash_blocks(text)
@@ -79,12 +82,14 @@ def test_sae_subshell_pins_gpu_zero_without_clobbering_caller_state() -> None:
         assert not re.search(r"(?m)^(GPU_ID|WANDB_PROJECT|EVALUATION_DATA)=", sae_section)
 
         guard_block = next(block for block in sae_blocks if "build-sae-clean-corpus" in block)
+        marker = tmp_path / f"{filename}.uv-invoked"
         failure = subprocess.run(
             [
                 "bash",
                 "-c",
                 "\n".join(
-                    environment_assignments
+                    ['uv() { : > "${UV_MARKER}"; }']
+                    + environment_assignments
                     + [
                         "unset SAE_ROOT ROOTED_REGISTRY",
                         guard_block,
@@ -95,9 +100,88 @@ def test_sae_subshell_pins_gpu_zero_without_clobbering_caller_state() -> None:
             text=True,
             capture_output=True,
             check=False,
+            env={**os.environ, "UV_MARKER": str(marker)},
         )
         assert failure.returncode == 0, failure.stderr
         assert failure.stdout.strip() == "CALLER_SURVIVED=5"
+        assert not marker.exists()
+
+
+def test_every_sae_gpu_block_fails_closed_before_invoking_uv(
+    tmp_path: Path,
+) -> None:
+    for filename in README_NAMES:
+        text = (PROJECT_ROOT / filename).read_text(encoding="utf-8")
+        sae_section = text.split("## 7.", maxsplit=1)[1]
+        gpu_blocks = [
+            block for block in _bash_blocks(sae_section) if "CUDA_VISIBLE_DEVICES=" in block
+        ]
+        assert len(gpu_blocks) == 3
+
+        for block_index, block in enumerate(gpu_blocks):
+            block_root = tmp_path / f"{filename}-{block_index}-sae"
+            block_root.mkdir()
+            registry = tmp_path / f"{filename}-{block_index}-registry.yaml"
+            registry.write_text("reviewed: true\n", encoding="utf-8")
+            training_root = tmp_path / f"{filename}-{block_index}-results"
+            training_source = training_root / "data/gemma4b-cycle3-64m/training_sources.jsonl"
+            training_source.parent.mkdir(parents=True)
+            training_source.write_text('{"record_id":"clean-1"}\n', encoding="utf-8")
+
+            command_specific_root = block_root / "command-specific-missing"
+            command_specific_root.mkdir()
+            supplement = command_specific_root / "clean-corpus/sae_clean_supplement.jsonl"
+            if "calibrate-sparse-autoencoder-l1" not in block:
+                supplement.parent.mkdir(parents=True)
+                supplement.write_text('{"record_id":"clean-2"}\n', encoding="utf-8")
+
+            scenarios = (
+                ("relative", "relative/sae-artifacts", "relative/registry.yaml"),
+                (
+                    "missing-root",
+                    str(tmp_path / f"{filename}-{block_index}-missing-root"),
+                    str(registry),
+                ),
+                (
+                    "missing-registry",
+                    str(block_root),
+                    str(tmp_path / f"{filename}-{block_index}-missing-registry.yaml"),
+                ),
+                (
+                    "missing-command-input",
+                    str(command_specific_root),
+                    str(registry),
+                ),
+            )
+            for scenario, sae_root, registry in scenarios:
+                marker = tmp_path / f"{filename}-{block_index}-{scenario}.uv-invoked"
+                result = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        "\n".join(('uv() { : > "${UV_MARKER}"; }', block)),
+                    ],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    env={
+                        **os.environ,
+                        "TRAIN_PROJECT": str(PROJECT_ROOT),
+                        "TRAIN_ROOT": str(training_root),
+                        "GPU_ID": "5",
+                        "WANDB_PROJECT": "typo-robustness-training",
+                        "SAE_ROOT": sae_root,
+                        "ROOTED_REGISTRY": registry,
+                        "UV_MARKER": str(marker),
+                    },
+                )
+
+                assert result.returncode != 0, (
+                    f"{filename} block {block_index} accepted {scenario} inputs"
+                )
+                assert not marker.exists(), (
+                    f"{filename} block {block_index} invoked uv for {scenario} inputs"
+                )
 
 
 def test_every_sae_gpu_reference_uses_the_gpu_zero_pin() -> None:

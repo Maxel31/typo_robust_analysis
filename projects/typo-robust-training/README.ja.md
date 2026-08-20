@@ -472,8 +472,8 @@ character 5-gram近重複検査を行います。このデータ準備commandは
 絶対directoryを`SAE_ROOT`として用意し、`wp2_project_root`と`wp2_project_root_identity`を持つ
 別途レビュー済みの絶対path `ROOTED_REGISTRY`を渡す必要があります。repository内のlegacy
 registry-v1はlineage証拠専用です。これとレビュー済みregistryを混在させると、bindされた
-preregistration SHAが変わり、validationがtraining runを拒否します。最初のblockは、外部契約
-または先行するrepository artifactが欠けている場合、data準備やGPU commandより前に失敗します。
+preregistration SHAが変わり、validationがtraining runを拒否します。各blockは、外部契約または
+command固有の先行artifactが不正または欠けている場合、data準備やGPU commandより前に失敗します。
 以下の各SAE command blockは独立したsubshellで実行します。GPU 0とSAE用W&B projectはblock内だけで
 有効になり、`exit 2`もsubshellだけを終了するため、callerの`GPU_ID`、`WANDB_PROJECT`、
 `EVALUATION_DATA`は変更されません。
@@ -511,10 +511,17 @@ uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-sae-clean-corpus \
 (
 : "${SAE_ROOT:?Set SAE_ROOT to a provisioned absolute external artifact directory}"
 : "${ROOTED_REGISTRY:?Set ROOTED_REGISTRY to the separately reviewed absolute registry path}"
+case "${SAE_ROOT}" in /*) ;; *) echo "SAE_ROOT must be absolute" >&2; exit 2 ;; esac
+case "${ROOTED_REGISTRY}" in /*) ;; *) echo "ROOTED_REGISTRY must be absolute" >&2; exit 2 ;; esac
+[ -d "${SAE_ROOT}" ] || { echo "SAE_ROOT does not exist: ${SAE_ROOT}" >&2; exit 2; }
+[ -f "${ROOTED_REGISTRY}" ] || { echo "reviewed ROOTED_REGISTRY does not exist: ${ROOTED_REGISTRY}" >&2; exit 2; }
 SAE_GPU_ID="0"
 SAE_WANDB_PROJECT="typo-robustness-sae"
 SAE_TRAINING_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m/training_sources.jsonl"
 SAE_SUPPLEMENT_DATA="${SAE_ROOT}/clean-corpus/sae_clean_supplement.jsonl"
+for REQUIRED_INPUT in "${SAE_TRAINING_DATA}" "${SAE_SUPPLEMENT_DATA}"; do
+  [ -f "${REQUIRED_INPUT}" ] || { echo "required SAE input file does not exist: ${REQUIRED_INPUT}" >&2; exit 2; }
+done
 CUDA_VISIBLE_DEVICES="${SAE_GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot calibrate-sparse-autoencoder-l1 \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
@@ -536,17 +543,25 @@ manifestを `--training-data` の繰り返しで追加します。
 (
 : "${SAE_ROOT:?Set SAE_ROOT to a provisioned absolute external artifact directory}"
 : "${ROOTED_REGISTRY:?Set ROOTED_REGISTRY to the separately reviewed absolute registry path}"
+case "${SAE_ROOT}" in /*) ;; *) echo "SAE_ROOT must be absolute" >&2; exit 2 ;; esac
+case "${ROOTED_REGISTRY}" in /*) ;; *) echo "ROOTED_REGISTRY must be absolute" >&2; exit 2 ;; esac
+[ -d "${SAE_ROOT}" ] || { echo "SAE_ROOT does not exist: ${SAE_ROOT}" >&2; exit 2; }
+[ -f "${ROOTED_REGISTRY}" ] || { echo "reviewed ROOTED_REGISTRY does not exist: ${ROOTED_REGISTRY}" >&2; exit 2; }
 SAE_GPU_ID="0"
 SAE_WANDB_PROJECT="typo-robustness-sae"
 SAE_TRAINING_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m/training_sources.jsonl"
 SAE_SUPPLEMENT_DATA="${SAE_ROOT}/clean-corpus/sae_clean_supplement.jsonl"
+SAE_L1_SELECTION="${SAE_ROOT}/l1-calibration/l1_selection.json"
+for REQUIRED_INPUT in "${SAE_TRAINING_DATA}" "${SAE_SUPPLEMENT_DATA}" "${SAE_L1_SELECTION}"; do
+  [ -f "${REQUIRED_INPUT}" ] || { echo "required SAE input file does not exist: ${REQUIRED_INPUT}" >&2; exit 2; }
+done
 CUDA_VISIBLE_DEVICES="${SAE_GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-sparse-autoencoders \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
   --registry "${ROOTED_REGISTRY}" \
   --training-data "${SAE_TRAINING_DATA}" \
   --training-data "${SAE_SUPPLEMENT_DATA}" \
-  --l1-selection "${SAE_ROOT}/l1-calibration/l1_selection.json" \
+  --l1-selection "${SAE_L1_SELECTION}" \
   --gpu-id "${SAE_GPU_ID}" \
   --wandb-project "${SAE_WANDB_PROJECT}" \
   --output-dir "${SAE_ROOT}/training"
@@ -565,16 +580,25 @@ CUDA_VISIBLE_DEVICES="${SAE_GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locke
 (
 : "${SAE_ROOT:?Set SAE_ROOT to a provisioned absolute external artifact directory}"
 : "${ROOTED_REGISTRY:?Set ROOTED_REGISTRY to the separately reviewed absolute registry path}"
+case "${SAE_ROOT}" in /*) ;; *) echo "SAE_ROOT must be absolute" >&2; exit 2 ;; esac
+case "${ROOTED_REGISTRY}" in /*) ;; *) echo "ROOTED_REGISTRY must be absolute" >&2; exit 2 ;; esac
+[ -d "${SAE_ROOT}" ] || { echo "SAE_ROOT does not exist: ${SAE_ROOT}" >&2; exit 2; }
+[ -f "${ROOTED_REGISTRY}" ] || { echo "reviewed ROOTED_REGISTRY does not exist: ${ROOTED_REGISTRY}" >&2; exit 2; }
 SAE_GPU_ID="0"
 SAE_TRAINING_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m/training_sources.jsonl"
 SAE_SUPPLEMENT_DATA="${SAE_ROOT}/clean-corpus/sae_clean_supplement.jsonl"
+SAE_CHECKPOINT_DIR="${SAE_ROOT}/training"
+for REQUIRED_INPUT in "${SAE_TRAINING_DATA}" "${SAE_SUPPLEMENT_DATA}"; do
+  [ -f "${REQUIRED_INPUT}" ] || { echo "required SAE input file does not exist: ${REQUIRED_INPUT}" >&2; exit 2; }
+done
+[ -d "${SAE_CHECKPOINT_DIR}" ] || { echo "SAE checkpoint directory does not exist: ${SAE_CHECKPOINT_DIR}" >&2; exit 2; }
 CUDA_VISIBLE_DEVICES="${SAE_GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot validate-sparse-autoencoders \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
   --registry "${ROOTED_REGISTRY}" \
   --validation-data "${SAE_TRAINING_DATA}" \
   --validation-data "${SAE_SUPPLEMENT_DATA}" \
-  --checkpoint-dir "${SAE_ROOT}/training" \
+  --checkpoint-dir "${SAE_CHECKPOINT_DIR}" \
   --gpu-id "${SAE_GPU_ID}" \
   --output-dir "${SAE_ROOT}/validation"
 )

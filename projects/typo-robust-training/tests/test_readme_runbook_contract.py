@@ -136,27 +136,34 @@ def test_sae_runbook_has_no_ephemeral_paths_and_fails_closed_before_gpu(
     text = (PROJECT_ROOT / readme_name).read_text(encoding="utf-8")
     bash = "\n".join(_bash_blocks(text))
     sae = text.split("## 7.", maxsplit=1)[1]
-    first_gpu = sae.index('CUDA_VISIBLE_DEVICES="${SAE_GPU_ID}"')
+    sae_blocks = _bash_blocks(sae)
+    gpu_blocks = [block for block in sae_blocks if "CUDA_VISIBLE_DEVICES=" in block]
+    build_block = next(block for block in sae_blocks if "build-sae-clean-corpus" in block)
 
     assert "/diskthalys/" not in bash
     assert "/tmp/typo-rebuttal-manifest" not in bash
     assert not re.search(r"(?m)^SAE_ROOT=", sae)
     assert not re.search(r"(?m)^ROOTED_REGISTRY=", sae)
-    for guard in (
-        ': "${SAE_ROOT:?Set SAE_ROOT',
-        ': "${ROOTED_REGISTRY:?Set ROOTED_REGISTRY',
-        'case "${SAE_ROOT}" in /*)',
-        'case "${ROOTED_REGISTRY}" in /*)',
-        '[ -d "${SAE_ROOT}" ]',
-        '[ -f "${ROOTED_REGISTRY}" ]',
-    ):
-        assert guard in sae[:first_gpu]
+    assert len(gpu_blocks) == 3
+    for block in gpu_blocks:
+        before_gpu = block[: block.index("CUDA_VISIBLE_DEVICES=")]
+        for guard in (
+            ': "${SAE_ROOT:?Set SAE_ROOT',
+            ': "${ROOTED_REGISTRY:?Set ROOTED_REGISTRY',
+            'case "${SAE_ROOT}" in /*)',
+            'case "${ROOTED_REGISTRY}" in /*)',
+            '[ -d "${SAE_ROOT}" ]',
+            '[ -f "${ROOTED_REGISTRY}" ]',
+            'for REQUIRED_INPUT in "${SAE_TRAINING_DATA}"',
+            '[ -f "${REQUIRED_INPUT}" ]',
+        ):
+            assert guard in before_gpu, block
     for repository_artifact in (
         'SAE_TRAINING_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m/training_sources.jsonl"',
         'SAE_EVALUATION_DATA="${TRAIN_ROOT}/evaluation-data/robustness-v1"',
         'SAE_LOCALIZATION_DATA="${TRAIN_ROOT}/localization/generic-joint-window-v1/pairs"',
     ):
-        assert repository_artifact in sae[:first_gpu]
+        assert repository_artifact in build_block
     assert "separately reviewed" in sae or "別途レビュー済み" in sae
 
 
