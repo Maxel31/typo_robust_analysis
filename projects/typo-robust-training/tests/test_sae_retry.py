@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from typo_robust_training.sae import retry as retry_module
 from typo_robust_training.sae.retry import (
     Wp2RetryInputs,
     claim_wp2_retry_training,
@@ -222,7 +223,7 @@ def test_validation_accepts_only_the_claimed_training_run_sha(tmp_path: Path) ->
         claim=claim,
         training_run_path=checkpoint / "run.json",
     )
-    assert require_claimed_wp2_retry_training(lineage, checkpoint_dir=checkpoint) == claim
+    assert require_claimed_wp2_retry_training(lineage, checkpoint_dir=checkpoint).claim == claim
 
     forged = tmp_path / "forged" / "training"
     _write(
@@ -244,3 +245,200 @@ def test_retry_lineage_rejects_tampered_initial_failure(tmp_path: Path) -> None:
             retry_config_sha256=config_sha,
             retry_preregistration_sha256=registry_sha,
         )
+
+
+def _completed_retry_training(tmp_path: Path):
+    lineage = _lineage(tmp_path)
+    checkpoint = tmp_path / "retry" / "training"
+    bindings = _retry_bindings(lineage, source_record_sha256="e" * 64)
+    claim = claim_wp2_retry_training(
+        lineage,
+        output_dir=checkpoint,
+        training_bindings=bindings,
+        resume=False,
+    )
+    run_sha = _write(
+        checkpoint / "run.json",
+        {"bindings": {**bindings, "wp2_retry_claim_sha256": claim.sha256}},
+    )
+    record_wp2_retry_training_completion(
+        lineage,
+        claim=claim,
+        training_run_path=checkpoint / "run.json",
+    )
+    claimed = require_claimed_wp2_retry_training(lineage, checkpoint_dir=checkpoint)
+    return lineage, checkpoint, claim, claimed, run_sha
+
+
+def test_retry_validation_reservation_is_exclusive_before_any_output(tmp_path: Path) -> None:
+    """Falsify a design that waits until validation completion to claim attempt 2."""
+
+    lineage, checkpoint, _claim, claimed, _run_sha = _completed_retry_training(tmp_path)
+    reserve = getattr(retry_module, "reserve_wp2_retry_validation")
+
+    def attempt(index: int) -> str:
+        try:
+            reserve(
+                lineage,
+                claimed_training=claimed,
+                checkpoint_dir=checkpoint,
+                output_dir=tmp_path / f"validation-{index}",
+            )
+        except ValueError:
+            return "rejected"
+        return "reserved"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(attempt, (1, 2)))
+    assert sorted(outcomes) == ["rejected", "reserved"]
+    assert not (tmp_path / "validation-1").exists()
+    assert not (tmp_path / "validation-2").exists()
+
+
+def test_initial_validation_reservation_is_exclusive_before_any_output(tmp_path: Path) -> None:
+    """Falsify two concurrent initial validations that both reach artifact generation."""
+
+    reserve = getattr(retry_module, "reserve_initial_wp2_validation")
+    checkpoint = tmp_path / "training"
+    checkpoint.mkdir()
+    run_sha = _write(checkpoint / "run.json", {"bindings": {}})
+
+    def attempt(index: int) -> str:
+        try:
+            reserve(
+                project_root=tmp_path,
+                config_sha256="a" * 64,
+                preregistration_sha256="b" * 64,
+                checkpoint_dir=checkpoint,
+                checkpoint_run_sha256=run_sha,
+                output_dir=tmp_path / f"validation-{index}",
+            )
+        except ValueError:
+            return "rejected"
+        return "reserved"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(attempt, (1, 2)))
+    assert sorted(outcomes) == ["rejected", "reserved"]
+    assert not (tmp_path / "validation-1").exists()
+    assert not (tmp_path / "validation-2").exists()
+
+
+def test_retry_training_run_is_revalidated_after_the_initial_claim_check(
+    tmp_path: Path,
+) -> None:
+    """Falsify a validation path that trusts a mutable run.json after preflight."""
+
+    lineage, checkpoint, _claim, claimed, _run_sha = _completed_retry_training(tmp_path)
+    _write(checkpoint / "run.json", {"bindings": {"tampered": True}})
+
+    revalidate = getattr(retry_module, "revalidate_claimed_wp2_retry_training")
+    with pytest.raises(ValueError, match="changed after validation reservation"):
+        revalidate(
+            lineage,
+            claimed_training=claimed,
+            checkpoint_dir=checkpoint,
+        )
+
+
+def test_retry_validation_completion_reloads_claim_and_records_attempt_audit(
+    tmp_path: Path,
+) -> None:
+    """Falsify completion code that trusts an in-memory claim and omits audit fields."""
+
+    lineage, checkpoint, claim, claimed, run_sha = _completed_retry_training(tmp_path)
+    reserve = getattr(retry_module, "reserve_wp2_retry_validation")
+    reservation = reserve(
+        lineage,
+        claimed_training=claimed,
+        checkpoint_dir=checkpoint,
+        output_dir=tmp_path / "retry-validation",
+    )
+    output = tmp_path / "retry-validation"
+    acceptance_sha = _write(
+        output / "wp2_acceptance.json",
+        {
+            "schema_version": "robustness-sae-wp2-acceptance/v1",
+            "passed": True,
+            "config_sha256": lineage.authorization.retry_config_sha256,
+            "preregistration_sha256": (
+                lineage.authorization.retry_preregistration_sha256
+            ),
+        },
+    )
+    validation_run = output / "run.json"
+    _write(
+        validation_run,
+        {
+            "schema_version": "robustness-sae-validation-run/v1",
+            "operation": "validate-sparse-autoencoders",
+            "passed": True,
+            "acceptance_sha256": acceptance_sha,
+            "training_run_sha256": run_sha,
+        },
+    )
+
+    # The disk claim is the authority. An in-memory claim must not let a changed
+    # claim file produce a completion record.
+    claim.path.write_text('{"tampered": true}\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="global retry claim"):
+        retry_module.record_wp2_retry_validation_completion(
+            lineage,
+            claimed_training=claimed,
+            reservation=reservation,
+            output_dir=output,
+            validation_run_path=validation_run,
+            acceptance_path=output / "wp2_acceptance.json",
+        )
+
+
+def test_retry_validation_completion_contains_passed_attempt_and_parent_audit(
+    tmp_path: Path,
+) -> None:
+    lineage, checkpoint, _claim, claimed, run_sha = _completed_retry_training(tmp_path)
+    reservation = getattr(retry_module, "reserve_wp2_retry_validation")(
+        lineage,
+        claimed_training=claimed,
+        checkpoint_dir=checkpoint,
+        output_dir=tmp_path / "retry-validation",
+    )
+    output = tmp_path / "retry-validation"
+    acceptance_sha = _write(
+        output / "wp2_acceptance.json",
+        {
+            "schema_version": "robustness-sae-wp2-acceptance/v1",
+            "passed": False,
+            "config_sha256": lineage.authorization.retry_config_sha256,
+            "preregistration_sha256": (
+                lineage.authorization.retry_preregistration_sha256
+            ),
+        },
+    )
+    validation_run = output / "run.json"
+    _write(
+        validation_run,
+        {
+            "schema_version": "robustness-sae-validation-run/v1",
+            "operation": "validate-sparse-autoencoders",
+            "passed": False,
+            "acceptance_sha256": acceptance_sha,
+            "training_run_sha256": run_sha,
+        },
+    )
+    retry_module.record_wp2_retry_validation_completion(
+        lineage,
+        claimed_training=claimed,
+        reservation=reservation,
+        output_dir=output,
+        validation_run_path=validation_run,
+        acceptance_path=output / "wp2_acceptance.json",
+    )
+
+    completion = json.loads(lineage.validation_completion_path.read_text(encoding="utf-8"))
+    assert completion["attempt"] == 2
+    assert completion["passed"] is False
+    assert completion["initial_attempt_ledger_sha256"] == (
+        lineage.authorization.initial_attempt_ledger_sha256
+    )
+    assert completion["training_run_sha256"] == run_sha
+    assert completion["validation_reservation_sha256"] == reservation.sha256

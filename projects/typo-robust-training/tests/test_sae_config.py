@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from typo_robust_training.cli import _wp2_retry_inputs, register_commands
+from typo_robust_training.cli import register_commands
 from typo_robust_training.sae.config import load_sae_protocol
 from typo_robust_training.sae.registry import load_sae_preregistration
 
@@ -220,6 +220,33 @@ def test_sae_registry_rejects_gpu_different_from_recorded_reassignment(tmp_path:
         load_sae_preregistration(path, protocol=protocol)
 
 
+def test_retry_preregistration_is_a_trusted_automatic_mode_marker(tmp_path: Path) -> None:
+    """Omitting CLI flags cannot turn a reviewed retry registry into an initial run."""
+
+    protocol = load_sae_protocol(DEFAULT_CONFIG)
+    payload = json.loads(DEFAULT_REGISTRY.read_text(encoding="utf-8"))
+    payload["schema_version"] = "robustness-sae-preregistry/v2"
+    payload["wp2_retry"] = {
+        "authorization_path": "lineage/retry-authorization.json",
+        "initial_attempt_ledger_path": "lineage/wp2_attempts.json",
+        "initial_training_dir": "lineage/training",
+    }
+    path = tmp_path / "retry-registry.json"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    registration = load_sae_preregistration(path, protocol=protocol)
+    assert registration.retry_inputs is not None
+    assert registration.retry_inputs.authorization_path == (
+        tmp_path / "lineage/retry-authorization.json"
+    ).resolve()
+    assert registration.retry_inputs.initial_attempt_ledger_path == (
+        tmp_path / "lineage/wp2_attempts.json"
+    ).resolve()
+    assert registration.retry_inputs.initial_training_dir == (
+        tmp_path / "lineage/training"
+    ).resolve()
+
+
 def test_cli_keeps_sae_calibration_training_and_validation_separate() -> None:
     root = argparse.ArgumentParser()
     commands = root.add_subparsers(dest="command")
@@ -286,19 +313,10 @@ def test_cli_keeps_sae_calibration_training_and_validation_separate() -> None:
             "--output-dir",
             "sae",
             "--resume",
-            "--wp2-retry-authorization",
-            "retry-authorization.json",
-            "--wp2-initial-attempt-ledger",
-            "failed/wp2_attempts.json",
-            "--wp2-initial-training-dir",
-            "failed/training",
         ]
     )
     assert training.resume is True
     assert training.l1_selection == Path("l1-selection.json")
-    assert training.wp2_retry_authorization == Path("retry-authorization.json")
-    assert training.wp2_initial_attempt_ledger == Path("failed/wp2_attempts.json")
-    assert training.wp2_initial_training_dir == Path("failed/training")
 
     validation = root.parse_args(
         [
@@ -320,12 +338,30 @@ def test_cli_keeps_sae_calibration_training_and_validation_separate() -> None:
     assert validation.validation_data == [Path("held-in.jsonl")]
 
 
-def test_cli_requires_all_wp2_retry_lineage_arguments_together() -> None:
-    partial = argparse.Namespace(
-        wp2_retry_authorization=Path("retry-authorization.json"),
-        wp2_initial_attempt_ledger=None,
-        wp2_initial_training_dir=None,
-    )
+def test_cli_cannot_opt_in_or_opt_out_of_retry_lineage() -> None:
+    root = argparse.ArgumentParser()
+    commands = root.add_subparsers(dest="command")
+    register_commands(commands)
 
-    with pytest.raises(ValueError, match="required together"):
-        _wp2_retry_inputs(partial)
+    with pytest.raises(SystemExit):
+        root.parse_args(
+            [
+                "train-sparse-autoencoders",
+                "--config",
+                "sae.json",
+                "--registry",
+                "registry.json",
+                "--training-data",
+                "clean.jsonl",
+                "--l1-selection",
+                "selection.json",
+                "--gpu-id",
+                "0",
+                "--wandb-project",
+                "test",
+                "--output-dir",
+                "sae",
+                "--wp2-retry-authorization",
+                "authorization.json",
+            ]
+        )

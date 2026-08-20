@@ -12,7 +12,6 @@ import torch
 
 from typo_robust_training.sae.data import PreparedSaeSources
 from typo_robust_training.sae.model import SparseAutoencoder
-from typo_robust_training.sae.retry import Wp2RetryInputs
 from typo_robust_training.sae.runner import (
     SaeCalibrationRunConfig,
     SaeTrainingRunConfig,
@@ -24,6 +23,7 @@ from typo_robust_training.sae.runner import (
     run_calibrate_sae_l1,
     run_train_saes,
 )
+from typo_robust_training.sae.retry import reserve_initial_wp2_validation
 from typo_robust_training.sae.runtime import ActivationBuffer
 
 
@@ -514,7 +514,11 @@ def test_wp2_retry_claim_precedes_runtime_and_model_initialization(
         activation_subsample_tokens=0,
         activation_batch_size=2,
     )
-    preregistration = SimpleNamespace(sha256="c" * 64, sae_gpu_id=0)
+    preregistration = SimpleNamespace(
+        sha256="c" * 64,
+        sae_gpu_id=0,
+        retry_inputs=SimpleNamespace(),
+    )
     prepared = PreparedSaeSources(
         sources=(SimpleNamespace(),),
         reserved=(SimpleNamespace(),),
@@ -554,7 +558,16 @@ def test_wp2_retry_claim_precedes_runtime_and_model_initialization(
         "typo_robust_training.sae.runner.load_sae_preregistration",
         lambda _path, protocol: preregistration,
     )
-    monkeypatch.setattr("typo_robust_training.sae.runner._load_inputs", fake_inputs)
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner._prepare_inputs",
+        lambda **_kwargs: prepared,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner._write_source_registry",
+        lambda *, output_dir, **_kwargs: (output_dir / "source_registry.json").write_text(
+            "{}\n", encoding="utf-8"
+        ),
+    )
     monkeypatch.setattr(
         "typo_robust_training.sae.runner._load_l1_selection",
         lambda *_args, **_kwargs: {5: 0.1},
@@ -584,17 +597,102 @@ def test_wp2_retry_claim_precedes_runtime_and_model_initialization(
             wandb_project="test-sae",
             wandb_entity=None,
             output_dir=tmp_path / "retry-training",
-            retry_inputs=Wp2RetryInputs(
-                authorization_path=tmp_path / "authorization.json",
-                initial_attempt_ledger_path=tmp_path / "wp2_attempts.json",
-                initial_training_dir=tmp_path / "initial-training",
-            ),
         ),
         runtime_factory=runtime_factory,
         tracker_factory=lambda **_kwargs: _Tracker(),
     )
 
     assert claim_created is True
+
+
+def test_retry_resume_does_not_mutate_output_before_claim_comparison(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    protocol = SimpleNamespace(
+        config_sha256="a" * 64,
+        model="model",
+        model_revision="b" * 40,
+        minimum_training_tokens=2,
+        statistics_tokens=1,
+    )
+    preregistration = SimpleNamespace(
+        sha256="c" * 64,
+        sae_gpu_id=0,
+        retry_inputs=SimpleNamespace(),
+    )
+    output = tmp_path / "retry-training"
+    output.mkdir()
+    source_registry = output / "source_registry.json"
+    source_registry.write_text('{"original": true}\n', encoding="utf-8")
+    before = source_registry.read_bytes()
+    prepared = PreparedSaeSources(
+        sources=(SimpleNamespace(),),
+        reserved=(SimpleNamespace(),),
+        input_paths=(tmp_path / "source.jsonl",),
+        input_sha256=("d" * 64,),
+        input_record_ids=frozenset({"record"}),
+        input_source_ids=frozenset({"source"}),
+        input_group_ids=frozenset({"group"}),
+        record_id_sha256="e" * 64,
+        source_tokens=3,
+        protected_eligible_records=1,
+        protected_eligible_source_tokens=3,
+        protected_eligible_record_ids_sha256="e" * 64,
+        protected_normalized_duplicates_removed=0,
+    )
+
+    def mutating_inputs(*, output_dir: Path, **_kwargs):
+        (output_dir / "source_registry.json").write_text('{"mutated": true}\n', encoding="utf-8")
+        return prepared
+
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner.load_sae_protocol",
+        lambda _path: protocol,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner.load_sae_preregistration",
+        lambda _path, protocol: preregistration,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner._prepare_inputs",
+        lambda **_kwargs: prepared,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner._write_source_registry",
+        mutating_inputs,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner._load_l1_selection",
+        lambda *_args, **_kwargs: {5: 0.1},
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner.load_wp2_retry_lineage",
+        lambda *_args, **_kwargs: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner.claim_wp2_retry_training",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("resume differs")),
+    )
+    selection = tmp_path / "selection.json"
+    selection.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="resume differs"):
+        run_train_saes(
+            SaeTrainingRunConfig(
+                config_path=tmp_path / "config.json",
+                registry_path=tmp_path / "registry.json",
+                training_data_paths=(tmp_path / "source.jsonl",),
+                l1_selection_path=selection,
+                gpu_id="0",
+                wandb_project="test",
+                wandb_entity=None,
+                output_dir=output,
+                resume=True,
+            )
+        )
+
+    assert source_registry.read_bytes() == before
 
 
 def test_sae_checkpoint_metadata_failure_preserves_previous_generation(
@@ -673,6 +771,14 @@ def test_wp2_attempt_ledger_enforces_one_preregistered_retrain(tmp_path: Path) -
         protocol=protocol,
         preregistration=preregistration,
     )
+    reservation = reserve_initial_wp2_validation(
+        project_root=ledger.parent,
+        config_sha256=protocol.config_sha256,
+        preregistration_sha256=preregistration.sha256,
+        checkpoint_dir=first,
+        checkpoint_run_sha256=digest,
+        output_dir=tmp_path / "validation-first",
+    )
     _record_wp2_attempt(
         ledger_path=ledger,
         prior_attempts=attempts,
@@ -682,6 +788,8 @@ def test_wp2_attempt_ledger_enforces_one_preregistered_retrain(tmp_path: Path) -
         acceptance_sha256="c" * 64,
         protocol=protocol,
         preregistration=preregistration,
+        reservation=reservation,
+        checkpoint_dir=first,
     )
 
     second = checkpoint("training-retrain", 2)
@@ -690,21 +798,39 @@ def test_wp2_attempt_ledger_enforces_one_preregistered_retrain(tmp_path: Path) -
         protocol=protocol,
         preregistration=preregistration,
     )
-    _record_wp2_attempt(
-        ledger_path=ledger,
-        prior_attempts=attempts,
-        checkpoint_run_sha256=digest,
-        output_dir=tmp_path / "validation-retrain",
-        passed=False,
-        acceptance_sha256="d" * 64,
-        protocol=protocol,
-        preregistration=preregistration,
+    with pytest.raises(ValueError, match="initial validation slot is already reserved"):
+        reserve_initial_wp2_validation(
+            project_root=ledger.parent,
+            config_sha256=protocol.config_sha256,
+            preregistration_sha256=preregistration.sha256,
+            checkpoint_dir=second,
+            checkpoint_run_sha256=digest,
+            output_dir=tmp_path / "validation-retrain",
+        )
+
+
+def test_initial_validation_rejects_retry_claimed_checkpoint(tmp_path: Path) -> None:
+    protocol = SimpleNamespace(config_sha256="a" * 64, maximum_gate_retrains=1)
+    preregistration = SimpleNamespace(sha256="b" * 64)
+    checkpoint = tmp_path / "training"
+    checkpoint.mkdir()
+    (checkpoint / "run.json").write_text(
+        json.dumps(
+            {
+                "bindings": {
+                    "config_sha256": protocol.config_sha256,
+                    "preregistration_sha256": preregistration.sha256,
+                    "wp2_retry_claim_sha256": "c" * 64,
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
     )
 
-    third = checkpoint("training-prohibited", 3)
-    with pytest.raises(ValueError, match="retrain limit is exhausted"):
+    with pytest.raises(ValueError, match="retry checkpoint requires retry preregistration"):
         _load_wp2_attempts(
-            checkpoint_dir=third,
+            checkpoint_dir=checkpoint,
             protocol=protocol,
             preregistration=preregistration,
         )

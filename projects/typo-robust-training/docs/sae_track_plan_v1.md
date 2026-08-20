@@ -116,11 +116,22 @@ is allowed; a second failure stops the track.
 The initial failed WP-2 ledger is immutable. A full-bundle retry is not
 authorized by the runner alone: a separately reviewed authorization must bind
 the complete initial config/preregistration/training/validation/acceptance/ledger
-hash chain to one amended config and preregistration hash. Retry training uses
-an `O_EXCL` project-root claim before runtime/model initialization. Exact resume
-must match that claim, retry validation must use its recorded training-run SHA,
-and changing any output parent cannot create a third bundle. No retry
-authorization or scientific retry value is added by this implementation.
+hash chain to one amended config and preregistration hash. The amended
+preregistration v2 is itself the trusted retry marker; retry mode is automatic
+and cannot be selected or bypassed by CLI arguments. The authorization binds
+the complete v2 preregistration digest.
+
+Initial and retry validation each consume an `O_EXCL` project-root reservation
+before output creation or GPU/runtime work. Retry training likewise claims its
+one slot before runtime/model initialization, and exact resume verifies that
+claim before any output mutation. Retry validation rechecks the claimed
+training-run SHA immediately before model loading and before its final immutable
+completion record. That record includes attempt number, pass/fail, and parent,
+training, reservation, validation, and acceptance hashes. Crash recovery is
+deliberately fail-closed: a consumed validation reservation is not silently
+reused. Changing an output parent cannot create another bundle. No retry
+authorization, v2 retry preregistration, or scientific retry value is added by
+this implementation.
 
 WP-5 is not authorized until two accepted layer-5 seeds exist. Its thresholds
 are frozen at `median(R_z) >= 0.5 * median(R_full)` and

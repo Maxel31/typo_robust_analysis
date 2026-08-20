@@ -27,14 +27,19 @@ from typo_robust_training.sae.registry import (
     validate_sae_prepared_sources,
 )
 from typo_robust_training.sae.retry import (
+    Wp2ClaimedRetryTraining,
     Wp2RetryClaim,
-    Wp2RetryInputs,
     Wp2RetryLineage,
+    Wp2ValidationReservation,
     claim_wp2_retry_training,
     load_wp2_retry_lineage,
     record_wp2_retry_training_completion,
     record_wp2_retry_validation_completion,
+    reserve_initial_wp2_validation,
+    reserve_wp2_retry_validation,
+    revalidate_claimed_wp2_retry_training,
     require_claimed_wp2_retry_training,
+    verify_initial_wp2_validation_reservation,
 )
 from typo_robust_training.sae.runtime import HuggingFaceSaeRuntime
 from typo_robust_training.training.tracking import (
@@ -70,7 +75,6 @@ class SaeTrainingRunConfig:
     wandb_entity: str | None
     output_dir: Path
     resume: bool = False
-    retry_inputs: Wp2RetryInputs | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +85,6 @@ class SaeValidationRunConfig:
     checkpoint_dir: Path
     gpu_id: str
     output_dir: Path
-    retry_inputs: Wp2RetryInputs | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +110,7 @@ class SaeValidationResult:
     passed: bool
 
 
-def _prepare_output(path: Path, *, resume: bool) -> Path:
+def _check_output(path: Path, *, resume: bool) -> Path:
     output = Path(path).resolve()
     if resume:
         if not output.is_dir():
@@ -117,16 +120,20 @@ def _prepare_output(path: Path, *, resume: bool) -> Path:
             raise FileExistsError(f"SAE output path is not a directory: {output}")
         if any(output.iterdir()):
             raise FileExistsError(f"fresh SAE run cannot overwrite non-empty output: {output}")
+    return output
+
+
+def _prepare_output(path: Path, *, resume: bool) -> Path:
+    output = _check_output(path, resume=resume)
     output.mkdir(parents=True, exist_ok=True)
     return output
 
 
-def _load_inputs(
+def _prepare_inputs(
     *,
     protocol: SaeProtocol,
     preregistration: SaePreregistration,
     paths: Sequence[Path],
-    output_dir: Path,
 ) -> PreparedSaeSources:
     prepared = prepare_sae_sources(
         paths,
@@ -144,6 +151,16 @@ def _load_inputs(
             or source.metadata.get("tokenizer_revision") != protocol.model_revision
         ):
             raise ValueError("SAE source tokenizer provenance differs from the frozen model")
+    return prepared
+
+
+def _write_source_registry(
+    *,
+    protocol: SaeProtocol,
+    preregistration: SaePreregistration,
+    prepared: PreparedSaeSources,
+    output_dir: Path,
+) -> None:
     registry = canonical_record_registry(
         input_paths=prepared.input_paths,
         input_sha256=prepared.input_sha256,
@@ -159,6 +176,26 @@ def _load_inputs(
         }
     )
     write_json_atomic(output_dir / "source_registry.json", registry)
+
+
+def _load_inputs(
+    *,
+    protocol: SaeProtocol,
+    preregistration: SaePreregistration,
+    paths: Sequence[Path],
+    output_dir: Path,
+) -> PreparedSaeSources:
+    prepared = _prepare_inputs(
+        protocol=protocol,
+        preregistration=preregistration,
+        paths=paths,
+    )
+    _write_source_registry(
+        protocol=protocol,
+        preregistration=preregistration,
+        prepared=prepared,
+        output_dir=output_dir,
+    )
     return prepared
 
 
@@ -817,13 +854,24 @@ def run_train_saes(
     preregistration = load_sae_preregistration(config.registry_path, protocol=protocol)
     if str(config.gpu_id) != str(preregistration.sae_gpu_id):
         raise ValueError(f"SAE training must use preregistered GPU {preregistration.sae_gpu_id}")
-    output = _prepare_output(config.output_dir, resume=config.resume)
-    sources = _load_inputs(
-        protocol=protocol,
-        preregistration=preregistration,
-        paths=config.training_data_paths,
-        output_dir=output,
-    )
+    retry_inputs = getattr(preregistration, "retry_inputs", None)
+    if retry_inputs is None:
+        output = _prepare_output(config.output_dir, resume=config.resume)
+        sources = _load_inputs(
+            protocol=protocol,
+            preregistration=preregistration,
+            paths=config.training_data_paths,
+            output_dir=output,
+        )
+    else:
+        # Retry classification comes only from the reviewed preregistration.
+        # Prepare and validate sources without writing into the claimed output.
+        output = _check_output(config.output_dir, resume=config.resume)
+        sources = _prepare_inputs(
+            protocol=protocol,
+            preregistration=preregistration,
+            paths=config.training_data_paths,
+        )
     required = protocol.minimum_training_tokens + protocol.statistics_tokens
     if sources.source_tokens < required:
         raise ValueError(
@@ -849,9 +897,9 @@ def run_train_saes(
     )
     retry_lineage: Wp2RetryLineage | None = None
     retry_claim: Wp2RetryClaim | None = None
-    if config.retry_inputs is not None:
+    if retry_inputs is not None:
         retry_lineage = load_wp2_retry_lineage(
-            config.retry_inputs,
+            retry_inputs,
             retry_config_sha256=protocol.config_sha256,
             retry_preregistration_sha256=preregistration.sha256,
         )
@@ -862,6 +910,15 @@ def run_train_saes(
             resume=config.resume,
         )
         bindings = {**bindings, "wp2_retry_claim_sha256": retry_claim.sha256}
+        # Only the exact preexisting claim may authorize resume. No output
+        # artifact is created or rewritten before that comparison succeeds.
+        output = _prepare_output(config.output_dir, resume=config.resume)
+        _write_source_registry(
+            protocol=protocol,
+            preregistration=preregistration,
+            prepared=sources,
+            output_dir=output,
+        )
     if config.resume:
         completed = _completed_training_result(
             output=output,
@@ -1133,6 +1190,15 @@ def _load_wp2_attempts(
     checkpoint_run = Path(checkpoint_dir).resolve() / "run.json"
     if not checkpoint_run.is_file():
         raise ValueError("SAE validation requires a completed training run.json")
+    checkpoint_payload = strict_loads(
+        checkpoint_run.read_text(encoding="utf-8"),
+        context=str(checkpoint_run),
+    )
+    checkpoint_bindings = (
+        checkpoint_payload.get("bindings") if isinstance(checkpoint_payload, Mapping) else None
+    )
+    if isinstance(checkpoint_bindings, Mapping) and "wp2_retry_claim_sha256" in checkpoint_bindings:
+        raise ValueError("SAE WP-2 retry checkpoint requires retry preregistration")
     checkpoint_sha256 = sha256_file(checkpoint_run)
     ledger_path = _wp2_attempt_ledger_path(checkpoint_dir)
     attempts: list[Mapping[str, object]] = []
@@ -1196,7 +1262,13 @@ def _record_wp2_attempt(
     acceptance_sha256: str,
     protocol: SaeProtocol,
     preregistration: SaePreregistration,
+    reservation: Wp2ValidationReservation,
+    checkpoint_dir: Path,
 ) -> None:
+    verify_initial_wp2_validation_reservation(
+        reservation,
+        checkpoint_dir=checkpoint_dir,
+    )
     if ledger_path.is_file():
         current = strict_loads(ledger_path.read_text(encoding="utf-8"), context=str(ledger_path))
         current_attempts = current.get("attempts") if isinstance(current, Mapping) else None
@@ -1214,6 +1286,12 @@ def _record_wp2_attempt(
             "acceptance_sha256": acceptance_sha256,
         },
     ]
+    # The reservation and checkpoint are mutable filesystem inputs; recheck
+    # them at the ledger commit boundary as well as at validation preflight.
+    verify_initial_wp2_validation_reservation(
+        reservation,
+        checkpoint_dir=checkpoint_dir,
+    )
     write_json_atomic(
         ledger_path,
         {
@@ -1235,26 +1313,43 @@ def run_validate_saes(
     preregistration = load_sae_preregistration(config.registry_path, protocol=protocol)
     if str(config.gpu_id) != str(preregistration.sae_gpu_id):
         raise ValueError(f"SAE validation must use preregistered GPU {preregistration.sae_gpu_id}")
+    retry_inputs = getattr(preregistration, "retry_inputs", None)
     retry_lineage: Wp2RetryLineage | None = None
-    retry_claim: Wp2RetryClaim | None = None
+    claimed_retry_training: Wp2ClaimedRetryTraining | None = None
+    validation_reservation: Wp2ValidationReservation | None = None
     ledger_path: Path | None = None
     prior_attempts: list[Mapping[str, object]] = []
     checkpoint_run_sha256: str | None = None
-    if config.retry_inputs is None:
+    _check_output(config.output_dir, resume=False)
+    if retry_inputs is None:
         ledger_path, prior_attempts, checkpoint_run_sha256 = _load_wp2_attempts(
             checkpoint_dir=config.checkpoint_dir,
             protocol=protocol,
             preregistration=preregistration,
         )
+        validation_reservation = reserve_initial_wp2_validation(
+            project_root=ledger_path.parent,
+            config_sha256=protocol.config_sha256,
+            preregistration_sha256=preregistration.sha256,
+            checkpoint_dir=config.checkpoint_dir,
+            checkpoint_run_sha256=checkpoint_run_sha256,
+            output_dir=config.output_dir,
+        )
     else:
         retry_lineage = load_wp2_retry_lineage(
-            config.retry_inputs,
+            retry_inputs,
             retry_config_sha256=protocol.config_sha256,
             retry_preregistration_sha256=preregistration.sha256,
         )
-        retry_claim = require_claimed_wp2_retry_training(
+        claimed_retry_training = require_claimed_wp2_retry_training(
             retry_lineage,
             checkpoint_dir=config.checkpoint_dir,
+        )
+        validation_reservation = reserve_wp2_retry_validation(
+            retry_lineage,
+            claimed_training=claimed_retry_training,
+            checkpoint_dir=config.checkpoint_dir,
+            output_dir=config.output_dir,
         )
     output = _prepare_output(config.output_dir, resume=False)
     sources = _load_inputs(
@@ -1264,6 +1359,17 @@ def run_validate_saes(
         output_dir=output,
     )
     runtime = runtime_factory(protocol=protocol, gpu_id=str(config.gpu_id))
+    if retry_lineage is not None and claimed_retry_training is not None:
+        revalidate_claimed_wp2_retry_training(
+            retry_lineage,
+            claimed_training=claimed_retry_training,
+            checkpoint_dir=config.checkpoint_dir,
+        )
+    elif validation_reservation is not None:
+        verify_initial_wp2_validation_reservation(
+            validation_reservation,
+            checkpoint_dir=config.checkpoint_dir,
+        )
     models, training_run = _load_final_saes(
         checkpoint_dir=config.checkpoint_dir,
         protocol=protocol,
@@ -1383,6 +1489,13 @@ def run_validate_saes(
         },
     )
     run_path = output / "run.json"
+    expected_training_run_sha256 = (
+        claimed_retry_training.training_run_sha256
+        if claimed_retry_training is not None
+        else checkpoint_run_sha256
+    )
+    if expected_training_run_sha256 is None:
+        raise AssertionError("WP-2 training run digest was not reserved")
     write_json_atomic(
         run_path,
         {
@@ -1391,13 +1504,16 @@ def run_validate_saes(
             "passed": all_passed,
             "acceptance_sha256": sha256_file(acceptance_path),
             "runtime": dict(runtime.provenance()),
-            "training_run_sha256": sha256_file(Path(config.checkpoint_dir) / "run.json"),
+            "training_run_sha256": expected_training_run_sha256,
         },
     )
-    if retry_lineage is not None and retry_claim is not None:
+    if retry_lineage is not None and claimed_retry_training is not None:
+        if validation_reservation is None:
+            raise AssertionError("retry WP-2 validation reservation was not created")
         record_wp2_retry_validation_completion(
             retry_lineage,
-            claim=retry_claim,
+            claimed_training=claimed_retry_training,
+            reservation=validation_reservation,
             output_dir=output,
             validation_run_path=run_path,
             acceptance_path=acceptance_path,
@@ -1405,6 +1521,8 @@ def run_validate_saes(
     else:
         if ledger_path is None or checkpoint_run_sha256 is None:
             raise AssertionError("initial WP-2 ledger state was not loaded")
+        if validation_reservation is None:
+            raise AssertionError("initial WP-2 validation reservation was not created")
         _record_wp2_attempt(
             ledger_path=ledger_path,
             prior_attempts=prior_attempts,
@@ -1414,6 +1532,8 @@ def run_validate_saes(
             acceptance_sha256=sha256_file(acceptance_path),
             protocol=protocol,
             preregistration=preregistration,
+            reservation=validation_reservation,
+            checkpoint_dir=config.checkpoint_dir,
         )
     return SaeValidationResult(
         acceptance_path=acceptance_path,

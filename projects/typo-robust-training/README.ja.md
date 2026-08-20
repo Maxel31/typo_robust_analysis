@@ -443,19 +443,25 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --output-dir "${SAE_ROOT}/validation"
 ```
 
-初回WP-2 validationは、変更不能な失敗bundle lineageを
-`${SAE_ROOT}/wp2_attempts.json`へ記録します。救済runは、元のconfig、事前登録、training、
-validation、acceptance、ledgerの各hashと、単一の改訂config / 事前登録hashを結ぶauthorizationが
-別レビューで承認されるまで禁止です。救済のtrainingとvalidationはいずれも
-`--wp2-retry-authorization`、`--wp2-initial-attempt-ledger`、
-`--wp2-initial-training-dir`の3引数をすべて指定する必要があります。
+初回WP-2 validationは、output作成やGPU/runtime初期化より前にproject rootへ排他的な予約fileを
+作成し、その後に変更不能な失敗bundle lineageを`${SAE_ROOT}/wp2_attempts.json`へ記録します。
+予約後にcrashした場合もそのattemptは消費され、validationの暗黙resumeは行いません。
+
+救済runは、元のconfig、事前登録、training、validation、acceptance、ledgerの各hashと、単一の
+改訂config / 事前登録hashを結ぶauthorizationが別レビューで承認されるまで禁止です。改訂事前登録は
+schema v2の`wp2_retry` lineage markerを持ちます。trainingとvalidationの救済modeはCLI optionでは
+なく、このレビュー済みmarkerから自動かつ強制的に決まり、authorizationはv2事前登録全体のSHA-256を
+逆向きにbindします。このためCLI引数の省略で初回validation経路へfallbackできません。
 
 救済trainingはruntime/model初期化より前に、排他的なfilesystem claimとして
-`${SAE_ROOT}/wp2_retry_claim.json`を作成します。training/validationの出力親directoryを変えても、
-project-globalな枠はリセットされません。`--resume`は既存claimと出力directory・bindingsが完全一致
-する場合だけ許可され、validationはclaimが記録したtraining `run.json` SHAと完全一致する
-checkpointだけを受理します。2件目のclaimまたはvalidationは拒否します。現時点では科学的な救済
-authorizationや改訂値はrepositoryへ追加しておらず、このlineage機構そのものは再学習を許可しません。
+`${SAE_ROOT}/wp2_retry_claim.json`を作成します。`--resume`時はoutput artifactや
+`source_registry.json`を作成・更新する前にclaimとの完全一致を確認します。救済validationもoutputや
+GPU/runtime workより前に唯一の枠を予約し、claimが記録したtraining `run.json` SHAと完全一致する
+checkpointだけを受理します。このSHAはmodel load直前とcompletion記録直前に再検証します。completionは
+attempt 2、pass/fail、親ledger、training run、reservation、validation、acceptanceのhashを監査情報として
+保存します。出力親directoryを変更してもproject-globalな予約はリセットされません。現時点では科学的な
+救済authorization、v2救済registry、改訂値をrepositoryへ追加しておらず、このlineage機構そのものは
+再学習を許可しません。
 
 `--resume`は対象 command 自身の hash-bound checkpoint が既にある場合だけ追加します。固定した
 手法とgateは [`docs/sae_track_plan_v1.ja.md`](docs/sae_track_plan_v1.ja.md) にあります。

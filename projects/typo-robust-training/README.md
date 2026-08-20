@@ -493,22 +493,31 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --output-dir "${SAE_ROOT}/validation"
 ```
 
-The first WP-2 validation records its immutable failed-bundle lineage in
-`${SAE_ROOT}/wp2_attempts.json`. A retry remains prohibited until a separately
-reviewed authorization binds the original config, preregistration, training,
-validation, acceptance, and ledger hashes to exactly one amended config and
-preregistration hash. Both retry training and retry validation must then receive
-all three lineage arguments: `--wp2-retry-authorization`,
-`--wp2-initial-attempt-ledger`, and `--wp2-initial-training-dir`.
+The first WP-2 validation reserves its attempt with an exclusive project-root
+file before creating output or initializing GPU/runtime work, then records its
+immutable failed-bundle lineage in `${SAE_ROOT}/wp2_attempts.json`. A crash after
+reservation consumes that attempt; there is no implicit validation resume.
+
+A retry remains prohibited until a separately reviewed authorization binds the
+original config, preregistration, training, validation, acceptance, and ledger
+hashes to exactly one amended config and preregistration hash. The amended
+preregistration uses schema v2 and contains a `wp2_retry` lineage marker. That
+reviewed marker, not a CLI option, automatically and unavoidably selects retry
+mode for both training and validation; the authorization in turn binds the full
+v2 preregistration SHA-256. CLI omission therefore cannot fall back to an initial
+validation path.
 
 Retry training creates `${SAE_ROOT}/wp2_retry_claim.json` with an exclusive
-filesystem claim before runtime or model initialization. Changing the training
-or validation output parent cannot reset that project-global claim. `--resume`
-is accepted only for the exact output directory and bindings already present in
-the claim, and retry validation accepts only the exact training `run.json` SHA
-recorded by that claim. A second claim or validation is rejected. This repository
-does not yet contain a scientific retry authorization or amended retry values;
-the lineage mechanism does not itself authorize a retrain.
+filesystem claim before runtime or model initialization. Exact resume compares
+that claim before creating or rewriting any output artifact, including
+`source_registry.json`. Retry validation reserves its sole slot before any output
+or GPU/runtime work, accepts only the exact claimed training `run.json`, and
+rechecks that SHA immediately before model loading and again before recording
+completion. Its immutable completion records attempt 2, pass/fail, the parent
+ledger, training run, reservation, validation, and acceptance hashes. Changing
+an output parent cannot reset either project-global reservation. This repository
+does not yet contain a scientific retry authorization, v2 retry registry, or
+amended retry values; the lineage mechanism does not itself authorize a retrain.
 
 Append `--resume` to a calibration/training command only after its own
 hash-bound checkpoint exists. The frozen method and gates are documented in

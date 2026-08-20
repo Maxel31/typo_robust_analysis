@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Mapping
 
 from typo_robust_training.data.config import strict_loads
 from typo_robust_training.sae.config import SaeProtocol
+from typo_robust_training.sae.retry import Wp2RetryInputs
 
 if TYPE_CHECKING:
     from typo_robust_training.sae.data import PreparedSaeSources
@@ -116,6 +117,7 @@ class SaePreregistration:
     initial_eligible_source_tokens: int
     initial_eligible_record_ids_sha256: str
     eligible_records_removed: int
+    retry_inputs: Wp2RetryInputs | None
 
 
 def _positive_int(value: object, *, field: str) -> int:
@@ -162,7 +164,7 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
         payload = strict_loads(raw.decode("utf-8"), context=str(resolved))
     except UnicodeDecodeError as exc:
         raise ValueError("SAE preregistration is not UTF-8") from exc
-    if not isinstance(payload, Mapping) or set(payload) != {
+    common_fields = {
         "schema_version",
         "registered_at",
         "track",
@@ -173,13 +175,51 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
         "wp3_predictions",
         "wp4_predictions",
         "wp5_gates",
-    }:
+    }
+    if not isinstance(payload, Mapping):
+        raise ValueError("SAE preregistration fields differ")
+    schema_version = payload.get("schema_version")
+    expected_fields = (
+        common_fields | {"wp2_retry"}
+        if schema_version == "robustness-sae-preregistry/v2"
+        else common_fields
+    )
+    if set(payload) != expected_fields:
         raise ValueError("SAE preregistration fields differ")
     if (
-        payload.get("schema_version") != "robustness-sae-preregistry/v1"
+        schema_version
+        not in {
+            "robustness-sae-preregistry/v1",
+            "robustness-sae-preregistry/v2",
+        }
         or payload.get("track") != "diagnostic-and-future-study-only"
     ):
         raise ValueError("SAE preregistration schema or track differs")
+    retry_inputs: Wp2RetryInputs | None = None
+    if schema_version == "robustness-sae-preregistry/v2":
+        retry = payload["wp2_retry"]
+        retry_fields = {
+            "authorization_path",
+            "initial_attempt_ledger_path",
+            "initial_training_dir",
+        }
+        if not isinstance(retry, Mapping) or set(retry) != retry_fields:
+            raise ValueError("SAE WP-2 retry registration differs")
+
+        def registered_path(field: str) -> Path:
+            value = retry.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"SAE WP-2 retry {field} must be a non-empty path")
+            candidate = Path(value)
+            if not candidate.is_absolute():
+                candidate = resolved.parent / candidate
+            return candidate.resolve()
+
+        retry_inputs = Wp2RetryInputs(
+            authorization_path=registered_path("authorization_path"),
+            initial_attempt_ledger_path=registered_path("initial_attempt_ledger_path"),
+            initial_training_dir=registered_path("initial_training_dir"),
+        )
     non_interference = payload["non_interference"]
     if (
         not isinstance(non_interference, Mapping)
@@ -367,6 +407,7 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
         initial_eligible_source_tokens=initial_tokens,
         initial_eligible_record_ids_sha256=initial_digest,
         eligible_records_removed=removed,
+        retry_inputs=retry_inputs,
     )
 
 

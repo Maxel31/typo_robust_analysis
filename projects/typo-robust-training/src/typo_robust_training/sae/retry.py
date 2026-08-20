@@ -17,6 +17,8 @@ from typo_robust_training.sae.data import sha256_file
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _CLAIM_NAME = "wp2_retry_claim.json"
 _TRAINING_COMPLETION_NAME = "wp2_retry_training_completion.json"
+_INITIAL_VALIDATION_RESERVATION_NAME = "wp2_initial_validation_reservation.json"
+_RETRY_VALIDATION_RESERVATION_NAME = "wp2_retry_validation_reservation.json"
 _VALIDATION_COMPLETION_NAME = "wp2_retry_validation_completion.json"
 
 
@@ -53,6 +55,20 @@ class Wp2RetryLineage:
 
 @dataclass(frozen=True, slots=True)
 class Wp2RetryClaim:
+    path: Path
+    sha256: str
+    payload: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class Wp2ClaimedRetryTraining:
+    claim: Wp2RetryClaim
+    training_run_path: Path
+    training_run_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class Wp2ValidationReservation:
     path: Path
     sha256: str
     payload: Mapping[str, object]
@@ -385,7 +401,7 @@ def require_claimed_wp2_retry_training(
     lineage: Wp2RetryLineage,
     *,
     checkpoint_dir: Path,
-) -> Wp2RetryClaim:
+) -> Wp2ClaimedRetryTraining:
     claim = _verified_claim(lineage)
     claim_payload = claim.payload
     completion = _load_object(
@@ -422,25 +438,208 @@ def require_claimed_wp2_retry_training(
     }
     if not isinstance(bindings, Mapping) or dict(bindings) != expected_bindings:
         raise ValueError("WP-2 validation checkpoint bindings differ from the global claim")
-    return claim
+    return Wp2ClaimedRetryTraining(
+        claim=claim,
+        training_run_path=run_path,
+        training_run_sha256=str(completion["training_run_sha256"]),
+    )
+
+
+def revalidate_claimed_wp2_retry_training(
+    lineage: Wp2RetryLineage,
+    *,
+    claimed_training: Wp2ClaimedRetryTraining,
+    checkpoint_dir: Path,
+) -> None:
+    """Fail closed when the claim or exact training run changed after preflight."""
+
+    try:
+        observed = require_claimed_wp2_retry_training(
+            lineage,
+            checkpoint_dir=checkpoint_dir,
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "WP-2 retry training changed after validation reservation"
+        ) from exc
+    if observed != claimed_training:
+        raise ValueError("WP-2 retry training changed after validation reservation")
+
+
+def reserve_initial_wp2_validation(
+    *,
+    project_root: Path,
+    config_sha256: str,
+    preregistration_sha256: str,
+    checkpoint_dir: Path,
+    checkpoint_run_sha256: str,
+    output_dir: Path,
+) -> Wp2ValidationReservation:
+    """Consume the initial validation slot before outputs, GPU, or runtime work."""
+
+    path = Path(project_root).resolve() / _INITIAL_VALIDATION_RESERVATION_NAME
+    payload = {
+        "schema_version": "robustness-sae-wp2-validation-reservation/v1",
+        "attempt": 1,
+        "config_sha256": config_sha256,
+        "preregistration_sha256": preregistration_sha256,
+        "checkpoint_dir": str(Path(checkpoint_dir).resolve()),
+        "checkpoint_run_sha256": checkpoint_run_sha256,
+        "output_dir": str(Path(output_dir).resolve()),
+    }
+    try:
+        _write_exclusive(path, payload)
+    except FileExistsError:
+        raise ValueError("SAE WP-2 initial validation slot is already reserved") from None
+    return Wp2ValidationReservation(path=path, sha256=sha256_file(path), payload=payload)
+
+
+def reserve_wp2_retry_validation(
+    lineage: Wp2RetryLineage,
+    *,
+    claimed_training: Wp2ClaimedRetryTraining,
+    checkpoint_dir: Path,
+    output_dir: Path,
+) -> Wp2ValidationReservation:
+    """Consume the retry validation slot before outputs, GPU, or runtime work."""
+
+    revalidate_claimed_wp2_retry_training(
+        lineage,
+        claimed_training=claimed_training,
+        checkpoint_dir=checkpoint_dir,
+    )
+    path = lineage.project_root / _RETRY_VALIDATION_RESERVATION_NAME
+    payload = {
+        "schema_version": "robustness-sae-wp2-validation-reservation/v1",
+        "project_id": lineage.authorization.project_id,
+        "attempt": 2,
+        "authorization_sha256": lineage.authorization.sha256,
+        "claim_sha256": claimed_training.claim.sha256,
+        "initial_attempt_ledger_sha256": (
+            lineage.authorization.initial_attempt_ledger_sha256
+        ),
+        "checkpoint_dir": str(Path(checkpoint_dir).resolve()),
+        "training_run_sha256": claimed_training.training_run_sha256,
+        "output_dir": str(Path(output_dir).resolve()),
+    }
+    try:
+        _write_exclusive(path, payload)
+    except FileExistsError:
+        raise ValueError("SAE WP-2 retry validation slot is already reserved") from None
+    return Wp2ValidationReservation(path=path, sha256=sha256_file(path), payload=payload)
+
+
+def verify_initial_wp2_validation_reservation(
+    reservation: Wp2ValidationReservation,
+    *,
+    checkpoint_dir: Path,
+) -> None:
+    observed = _load_object(reservation.path, description="initial validation reservation")
+    if (
+        observed != reservation.payload
+        or sha256_file(reservation.path) != reservation.sha256
+        or reservation.payload.get("attempt") != 1
+        or reservation.payload.get("checkpoint_dir")
+        != str(Path(checkpoint_dir).resolve())
+        or reservation.payload.get("checkpoint_run_sha256")
+        != sha256_file(Path(checkpoint_dir).resolve() / "run.json")
+    ):
+        raise ValueError("SAE WP-2 initial validation reservation changed during validation")
+
+
+def _verify_retry_validation_reservation(
+    lineage: Wp2RetryLineage,
+    *,
+    claimed_training: Wp2ClaimedRetryTraining,
+    reservation: Wp2ValidationReservation,
+    output_dir: Path,
+) -> None:
+    observed = _load_object(reservation.path, description="retry validation reservation")
+    if (
+        reservation.path != lineage.project_root / _RETRY_VALIDATION_RESERVATION_NAME
+        or observed != reservation.payload
+        or sha256_file(reservation.path) != reservation.sha256
+        or reservation.payload.get("attempt") != 2
+        or reservation.payload.get("claim_sha256") != claimed_training.claim.sha256
+        or reservation.payload.get("training_run_sha256")
+        != claimed_training.training_run_sha256
+        or reservation.payload.get("output_dir") != str(Path(output_dir).resolve())
+    ):
+        raise ValueError("SAE WP-2 retry validation reservation changed during validation")
 
 
 def record_wp2_retry_validation_completion(
     lineage: Wp2RetryLineage,
     *,
-    claim: Wp2RetryClaim,
+    claimed_training: Wp2ClaimedRetryTraining,
+    reservation: Wp2ValidationReservation,
     output_dir: Path,
     validation_run_path: Path,
     acceptance_path: Path,
 ) -> None:
+    observed_claim = _verified_claim(lineage)
+    if observed_claim != claimed_training.claim:
+        raise ValueError("WP-2 global retry claim changed before validation completion")
+    revalidate_claimed_wp2_retry_training(
+        lineage,
+        claimed_training=claimed_training,
+        checkpoint_dir=claimed_training.training_run_path.parent,
+    )
+    _verify_retry_validation_reservation(
+        lineage,
+        claimed_training=claimed_training,
+        reservation=reservation,
+        output_dir=output_dir,
+    )
+    resolved_output = Path(output_dir).resolve()
+    run_path = Path(validation_run_path).resolve()
+    resolved_acceptance = Path(acceptance_path).resolve()
+    if run_path.parent != resolved_output or resolved_acceptance.parent != resolved_output:
+        raise ValueError("WP-2 retry validation artifacts are outside the reserved output")
+    validation_run = _load_object(run_path, description="retry validation run")
+    acceptance = _load_object(resolved_acceptance, description="retry acceptance")
+    passed = acceptance.get("passed")
+    claimed_bindings = claimed_training.claim.payload.get("training_bindings")
+    if (
+        type(passed) is not bool
+        or acceptance.get("schema_version") != "robustness-sae-wp2-acceptance/v1"
+        or not isinstance(claimed_bindings, Mapping)
+        or acceptance.get("config_sha256") != claimed_bindings.get("config_sha256")
+        or acceptance.get("preregistration_sha256")
+        != claimed_bindings.get("preregistration_sha256")
+        or validation_run.get("schema_version")
+        != "robustness-sae-validation-run/v1"
+        or validation_run.get("operation") != "validate-sparse-autoencoders"
+        or validation_run.get("passed") is not passed
+        or validation_run.get("acceptance_sha256") != sha256_file(resolved_acceptance)
+        or validation_run.get("training_run_sha256")
+        != claimed_training.training_run_sha256
+    ):
+        raise ValueError("WP-2 retry validation result lineage differs")
     payload = {
         "schema_version": "robustness-sae-wp2-retry-validation-completion/v1",
         "project_id": lineage.authorization.project_id,
-        "claim_sha256": claim.sha256,
-        "output_dir": str(Path(output_dir).resolve()),
-        "validation_run_sha256": sha256_file(validation_run_path),
-        "acceptance_sha256": sha256_file(acceptance_path),
+        "attempt": 2,
+        "passed": passed,
+        "authorization_sha256": lineage.authorization.sha256,
+        "claim_sha256": claimed_training.claim.sha256,
+        "initial_attempt_ledger_sha256": (
+            lineage.authorization.initial_attempt_ledger_sha256
+        ),
+        "training_run_sha256": claimed_training.training_run_sha256,
+        "validation_reservation_sha256": reservation.sha256,
+        "output_dir": str(resolved_output),
+        "validation_run_sha256": sha256_file(run_path),
+        "acceptance_sha256": sha256_file(resolved_acceptance),
     }
+    # Narrow the mutable-run TOCTOU window to the final exclusive record write.
+    revalidate_claimed_wp2_retry_training(
+        lineage,
+        claimed_training=claimed_training,
+        checkpoint_dir=claimed_training.training_run_path.parent,
+    )
+    if _verified_claim(lineage) != claimed_training.claim:
+        raise ValueError("WP-2 global retry claim changed before validation completion")
     try:
         _write_exclusive(lineage.validation_completion_path, payload)
     except FileExistsError:
@@ -448,14 +647,20 @@ def record_wp2_retry_validation_completion(
 
 
 __all__ = [
+    "Wp2ClaimedRetryTraining",
     "Wp2RetryAuthorization",
     "Wp2RetryClaim",
     "Wp2RetryInputs",
     "Wp2RetryLineage",
+    "Wp2ValidationReservation",
     "claim_wp2_retry_training",
     "load_wp2_retry_authorization",
     "load_wp2_retry_lineage",
     "record_wp2_retry_training_completion",
     "record_wp2_retry_validation_completion",
+    "reserve_initial_wp2_validation",
+    "reserve_wp2_retry_validation",
+    "revalidate_claimed_wp2_retry_training",
     "require_claimed_wp2_retry_training",
+    "verify_initial_wp2_validation_reservation",
 ]
