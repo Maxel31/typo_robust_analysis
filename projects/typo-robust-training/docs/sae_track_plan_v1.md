@@ -114,7 +114,9 @@ where dead means `p_i < 1e-5`, median splice KL <= 0.15 nats/token, and saved
 is allowed; a second failure stops the track.
 
 The initial failed WP-2 ledger is immutable. New initial v1 registrations must
-include an absolute, pre-existing `wp2_project_root`; the historical checked-in
+include an absolute, pre-existing `wp2_project_root` and bind its `device` and
+`inode` under `wp2_project_root_identity`. This machine-local identity is part
+of the same execution contract as the absolute path. The historical checked-in
 unrooted v1 remains byte-identical and readable only as evidence for its
 existing retry chain. A full-bundle retry is not authorized by the runner
 alone: a separately reviewed authorization must bind the complete initial
@@ -135,6 +137,17 @@ reserved/eligible role and order, the loaded L1 mapping, the reviewed source
 implementation closure, and effective W&B identity. Raw input files are
 rehashed immediately after parsing/loading. A nonblocking project-root `flock`
 is held for the entire retry invocation.
+All exclusive claim/reservation/completion records open the already canonical,
+pre-existing parent path with `O_DIRECTORY|O_NOFOLLOW` and create the literal final basename with
+`O_EXCL|O_NOFOLLOW`. Final-component symlinks cannot redirect a budget record.
+The reviewed preregistration bytes pin the project root's `st_dev/st_ino`
+across invocations, and the
+lease plus every authority read/write verifies the opened directory identity;
+replacement by either a symlink or a new regular directory fails closed.
+Training and validation output paths reject final symlinks as well.
+Existing exclusive authorities are read through the same anchored parent using
+nonblocking `O_NOFOLLOW` descriptors and must be same-owner, singly linked
+regular files. Equal-payload symlink/hardlink/FIFO aliases fail closed.
 
 A crash in the claim-only interval is recoverable only for the exact same claim
 and an absent/empty output or exact source registry. A product-created

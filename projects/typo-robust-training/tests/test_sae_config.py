@@ -228,6 +228,10 @@ def test_retry_preregistration_is_a_trusted_automatic_mode_marker(tmp_path: Path
     (tmp_path / "lineage").mkdir()
     payload["schema_version"] = "robustness-sae-preregistry/v2"
     payload["wp2_project_root"] = str((tmp_path / "lineage").resolve())
+    payload["wp2_project_root_identity"] = {
+        "device": (tmp_path / "lineage").stat().st_dev,
+        "inode": (tmp_path / "lineage").stat().st_ino,
+    }
     payload["wp2_retry"] = {
         "authorization_path": "lineage/retry-authorization.json",
         "initial_attempt_ledger_path": "lineage/wp2_attempts.json",
@@ -238,8 +242,18 @@ def test_retry_preregistration_is_a_trusted_automatic_mode_marker(tmp_path: Path
 
     registration = load_sae_preregistration(path, protocol=protocol)
     assert registration.wp2_project_root == (tmp_path / "lineage").resolve()
+    assert registration.wp2_project_root_device == (tmp_path / "lineage").stat().st_dev
+    assert registration.wp2_project_root_inode == (tmp_path / "lineage").stat().st_ino
     assert registration.retry_inputs is not None
     assert registration.retry_inputs.project_root == (tmp_path / "lineage").resolve()
+    assert (
+        registration.retry_inputs.project_root_device
+        == registration.wp2_project_root_device
+    )
+    assert (
+        registration.retry_inputs.project_root_inode
+        == registration.wp2_project_root_inode
+    )
     assert registration.retry_inputs.authorization_path == (
         tmp_path / "lineage/retry-authorization.json"
     ).resolve()
@@ -259,6 +273,10 @@ def test_retry_preregistration_ledger_must_be_under_the_fixed_project_root(
     (tmp_path / "fixed-project").mkdir()
     payload["schema_version"] = "robustness-sae-preregistry/v2"
     payload["wp2_project_root"] = str((tmp_path / "fixed-project").resolve())
+    payload["wp2_project_root_identity"] = {
+        "device": (tmp_path / "fixed-project").stat().st_dev,
+        "inode": (tmp_path / "fixed-project").stat().st_ino,
+    }
     payload["wp2_retry"] = {
         "authorization_path": str((tmp_path / "authorization.json").resolve()),
         "initial_attempt_ledger_path": str(
@@ -283,11 +301,17 @@ def test_initial_preregistration_requires_an_explicit_absolute_project_root(
     project_root = (tmp_path / "wp2-project").resolve()
     project_root.mkdir()
     payload["wp2_project_root"] = str(project_root)
+    payload["wp2_project_root_identity"] = {
+        "device": project_root.stat().st_dev,
+        "inode": project_root.stat().st_ino,
+    }
     path = tmp_path / "rooted-registry.json"
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
     registration = load_sae_preregistration(path, protocol=protocol)
     assert registration.wp2_project_root == project_root
+    assert registration.wp2_project_root_device == project_root.stat().st_dev
+    assert registration.wp2_project_root_inode == project_root.stat().st_ino
 
     payload["wp2_project_root"] = "relative/project"
     path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
@@ -306,6 +330,8 @@ def test_legacy_initial_preregistration_remains_readable_but_unrooted() -> None:
     protocol = load_sae_protocol(DEFAULT_CONFIG)
     registration = load_sae_preregistration(DEFAULT_REGISTRY, protocol=protocol)
     assert registration.wp2_project_root is None
+    assert registration.wp2_project_root_device is None
+    assert registration.wp2_project_root_inode is None
 
 
 def test_cli_keeps_sae_calibration_training_and_validation_separate() -> None:

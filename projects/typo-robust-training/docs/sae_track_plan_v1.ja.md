@@ -64,7 +64,9 @@ WP-2 は FVU <= 0.35、median L0 in [30,150]、dead feature 率 <= 20%、splice 
 を因果 component として対外的に主張しません。
 
 初回の失敗WP-2 ledgerは変更不能です。新規の初回v1事前登録は絶対pathかつ作成済みdirectoryの
-`wp2_project_root`を含めます。既存のrepository内unrooted v1はbyte単位で不変に保ち、既存救済chainの
+`wp2_project_root`と、そのdirectoryの`device`/`inode`を持つ
+`wp2_project_root_identity`を含めます。このmachine-local identityは絶対pathと同じ実行契約です。
+既存のrepository内unrooted v1はbyte単位で不変に保ち、既存救済chainの
 証拠としてのみ読み込めます。runnerを実装しただけではfull-bundle救済は許可されません。別レビュー済み
 authorizationが、初回config・事前登録・training・validation・acceptance・ledgerの完全なhash chainと、
 単一の改訂config / 事前登録hashを結ぶ必要があります。改訂事前登録v2自体が同じproject rootを持つ
@@ -79,6 +81,13 @@ trusted retry markerであり、`initial_attempt_ledger_path`は厳密に
 全source値とreserved/eligible role・順序のcanonical digest、load済みL1 mapping、レビュー対象source
 closure、実効W&B identityもbindします。parse/load直後にはraw入力を再hashし、救済invocation全体で
 project-rootのnonblocking `flock`を保持します。
+排他的なclaim/reservation/completion recordはすべて、canonicalな既存親directory pathを`O_DIRECTORY|O_NOFOLLOW`で開き、
+literalな最終basenameを`O_EXCL|O_NOFOLLOW`で作成します。最終componentのsymlinkはbudget recordを転送できません。
+レビュー済みpreregistration bytesがproject rootの`st_dev/st_ino`をinvocation横断で固定し、leaseと全authority read/writeで
+open済みdirectoryのidentity一致を検証します。symlinkまたは新しい通常directoryへの置換はいずれもfail closedします。
+training/validationのoutput pathも最終symlinkを拒否します。
+既存の排他authorityも同じ固定済み親に対するnonblocking `O_NOFOLLOW` descriptorから読み、
+同一user所有・single-linkの通常fileだけを受理します。同一payloadでもsymlink/hardlink/FIFO aliasはfail closedします。
 
 claimだけが作成された区間でcrashした場合、同一claimかつoutputが未作成/空または完全一致するsource
 registryだけを持つ場合に限り再開できます。製品が残したsource-registry一時fileも、正のASCII PID標準表記名を持ち、

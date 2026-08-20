@@ -25,8 +25,12 @@ from typo_robust_training.sae.retry import (
 )
 
 
-def _lease_worker(project_root, ready, release, reached, outcomes) -> None:
-    lineage = SimpleNamespace(project_root=Path(project_root))
+def _lease_worker(project_root, project_root_device, project_root_inode, ready, release, reached, outcomes) -> None:
+    lineage = SimpleNamespace(
+        project_root=Path(project_root),
+        project_root_device=project_root_device,
+        project_root_inode=project_root_inode,
+    )
     try:
         with hold_wp2_retry_training_lease(lineage):
             reached.put(os.getpid())
@@ -44,6 +48,14 @@ def _write(path: Path, payload: object) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _root_identity(path: Path) -> dict[str, int]:
+    metadata = path.stat()
+    return {
+        "project_root_device": metadata.st_dev,
+        "project_root_inode": metadata.st_ino,
+    }
+
+
 def _failed_project(
     tmp_path: Path,
     *,
@@ -53,7 +65,6 @@ def _failed_project(
     initial_config = "a" * 64
     initial_registry = "b" * 64
     retry_config = "c" * 64
-    retry_registry = "d" * 64
 
     training_dir = project / "training"
     training_sha = _write(
@@ -101,6 +112,18 @@ def _failed_project(
             ],
         },
     )
+    retry_preregistration_path = tmp_path / "retry-preregistration.json"
+    retry_registry = _write(
+        retry_preregistration_path,
+        {
+            "schema_version": "robustness-sae-preregistry/v2",
+            "wp2_project_root": str(project),
+            "wp2_project_root_identity": {
+                "device": project.stat().st_dev,
+                "inode": project.stat().st_ino,
+            },
+        },
+    )
     authorization_path = tmp_path / "retry-authorization.json"
     _write(
         authorization_path,
@@ -125,6 +148,9 @@ def _failed_project(
     return (
         Wp2RetryInputs(
             project_root=project,
+            project_root_device=project.stat().st_dev,
+            project_root_inode=project.stat().st_ino,
+            preregistration_path=retry_preregistration_path,
             authorization_path=authorization_path,
             initial_attempt_ledger_path=ledger_path,
             initial_training_dir=training_dir,
@@ -171,6 +197,172 @@ def test_relocated_retry_cannot_mint_a_third_wp2_bundle(tmp_path: Path) -> None:
         )
 
 
+def test_retry_claim_never_follows_the_final_record_symlink(tmp_path: Path) -> None:
+    lineage = _lineage(tmp_path)
+    external = tmp_path / "external-claim.json"
+    lineage.claim_path.symlink_to(external)
+
+    with pytest.raises(ValueError, match="project-global retrain limit is exhausted"):
+        claim_wp2_retry_training(
+            lineage,
+            output_dir=tmp_path / "retry" / "training",
+            training_bindings=_retry_bindings(lineage),
+            resume=False,
+        )
+
+    assert lineage.claim_path.is_symlink()
+    assert not external.exists()
+
+
+def test_retry_claim_rejects_project_root_replaced_by_a_symlink(tmp_path: Path) -> None:
+    lineage = _lineage(tmp_path)
+    original_root = tmp_path / "original-project"
+    lineage.project_root.rename(original_root)
+    substituted_root = tmp_path / "substituted-project"
+    substituted_root.mkdir()
+    lineage.project_root.symlink_to(substituted_root, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="pre-existing directory"):
+        claim_wp2_retry_training(
+            lineage,
+            output_dir=tmp_path / "retry" / "training",
+            training_bindings=_retry_bindings(lineage),
+            resume=False,
+        )
+
+    assert not (substituted_root / "wp2_retry_claim.json").exists()
+    assert not (original_root / "wp2_retry_claim.json").exists()
+
+
+def test_loaded_lineage_does_not_follow_replaced_project_root_directory(
+    tmp_path: Path,
+) -> None:
+    """A new regular directory at the reviewed pathname must not reset the budget."""
+
+    lineage = _lineage(tmp_path)
+    original_root = tmp_path / "original-project"
+    lineage.project_root.rename(original_root)
+    lineage.project_root.mkdir()
+
+    with pytest.raises(ValueError, match="filesystem identity changed"):
+        with hold_wp2_retry_training_lease(lineage):
+            pytest.fail("a replacement inode must never acquire the retry lease")
+    with pytest.raises(ValueError, match="pre-existing directory"):
+        claim_wp2_retry_training(
+            lineage,
+            output_dir=tmp_path / "retry" / "training",
+            training_bindings=_retry_bindings(lineage),
+            resume=False,
+        )
+
+    assert not (lineage.project_root / "wp2_retry_training.lock").exists()
+    assert not (lineage.project_root / "wp2_retry_claim.json").exists()
+    assert not (original_root / "wp2_retry_training.lock").exists()
+    assert not (original_root / "wp2_retry_claim.json").exists()
+
+
+def test_new_invocation_cannot_recapture_replacement_root_identity(
+    tmp_path: Path,
+) -> None:
+    """The reviewed preregistration, not each process, pins the root inode."""
+
+    inputs, config_sha, registry_sha = _failed_project(tmp_path)
+    lineage = load_wp2_retry_lineage(
+        inputs,
+        retry_config_sha256=config_sha,
+        retry_preregistration_sha256=registry_sha,
+    )
+    claim_wp2_retry_training(
+        lineage,
+        output_dir=tmp_path / "retry-1" / "training",
+        training_bindings=_retry_bindings(lineage),
+        resume=False,
+    )
+
+    original_root = tmp_path / "original-project"
+    inputs.project_root.rename(original_root)
+    inputs.project_root.mkdir()
+    shutil.copytree(original_root / "training", inputs.project_root / "training")
+    shutil.copytree(original_root / "validation", inputs.project_root / "validation")
+    shutil.copy2(
+        original_root / "wp2_attempts.json",
+        inputs.project_root / "wp2_attempts.json",
+    )
+    replacement_inputs = Wp2RetryInputs(
+        project_root=inputs.project_root,
+        project_root_device=inputs.project_root.stat().st_dev,
+        project_root_inode=inputs.project_root.stat().st_ino,
+        preregistration_path=inputs.preregistration_path,
+        authorization_path=inputs.authorization_path,
+        initial_attempt_ledger_path=inputs.project_root / "wp2_attempts.json",
+        initial_training_dir=inputs.project_root / "training",
+    )
+
+    with pytest.raises(ValueError, match="preregistration project root identity differs"):
+        load_wp2_retry_lineage(
+            replacement_inputs,
+            retry_config_sha256=config_sha,
+            retry_preregistration_sha256=registry_sha,
+        )
+
+    assert not (inputs.project_root / "wp2_retry_claim.json").exists()
+    assert (original_root / "wp2_retry_claim.json").is_file()
+
+
+def test_initial_validation_reservation_rejects_project_root_symlink_substitution(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    project_root_device = project_root.stat().st_dev
+    project_root_inode = project_root.stat().st_ino
+    original_root = tmp_path / "original-project"
+    project_root.rename(original_root)
+    substituted_root = tmp_path / "substituted-project"
+    substituted_root.mkdir()
+    project_root.symlink_to(substituted_root, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="pre-existing directory"):
+        retry_module.reserve_initial_wp2_validation(
+            project_root=project_root,
+            project_root_device=project_root_device,
+            project_root_inode=project_root_inode,
+            config_sha256="a" * 64,
+            preregistration_sha256="b" * 64,
+            checkpoint_dir=tmp_path / "training",
+            checkpoint_run_sha256="c" * 64,
+            output_dir=tmp_path / "validation",
+        )
+
+    assert not (substituted_root / "wp2_initial_validation_reservation.json").exists()
+    assert not (original_root / "wp2_initial_validation_reservation.json").exists()
+
+
+def test_initial_validation_reservation_rejects_project_root_inode_substitution(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    identity = _root_identity(project_root)
+    original_root = tmp_path / "original-project"
+    project_root.rename(original_root)
+    project_root.mkdir()
+
+    with pytest.raises(ValueError, match="pre-existing directory"):
+        retry_module.reserve_initial_wp2_validation(
+            project_root=project_root,
+            **identity,
+            config_sha256="a" * 64,
+            preregistration_sha256="b" * 64,
+            checkpoint_dir=tmp_path / "training",
+            checkpoint_run_sha256="c" * 64,
+            output_dir=tmp_path / "validation",
+        )
+
+    assert not (project_root / "wp2_initial_validation_reservation.json").exists()
+    assert not (original_root / "wp2_initial_validation_reservation.json").exists()
+
+
 def test_retry_resume_requires_the_same_preexisting_claim(tmp_path: Path) -> None:
     lineage = _lineage(tmp_path)
     output = tmp_path / "retry" / "training"
@@ -215,6 +407,42 @@ def test_retry_resume_requires_the_same_preexisting_claim(tmp_path: Path) -> Non
         )
 
 
+@pytest.mark.parametrize("artifact_kind", ("symlink", "hardlink", "fifo", "directory"))
+def test_retry_resume_rejects_unsafe_existing_claim_authority_records(
+    tmp_path: Path,
+    artifact_kind: str,
+) -> None:
+    lineage = _lineage(tmp_path)
+    output = tmp_path / "retry" / "training"
+    bindings = _retry_bindings(lineage, source_record_sha256="e" * 64)
+    claim_wp2_retry_training(
+        lineage,
+        output_dir=output,
+        training_bindings=bindings,
+        resume=False,
+    )
+    claim_bytes = lineage.claim_path.read_bytes()
+    lineage.claim_path.unlink()
+    external = tmp_path / "external-claim.json"
+    external.write_bytes(claim_bytes)
+    if artifact_kind == "symlink":
+        lineage.claim_path.symlink_to(external)
+    elif artifact_kind == "hardlink":
+        os.link(external, lineage.claim_path)
+    elif artifact_kind == "fifo":
+        os.mkfifo(lineage.claim_path)
+    else:
+        lineage.claim_path.mkdir()
+
+    with pytest.raises(ValueError, match="requires the pre-training global claim"):
+        claim_wp2_retry_training(
+            lineage,
+            output_dir=output,
+            training_bindings=bindings,
+            resume=True,
+        )
+
+
 def test_concurrent_double_claim_allows_exactly_one_bundle(tmp_path: Path) -> None:
     lineage = _lineage(tmp_path)
 
@@ -245,16 +473,34 @@ def test_retry_training_lease_allows_exactly_one_process_to_reach_runtime(
     outcomes = context.Queue()
     project_root = tmp_path / "project"
     project_root.mkdir()
+    project_root_device = project_root.stat().st_dev
+    project_root_inode = project_root.stat().st_ino
 
     first = context.Process(
         target=_lease_worker,
-        args=(project_root, ready, release, reached, outcomes),
+        args=(
+            project_root,
+            project_root_device,
+            project_root_inode,
+            ready,
+            release,
+            reached,
+            outcomes,
+        ),
     )
     first.start()
     assert ready.wait(timeout=10)
     second = context.Process(
         target=_lease_worker,
-        args=(project_root, ready, release, reached, outcomes),
+        args=(
+            project_root,
+            project_root_device,
+            project_root_inode,
+            ready,
+            release,
+            reached,
+            outcomes,
+        ),
     )
     second.start()
     second.join(timeout=10)
@@ -273,12 +519,20 @@ def test_retry_training_lease_allows_exactly_one_process_to_reach_runtime(
 def test_retry_training_lease_rejects_a_symlink(tmp_path: Path) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
+    project_root_device = project_root.stat().st_dev
+    project_root_inode = project_root.stat().st_ino
     target = tmp_path / "external-lock"
     target.write_text("not a lock\n", encoding="utf-8")
     (project_root / "wp2_retry_training.lock").symlink_to(target)
 
     with pytest.raises(ValueError, match="not a regular file"):
-        with hold_wp2_retry_training_lease(SimpleNamespace(project_root=project_root)):
+        with hold_wp2_retry_training_lease(
+            SimpleNamespace(
+                project_root=project_root,
+                project_root_device=project_root_device,
+                project_root_inode=project_root_inode,
+            )
+        ):
             pytest.fail("a symlink must never acquire the retry lease")
 
 
@@ -310,6 +564,44 @@ def test_validation_accepts_only_the_claimed_training_run_sha(tmp_path: Path) ->
     )
     with pytest.raises(ValueError, match="not the claimed retry training run"):
         require_claimed_wp2_retry_training(lineage, checkpoint_dir=forged)
+
+
+def test_training_completion_idempotence_rejects_an_exact_payload_symlink(
+    tmp_path: Path,
+) -> None:
+    lineage = _lineage(tmp_path)
+    checkpoint = tmp_path / "retry" / "training"
+    base_bindings = _retry_bindings(lineage, source_record_sha256="e" * 64)
+    claim = claim_wp2_retry_training(
+        lineage,
+        output_dir=checkpoint,
+        training_bindings=base_bindings,
+        resume=False,
+    )
+    run_path = checkpoint / "run.json"
+    run_sha256 = _write(
+        run_path,
+        {"bindings": {**base_bindings, "wp2_retry_claim_sha256": claim.sha256}},
+    )
+    external = tmp_path / "external-training-completion.json"
+    _write(
+        external,
+        {
+            "schema_version": "robustness-sae-wp2-retry-training-completion/v1",
+            "project_id": lineage.authorization.project_id,
+            "claim_sha256": claim.sha256,
+            "training_run_path": str(run_path.resolve()),
+            "training_run_sha256": run_sha256,
+        },
+    )
+    lineage.training_completion_path.symlink_to(external)
+
+    with pytest.raises(ValueError, match="missing or unsafe"):
+        record_wp2_retry_training_completion(
+            lineage,
+            claim=claim,
+            training_run_path=run_path,
+        )
 
 
 def test_retry_lineage_rejects_tampered_initial_failure(tmp_path: Path) -> None:
@@ -358,6 +650,9 @@ def test_copied_initial_bundle_and_new_authorization_cannot_mint_another_claim(
     _write(copied_authorization, authorization)
     copied_inputs = Wp2RetryInputs(
         project_root=inputs.project_root,
+        project_root_device=inputs.project_root_device,
+        project_root_inode=inputs.project_root_inode,
+        preregistration_path=inputs.preregistration_path,
         authorization_path=copied_authorization,
         initial_attempt_ledger_path=copied_project / "wp2_attempts.json",
         initial_training_dir=copied_project / "training",
@@ -431,6 +726,7 @@ def test_initial_validation_reservation_is_exclusive_before_any_output(tmp_path:
         try:
             reserve(
                 project_root=tmp_path,
+                **_root_identity(tmp_path),
                 config_sha256="a" * 64,
                 preregistration_sha256="b" * 64,
                 checkpoint_dir=checkpoint,
@@ -467,6 +763,7 @@ def test_exclusive_reservation_fsyncs_the_project_root_directory(
     monkeypatch.setattr(retry_module.os, "fsync", record_fsync)
     retry_module.reserve_initial_wp2_validation(
         project_root=tmp_path,
+        **_root_identity(tmp_path),
         config_sha256="a" * 64,
         preregistration_sha256="b" * 64,
         checkpoint_dir=checkpoint,
@@ -490,6 +787,8 @@ def test_exclusive_reservation_refuses_to_create_a_missing_project_root(
     with pytest.raises(ValueError, match="pre-existing directory"):
         retry_module.reserve_initial_wp2_validation(
             project_root=missing_root,
+            project_root_device=0,
+            project_root_inode=1,
             config_sha256="a" * 64,
             preregistration_sha256="b" * 64,
             checkpoint_dir=checkpoint,
@@ -519,6 +818,7 @@ def test_directory_fsync_failure_leaves_the_validation_slot_consumed(
     monkeypatch.setattr(retry_module.os, "fsync", fail_directory_fsync)
     kwargs = {
         "project_root": tmp_path,
+        **_root_identity(tmp_path),
         "config_sha256": "a" * 64,
         "preregistration_sha256": "b" * 64,
         "checkpoint_dir": checkpoint,

@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING, Mapping
 
 from typo_robust_training.data.config import strict_loads
 from typo_robust_training.sae.config import SaeProtocol
-from typo_robust_training.sae.retry import Wp2RetryInputs
+from typo_robust_training.sae.retry import (
+    Wp2RetryInputs,
+    capture_wp2_project_root_identity,
+)
 
 if TYPE_CHECKING:
     from typo_robust_training.sae.data import PreparedSaeSources
@@ -118,6 +121,8 @@ class SaePreregistration:
     initial_eligible_record_ids_sha256: str
     eligible_records_removed: int
     wp2_project_root: Path | None
+    wp2_project_root_device: int | None
+    wp2_project_root_inode: int | None
     retry_inputs: Wp2RetryInputs | None
 
 
@@ -181,8 +186,11 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
         raise ValueError("SAE preregistration fields differ")
     schema_version = payload.get("schema_version")
     observed_fields = set(payload)
-    rooted_v1_fields = common_fields | {"wp2_project_root"}
-    retry_v2_fields = common_fields | {"wp2_project_root", "wp2_retry"}
+    rooted_v1_fields = common_fields | {
+        "wp2_project_root",
+        "wp2_project_root_identity",
+    }
+    retry_v2_fields = rooted_v1_fields | {"wp2_retry"}
     if (
         schema_version == "robustness-sae-preregistry/v1"
         and frozenset(observed_fields)
@@ -202,6 +210,8 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
     ):
         raise ValueError("SAE preregistration schema or track differs")
     wp2_project_root: Path | None = None
+    wp2_project_root_device: int | None = None
+    wp2_project_root_inode: int | None = None
     if "wp2_project_root" in payload:
         root_value = payload["wp2_project_root"]
         if not isinstance(root_value, str) or not root_value.strip():
@@ -209,12 +219,34 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
         registered_root = Path(root_value)
         if not registered_root.is_absolute():
             raise ValueError("SAE wp2_project_root must be an absolute path")
+        if registered_root.is_symlink():
+            raise ValueError("SAE wp2_project_root must not be a symlink")
         wp2_project_root = registered_root.resolve()
         if not wp2_project_root.is_dir():
             raise ValueError(
                 "SAE wp2_project_root must be a pre-existing directory: "
                 f"{wp2_project_root}"
             )
+        root_identity = payload.get("wp2_project_root_identity")
+        if (
+            not isinstance(root_identity, Mapping)
+            or set(root_identity) != {"device", "inode"}
+        ):
+            raise ValueError("SAE wp2_project_root_identity fields differ")
+        wp2_project_root_device = _nonnegative_int(
+            root_identity.get("device"),
+            field="wp2_project_root_identity.device",
+        )
+        wp2_project_root_inode = _positive_int(
+            root_identity.get("inode"),
+            field="wp2_project_root_identity.inode",
+        )
+        observed_root_identity = capture_wp2_project_root_identity(wp2_project_root)
+        if observed_root_identity != (
+            wp2_project_root_device,
+            wp2_project_root_inode,
+        ):
+            raise ValueError("SAE wp2_project_root filesystem identity differs")
 
     retry_inputs: Wp2RetryInputs | None = None
     if schema_version == "robustness-sae-preregistry/v2":
@@ -240,6 +272,9 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
 
         retry_inputs = Wp2RetryInputs(
             project_root=wp2_project_root,
+            project_root_device=wp2_project_root_device,
+            project_root_inode=wp2_project_root_inode,
+            preregistration_path=resolved,
             authorization_path=registered_path("authorization_path"),
             initial_attempt_ledger_path=registered_path("initial_attempt_ledger_path"),
             initial_training_dir=registered_path("initial_training_dir"),
@@ -438,6 +473,8 @@ def load_sae_preregistration(path: Path, *, protocol: SaeProtocol) -> SaePreregi
         initial_eligible_record_ids_sha256=initial_digest,
         eligible_records_removed=removed,
         wp2_project_root=wp2_project_root,
+        wp2_project_root_device=wp2_project_root_device,
+        wp2_project_root_inode=wp2_project_root_inode,
         retry_inputs=retry_inputs,
     )
 

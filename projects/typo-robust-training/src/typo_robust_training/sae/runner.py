@@ -124,7 +124,10 @@ class SaeValidationResult:
 
 
 def _check_output(path: Path, *, resume: bool) -> Path:
-    output = Path(path).resolve()
+    requested = Path(path)
+    if requested.is_symlink():
+        raise ValueError(f"SAE output path must not be a symlink: {requested}")
+    output = requested.resolve()
     if resume:
         if not output.is_dir():
             raise ValueError("SAE resume output directory does not exist")
@@ -145,10 +148,13 @@ def _prepare_output(path: Path, *, resume: bool) -> Path:
 def _retry_output_before_claim(path: Path, *, resume: bool) -> Path:
     """Resolve a retry output without creating it before the global claim check."""
 
+    requested = Path(path)
+    if requested.is_symlink():
+        raise ValueError(f"SAE output path must not be a symlink: {requested}")
     if not resume:
-        return _check_output(path, resume=False)
-    output = Path(path).resolve()
-    if output.exists() and (not output.is_dir() or output.is_symlink()):
+        return _check_output(requested, resume=False)
+    output = requested.resolve()
+    if output.exists() and not output.is_dir():
         raise FileExistsError(f"SAE output path is not a directory: {output}")
     return output
 
@@ -248,9 +254,12 @@ def _check_retry_claim_only_output(
 ) -> None:
     """Fail closed unless the pre-checkpoint output contains only exact inputs."""
 
+    output = Path(output)
+    if output.is_symlink():
+        raise ValueError("SAE WP-2 claim-only recovery output must not be a symlink")
     if not output.exists():
         return
-    if not output.is_dir() or output.is_symlink():
+    if not output.is_dir():
         raise ValueError("SAE WP-2 claim-only recovery output is not a directory")
     for artifact in output.iterdir():
         if artifact.name == "source_registry.json":
@@ -1517,9 +1526,9 @@ def _wp2_attempt_ledger_path(preregistration: SaePreregistration) -> Path:
             "wp2_project_root in the reviewed preregistration; legacy unrooted v1 "
             "registries are retry-lineage inputs only"
         )
-    if not project_root.is_dir():
+    if project_root.is_symlink() or not project_root.is_dir():
         raise ValueError(
-            "SAE WP-2 project root must be a pre-existing directory: "
+            "SAE WP-2 project root must be a pre-existing non-symlink directory: "
             f"{project_root}"
         )
     return project_root / "wp2_attempts.json"
@@ -1671,8 +1680,15 @@ def run_validate_saes(
             protocol=protocol,
             preregistration=preregistration,
         )
+        if (
+            preregistration.wp2_project_root_device is None
+            or preregistration.wp2_project_root_inode is None
+        ):
+            raise AssertionError("initial WP-2 project root identity was not captured")
         validation_reservation = reserve_initial_wp2_validation(
             project_root=ledger_path.parent,
+            project_root_device=preregistration.wp2_project_root_device,
+            project_root_inode=preregistration.wp2_project_root_inode,
             config_sha256=protocol.config_sha256,
             preregistration_sha256=preregistration.sha256,
             checkpoint_dir=config.checkpoint_dir,

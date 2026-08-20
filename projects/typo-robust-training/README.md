@@ -496,8 +496,11 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 The first WP-2 validation reserves its attempt with an exclusive project-root
 file before creating output or initializing GPU/runtime work, then records its
 immutable failed-bundle lineage in `${SAE_ROOT}/wp2_attempts.json`. A newly
-reviewed initial v1 preregistration must declare an absolute `wp2_project_root`,
-and that directory must already exist. The checked-in legacy v1 preregistration
+reviewed initial v1 preregistration must declare an absolute `wp2_project_root`
+and its `wp2_project_root_identity` (`device`/`inode`), and that directory must
+already exist with the registered identity. This is deliberately a
+machine-local execution contract, just like the absolute path. The checked-in
+legacy v1 preregistration
 is intentionally byte-identical to the artifact used by the completed initial
 run: it remains readable as retry-lineage evidence, but cannot start another
 initial validation. The exclusive record is file-fsynced and its parent
@@ -526,6 +529,18 @@ hashes, the canonical values actually loaded into the reserved/eligible source
 stream, the loaded layer-to-L1 mapping, the reviewed implementation closure,
 and the effective W&B project/entity. The project root also holds a nonblocking
 process-lifetime lock, so only one fresh/resumed retry can reach runtime.
+Exclusive claim/reservation/completion records open the already canonical,
+pre-existing parent path with `O_DIRECTORY|O_NOFOLLOW`; their literal final basename is created with
+`O_EXCL|O_NOFOLLOW`, so a final-component symlink cannot redirect or preserve a
+budget slot. The reviewed preregistration bytes pin the project root's
+`st_dev/st_ino` across invocations;
+the lease and every authority read/write compare the opened directory against
+that identity. A renamed root replaced by either a symlink or a new regular
+directory therefore fails closed.
+Training and validation output paths likewise reject final symlinks.
+Existing claim/reservation/completion authorities are read through the same
+anchored parent with a nonblocking `O_NOFOLLOW` descriptor and must be
+same-owner, singly linked regular files; equal-payload aliases are not accepted.
 
 If the process dies after the claim but before a training checkpoint, exact
 `--resume` is allowed only when the output is absent/empty or contains the exact

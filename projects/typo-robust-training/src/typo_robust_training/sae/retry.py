@@ -30,6 +30,9 @@ _TRAINING_LEASE_NAME = "wp2_retry_training.lock"
 @dataclass(frozen=True, slots=True)
 class Wp2RetryInputs:
     project_root: Path
+    project_root_device: int
+    project_root_inode: int
+    preregistration_path: Path
     authorization_path: Path
     initial_attempt_ledger_path: Path
     initial_training_dir: Path
@@ -54,6 +57,8 @@ class Wp2RetryAuthorization:
 class Wp2RetryLineage:
     authorization: Wp2RetryAuthorization
     project_root: Path
+    project_root_device: int
+    project_root_inode: int
     claim_path: Path
     training_completion_path: Path
     validation_completion_path: Path
@@ -78,6 +83,77 @@ class Wp2ValidationReservation:
     path: Path
     sha256: str
     payload: Mapping[str, object]
+    project_root_device: int
+    project_root_inode: int
+
+
+def _identity(
+    *,
+    device: object,
+    inode: object,
+    description: str,
+) -> tuple[int, int]:
+    if (
+        isinstance(device, bool)
+        or not isinstance(device, int)
+        or device < 0
+        or isinstance(inode, bool)
+        or not isinstance(inode, int)
+        or inode <= 0
+    ):
+        raise ValueError(f"{description} filesystem identity is invalid")
+    return device, inode
+
+
+def _open_verified_directory(
+    path: Path,
+    *,
+    expected_identity: tuple[int, int] | None,
+    description: str,
+) -> tuple[int, tuple[int, int]]:
+    requested = Path(path)
+    if not requested.is_absolute():
+        raise ValueError(f"{description} path must be absolute")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(requested, flags)
+    except OSError as error:
+        raise ValueError(f"{description} is missing or unsafe: {requested}") from error
+    try:
+        metadata = os.fstat(descriptor)
+        observed_identity = (metadata.st_dev, metadata.st_ino)
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise ValueError(f"{description} is not a directory: {requested}")
+        if expected_identity is not None and observed_identity != expected_identity:
+            raise ValueError(f"{description} filesystem identity changed: {requested}")
+    except Exception:
+        os.close(descriptor)
+        raise
+    return descriptor, observed_identity
+
+
+def capture_wp2_project_root_identity(project_root: Path) -> tuple[int, int]:
+    """Capture the identity later used to reject path-to-new-inode substitution."""
+
+    descriptor, identity = _open_verified_directory(
+        project_root,
+        expected_identity=None,
+        description="SAE WP-2 project root",
+    )
+    os.close(descriptor)
+    return identity
+
+
+def _lineage_identity(lineage: Wp2RetryLineage) -> tuple[int, int]:
+    return _identity(
+        device=lineage.project_root_device,
+        inode=lineage.project_root_inode,
+        description="SAE WP-2 retry project root",
+    )
 
 
 @contextmanager
@@ -88,14 +164,30 @@ def hold_wp2_retry_training_lease(lineage: Wp2RetryLineage) -> Iterator[None]:
     authoritative and is released automatically if the process dies.
     """
 
-    path = lineage.project_root / _TRAINING_LEASE_NAME
+    expected_identity = _lineage_identity(lineage)
+    directory_descriptor, _observed_identity = _open_verified_directory(
+        lineage.project_root,
+        expected_identity=expected_identity,
+        description="SAE WP-2 retry project root",
+    )
     flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
     try:
-        descriptor = os.open(path, flags, 0o600)
+        descriptor = os.open(
+            _TRAINING_LEASE_NAME,
+            flags,
+            0o600,
+            dir_fd=directory_descriptor,
+        )
     except OSError as exc:
+        os.close(directory_descriptor)
         raise ValueError("SAE WP-2 retry training lease is not a regular file") from exc
     try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_uid != os.geteuid()
+        ):
             raise ValueError("SAE WP-2 retry training lease is not a regular file")
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -107,6 +199,7 @@ def hold_wp2_retry_training_lease(lineage: Wp2RetryLineage) -> Iterator[None]:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
     finally:
         os.close(descriptor)
+        os.close(directory_descriptor)
 
 
 def _sha256(value: object, *, field: str) -> str:
@@ -189,6 +282,44 @@ def load_wp2_retry_authorization(path: Path) -> Wp2RetryAuthorization:
     )
 
 
+def _verify_bound_retry_project_root(
+    inputs: Wp2RetryInputs,
+    *,
+    expected_preregistration_sha256: str,
+) -> None:
+    preregistration_path = Path(inputs.preregistration_path).resolve()
+    if not preregistration_path.is_file():
+        raise ValueError(
+            f"WP-2 retry preregistration is missing: {preregistration_path}"
+        )
+    raw = preregistration_path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != expected_preregistration_sha256:
+        raise ValueError("WP-2 retry preregistration hash differs from authorization")
+    payload = strict_loads(raw.decode("utf-8"), context=str(preregistration_path))
+    if not isinstance(payload, Mapping):
+        raise ValueError("WP-2 retry preregistration must be an object")
+    root_identity = payload.get("wp2_project_root_identity")
+    if (
+        payload.get("schema_version") != "robustness-sae-preregistry/v2"
+        or payload.get("wp2_project_root") != str(inputs.project_root)
+        or not isinstance(root_identity, Mapping)
+        or set(root_identity) != {"device", "inode"}
+    ):
+        raise ValueError("WP-2 retry preregistration project root binding differs")
+    registered_identity = _identity(
+        device=root_identity.get("device"),
+        inode=root_identity.get("inode"),
+        description="WP-2 retry preregistration project root",
+    )
+    input_identity = _identity(
+        device=inputs.project_root_device,
+        inode=inputs.project_root_inode,
+        description="WP-2 retry project root",
+    )
+    if registered_identity != input_identity:
+        raise ValueError("WP-2 retry preregistration project root identity differs")
+
+
 def _load_object(path: Path, *, description: str) -> Mapping[str, object]:
     if not path.is_file():
         raise ValueError(f"WP-2 retry {description} is missing: {path}")
@@ -196,6 +327,54 @@ def _load_object(path: Path, *, description: str) -> Mapping[str, object]:
     if not isinstance(payload, Mapping):
         raise ValueError(f"WP-2 retry {description} must be an object")
     return payload
+
+
+def _load_exclusive_object(
+    path: Path,
+    *,
+    description: str,
+    expected_parent_identity: tuple[int, int],
+) -> tuple[Mapping[str, object], str]:
+    """Read one authority record without following either final symlinks or FIFOs."""
+
+    requested = Path(path)
+    if not requested.is_absolute():
+        raise ValueError(f"WP-2 retry {description} path must be absolute")
+    directory_descriptor = -1
+    descriptor = -1
+    try:
+        directory_descriptor, _observed_identity = _open_verified_directory(
+            requested.parent,
+            expected_identity=expected_parent_identity,
+            description=f"WP-2 retry {description} parent",
+        )
+        descriptor = os.open(
+            requested.name,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=directory_descriptor,
+        )
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_uid != os.geteuid()
+        ):
+            raise ValueError(f"WP-2 retry {description} is unsafe")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            raw = handle.read()
+    except OSError as error:
+        raise ValueError(f"WP-2 retry {description} is missing or unsafe: {requested}") from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if directory_descriptor >= 0:
+            os.close(directory_descriptor)
+    payload = strict_loads(raw.decode("utf-8"), context=str(requested))
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"WP-2 retry {description} must be an object")
+    return payload, hashlib.sha256(raw).hexdigest()
 
 
 def load_wp2_retry_lineage(
@@ -212,13 +391,34 @@ def load_wp2_retry_lineage(
         or retry_preregistration_sha256 != authorization.retry_preregistration_sha256
     ):
         raise ValueError("WP-2 retry config/preregistration differs from authorization")
+    _verify_bound_retry_project_root(
+        inputs,
+        expected_preregistration_sha256=authorization.retry_preregistration_sha256,
+    )
 
-    project_root = Path(inputs.project_root).resolve()
-    if not project_root.is_dir():
+    project_root = Path(inputs.project_root)
+    if (
+        not project_root.is_absolute()
+        or project_root.is_symlink()
+        or project_root.resolve() != project_root
+        or not project_root.is_dir()
+    ):
         raise ValueError(
-            "WP-2 retry project root must be a pre-existing directory: "
+            "WP-2 retry project root must be a canonical pre-existing non-symlink "
+            "directory: "
             f"{project_root}"
         )
+    expected_root_identity = _identity(
+        device=inputs.project_root_device,
+        inode=inputs.project_root_inode,
+        description="SAE WP-2 retry project root",
+    )
+    project_root_descriptor, observed_root_identity = _open_verified_directory(
+        project_root,
+        expected_identity=expected_root_identity,
+        description="SAE WP-2 retry project root",
+    )
+    os.close(project_root_descriptor)
     ledger_path = Path(inputs.initial_attempt_ledger_path).resolve()
     if ledger_path != project_root / "wp2_attempts.json":
         raise ValueError(
@@ -293,6 +493,8 @@ def load_wp2_retry_lineage(
     return Wp2RetryLineage(
         authorization=authorization,
         project_root=project_root,
+        project_root_device=observed_root_identity[0],
+        project_root_inode=observed_root_identity[1],
         claim_path=project_root / _CLAIM_NAME,
         training_completion_path=project_root / _TRAINING_COMPLETION_NAME,
         validation_completion_path=project_root / _VALIDATION_COMPLETION_NAME,
@@ -305,21 +507,35 @@ def _canonical_json_bytes(payload: object) -> bytes:
     ).encode("utf-8")
 
 
-def _write_exclusive(path: Path, payload: object) -> None:
+def _write_exclusive(
+    path: Path,
+    payload: object,
+    *,
+    expected_parent_identity: tuple[int, int],
+) -> tuple[int, int]:
     data = _canonical_json_bytes(payload)
-    resolved = Path(path).resolve()
-    parent = resolved.parent
-    if not parent.is_dir():
+    requested = Path(path)
+    if not requested.is_absolute():
+        raise ValueError("SAE WP-2 exclusive record path must be absolute")
+    parent = requested.parent
+    try:
+        directory_descriptor, observed_identity = _open_verified_directory(
+            parent,
+            expected_identity=expected_parent_identity,
+            description="SAE WP-2 exclusive record parent",
+        )
+    except ValueError as error:
         raise ValueError(
             "SAE WP-2 exclusive record requires a pre-existing directory: "
             f"{parent}"
-        )
-    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    directory_descriptor = os.open(parent, directory_flags)
+        ) from error
     try:
         descriptor = os.open(
-            resolved.name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            requested.name,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0),
             0o600,
             dir_fd=directory_descriptor,
         )
@@ -333,7 +549,7 @@ def _write_exclusive(path: Path, payload: object) -> None:
         except Exception:
             if not file_is_durable:
                 try:
-                    os.unlink(resolved.name, dir_fd=directory_descriptor)
+                    os.unlink(requested.name, dir_fd=directory_descriptor)
                     os.fsync(directory_descriptor)
                 except OSError:
                     # A residual entry consumes the slot: the fail-closed outcome.
@@ -345,6 +561,7 @@ def _write_exclusive(path: Path, payload: object) -> None:
         os.fsync(directory_descriptor)
     finally:
         os.close(directory_descriptor)
+    return observed_identity
 
 
 def claim_wp2_retry_training(
@@ -375,26 +592,48 @@ def claim_wp2_retry_training(
         "training_bindings": dict(training_bindings),
     }
     if resume:
-        if not lineage.claim_path.is_file():
-            raise ValueError("SAE WP-2 retry resume requires the pre-training global claim")
-        observed = _load_object(lineage.claim_path, description="global retry claim")
+        try:
+            observed, digest = _load_exclusive_object(
+                lineage.claim_path,
+                description="global retry claim",
+                expected_parent_identity=_lineage_identity(lineage),
+            )
+        except ValueError as error:
+            raise ValueError(
+                "SAE WP-2 retry resume requires the pre-training global claim"
+            ) from error
+
         if observed != payload:
             raise ValueError("SAE WP-2 retry resume differs from the existing global claim")
         return Wp2RetryClaim(
             path=lineage.claim_path,
-            sha256=sha256_file(lineage.claim_path),
+            sha256=digest,
             payload=payload,
         )
     try:
-        _write_exclusive(lineage.claim_path, payload)
+        _write_exclusive(
+            lineage.claim_path,
+            payload,
+            expected_parent_identity=_lineage_identity(lineage),
+        )
     except FileExistsError:
         raise ValueError("SAE WP-2 project-global retrain limit is exhausted") from None
-    digest = sha256_file(lineage.claim_path)
+    observed, digest = _load_exclusive_object(
+        lineage.claim_path,
+        description="global retry claim",
+        expected_parent_identity=_lineage_identity(lineage),
+    )
+    if observed != payload:
+        raise ValueError("SAE WP-2 global retry claim changed during creation")
     return Wp2RetryClaim(path=lineage.claim_path, sha256=digest, payload=payload)
 
 
 def _verified_claim(lineage: Wp2RetryLineage) -> Wp2RetryClaim:
-    payload = _load_object(lineage.claim_path, description="global retry claim")
+    payload, digest = _load_exclusive_object(
+        lineage.claim_path,
+        description="global retry claim",
+        expected_parent_identity=_lineage_identity(lineage),
+    )
     expected_keys = {
         "schema_version",
         "project_id",
@@ -422,7 +661,7 @@ def _verified_claim(lineage: Wp2RetryLineage) -> Wp2RetryClaim:
         raise ValueError("WP-2 global retry claim lineage differs")
     return Wp2RetryClaim(
         path=lineage.claim_path,
-        sha256=sha256_file(lineage.claim_path),
+        sha256=digest,
         payload=payload,
     )
 
@@ -458,12 +697,18 @@ def record_wp2_retry_training_completion(
         "training_run_sha256": sha256_file(run_path),
     }
     try:
-        _write_exclusive(lineage.training_completion_path, payload)
+        _write_exclusive(
+            lineage.training_completion_path,
+            payload,
+            expected_parent_identity=_lineage_identity(lineage),
+        )
     except FileExistsError:
-        if _load_object(
+        observed, _digest = _load_exclusive_object(
             lineage.training_completion_path,
             description="retry training completion",
-        ) != payload:
+            expected_parent_identity=_lineage_identity(lineage),
+        )
+        if observed != payload:
             raise ValueError("WP-2 retry training completion differs") from None
 
 
@@ -474,9 +719,10 @@ def require_claimed_wp2_retry_training(
 ) -> Wp2ClaimedRetryTraining:
     claim = _verified_claim(lineage)
     claim_payload = claim.payload
-    completion = _load_object(
+    completion, _completion_sha256 = _load_exclusive_object(
         lineage.training_completion_path,
         description="retry training completion",
+        expected_parent_identity=_lineage_identity(lineage),
     )
     run_path = Path(checkpoint_dir).resolve() / "run.json"
     if not run_path.is_file():
@@ -539,6 +785,8 @@ def revalidate_claimed_wp2_retry_training(
 def reserve_initial_wp2_validation(
     *,
     project_root: Path,
+    project_root_device: int,
+    project_root_inode: int,
     config_sha256: str,
     preregistration_sha256: str,
     checkpoint_dir: Path,
@@ -547,7 +795,15 @@ def reserve_initial_wp2_validation(
 ) -> Wp2ValidationReservation:
     """Consume the initial validation slot before outputs, GPU, or runtime work."""
 
-    path = Path(project_root).resolve() / _INITIAL_VALIDATION_RESERVATION_NAME
+    root = Path(project_root)
+    if not root.is_absolute():
+        raise ValueError("SAE WP-2 initial validation project root must be absolute")
+    expected_root_identity = _identity(
+        device=project_root_device,
+        inode=project_root_inode,
+        description="SAE WP-2 initial validation project root",
+    )
+    path = root / _INITIAL_VALIDATION_RESERVATION_NAME
     payload = {
         "schema_version": "robustness-sae-wp2-validation-reservation/v1",
         "attempt": 1,
@@ -558,10 +814,27 @@ def reserve_initial_wp2_validation(
         "output_dir": str(Path(output_dir).resolve()),
     }
     try:
-        _write_exclusive(path, payload)
+        observed_root_identity = _write_exclusive(
+            path,
+            payload,
+            expected_parent_identity=expected_root_identity,
+        )
     except FileExistsError:
         raise ValueError("SAE WP-2 initial validation slot is already reserved") from None
-    return Wp2ValidationReservation(path=path, sha256=sha256_file(path), payload=payload)
+    observed, digest = _load_exclusive_object(
+        path,
+        description="initial validation reservation",
+        expected_parent_identity=observed_root_identity,
+    )
+    if observed != payload:
+        raise ValueError("SAE WP-2 initial validation reservation changed during creation")
+    return Wp2ValidationReservation(
+        path=path,
+        sha256=digest,
+        payload=payload,
+        project_root_device=observed_root_identity[0],
+        project_root_inode=observed_root_identity[1],
+    )
 
 
 def reserve_wp2_retry_validation(
@@ -593,10 +866,27 @@ def reserve_wp2_retry_validation(
         "output_dir": str(Path(output_dir).resolve()),
     }
     try:
-        _write_exclusive(path, payload)
+        _write_exclusive(
+            path,
+            payload,
+            expected_parent_identity=_lineage_identity(lineage),
+        )
     except FileExistsError:
         raise ValueError("SAE WP-2 retry validation slot is already reserved") from None
-    return Wp2ValidationReservation(path=path, sha256=sha256_file(path), payload=payload)
+    observed, digest = _load_exclusive_object(
+        path,
+        description="retry validation reservation",
+        expected_parent_identity=_lineage_identity(lineage),
+    )
+    if observed != payload:
+        raise ValueError("SAE WP-2 retry validation reservation changed during creation")
+    return Wp2ValidationReservation(
+        path=path,
+        sha256=digest,
+        payload=payload,
+        project_root_device=lineage.project_root_device,
+        project_root_inode=lineage.project_root_inode,
+    )
 
 
 def verify_initial_wp2_validation_reservation(
@@ -604,10 +894,18 @@ def verify_initial_wp2_validation_reservation(
     *,
     checkpoint_dir: Path,
 ) -> None:
-    observed = _load_object(reservation.path, description="initial validation reservation")
+    observed, digest = _load_exclusive_object(
+        reservation.path,
+        description="initial validation reservation",
+        expected_parent_identity=_identity(
+            device=reservation.project_root_device,
+            inode=reservation.project_root_inode,
+            description="SAE WP-2 initial validation project root",
+        ),
+    )
     if (
         observed != reservation.payload
-        or sha256_file(reservation.path) != reservation.sha256
+        or digest != reservation.sha256
         or reservation.payload.get("attempt") != 1
         or reservation.payload.get("checkpoint_dir")
         != str(Path(checkpoint_dir).resolve())
@@ -624,11 +922,15 @@ def _verify_retry_validation_reservation(
     reservation: Wp2ValidationReservation,
     output_dir: Path,
 ) -> None:
-    observed = _load_object(reservation.path, description="retry validation reservation")
+    observed, digest = _load_exclusive_object(
+        reservation.path,
+        description="retry validation reservation",
+        expected_parent_identity=_lineage_identity(lineage),
+    )
     if (
         reservation.path != lineage.project_root / _RETRY_VALIDATION_RESERVATION_NAME
         or observed != reservation.payload
-        or sha256_file(reservation.path) != reservation.sha256
+        or digest != reservation.sha256
         or reservation.payload.get("attempt") != 2
         or reservation.payload.get("claim_sha256") != claimed_training.claim.sha256
         or reservation.payload.get("training_run_sha256")
@@ -711,7 +1013,11 @@ def record_wp2_retry_validation_completion(
     if _verified_claim(lineage) != claimed_training.claim:
         raise ValueError("WP-2 global retry claim changed before validation completion")
     try:
-        _write_exclusive(lineage.validation_completion_path, payload)
+        _write_exclusive(
+            lineage.validation_completion_path,
+            payload,
+            expected_parent_identity=_lineage_identity(lineage),
+        )
     except FileExistsError:
         raise ValueError("SAE WP-2 retry validation was already completed") from None
 

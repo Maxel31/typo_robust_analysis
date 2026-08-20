@@ -445,8 +445,10 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 
 初回WP-2 validationは、output作成やGPU/runtime初期化より前にproject rootへ排他的な予約fileを
 作成し、その後に変更不能な失敗bundle lineageを`${SAE_ROOT}/wp2_attempts.json`へ記録します。
-新たにレビューする初回v1事前登録は絶対pathの`wp2_project_root`を明記し、そのdirectoryを実行前に
-作成済みにする必要があります。既存の初回実行に使用したrepository内v1事前登録はbyte単位で不変に
+新たにレビューする初回v1事前登録は絶対pathの`wp2_project_root`と、そのdirectoryの
+`wp2_project_root_identity`（`device`/`inode`）を明記し、そのidentityを持つdirectoryを実行前に
+作成済みにする必要があります。このidentityは絶対pathと同じmachine-localな実行契約です。
+既存の初回実行に使用したrepository内v1事前登録はbyte単位で不変に
 保ち、救済lineageの証拠としては読み込めますが、新たな初回validationの開始には使えません。予約file
 本体に加えて親directoryもfsyncするため、crash後もそのattemptは消費済みとなり、validationの暗黙
 resumeは行いません。
@@ -467,6 +469,13 @@ ledgerがその絶対pathを、authorizationが全artifact hashをbindするた�
 path/raw hash、reserved/eligibleとして実際にmemoryへloadされたsource値と順序、load済みlayer→L1対応、
 レビュー対象implementation closure、実効W&B project/entityをbindします。さらにproject root上の
 nonblockingなprocess-lifetime lockにより、fresh/resumeを問わずruntimeへ到達できる救済trainingは1つだけです。
+排他的なclaim/reservation/completion recordはcanonicalな既存親directory pathを`O_DIRECTORY|O_NOFOLLOW`で開き、
+literalな最終basenameを`O_EXCL|O_NOFOLLOW`で作成します。このため最終componentのsymlinkでbudget slotを外部へ転送・保存できません。
+レビュー済みpreregistration bytesがproject rootの`st_dev/st_ino`をinvocation横断で固定し、leaseと全authority read/writeで
+open済みdirectoryのidentity一致を検証します。改名したproject rootをsymlinkまたは新しい通常directoryで置換した場合もfail closedします。
+training/validationのoutput pathも最終symlinkを拒否します。
+既存のclaim/reservation/completion authorityも同じ固定済み親に対するnonblocking `O_NOFOLLOW` descriptorから読み、
+同一user所有・single-linkの通常fileだけを受理します。payloadが同一でもaliasは受理しません。
 
 claim後かつtraining checkpoint作成前にprocessが停止した場合、同一claimの`--resume`は、outputが
 未作成/空、または完全一致するcanonical source registry（および未完了のatomic checkpoint一時file、

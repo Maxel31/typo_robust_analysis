@@ -855,6 +855,32 @@ def test_retry_resume_does_not_mutate_output_before_claim_comparison(
     assert source_registry.read_bytes() == before
 
 
+@pytest.mark.parametrize("resume", (False, True))
+@pytest.mark.parametrize("relative", (False, True))
+@pytest.mark.parametrize("target_exists", (False, True))
+def test_sae_output_contract_rejects_a_final_symlink(
+    tmp_path: Path,
+    resume: bool,
+    relative: bool,
+    target_exists: bool,
+) -> None:
+    target = tmp_path / "real-output"
+    if target_exists:
+        target.mkdir()
+    alias = tmp_path / "output-alias"
+    alias.symlink_to(target.name if relative else target, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="output path must not be a symlink"):
+        runner_module._check_output(alias, resume=resume)
+    with pytest.raises(ValueError, match="output path must not be a symlink"):
+        runner_module._retry_output_before_claim(alias, resume=resume)
+    with pytest.raises(ValueError, match="recovery output must not be a symlink"):
+        runner_module._check_retry_claim_only_output(
+            output=alias,
+            expected_source_registry=b"{}\n",
+        )
+
+
 def test_retry_resume_replays_from_zero_after_claim_before_output_crash(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1286,10 +1312,13 @@ def test_sae_checkpoint_metadata_failure_preserves_previous_generation(
 
 def test_wp2_attempt_ledger_enforces_one_preregistered_retrain(tmp_path: Path) -> None:
     protocol = SimpleNamespace(config_sha256="a" * 64, maximum_gate_retrains=1)
-    (tmp_path / "fixed-project-root").mkdir()
+    project_root = tmp_path / "fixed-project-root"
+    project_root.mkdir()
     preregistration = SimpleNamespace(
         sha256="b" * 64,
-        wp2_project_root=(tmp_path / "fixed-project-root").resolve(),
+        wp2_project_root=project_root.resolve(),
+        wp2_project_root_device=project_root.stat().st_dev,
+        wp2_project_root_inode=project_root.stat().st_ino,
     )
 
     def checkpoint(name: str, value: int) -> Path:
@@ -1306,6 +1335,8 @@ def test_wp2_attempt_ledger_enforces_one_preregistered_retrain(tmp_path: Path) -
     )
     reservation = reserve_initial_wp2_validation(
         project_root=ledger.parent,
+        project_root_device=preregistration.wp2_project_root_device,
+        project_root_inode=preregistration.wp2_project_root_inode,
         config_sha256=protocol.config_sha256,
         preregistration_sha256=preregistration.sha256,
         checkpoint_dir=first,
@@ -1334,6 +1365,8 @@ def test_wp2_attempt_ledger_enforces_one_preregistered_retrain(tmp_path: Path) -
     with pytest.raises(ValueError, match="initial validation slot is already reserved"):
         reserve_initial_wp2_validation(
             project_root=ledger.parent,
+            project_root_device=preregistration.wp2_project_root_device,
+            project_root_inode=preregistration.wp2_project_root_inode,
             config_sha256=protocol.config_sha256,
             preregistration_sha256=preregistration.sha256,
             checkpoint_dir=second,
@@ -1346,10 +1379,13 @@ def test_relocated_checkpoint_parent_cannot_reset_initial_wp2_budget(tmp_path: P
     """Falsify checkpoint-parent scoped ledgers by moving every full bundle."""
 
     protocol = SimpleNamespace(config_sha256="a" * 64, maximum_gate_retrains=1)
-    (tmp_path / "fixed-project-root").mkdir()
+    project_root = tmp_path / "fixed-project-root"
+    project_root.mkdir()
     preregistration = SimpleNamespace(
         sha256="b" * 64,
-        wp2_project_root=(tmp_path / "fixed-project-root").resolve(),
+        wp2_project_root=project_root.resolve(),
+        wp2_project_root_device=project_root.stat().st_dev,
+        wp2_project_root_inode=project_root.stat().st_ino,
     )
     accepted = 0
     for index in range(4):
@@ -1368,6 +1404,8 @@ def test_relocated_checkpoint_parent_cannot_reset_initial_wp2_budget(tmp_path: P
             )
             reservation = reserve_initial_wp2_validation(
                 project_root=ledger.parent,
+                project_root_device=preregistration.wp2_project_root_device,
+                project_root_inode=preregistration.wp2_project_root_inode,
                 config_sha256=protocol.config_sha256,
                 preregistration_sha256=preregistration.sha256,
                 checkpoint_dir=checkpoint,
