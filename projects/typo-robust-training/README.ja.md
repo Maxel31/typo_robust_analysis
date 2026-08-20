@@ -371,6 +371,10 @@ SAE は診断・将来研究用です。GPU 5/6 で保護している output mat
 凍結済み評価とlocalizationの全roleを渡す必要があり、ID・contentの完全一致に加えて、固定した
 character 5-gram近重複検査を行います。このデータ準備commandはGPUを使用しません。
 
+以下4 commandでは、`wp2_project_root`と`wp2_project_root_identity`を持つ、別途レビュー済みの
+同一`ROOTED_REGISTRY`を使用します。repository内のlegacy registry-v1はlineage証拠専用です。
+両者を混在させるとbindされたpreregistration SHAが変わり、validationがtraining runを拒否します。
+
 ```bash
 GPU_ID="0"
 SAE_ROOT="/diskthalys/ssd14tc/sfukuhata/typo_sae_artifacts/gemma4b-v1"
@@ -379,10 +383,11 @@ EVALUATION_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-tr
 LOCALIZATION_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-training/results/localization/generic-joint-window-v1/pairs"
 SUPPLEMENT_DATA="${SAE_ROOT}/clean-corpus/sae_clean_supplement.jsonl"
 WANDB_PROJECT="typo-robustness-sae"
+ROOTED_REGISTRY="/absolute/path/to/reviewed/rooted-sae-preregistration.yaml"
 
 uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-sae-clean-corpus \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
-  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --registry "${ROOTED_REGISTRY}" \
   --existing-data "${TRAINING_DATA}" \
   --exclude-data "${EVALUATION_DATA}" \
   --exclude-data "${LOCALIZATION_DATA}" \
@@ -396,7 +401,7 @@ uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-sae-clean-corpus \
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot calibrate-sparse-autoencoder-l1 \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
-  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --registry "${ROOTED_REGISTRY}" \
   --training-data "${TRAINING_DATA}" \
   --training-data "${SUPPLEMENT_DATA}" \
   --gpu-id "${GPU_ID}" \
@@ -413,7 +418,7 @@ manifestを `--training-data` の繰り返しで追加します。
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-sparse-autoencoders \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
-  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --registry "${ROOTED_REGISTRY}" \
   --training-data "${TRAINING_DATA}" \
   --training-data "${SUPPLEMENT_DATA}" \
   --l1-selection "${SAE_ROOT}/l1-calibration/l1_selection.json" \
@@ -435,7 +440,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot validate-sparse-autoencoders \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
-  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --registry "${ROOTED_REGISTRY}" \
   --validation-data "${TRAINING_DATA}" \
   --validation-data "${SUPPLEMENT_DATA}" \
   --checkpoint-dir "${SAE_ROOT}/training" \
@@ -443,9 +448,61 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --output-dir "${SAE_ROOT}/validation"
 ```
 
-WP-2 validationは異なるcheckpointごとの試行を`${SAE_ROOT}/wp2_attempts.json`へ記録し、
-初回validationと、失敗後に許された最大1回の再学習だけを、新しいvalidation出力directory間でも
-強制します。
+初回WP-2 validationは、output作成やGPU/runtime初期化より前にproject rootへ排他的な予約fileを
+作成し、その後に変更不能な失敗bundle lineageを`${SAE_ROOT}/wp2_attempts.json`へ記録します。
+新たにレビューする初回v1事前登録は絶対pathの`wp2_project_root`と、そのdirectoryの
+`wp2_project_root_identity`（`device`/`inode`）を明記し、そのidentityを持つdirectoryを実行前に
+作成済みにする必要があります。このidentityは絶対pathと同じmachine-localな実行契約です。
+既存の初回実行に使用したrepository内v1事前登録はbyte単位で不変に
+保ち、救済lineageの証拠としては読み込めますが、新たな初回validationの開始には使えません。予約file
+本体に加えて親directoryもfsyncするため、crash後もそのattemptは消費済みとなり、validationの暗黙
+resumeは行いません。
 
-`--resume`は対象 command 自身の hash-bound checkpoint が既にある場合だけ追加します。固定した
+救済runは、元のconfig、事前登録、training、validation、acceptance、ledgerの各hashと、単一の
+改訂config / 事前登録hashを結ぶauthorizationが別レビューで承認されるまで禁止です。改訂事前登録は
+同じ絶対pathの`wp2_project_root`とschema v2の`wp2_retry` lineage markerを持ち、
+`initial_attempt_ledger_path`は厳密に`wp2_project_root/wp2_attempts.json`でなければなりません。
+trainingとvalidationの救済modeはCLI optionではなく、このレビュー済みmarkerから自動かつ強制的に
+決まり、authorizationはv2事前登録全体のSHA-256を逆向きにbindします。このためCLI引数の省略で
+初回validation経路へfallbackできません。初回validation outputはproject root外でも構いません。
+ledgerがその絶対pathを、authorizationが全artifact hashをbindするため、outputの移動や複製で新しい
+救済budgetを作ることはできません。
+
+救済trainingはruntime/model初期化より前に、排他的なfilesystem claimとして
+`${SAE_ROOT}/wp2_retry_claim.json`を作成します。`--resume`時はoutput artifactや
+`source_registry.json`を作成・更新する前にclaimとの完全一致を確認します。claimは順序付きmanifestの
+path/raw hash、reserved/eligibleとして実際にmemoryへloadされたsource値と順序、load済みlayer→L1対応、
+レビュー対象implementation closure、実効W&B project/entityをbindします。さらにproject root上の
+nonblockingなprocess-lifetime lockにより、fresh/resumeを問わずruntimeへ到達できる救済trainingは1つだけです。
+排他的なclaim/reservation/completion recordはcanonicalな既存親directory pathを`O_DIRECTORY|O_NOFOLLOW`で開き、
+literalな最終basenameを`O_EXCL|O_NOFOLLOW`で作成します。このため最終componentのsymlinkでbudget slotを外部へ転送・保存できません。
+レビュー済みpreregistration bytesがproject rootの`st_dev/st_ino`をinvocation横断で固定し、leaseと全authority read/writeで
+open済みdirectoryのidentity一致を検証します。改名したproject rootをsymlinkまたは新しい通常directoryで置換した場合もfail closedします。
+training/validationのoutput pathも最終symlinkを拒否します。
+既存のclaim/reservation/completion authorityも同じ固定済み親に対するnonblocking `O_NOFOLLOW` descriptorから読み、
+同一user所有・single-linkの通常fileだけを受理します。payloadが同一でもaliasは受理しません。
+救済trainingの`--resume`ではruntime/model初期化より前にtraining completion authorityを確認します。
+hashでbindされたrun/model artifactが完全一致して残る場合は再学習せず完了結果を返し、記録済みoutputの
+一部でも欠損・不一致ならfail closedとして、消費済みの救済枠を再度使うことを禁止します。
+
+claim後かつtraining checkpoint作成前にprocessが停止した場合、同一claimの`--resume`は、outputが
+未作成/空、または完全一致するcanonical source registry（および未完了のatomic checkpoint一時file、
+または正のASCII PID標準表記名を持ち、期待するcanonical registryのbyte prefixだけを含む
+同一user所有・single-linkの通常file・非symlinkのsource-registry一時file）のみを
+含む場合に限り許可します。source-registry一時fileは非権威的で、回復時にregistryとしてloadしません。
+それ以外のorphan artifactはfail closedです。runtime・model・optimizer初期化後、
+W&B、activation収集、optimizer stepより前にcursor zeroのcheckpointをatomicに書いてfsyncします。W&Bも
+claim由来のrun ID intentを`wandb.init`より前に永続化するため、再開時に同じidentityを使います。通常の
+非救済runは従来どおり、既存checkpointがなければresumeできません。
+
+救済validationもoutputや
+GPU/runtime workより前に唯一の枠を予約し、claimが記録したtraining `run.json` SHAと完全一致する
+checkpointだけを受理します。このSHAはmodel load直前とcompletion記録直前に再検証します。completionは
+attempt 2、pass/fail、親ledger、training run、reservation、validation、acceptanceのhashを監査情報として
+保存します。出力親directoryを変更してもproject-globalな予約はリセットされません。現時点では科学的な
+救済authorization、v2救済registry、改訂値をrepositoryへ追加しておらず、このlineage機構そのものは
+再学習を許可しません。
+
+`--resume`は対象 command 自身のhash-bound checkpointが既にある場合だけ追加します。ただし上記の
+レビュー済み救済claim-only recoveryだけは例外です。固定した
 手法とgateは [`docs/sae_track_plan_v1.ja.md`](docs/sae_track_plan_v1.ja.md) にあります。

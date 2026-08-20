@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass, fields
 from pathlib import Path
-from dataclasses import dataclass
 from typing import Sequence
 
 from typo_robust_training.data.config import strict_loads
@@ -24,6 +24,7 @@ class PreparedSaeSources:
     input_source_ids: frozenset[str]
     input_group_ids: frozenset[str]
     record_id_sha256: str
+    source_stream_sha256: str
     source_tokens: int
     protected_eligible_records: int
     protected_eligible_source_tokens: int
@@ -90,6 +91,37 @@ def record_id_sha256(sources: Sequence[TrainingSource]) -> str:
     for row in rows:
         digest.update(row.record_id.encode("ascii"))
         digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def source_stream_sha256(
+    *,
+    reserved: Sequence[TrainingSource],
+    eligible: Sequence[TrainingSource],
+) -> str:
+    """Hash the exact in-memory source values, roles, and training order.
+
+    Raw manifest hashes identify the bytes that were opened.  This second
+    digest identifies what parsing actually placed in memory, so a retry claim
+    cannot silently bind stale file hashes after a hash/read race.
+    """
+
+    digest = hashlib.sha256(b"robustness-sae-loaded-source-stream/v1\0")
+    for role, sources in (("reserved", reserved), ("eligible", eligible)):
+        for index, source in enumerate(sources):
+            if not isinstance(source, TrainingSource):
+                raise TypeError("SAE source-stream digest requires TrainingSource values")
+            values = {field.name: getattr(source, field.name) for field in fields(source)}
+            values["metadata"] = dict(source.metadata)
+            encoded = json.dumps(
+                {"index": index, "role": role, "source": values},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+            digest.update(len(encoded).to_bytes(8, "big"))
+            digest.update(encoded)
     return digest.hexdigest()
 
 
@@ -228,6 +260,10 @@ def prepare_sae_sources(
         input_source_ids=frozenset(seen_source_ids),
         input_group_ids=frozenset(seen_group_ids),
         record_id_sha256=record_id_sha256(ordered),
+        source_stream_sha256=source_stream_sha256(
+            reserved=reserved,
+            eligible=ordered,
+        ),
         source_tokens=sum(row.token_count for row in ordered),
         protected_eligible_records=len(protected_eligible),
         protected_eligible_source_tokens=sum(row.token_count for row in protected_eligible),
@@ -283,6 +319,7 @@ __all__ = [
     "canonical_record_registry",
     "load_clean_fineweb_sources",
     "record_id_sha256",
+    "source_stream_sha256",
     "prepare_sae_sources",
     "reserve_confirmatory_training_prefix",
     "sha256_file",

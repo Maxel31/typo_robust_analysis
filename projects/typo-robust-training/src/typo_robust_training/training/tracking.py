@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from typo_robust_training.training.json_io import write_json_atomic
+from typo_robust_training.training.json_io import write_json_atomic, write_json_durable
 
 
 _SCHEMA = "robustness-wandb-training-run/v1"
@@ -460,10 +460,18 @@ def start_wandb_training_tracker(
         prior_step = metadata["last_logged_optimizer_step"]
         if not isinstance(prior_step, int) or prior_step < resume_optimizer_step:
             raise ValueError("W&B history is behind the local checkpoint")
+        status = metadata["status"]
+        if status not in {"initializing", "running", "failed", "completed"}:
+            raise ValueError("W&B resume status is not recoverable")
         run_id = metadata["run_id"]
         if not isinstance(run_id, str) or not run_id:
             raise ValueError("W&B run ID is invalid")
-        init_resume = {"id": run_id, "resume": "must"}
+        intent_only = (
+            status == "initializing"
+            and prior_step == 0
+            and metadata.get("url") is None
+        )
+        init_resume = {"id": run_id, "resume": "allow" if intent_only else "must"}
         last_logged_optimizer_step = prior_step
     else:
         if metadata_path.exists():
@@ -489,22 +497,29 @@ def start_wandb_training_tracker(
     module = wandb_module or importlib.import_module("wandb")
     local_dir = root / ".wandb"
     local_dir.mkdir(parents=True, exist_ok=True)
-    run = module.init(
-        project=project,
-        entity=resolved_entity,
-        name=presentation.name,
-        group=presentation.group,
-        job_type=presentation.job_type,
-        tags=list(presentation.tags),
-        notes=presentation.notes,
-        config=frozen_bindings,
-        dir=str(local_dir),
-        mode="online",
-        reinit="create_new",
-        **init_resume,
-    )
-    valid_run = run is not None and getattr(run, "id", None) == run_id
+    if not resume:
+        # Persist the remote identity before wandb.init.  A process death after
+        # the remote run is created can therefore resume the same ID with
+        # ``allow`` instead of orphaning it and minting a second run.
+        write_json_durable(metadata_path, metadata)
+    run: Any | None = None
+    valid_run = False
     try:
+        run = module.init(
+            project=project,
+            entity=resolved_entity,
+            name=presentation.name,
+            group=presentation.group,
+            job_type=presentation.job_type,
+            tags=list(presentation.tags),
+            notes=presentation.notes,
+            config=frozen_bindings,
+            dir=str(local_dir),
+            mode="online",
+            reinit="create_new",
+            **init_resume,
+        )
+        valid_run = run is not None and getattr(run, "id", None) == run_id
         if not valid_run:
             raise RuntimeError("W&B initialized a different or missing run ID")
         metadata.update(

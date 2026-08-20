@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from typo_robust_training.sae.data import (
     record_id_sha256,
     reserve_confirmatory_training_prefix,
     sha256_file,
+    source_stream_sha256,
 )
 from typo_robust_training.sae.registry import validate_sae_prepared_sources
 
@@ -73,6 +75,27 @@ def test_sae_input_accepts_only_clean_fineweb_train_records(tmp_path: Path) -> N
     assert len(eligible) == 3
     assert not ({row.record_id for row in reserved} & {row.record_id for row in eligible})
     assert len(record_id_sha256(eligible)) == 64
+
+
+@pytest.mark.parametrize("field", ("clean_text", "metadata", "token_count"))
+def test_loaded_source_digest_binds_every_training_value_and_role(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    path = tmp_path / "training.jsonl"
+    _write(path, [_row(index) for index in range(3)])
+    first, second, third = load_clean_fineweb_sources(path)
+    baseline = source_stream_sha256(reserved=(first,), eligible=(second, third))
+    replacements = {
+        "clean_text": second.clean_text + " changed",
+        "metadata": {"changed": True},
+        "token_count": second.token_count + 1,
+    }
+    changed = replace(second, **{field: replacements[field]})
+
+    assert source_stream_sha256(reserved=(first,), eligible=(changed, third)) != baseline
+    assert source_stream_sha256(reserved=(second,), eligible=(first, third)) != baseline
+    assert source_stream_sha256(reserved=(first,), eligible=(third, second)) != baseline
 
 
 @pytest.mark.parametrize(

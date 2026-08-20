@@ -418,6 +418,11 @@ rejects exact identity/content overlap, and applies the frozen character-5gram
 near-duplicate check. This is a separate data-preparation command and uses no
 GPU:
 
+Use one separately reviewed `ROOTED_REGISTRY` containing `wp2_project_root`
+and `wp2_project_root_identity` for all four commands below. The checked-in
+legacy registry-v1 is evidence only. Mixing the two changes the bound
+preregistration SHA, so validation rejects that training run.
+
 ```bash
 GPU_ID="0"
 SAE_ROOT="/diskthalys/ssd14tc/sfukuhata/typo_sae_artifacts/gemma4b-v1"
@@ -426,10 +431,11 @@ EVALUATION_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-tr
 LOCALIZATION_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-training/results/localization/generic-joint-window-v1/pairs"
 SUPPLEMENT_DATA="${SAE_ROOT}/clean-corpus/sae_clean_supplement.jsonl"
 WANDB_PROJECT="typo-robustness-sae"
+ROOTED_REGISTRY="/absolute/path/to/reviewed/rooted-sae-preregistration.yaml"
 
 uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-sae-clean-corpus \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
-  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --registry "${ROOTED_REGISTRY}" \
   --existing-data "${TRAINING_DATA}" \
   --exclude-data "${EVALUATION_DATA}" \
   --exclude-data "${LOCALIZATION_DATA}" \
@@ -444,7 +450,7 @@ clean stream:
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot calibrate-sparse-autoencoder-l1 \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
-  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --registry "${ROOTED_REGISTRY}" \
   --training-data "${TRAINING_DATA}" \
   --training-data "${SUPPLEMENT_DATA}" \
   --gpu-id "${GPU_ID}" \
@@ -462,7 +468,7 @@ unique source tokens.
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-sparse-autoencoders \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
-  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --registry "${ROOTED_REGISTRY}" \
   --training-data "${TRAINING_DATA}" \
   --training-data "${SUPPLEMENT_DATA}" \
   --l1-selection "${SAE_ROOT}/l1-calibration/l1_selection.json" \
@@ -485,7 +491,7 @@ it does not run task accuracy or open any evaluation tier.
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot validate-sparse-autoencoders \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
-  --registry "${TRAIN_PROJECT}/configs/sae/registry-v1.yaml" \
+  --registry "${ROOTED_REGISTRY}" \
   --validation-data "${TRAINING_DATA}" \
   --validation-data "${SUPPLEMENT_DATA}" \
   --checkpoint-dir "${SAE_ROOT}/training" \
@@ -493,10 +499,83 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   --output-dir "${SAE_ROOT}/validation"
 ```
 
-WP-2 validation records each distinct checkpoint in
-`${SAE_ROOT}/wp2_attempts.json`; the initial validation plus at most one failed
-retrain are enforced across fresh validation output directories.
+The first WP-2 validation reserves its attempt with an exclusive project-root
+file before creating output or initializing GPU/runtime work, then records its
+immutable failed-bundle lineage in `${SAE_ROOT}/wp2_attempts.json`. A newly
+reviewed initial v1 preregistration must declare an absolute `wp2_project_root`
+and its `wp2_project_root_identity` (`device`/`inode`), and that directory must
+already exist with the registered identity. This is deliberately a
+machine-local execution contract, just like the absolute path. The checked-in
+legacy v1 preregistration
+is intentionally byte-identical to the artifact used by the completed initial
+run: it remains readable as retry-lineage evidence, but cannot start another
+initial validation. The exclusive record is file-fsynced and its parent
+directory is then fsynced; a crash after reservation consumes that attempt and
+there is no implicit validation resume.
+
+A retry remains prohibited until a separately reviewed authorization binds the
+original config, preregistration, training, validation, acceptance, and ledger
+hashes to exactly one amended config and preregistration hash. The amended
+preregistration uses schema v2 and contains the same absolute
+`wp2_project_root` plus a `wp2_retry` lineage marker. Its
+`initial_attempt_ledger_path` must be exactly
+`wp2_project_root/wp2_attempts.json`. That reviewed marker, not a CLI option,
+automatically and unavoidably selects retry mode for both training and
+validation; the authorization in turn binds the full v2 preregistration
+SHA-256. CLI omission therefore cannot fall back to an initial validation path.
+The initial validation output itself may be outside the project root because
+the ledger binds its absolute path and the authorization binds every artifact
+hash; relocating or copying that output does not create a new retry budget.
+
+Retry training creates `${SAE_ROOT}/wp2_retry_claim.json` with an exclusive
+filesystem claim before runtime or model initialization. Exact resume compares
+that claim before creating or rewriting any output artifact, including
+`source_registry.json`. The claim binds the ordered manifest paths and raw
+hashes, the canonical values actually loaded into the reserved/eligible source
+stream, the loaded layer-to-L1 mapping, the reviewed implementation closure,
+and the effective W&B project/entity. The project root also holds a nonblocking
+process-lifetime lock, so only one fresh/resumed retry can reach runtime.
+Exclusive claim/reservation/completion records open the already canonical,
+pre-existing parent path with `O_DIRECTORY|O_NOFOLLOW`; their literal final basename is created with
+`O_EXCL|O_NOFOLLOW`, so a final-component symlink cannot redirect or preserve a
+budget slot. The reviewed preregistration bytes pin the project root's
+`st_dev/st_ino` across invocations;
+the lease and every authority read/write compare the opened directory against
+that identity. A renamed root replaced by either a symlink or a new regular
+directory therefore fails closed.
+Training and validation output paths likewise reject final symlinks.
+Existing claim/reservation/completion authorities are read through the same
+anchored parent with a nonblocking `O_NOFOLLOW` descriptor and must be
+same-owner, singly linked regular files; equal-payload aliases are not accepted.
+On retry `--resume`, the training-completion authority is checked before
+runtime/model initialization. If its exact hash-bound run and model artifacts
+still exist, the completed result is returned without training; if any recorded
+output is missing or differs, resume fails closed and cannot spend the retry again.
+
+If the process dies after the claim but before a training checkpoint, exact
+`--resume` is allowed only when the output is absent/empty or contains the exact
+canonical source registry (plus an abandoned atomic checkpoint temporary, or a
+source-registry temporary with the product's canonical positive ASCII PID name,
+same-user singly linked regular non-symlink type, and bytes that prefix the
+expected canonical registry).
+Source-registry temporaries are non-authoritative
+and are never loaded as the registry during recovery.
+Every other orphan artifact fails closed. After runtime, model, and optimizer
+initialization, training fsyncs an atomic cursor-zero checkpoint before W&B,
+activation collection, or an optimizer step. W&B likewise persists a
+claim-derived run-ID intent before `wandb.init`, so recovery reuses that identity.
+Ordinary non-retry resume still requires its pre-existing checkpoint.
+
+Retry validation reserves its sole slot before any output
+or GPU/runtime work, accepts only the exact claimed training `run.json`, and
+rechecks that SHA immediately before model loading and again before recording
+completion. Its immutable completion records attempt 2, pass/fail, the parent
+ledger, training run, reservation, validation, and acceptance hashes. Changing
+an output parent cannot reset either project-global reservation. This repository
+does not yet contain a scientific retry authorization, v2 retry registry, or
+amended retry values; the lineage mechanism does not itself authorize a retrain.
 
 Append `--resume` to a calibration/training command only after its own
-hash-bound checkpoint exists. The frozen method and gates are documented in
+hash-bound checkpoint exists, except for the exact reviewed retry claim-only
+recovery described above. The frozen method and gates are documented in
 [`docs/sae_track_plan_v1.md`](docs/sae_track_plan_v1.md).

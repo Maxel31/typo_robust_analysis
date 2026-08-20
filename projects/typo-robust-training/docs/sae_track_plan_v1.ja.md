@@ -62,3 +62,43 @@ WP-2 は FVU <= 0.35、median L0 in [30,150]、dead feature 率 <= 20%、splice 
 <= 0.15 nats/token、`p_i` と再構成誤差中央値 `s` の保存を要求します。WP-5 は層 5 の 2 seed で
 `median(R_z) >= 0.5 median(R_full)` と因果方向の再現を必須とします。合格前に neuron/head/feature
 を因果 component として対外的に主張しません。
+
+初回の失敗WP-2 ledgerは変更不能です。新規の初回v1事前登録は絶対pathかつ作成済みdirectoryの
+`wp2_project_root`と、そのdirectoryの`device`/`inode`を持つ
+`wp2_project_root_identity`を含めます。このmachine-local identityは絶対pathと同じ実行契約です。
+既存のrepository内unrooted v1はbyte単位で不変に保ち、既存救済chainの
+証拠としてのみ読み込めます。runnerを実装しただけではfull-bundle救済は許可されません。別レビュー済み
+authorizationが、初回config・事前登録・training・validation・acceptance・ledgerの完全なhash chainと、
+単一の改訂config / 事前登録hashを結ぶ必要があります。改訂事前登録v2自体が同じproject rootを持つ
+trusted retry markerであり、`initial_attempt_ledger_path`は厳密に
+`wp2_project_root/wp2_attempts.json`と一致させます。救済modeはCLIから選択も回避もできず自動的に
+強制され、authorizationはv2事前登録全体のdigestをbindします。
+
+初回と救済のvalidationはいずれも、output作成やGPU/runtime workより前にproject rootへ`O_EXCL`
+予約を作成します。各排他recordはfile本体をfsyncした後、事前作成済みの親directoryもfsyncします。
+救済trainingもruntime/model初期化前に唯一のclaimを作成し、resume時はoutputを
+一切変更する前にclaimを完全照合します。claimには、順序付き入力のraw hash、memoryへ実際にloadした
+全source値とreserved/eligible role・順序のcanonical digest、load済みL1 mapping、レビュー対象source
+closure、実効W&B identityもbindします。parse/load直後にはraw入力を再hashし、救済invocation全体で
+project-rootのnonblocking `flock`を保持します。
+排他的なclaim/reservation/completion recordはすべて、canonicalな既存親directory pathを`O_DIRECTORY|O_NOFOLLOW`で開き、
+literalな最終basenameを`O_EXCL|O_NOFOLLOW`で作成します。最終componentのsymlinkはbudget recordを転送できません。
+レビュー済みpreregistration bytesがproject rootの`st_dev/st_ino`をinvocation横断で固定し、leaseと全authority read/writeで
+open済みdirectoryのidentity一致を検証します。symlinkまたは新しい通常directoryへの置換はいずれもfail closedします。
+training/validationのoutput pathも最終symlinkを拒否します。
+既存の排他authorityも同じ固定済み親に対するnonblocking `O_NOFOLLOW` descriptorから読み、
+同一user所有・single-linkの通常fileだけを受理します。同一payloadでもsymlink/hardlink/FIFO aliasはfail closedします。
+
+claimだけが作成された区間でcrashした場合、同一claimかつoutputが未作成/空または完全一致するsource
+registryだけを持つ場合に限り再開できます。製品が残したsource-registry一時fileも、正のASCII PID標準表記名を持ち、
+期待するcanonical registryのbyte prefixである同一user所有・single-linkの通常file・非symlinkの場合に限り許可し、
+権威的registryとしてはloadしません。
+未知のruntime artifactはfail closedです。runtime/model/
+optimizer初期化後、W&B・activation・学習より先にcursor-zero checkpointをatomicかつdurableに保存し、
+claim由来のW&B ID intentもremote初期化前に永続化します。通常runのresume意味論は変更しません。
+救済validationはclaim済みtraining-run SHAをmodel load直前と
+最終completion記録直前に再検証し、completionへattempt番号、pass/fail、親ledger、training、予約、
+validation、acceptanceのhashを保存します。crash後も予約を暗黙再利用しないfail-closed設計です。
+出力親directoryを変えても追加bundleは作れません。初回validation outputはproject root外でもよく、
+ledgerが絶対pathを、authorizationがartifact hashをbindし、project-root ledgerだけがbudgetのauthorityに
+なります。本実装は救済authorization、v2救済事前登録、科学的な改訂値を追加しません。

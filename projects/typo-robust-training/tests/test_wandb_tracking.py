@@ -60,6 +60,12 @@ class _FailingWandb(_Wandb):
         return run
 
 
+class _FailBeforeRemoteWandb(_Wandb):
+    def init(self, **kwargs: object) -> _Run:
+        self.calls.append(dict(kwargs))
+        raise RuntimeError("injected pre-remote initialization failure")
+
+
 def _bindings() -> dict[str, object]:
     return {
         "condition": "localized-state-distillation",
@@ -210,6 +216,45 @@ def test_wandb_post_init_failure_finishes_and_records_the_remote_run(tmp_path: P
     metadata = json.loads((tmp_path / "wandb_run.json").read_text(encoding="utf-8"))
     assert metadata["run_id"] == "failed-run-id"
     assert metadata["status"] == "failed"
+
+
+def test_wandb_persists_run_intent_before_init_and_recovers_the_same_id(
+    tmp_path: Path,
+) -> None:
+    failing = _FailBeforeRemoteWandb()
+    with pytest.raises(RuntimeError, match="pre-remote initialization failure"):
+        start_wandb_training_tracker(
+            output_dir=tmp_path,
+            project="typo-robustness-training",
+            entity="fixture-entity",
+            bindings=_bindings(),
+            resume=False,
+            resume_optimizer_step=0,
+            environment={"WANDB_API_KEY": "secret"},
+            wandb_module=failing,
+            run_id_factory=lambda: "claim-bound-run-id",
+        )
+
+    intent = json.loads((tmp_path / "wandb_run.json").read_text(encoding="utf-8"))
+    assert intent["run_id"] == "claim-bound-run-id"
+    assert intent["status"] == "initializing"
+    assert intent["url"] is None
+
+    recovered_module = _Wandb()
+    tracker = start_wandb_training_tracker(
+        output_dir=tmp_path,
+        project="typo-robustness-training",
+        entity="fixture-entity",
+        bindings=_bindings(),
+        resume=True,
+        resume_optimizer_step=0,
+        environment={"WANDB_API_KEY": "secret"},
+        wandb_module=recovered_module,
+        run_id_factory=lambda: "must-not-be-used",
+    )
+    assert recovered_module.calls[0]["id"] == "claim-bound-run-id"
+    assert recovered_module.calls[0]["resume"] == "allow"
+    tracker.finish(status="failed", summary={"optimizer_steps": 0})
 
 
 def test_wandb_logs_scalars_and_resumes_same_hash_bound_run(tmp_path: Path) -> None:
