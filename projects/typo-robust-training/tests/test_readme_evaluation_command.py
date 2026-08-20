@@ -129,6 +129,14 @@ def test_evaluated_checkpoint_has_a_documented_training_producer(
 
 
 @pytest.mark.parametrize("readme_name", ["README.md", "README.ja.md"])
+def test_cycle3_readme_uses_the_runtime_wandb_role_name(readme_name: str) -> None:
+    readme = (PROJECT_ROOT / readme_name).read_text(encoding="utf-8")
+
+    assert "`Proposed method`" in readme
+    assert "`Causal-window proposal`" not in readme
+
+
+@pytest.mark.parametrize("readme_name", ["README.md", "README.ja.md"])
 def test_typo_cot_readme_training_catalog_matches_the_installed_plugin_cli(
     readme_name: str,
 ) -> None:

@@ -59,6 +59,10 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
     assert "implements and registers the commands" in project_english
     assert "interface catalog, not a sequential or self-contained" in project_english
     assert "projects/typo-robust-training/README.md" in project_english
+    assert "required provenance and interface" in project_english
+    assert "prebuilt 64M training-data artifact" in project_english
+    assert "does not necessarily materialize every prerequisite" in project_english
+    assert "to materialize each prerequisite" not in project_english
     assert "fails explicitly rather than being" in project_english
     assert "`build-rebuttal-manifest` is implemented and CPU-only" in project_english
     assert "`six-setting-patch-controls` is implemented and GPU-only" in project_english
@@ -71,6 +75,10 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
     assert "学習projectが実装・登録済み" in project_japanese
     assert "自己完結pipelineではなく、複数のstudy cycleを含むinterface catalog" in project_japanese
     assert "projects/typo-robust-training/README.ja.md" in project_japanese
+    assert "必要なprovenanceとinterface" in project_japanese
+    assert "事前構築済みの64M training-data artifact" in project_japanese
+    assert "必ずしもすべての前提資産を" in project_japanese
+    assert "各前提資産の作成手順" not in project_japanese
     assert "`build-rebuttal-manifest` は実装済みのCPU専用コマンド" in project_japanese
     assert "`six-setting-patch-controls` は実装済みのGPU専用コマンド" in project_japanese
     assert "`source-write-coordinate-grid` は実装済みのGPU専用コマンド" in project_japanese
