@@ -53,11 +53,11 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
 
     for contents in (project_english, project_japanese):
         examples = _bash_blocks(contents)
-        assert "interface-frozen" in contents
         for command in (*REBUTTAL_COMMANDS, *TRAINING_COMMANDS):
             assert f"typo-cot {command}" in examples
 
-    assert "not yet runnable" in project_english
+    assert "implements and registers the commands" in project_english
+    assert "a missing prerequisite fails" in project_english
     assert "`build-rebuttal-manifest` is implemented and CPU-only" in project_english
     assert "`six-setting-patch-controls` is implemented and GPU-only" in project_english
     assert "`source-write-coordinate-grid` is implemented and GPU-only" in project_english
@@ -66,8 +66,8 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
     assert "`tokenization-severity-analysis` is implemented and CPU-only" in project_english
     assert "`subword-position-patching` is implemented and GPU-only" in project_english
     assert "`held-out-window-evaluation` is implemented and GPU-only" in project_english
-    assert "prose-only pre-implementation label" in project_english
-    assert "まだ実行できません" in project_japanese
+    assert "学習projectが実装・登録済み" in project_japanese
+    assert "不足している前提資産を" in project_japanese
     assert "`build-rebuttal-manifest` は実装済みのCPU専用コマンド" in project_japanese
     assert "`six-setting-patch-controls` は実装済みのGPU専用コマンド" in project_japanese
     assert "`source-write-coordinate-grid` は実装済みのGPU専用コマンド" in project_japanese
@@ -76,7 +76,6 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
     assert "`tokenization-severity-analysis` は実装済みのCPU専用コマンド" in project_japanese
     assert "`subword-position-patching` は実装済みのGPU専用コマンド" in project_japanese
     assert "`held-out-window-evaluation` は実装済みのGPU専用コマンド" in project_japanese
-    assert "README上の実装前ラベル" in project_japanese
 
     english_examples = _bash_blocks(project_english)
     japanese_examples = _bash_blocks(project_japanese)

@@ -336,10 +336,10 @@ PEFTを追加しても論文再現環境を変更しないよう、学習には�
 使用します。datasetの役割、leakage防止、layerからcomponentへ進む局所化、loss、
 baseline、PR前の実測gateは
 [`docs/robustness_training_plan_v1.md`](docs/robustness_training_plan_v1.md) で固定しています。
-以下も `interface-frozen` であり、**まだ実行できません**。特に学習実装は、held-out
-評価でclean性能を維持しながらtypo頑健性が向上するまでPRを作成しません。
-ここでの `interface-frozen` はREADME上の実装前ラベル（prose-only label）であり、
-実測gateを満たすまで学習commandを実行可能なexperiment catalogには登録しません。
+以下のcommandは、別lockfileを持つ学習projectが実装・登録済みです。必要なmanifest、
+corpus、localization record、checkpointを準備した後に実行でき、不足している前提資産を
+暗黙に生成せず明示的に失敗します。実測runでは、評価tierとsealed dataの開封規則を
+引き続き遵守してください。
 
 ```bash
 GPU_ID=0

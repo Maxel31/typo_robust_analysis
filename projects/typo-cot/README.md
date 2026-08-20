@@ -369,12 +369,11 @@ paper reproduction environment. The data roles, leakage controls, hierarchical
 layer/component localization, losses, baselines, and pre-PR empirical gate are
 fixed in
 [`docs/robustness_training_plan_v1.md`](docs/robustness_training_plan_v1.md).
-These `interface-frozen` commands are also **not yet runnable**. In particular,
-the training implementation is not opened as a PR until held-out evaluation
-shows improved typo robustness with clean performance preserved.
-Here `interface-frozen` remains a prose-only pre-implementation label; training
-commands are absent from the runnable experiment catalog until their empirical
-gate is met.
+The separately locked training project implements and registers the commands
+below. They are runnable after their required manifests, corpora, localization
+records, and checkpoints have been materialized; a missing prerequisite fails
+explicitly rather than being generated implicitly. Evaluation-tier and sealed
+data opening rules still apply to every empirical run.
 
 ```bash
 GPU_ID=0
