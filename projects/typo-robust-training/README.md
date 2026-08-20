@@ -529,7 +529,12 @@ process-lifetime lock, so only one fresh/resumed retry can reach runtime.
 
 If the process dies after the claim but before a training checkpoint, exact
 `--resume` is allowed only when the output is absent/empty or contains the exact
-canonical source registry (plus an abandoned atomic checkpoint temporary).
+canonical source registry (plus an abandoned atomic checkpoint temporary, or a
+source-registry temporary with the product's canonical positive ASCII PID name,
+same-user singly linked regular non-symlink type, and bytes that prefix the
+expected canonical registry).
+Source-registry temporaries are non-authoritative
+and are never loaded as the registry during recovery.
 Every other orphan artifact fails closed. After runtime, model, and optimizer
 initialization, training fsyncs an atomic cursor-zero checkpoint before W&B,
 activation collection, or an optimizer step. W&B likewise persists a

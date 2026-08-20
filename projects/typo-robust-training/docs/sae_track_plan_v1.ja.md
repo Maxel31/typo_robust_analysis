@@ -81,7 +81,10 @@ closure、実効W&B identityもbindします。parse/load直後にはraw入力�
 project-rootのnonblocking `flock`を保持します。
 
 claimだけが作成された区間でcrashした場合、同一claimかつoutputが未作成/空または完全一致するsource
-registryだけを持つ場合に限り再開できます。未知のruntime artifactはfail closedです。runtime/model/
+registryだけを持つ場合に限り再開できます。製品が残したsource-registry一時fileも、正のASCII PID標準表記名を持ち、
+期待するcanonical registryのbyte prefixである同一user所有・single-linkの通常file・非symlinkの場合に限り許可し、
+権威的registryとしてはloadしません。
+未知のruntime artifactはfail closedです。runtime/model/
 optimizer初期化後、W&B・activation・学習より先にcursor-zero checkpointをatomicかつdurableに保存し、
 claim由来のW&B ID intentもremote初期化前に永続化します。通常runのresume意味論は変更しません。
 救済validationはclaim済みtraining-run SHAをmodel load直前と

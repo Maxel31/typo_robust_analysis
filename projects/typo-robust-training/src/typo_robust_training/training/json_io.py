@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 
 
@@ -29,9 +30,16 @@ def write_json_durable(path: Path, payload: object) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     data = (json.dumps(payload, sort_keys=True, indent=2, allow_nan=False) + "\n").encode()
-    temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
     try:
-        with temporary.open("xb") as handle:
+        handle = os.fdopen(descriptor, "wb")
+        descriptor = -1
+        with handle:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
@@ -43,6 +51,8 @@ def write_json_durable(path: Path, payload: object) -> None:
         finally:
             os.close(directory_descriptor)
     finally:
+        if descriptor >= 0:
+            os.close(descriptor)
         temporary.unlink(missing_ok=True)
 
 

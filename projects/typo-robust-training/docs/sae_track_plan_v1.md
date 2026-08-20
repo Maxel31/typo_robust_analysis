@@ -137,8 +137,13 @@ rehashed immediately after parsing/loading. A nonblocking project-root `flock`
 is held for the entire retry invocation.
 
 A crash in the claim-only interval is recoverable only for the exact same claim
-and an absent/empty output or exact source registry; unknown runtime artifacts
-fail closed. Runtime/model/optimizer initialization is followed by a durable
+and an absent/empty output or exact source registry. A product-created
+source-registry temporary is also allowed only when it has the product's
+canonical positive ASCII PID name, is a regular non-symlink, and its bytes are a
+prefix of the expected canonical registry. It must also be owned by the current
+user and have exactly one hard link; it remains
+non-authoritative and is never loaded. Unknown runtime artifacts fail closed.
+Runtime/model/optimizer initialization is followed by a durable
 cursor-zero checkpoint before W&B, activations, or training. A deterministic
 claim-derived W&B ID is persisted as local intent before remote initialization.
 Normal non-retry resume semantics remain unchanged. Retry validation rechecks the claimed

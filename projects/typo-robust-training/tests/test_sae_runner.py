@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -976,6 +977,95 @@ def test_retry_resume_replays_from_durable_zero_checkpoint_in_the_same_wandb_run
     assert next((output / "activation_subsample").rglob("*.pt")).read_bytes() == (
         activation_before
     )
+
+
+def test_retry_claim_only_accepts_only_a_canonical_source_registry_temporary_prefix(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "retry-training"
+    output.mkdir()
+    expected = b'{\n  "schema_version": "robustness-sae-source-registry/v1"\n}\n'
+    temporary = output / ".source_registry.json.12345.tmp"
+    temporary.write_bytes(expected[:23])
+
+    runner_module._check_retry_claim_only_output(
+        output=output,
+        expected_source_registry=expected,
+    )
+
+    temporary.write_bytes(b'{"attacker-controlled": true}\n')
+    with pytest.raises(ValueError, match="source registry temporary differs"):
+        runner_module._check_retry_claim_only_output(
+            output=output,
+            expected_source_registry=expected,
+        )
+
+
+def test_retry_claim_only_rejects_a_source_registry_temporary_symlink(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "retry-training"
+    output.mkdir()
+    expected = b'{"expected": true}\n'
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(expected)
+    (output / ".source_registry.json.12345.tmp").symlink_to(outside)
+
+    with pytest.raises(ValueError, match="source registry temporary is invalid"):
+        runner_module._check_retry_claim_only_output(
+            output=output,
+            expected_source_registry=expected,
+        )
+
+
+@pytest.mark.parametrize("identifier", ("012345", "0", "١٢٣٤٥"))
+def test_retry_claim_only_rejects_noncanonical_source_registry_temporary_names(
+    tmp_path: Path,
+    identifier: str,
+) -> None:
+    output = tmp_path / "retry-training"
+    output.mkdir()
+    expected = b'{"expected": true}\n'
+    (output / f".source_registry.json.{identifier}.tmp").write_bytes(expected)
+
+    with pytest.raises(ValueError, match="source registry temporary is invalid"):
+        runner_module._check_retry_claim_only_output(
+            output=output,
+            expected_source_registry=expected,
+        )
+
+
+def test_retry_claim_only_rejects_a_source_registry_temporary_fifo_without_blocking(
+    tmp_path: Path,
+) -> None:
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("FIFO creation is unavailable on this platform")
+    output = tmp_path / "retry-training"
+    output.mkdir()
+    os.mkfifo(output / ".source_registry.json.12345.tmp")
+
+    with pytest.raises(ValueError, match="source registry temporary is invalid"):
+        runner_module._check_retry_claim_only_output(
+            output=output,
+            expected_source_registry=b'{"expected": true}\n',
+        )
+
+
+def test_retry_claim_only_rejects_a_hard_linked_source_registry_temporary(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "retry-training"
+    output.mkdir()
+    expected = b'{"expected": true}\n'
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(expected)
+    os.link(outside, output / ".source_registry.json.12345.tmp")
+
+    with pytest.raises(ValueError, match="source registry temporary is invalid"):
+        runner_module._check_retry_claim_only_output(
+            output=output,
+            expected_source_registry=expected,
+        )
 
 
 @pytest.mark.parametrize(

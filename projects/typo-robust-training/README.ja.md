@@ -469,8 +469,11 @@ path/raw hash、reserved/eligibleとして実際にmemoryへloadされたsource�
 nonblockingなprocess-lifetime lockにより、fresh/resumeを問わずruntimeへ到達できる救済trainingは1つだけです。
 
 claim後かつtraining checkpoint作成前にprocessが停止した場合、同一claimの`--resume`は、outputが
-未作成/空、または完全一致するcanonical source registry（および未完了のatomic checkpoint一時file）のみを
-含む場合に限り許可します。それ以外のorphan artifactはfail closedです。runtime・model・optimizer初期化後、
+未作成/空、または完全一致するcanonical source registry（および未完了のatomic checkpoint一時file、
+または正のASCII PID標準表記名を持ち、期待するcanonical registryのbyte prefixだけを含む
+同一user所有・single-linkの通常file・非symlinkのsource-registry一時file）のみを
+含む場合に限り許可します。source-registry一時fileは非権威的で、回復時にregistryとしてloadしません。
+それ以外のorphan artifactはfail closedです。runtime・model・optimizer初期化後、
 W&B、activation収集、optimizer stepより前にcursor zeroのcheckpointをatomicに書いてfsyncします。W&Bも
 claim由来のrun ID intentを`wandb.init`より前に永続化するため、再開時に同じidentityを使います。通常の
 非救済runは従来どおり、既存checkpointがなければresumeできません。

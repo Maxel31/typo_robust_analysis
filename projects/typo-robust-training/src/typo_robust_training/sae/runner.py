@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import statistics
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -259,6 +260,55 @@ def _check_retry_claim_only_output(
                 or artifact.read_bytes() != expected_source_registry
             ):
                 raise ValueError("SAE WP-2 claim-only source registry differs")
+            continue
+        source_temporary_prefix = ".source_registry.json."
+        if artifact.name.startswith(source_temporary_prefix) and artifact.name.endswith(
+            ".tmp"
+        ):
+            temporary_identifier = artifact.name[
+                len(source_temporary_prefix) : -len(".tmp")
+            ]
+            if not (
+                temporary_identifier.isascii()
+                and temporary_identifier.isdigit()
+                and int(temporary_identifier) > 0
+                and str(int(temporary_identifier)) == temporary_identifier
+            ):
+                raise ValueError(
+                    "SAE WP-2 claim-only source registry temporary is invalid"
+                )
+            descriptor = -1
+            try:
+                descriptor = os.open(
+                    artifact,
+                    os.O_RDONLY
+                    | getattr(os, "O_NOFOLLOW", 0)
+                    | getattr(os, "O_NONBLOCK", 0),
+                )
+                metadata = os.fstat(descriptor)
+                if (
+                    not stat.S_ISREG(metadata.st_mode)
+                    or metadata.st_nlink != 1
+                    or metadata.st_uid != os.geteuid()
+                ):
+                    raise ValueError(
+                        "SAE WP-2 claim-only source registry temporary is invalid"
+                    )
+                with os.fdopen(descriptor, "rb", closefd=False) as handle:
+                    partial_registry = handle.read(len(expected_source_registry) + 1)
+                if not expected_source_registry.startswith(partial_registry):
+                    raise ValueError(
+                        "SAE WP-2 claim-only source registry temporary differs"
+                    )
+            except OSError as error:
+                raise ValueError(
+                    "SAE WP-2 claim-only source registry temporary is invalid"
+                ) from error
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
+            # A killed source-registry writer can leave any prefix of the
+            # canonical bytes. It is never authoritative or loaded on resume.
             continue
         if (
             artifact.name.startswith(".checkpoint.json.")
