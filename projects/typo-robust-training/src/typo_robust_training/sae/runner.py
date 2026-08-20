@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import statistics
 import time
@@ -19,6 +21,7 @@ from typo_robust_training.sae.data import (
     sha256_file,
     write_json_atomic,
 )
+from typo_robust_training.sae.implementation import retry_implementation_sha256
 from typo_robust_training.sae.metrics import SaeStatisticsAccumulator, evaluate_sae_gates
 from typo_robust_training.sae.model import SparseAutoencoder
 from typo_robust_training.sae.registry import (
@@ -32,6 +35,7 @@ from typo_robust_training.sae.retry import (
     Wp2RetryLineage,
     Wp2ValidationReservation,
     claim_wp2_retry_training,
+    hold_wp2_retry_training_lease,
     load_wp2_retry_lineage,
     record_wp2_retry_training_completion,
     record_wp2_retry_validation_completion,
@@ -46,10 +50,18 @@ from typo_robust_training.training.tracking import (
     WandbRunPresentation,
     start_wandb_training_tracker,
 )
+from typo_robust_training.training.json_io import write_json_durable
 
 
 _CHECKPOINT_INTERVAL_TOKENS = 10_000_000
 _CHECKPOINT_STATE_FILES = ("checkpoint.0.pt", "checkpoint.1.pt")
+_ZERO_CURSOR = {
+    "trained_tokens": 0,
+    "optimizer_steps": 0,
+    "next_source_index": 0,
+    "next_source_offset": 0,
+    "next_buffer_index": 0,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +141,17 @@ def _prepare_output(path: Path, *, resume: bool) -> Path:
     return output
 
 
+def _retry_output_before_claim(path: Path, *, resume: bool) -> Path:
+    """Resolve a retry output without creating it before the global claim check."""
+
+    if not resume:
+        return _check_output(path, resume=False)
+    output = Path(path).resolve()
+    if output.exists() and (not output.is_dir() or output.is_symlink()):
+        raise FileExistsError(f"SAE output path is not a directory: {output}")
+    return output
+
+
 def _prepare_inputs(
     *,
     protocol: SaeProtocol,
@@ -154,13 +177,12 @@ def _prepare_inputs(
     return prepared
 
 
-def _write_source_registry(
+def _source_registry_payload(
     *,
     protocol: SaeProtocol,
     preregistration: SaePreregistration,
     prepared: PreparedSaeSources,
-    output_dir: Path,
-) -> None:
+) -> dict[str, object]:
     registry = canonical_record_registry(
         input_paths=prepared.input_paths,
         input_sha256=prepared.input_sha256,
@@ -173,9 +195,115 @@ def _write_source_registry(
             "config_sha256": protocol.config_sha256,
             "preregistration_sha256": preregistration.sha256,
             "protected_student_token_budget": protocol.protected_student_token_budget,
+            "source_stream_sha256": prepared.source_stream_sha256,
         }
     )
-    write_json_atomic(output_dir / "source_registry.json", registry)
+    return registry
+
+
+def _source_registry_bytes(
+    *,
+    protocol: SaeProtocol,
+    preregistration: SaePreregistration,
+    prepared: PreparedSaeSources,
+) -> bytes:
+    return (
+        json.dumps(
+            _source_registry_payload(
+                protocol=protocol,
+                preregistration=preregistration,
+                prepared=prepared,
+            ),
+            ensure_ascii=False,
+            sort_keys=True,
+            indent=2,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def _write_source_registry(
+    *,
+    protocol: SaeProtocol,
+    preregistration: SaePreregistration,
+    prepared: PreparedSaeSources,
+    output_dir: Path,
+) -> None:
+    write_json_atomic(
+        output_dir / "source_registry.json",
+        _source_registry_payload(
+            protocol=protocol,
+            preregistration=preregistration,
+            prepared=prepared,
+        ),
+    )
+
+
+def _check_retry_claim_only_output(
+    *,
+    output: Path,
+    expected_source_registry: bytes,
+) -> None:
+    """Fail closed unless the pre-checkpoint output contains only exact inputs."""
+
+    if not output.exists():
+        return
+    if not output.is_dir() or output.is_symlink():
+        raise ValueError("SAE WP-2 claim-only recovery output is not a directory")
+    for artifact in output.iterdir():
+        if artifact.name == "source_registry.json":
+            if (
+                artifact.is_symlink()
+                or not artifact.is_file()
+                or artifact.read_bytes() != expected_source_registry
+            ):
+                raise ValueError("SAE WP-2 claim-only source registry differs")
+            continue
+        if (
+            artifact.name.startswith(".checkpoint.json.")
+            and artifact.name.endswith(".tmp")
+            and artifact.is_file()
+            and not artifact.is_symlink()
+        ):
+            # A killed atomic JSON replacement can leave only this non-authoritative
+            # temporary.  It is never read and cannot encode training progress.
+            continue
+        raise ValueError(
+            "SAE WP-2 claim-only recovery found an unexpected pre-checkpoint artifact: "
+            f"{artifact.name}"
+        )
+
+
+def _require_exact_source_registry(*, output: Path, expected: bytes) -> None:
+    path = output / "source_registry.json"
+    if path.is_symlink() or not path.is_file() or path.read_bytes() != expected:
+        raise ValueError("SAE WP-2 retry source registry differs")
+
+
+def _retry_wandb_run_id(claim_sha256: str) -> str:
+    return hashlib.sha256(
+        f"robustness-sae-wp2-retry-wandb/v1\0{claim_sha256}".encode("ascii")
+    ).hexdigest()[:32]
+
+
+def _require_unchanged_source_files(prepared: PreparedSaeSources) -> None:
+    observed = tuple(sha256_file(path) for path in prepared.input_paths)
+    if observed != prepared.input_sha256:
+        raise ValueError("SAE training manifest changed while it was being loaded")
+
+
+def _selected_l1_sha256(selected: Mapping[int, float]) -> str:
+    encoded = json.dumps(
+        [
+            {"l1_coefficient": coefficient, "layer": layer}
+            for layer, coefficient in sorted(selected.items())
+        ],
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(b"robustness-sae-loaded-l1-selection/v1\0" + encoded).hexdigest()
 
 
 def _load_inputs(
@@ -635,12 +763,31 @@ def _next_training_checkpoint_state_path(output: Path) -> Path:
     payload = strict_loads(metadata_path.read_text(encoding="utf-8"), context=str(metadata_path))
     if not isinstance(payload, Mapping):
         raise ValueError("SAE checkpoint metadata must be an object")
+    if payload.get("schema_version") == "robustness-sae-initial-training-checkpoint/v1":
+        return output / _CHECKPOINT_STATE_FILES[0]
     current = payload.get("state_file")
     if current == _CHECKPOINT_STATE_FILES[0]:
         return output / _CHECKPOINT_STATE_FILES[1]
     if current in {_CHECKPOINT_STATE_FILES[1], "checkpoint.pt"}:
         return output / _CHECKPOINT_STATE_FILES[0]
     raise ValueError("SAE checkpoint state file is outside the supported slots")
+
+
+def _save_initial_training_checkpoint(
+    *,
+    output: Path,
+    bindings: Mapping[str, object],
+) -> None:
+    """Commit cursor zero atomically before telemetry or activation processing."""
+
+    write_json_durable(
+        output / "checkpoint.json",
+        {
+            "schema_version": "robustness-sae-initial-training-checkpoint/v1",
+            "bindings": dict(bindings),
+            "cursor": dict(_ZERO_CURSOR),
+        },
+    )
 
 
 def _save_training_checkpoint(
@@ -690,6 +837,19 @@ def _load_training_checkpoint(
     if not metadata_path.is_file():
         raise ValueError("SAE resume requires checkpoint.json")
     payload = strict_loads(metadata_path.read_text(encoding="utf-8"), context=str(metadata_path))
+    if isinstance(payload, Mapping) and set(payload) == {
+        "schema_version",
+        "bindings",
+        "cursor",
+    }:
+        if (
+            payload.get("schema_version")
+            != "robustness-sae-initial-training-checkpoint/v1"
+            or payload.get("bindings") != dict(bindings)
+            or payload.get("cursor") != _ZERO_CURSOR
+        ):
+            raise ValueError("SAE initial checkpoint bindings or cursor differ")
+        return dict(_ZERO_CURSOR)
     if not isinstance(payload, Mapping) or set(payload) != {
         "schema_version",
         "bindings",
@@ -854,6 +1014,41 @@ def run_train_saes(
     preregistration = load_sae_preregistration(config.registry_path, protocol=protocol)
     if str(config.gpu_id) != str(preregistration.sae_gpu_id):
         raise ValueError(f"SAE training must use preregistered GPU {preregistration.sae_gpu_id}")
+    retry_lineage: Wp2RetryLineage | None = None
+    if preregistration.retry_inputs is not None:
+        retry_lineage = load_wp2_retry_lineage(
+            preregistration.retry_inputs,
+            retry_config_sha256=protocol.config_sha256,
+            retry_preregistration_sha256=preregistration.sha256,
+        )
+        with hold_wp2_retry_training_lease(retry_lineage):
+            return _run_train_saes_loaded(
+                config,
+                protocol=protocol,
+                preregistration=preregistration,
+                retry_lineage=retry_lineage,
+                runtime_factory=runtime_factory,
+                tracker_factory=tracker_factory,
+            )
+    return _run_train_saes_loaded(
+        config,
+        protocol=protocol,
+        preregistration=preregistration,
+        retry_lineage=None,
+        runtime_factory=runtime_factory,
+        tracker_factory=tracker_factory,
+    )
+
+
+def _run_train_saes_loaded(
+    config: SaeTrainingRunConfig,
+    *,
+    protocol: SaeProtocol,
+    preregistration: SaePreregistration,
+    retry_lineage: Wp2RetryLineage | None,
+    runtime_factory: Callable[..., Any],
+    tracker_factory: Callable[..., Any],
+) -> SaeTrainingResult:
     retry_inputs = preregistration.retry_inputs
     if retry_inputs is None:
         output = _prepare_output(config.output_dir, resume=config.resume)
@@ -866,18 +1061,21 @@ def run_train_saes(
     else:
         # Retry classification comes only from the reviewed preregistration.
         # Prepare and validate sources without writing into the claimed output.
-        output = _check_output(config.output_dir, resume=config.resume)
+        output = _retry_output_before_claim(config.output_dir, resume=config.resume)
         sources = _prepare_inputs(
             protocol=protocol,
             preregistration=preregistration,
             paths=config.training_data_paths,
         )
+    if retry_inputs is not None:
+        _require_unchanged_source_files(sources)
     required = protocol.minimum_training_tokens + protocol.statistics_tokens
     if sources.source_tokens < required:
         raise ValueError(
             "SAE training manifests contain insufficient unique clean source tokens: "
             f"{sources.source_tokens} < required training+statistics budget {required}"
         )
+    l1_sha_before = sha256_file(config.l1_selection_path)
     selected = _load_l1_selection(
         config.l1_selection_path,
         protocol=protocol,
@@ -885,24 +1083,54 @@ def run_train_saes(
         expected_source_sha256=sources.record_id_sha256,
     )
     l1_sha = sha256_file(config.l1_selection_path)
+    if l1_sha != l1_sha_before:
+        raise ValueError("SAE L1 selection changed while it was being loaded")
+    selected_l1_digest = _selected_l1_sha256(selected)
+    effective_wandb_entity = config.wandb_entity or os.environ.get("WANDB_ENTITY") or None
+    extra_bindings: dict[str, object] = {
+        "l1_selection_sha256": l1_sha,
+        "activation_budget": protocol.minimum_training_tokens,
+    }
+    expected_source_registry: bytes | None = None
+    retry_implementation_digest: str | None = None
+    if retry_inputs is not None:
+        expected_source_registry = _source_registry_bytes(
+            protocol=protocol,
+            preregistration=preregistration,
+            prepared=sources,
+        )
+        retry_implementation_digest = retry_implementation_sha256()
+        extra_bindings.update(
+            {
+                "source_inputs": [
+                    {"path": str(path.resolve()), "sha256": digest}
+                    for path, digest in zip(
+                        sources.input_paths, sources.input_sha256, strict=True
+                    )
+                ],
+                "source_registry_sha256": hashlib.sha256(
+                    expected_source_registry
+                ).hexdigest(),
+                "source_stream_sha256": sources.source_stream_sha256,
+                "selected_l1_sha256": selected_l1_digest,
+                "implementation_sha256": retry_implementation_digest,
+                "wandb_project": config.wandb_project,
+                "wandb_entity": effective_wandb_entity,
+            }
+        )
     bindings = _bindings(
         condition="sae-training",
         protocol=protocol,
         preregistration=preregistration,
         sources=sources,
-        extra={
-            "l1_selection_sha256": l1_sha,
-            "activation_budget": protocol.minimum_training_tokens,
-        },
+        extra=extra_bindings,
     )
-    retry_lineage: Wp2RetryLineage | None = None
     retry_claim: Wp2RetryClaim | None = None
     if retry_inputs is not None:
-        retry_lineage = load_wp2_retry_lineage(
-            retry_inputs,
-            retry_config_sha256=protocol.config_sha256,
-            retry_preregistration_sha256=preregistration.sha256,
-        )
+        if retry_lineage is None:
+            raise AssertionError("SAE WP-2 retry lineage was not loaded before the lease")
+        if expected_source_registry is None:
+            raise AssertionError("SAE WP-2 retry source registry was not prepared")
         retry_claim = claim_wp2_retry_training(
             retry_lineage,
             output_dir=output,
@@ -910,15 +1138,50 @@ def run_train_saes(
             resume=config.resume,
         )
         bindings = {**bindings, "wp2_retry_claim_sha256": retry_claim.sha256}
+        if retry_implementation_sha256() != retry_implementation_digest:
+            raise ValueError("SAE WP-2 retry implementation changed after the global claim")
         # Only the exact preexisting claim may authorize resume. No output
         # artifact is created or rewritten before that comparison succeeds.
-        output = _prepare_output(config.output_dir, resume=config.resume)
-        _write_source_registry(
-            protocol=protocol,
-            preregistration=preregistration,
-            prepared=sources,
-            output_dir=output,
-        )
+        if config.resume and (output / "checkpoint.json").is_file():
+            _require_exact_source_registry(
+                output=output,
+                expected=expected_source_registry,
+            )
+        if config.resume and output.is_dir():
+            completed = _completed_training_result(
+                output=output,
+                bindings=bindings,
+                protocol=protocol,
+            )
+            if completed is not None:
+                record_wp2_retry_training_completion(
+                    retry_lineage,
+                    claim=retry_claim,
+                    training_run_path=completed.run_path,
+                )
+                return completed
+        if config.resume and not (output / "checkpoint.json").is_file():
+            _check_retry_claim_only_output(
+                output=output,
+                expected_source_registry=expected_source_registry,
+            )
+        if config.resume:
+            output.mkdir(parents=True, exist_ok=True)
+        else:
+            output = _prepare_output(config.output_dir, resume=False)
+        registry_path = output / "source_registry.json"
+        if registry_path.exists():
+            _require_exact_source_registry(
+                output=output,
+                expected=expected_source_registry,
+            )
+        else:
+            _write_source_registry(
+                protocol=protocol,
+                preregistration=preregistration,
+                prepared=sources,
+                output_dir=output,
+            )
     if config.resume:
         completed = _completed_training_result(
             output=output,
@@ -945,28 +1208,42 @@ def run_train_saes(
             models[key] = _instantiate_sae(protocol=protocol, seed=seed, device=runtime.device)
             optimizers[key] = _optimizer(models[key], protocol=protocol)
             coefficients[key] = selected[layer]
-    cursor = {
-        "trained_tokens": 0,
-        "optimizer_steps": 0,
-        "next_source_index": 0,
-        "next_source_offset": 0,
-        "next_buffer_index": 0,
-    }
-    if config.resume:
+    cursor = dict(_ZERO_CURSOR)
+    initial_retry_checkpoint = retry_inputs is not None and not (
+        output / "checkpoint.json"
+    ).is_file()
+    if config.resume and not initial_retry_checkpoint:
         cursor = _load_training_checkpoint(
             output=output,
             bindings=bindings,
             models=models,
             optimizers=optimizers,
         )
+    elif initial_retry_checkpoint:
+        _save_initial_training_checkpoint(output=output, bindings=bindings)
+    wandb_metadata_path = output / "wandb_run.json"
+    tracker_resume = config.resume
+    if (
+        retry_inputs is not None
+        and config.resume
+        and cursor["optimizer_steps"] == 0
+        and not wandb_metadata_path.exists()
+    ):
+        tracker_resume = False
+    tracker_kwargs: dict[str, object] = {
+        "output_dir": output,
+        "project": config.wandb_project,
+        "entity": effective_wandb_entity,
+        "bindings": bindings,
+        "presentation": _presentation(phase="training", protocol=protocol),
+        "resume": tracker_resume,
+        "resume_optimizer_step": cursor["optimizer_steps"],
+    }
+    if retry_claim is not None:
+        run_id = _retry_wandb_run_id(retry_claim.sha256)
+        tracker_kwargs["run_id_factory"] = lambda: run_id
     tracker = tracker_factory(
-        output_dir=output,
-        project=config.wandb_project,
-        entity=config.wandb_entity,
-        bindings=bindings,
-        presentation=_presentation(phase="training", protocol=protocol),
-        resume=config.resume,
-        resume_optimizer_step=cursor["optimizer_steps"],
+        **tracker_kwargs,
     )
     saved_subsample_tokens = min(cursor["trained_tokens"], protocol.activation_subsample_tokens)
     started = time.monotonic()
@@ -1042,6 +1319,11 @@ def run_train_saes(
                     last_checkpoint_tokens = cursor["trained_tokens"]
         if cursor["trained_tokens"] != protocol.minimum_training_tokens:
             raise RuntimeError("SAE training stopped before the frozen token budget")
+        if (
+            retry_implementation_digest is not None
+            and retry_implementation_sha256() != retry_implementation_digest
+        ):
+            raise ValueError("SAE WP-2 retry implementation changed during training")
         model_outputs: dict[str, object] = {}
         for key, model in models.items():
             path = output / f"sae-{key}.pt"

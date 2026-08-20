@@ -6,9 +6,13 @@ import hashlib
 import json
 import os
 import re
+import stat
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+
+import fcntl
 
 from typo_robust_training.data.config import strict_loads
 from typo_robust_training.sae.data import sha256_file
@@ -20,6 +24,7 @@ _TRAINING_COMPLETION_NAME = "wp2_retry_training_completion.json"
 _INITIAL_VALIDATION_RESERVATION_NAME = "wp2_initial_validation_reservation.json"
 _RETRY_VALIDATION_RESERVATION_NAME = "wp2_retry_validation_reservation.json"
 _VALIDATION_COMPLETION_NAME = "wp2_retry_validation_completion.json"
+_TRAINING_LEASE_NAME = "wp2_retry_training.lock"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +78,35 @@ class Wp2ValidationReservation:
     path: Path
     sha256: str
     payload: Mapping[str, object]
+
+
+@contextmanager
+def hold_wp2_retry_training_lease(lineage: Wp2RetryLineage) -> Iterator[None]:
+    """Hold the one process-lifetime lease for retry training.
+
+    The stable lock file is intentionally retained; only the kernel lock is
+    authoritative and is released automatically if the process dies.
+    """
+
+    path = lineage.project_root / _TRAINING_LEASE_NAME
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise ValueError("SAE WP-2 retry training lease is not a regular file") from exc
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("SAE WP-2 retry training lease is not a regular file")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ValueError("SAE WP-2 retry training is already active") from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
 
 
 def _sha256(value: object, *, field: str) -> str:
@@ -690,6 +724,7 @@ __all__ = [
     "Wp2RetryLineage",
     "Wp2ValidationReservation",
     "claim_wp2_retry_training",
+    "hold_wp2_retry_training_lease",
     "load_wp2_retry_authorization",
     "load_wp2_retry_lineage",
     "record_wp2_retry_training_completion",

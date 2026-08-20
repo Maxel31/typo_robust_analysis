@@ -75,7 +75,16 @@ trusted retry markerであり、`initial_attempt_ledger_path`は厳密に
 初回と救済のvalidationはいずれも、output作成やGPU/runtime workより前にproject rootへ`O_EXCL`
 予約を作成します。各排他recordはfile本体をfsyncした後、事前作成済みの親directoryもfsyncします。
 救済trainingもruntime/model初期化前に唯一のclaimを作成し、resume時はoutputを
-一切変更する前にclaimを完全照合します。救済validationはclaim済みtraining-run SHAをmodel load直前と
+一切変更する前にclaimを完全照合します。claimには、順序付き入力のraw hash、memoryへ実際にloadした
+全source値とreserved/eligible role・順序のcanonical digest、load済みL1 mapping、レビュー対象source
+closure、実効W&B identityもbindします。parse/load直後にはraw入力を再hashし、救済invocation全体で
+project-rootのnonblocking `flock`を保持します。
+
+claimだけが作成された区間でcrashした場合、同一claimかつoutputが未作成/空または完全一致するsource
+registryだけを持つ場合に限り再開できます。未知のruntime artifactはfail closedです。runtime/model/
+optimizer初期化後、W&B・activation・学習より先にcursor-zero checkpointをatomicかつdurableに保存し、
+claim由来のW&B ID intentもremote初期化前に永続化します。通常runのresume意味論は変更しません。
+救済validationはclaim済みtraining-run SHAをmodel load直前と
 最終completion記録直前に再検証し、completionへattempt番号、pass/fail、親ledger、training、予約、
 validation、acceptanceのhashを保存します。crash後も予約を暗黙再利用しないfail-closed設計です。
 出力親directoryを変えても追加bundleは作れません。初回validation outputはproject root外でもよく、

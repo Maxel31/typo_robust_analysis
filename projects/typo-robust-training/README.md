@@ -521,7 +521,22 @@ hash; relocating or copying that output does not create a new retry budget.
 Retry training creates `${SAE_ROOT}/wp2_retry_claim.json` with an exclusive
 filesystem claim before runtime or model initialization. Exact resume compares
 that claim before creating or rewriting any output artifact, including
-`source_registry.json`. Retry validation reserves its sole slot before any output
+`source_registry.json`. The claim binds the ordered manifest paths and raw
+hashes, the canonical values actually loaded into the reserved/eligible source
+stream, the loaded layer-to-L1 mapping, the reviewed implementation closure,
+and the effective W&B project/entity. The project root also holds a nonblocking
+process-lifetime lock, so only one fresh/resumed retry can reach runtime.
+
+If the process dies after the claim but before a training checkpoint, exact
+`--resume` is allowed only when the output is absent/empty or contains the exact
+canonical source registry (plus an abandoned atomic checkpoint temporary).
+Every other orphan artifact fails closed. After runtime, model, and optimizer
+initialization, training fsyncs an atomic cursor-zero checkpoint before W&B,
+activation collection, or an optimizer step. W&B likewise persists a
+claim-derived run-ID intent before `wandb.init`, so recovery reuses that identity.
+Ordinary non-retry resume still requires its pre-existing checkpoint.
+
+Retry validation reserves its sole slot before any output
 or GPU/runtime work, accepts only the exact claimed training `run.json`, and
 rechecks that SHA immediately before model loading and again before recording
 completion. Its immutable completion records attempt 2, pass/fail, the parent
@@ -531,5 +546,6 @@ does not yet contain a scientific retry authorization, v2 retry registry, or
 amended retry values; the lineage mechanism does not itself authorize a retrain.
 
 Append `--resume` to a calibration/training command only after its own
-hash-bound checkpoint exists. The frozen method and gates are documented in
+hash-bound checkpoint exists, except for the exact reviewed retry claim-only
+recovery described above. The frozen method and gates are documented in
 [`docs/sae_track_plan_v1.md`](docs/sae_track_plan_v1.md).

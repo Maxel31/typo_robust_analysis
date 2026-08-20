@@ -129,7 +129,19 @@ Initial and retry validation each consume an `O_EXCL` project-root reservation
 before output creation or GPU/runtime work. Each exclusive record is fsynced,
 then its pre-existing parent directory is fsynced. Retry training likewise claims its
 one slot before runtime/model initialization, and exact resume verifies that
-claim before any output mutation. Retry validation rechecks the claimed
+claim before any output mutation. The claim additionally binds raw ordered
+input hashes, a canonical digest of every in-memory source value with its
+reserved/eligible role and order, the loaded L1 mapping, the reviewed source
+implementation closure, and effective W&B identity. Raw input files are
+rehashed immediately after parsing/loading. A nonblocking project-root `flock`
+is held for the entire retry invocation.
+
+A crash in the claim-only interval is recoverable only for the exact same claim
+and an absent/empty output or exact source registry; unknown runtime artifacts
+fail closed. Runtime/model/optimizer initialization is followed by a durable
+cursor-zero checkpoint before W&B, activations, or training. A deterministic
+claim-derived W&B ID is persisted as local intent before remote initialization.
+Normal non-retry resume semantics remain unchanged. Retry validation rechecks the claimed
 training-run SHA immediately before model loading and before its final immutable
 completion record. That record includes attempt number, pass/fail, and parent,
 training, reservation, validation, and acceptance hashes. Crash recovery is

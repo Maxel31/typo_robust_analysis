@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import stat
 from concurrent.futures import ThreadPoolExecutor
+from multiprocessing import get_context
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,10 +18,23 @@ from typo_robust_training.sae import retry as retry_module
 from typo_robust_training.sae.retry import (
     Wp2RetryInputs,
     claim_wp2_retry_training,
+    hold_wp2_retry_training_lease,
     load_wp2_retry_lineage,
     record_wp2_retry_training_completion,
     require_claimed_wp2_retry_training,
 )
+
+
+def _lease_worker(project_root, ready, release, reached, outcomes) -> None:
+    lineage = SimpleNamespace(project_root=Path(project_root))
+    try:
+        with hold_wp2_retry_training_lease(lineage):
+            reached.put(os.getpid())
+            ready.set()
+            release.wait(timeout=10)
+            outcomes.put((os.getpid(), "completed"))
+    except ValueError:
+        outcomes.put((os.getpid(), "rejected"))
 
 
 def _write(path: Path, payload: object) -> str:
@@ -190,6 +206,14 @@ def test_retry_resume_requires_the_same_preexisting_claim(tmp_path: Path) -> Non
             resume=True,
         )
 
+    with pytest.raises(ValueError, match="resume differs"):
+        claim_wp2_retry_training(
+            lineage,
+            output_dir=output,
+            training_bindings={**bindings, "source_record_sha256": "f" * 64},
+            resume=True,
+        )
+
 
 def test_concurrent_double_claim_allows_exactly_one_bundle(tmp_path: Path) -> None:
     lineage = _lineage(tmp_path)
@@ -209,6 +233,53 @@ def test_concurrent_double_claim_allows_exactly_one_bundle(tmp_path: Path) -> No
     with ThreadPoolExecutor(max_workers=2) as pool:
         outcomes = list(pool.map(attempt, (1, 2)))
     assert sorted(outcomes) == ["claimed", "rejected"]
+
+
+def test_retry_training_lease_allows_exactly_one_process_to_reach_runtime(
+    tmp_path: Path,
+) -> None:
+    context = get_context("fork")
+    ready = context.Event()
+    release = context.Event()
+    reached = context.Queue()
+    outcomes = context.Queue()
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+
+    first = context.Process(
+        target=_lease_worker,
+        args=(project_root, ready, release, reached, outcomes),
+    )
+    first.start()
+    assert ready.wait(timeout=10)
+    second = context.Process(
+        target=_lease_worker,
+        args=(project_root, ready, release, reached, outcomes),
+    )
+    second.start()
+    second.join(timeout=10)
+    assert not second.is_alive()
+    rejected_pid, rejected_status = outcomes.get(timeout=2)
+    assert (rejected_pid, rejected_status) == (second.pid, "rejected")
+
+    assert reached.get(timeout=2) == first.pid
+    release.set()
+    first.join(timeout=10)
+    assert not first.is_alive()
+    completed_pid, completed_status = outcomes.get(timeout=2)
+    assert (completed_pid, completed_status) == (first.pid, "completed")
+
+
+def test_retry_training_lease_rejects_a_symlink(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    target = tmp_path / "external-lock"
+    target.write_text("not a lock\n", encoding="utf-8")
+    (project_root / "wp2_retry_training.lock").symlink_to(target)
+
+    with pytest.raises(ValueError, match="not a regular file"):
+        with hold_wp2_retry_training_lease(SimpleNamespace(project_root=project_root)):
+            pytest.fail("a symlink must never acquire the retry lease")
 
 
 def test_validation_accepts_only_the_claimed_training_run_sha(tmp_path: Path) -> None:

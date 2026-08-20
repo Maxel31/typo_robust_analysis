@@ -463,7 +463,19 @@ ledgerがその絶対pathを、authorizationが全artifact hashをbindするた�
 
 救済trainingはruntime/model初期化より前に、排他的なfilesystem claimとして
 `${SAE_ROOT}/wp2_retry_claim.json`を作成します。`--resume`時はoutput artifactや
-`source_registry.json`を作成・更新する前にclaimとの完全一致を確認します。救済validationもoutputや
+`source_registry.json`を作成・更新する前にclaimとの完全一致を確認します。claimは順序付きmanifestの
+path/raw hash、reserved/eligibleとして実際にmemoryへloadされたsource値と順序、load済みlayer→L1対応、
+レビュー対象implementation closure、実効W&B project/entityをbindします。さらにproject root上の
+nonblockingなprocess-lifetime lockにより、fresh/resumeを問わずruntimeへ到達できる救済trainingは1つだけです。
+
+claim後かつtraining checkpoint作成前にprocessが停止した場合、同一claimの`--resume`は、outputが
+未作成/空、または完全一致するcanonical source registry（および未完了のatomic checkpoint一時file）のみを
+含む場合に限り許可します。それ以外のorphan artifactはfail closedです。runtime・model・optimizer初期化後、
+W&B、activation収集、optimizer stepより前にcursor zeroのcheckpointをatomicに書いてfsyncします。W&Bも
+claim由来のrun ID intentを`wandb.init`より前に永続化するため、再開時に同じidentityを使います。通常の
+非救済runは従来どおり、既存checkpointがなければresumeできません。
+
+救済validationもoutputや
 GPU/runtime workより前に唯一の枠を予約し、claimが記録したtraining `run.json` SHAと完全一致する
 checkpointだけを受理します。このSHAはmodel load直前とcompletion記録直前に再検証します。completionは
 attempt 2、pass/fail、親ledger、training run、reservation、validation、acceptanceのhashを監査情報として
@@ -471,5 +483,6 @@ attempt 2、pass/fail、親ledger、training run、reservation、validation、ac
 救済authorization、v2救済registry、改訂値をrepositoryへ追加しておらず、このlineage機構そのものは
 再学習を許可しません。
 
-`--resume`は対象 command 自身の hash-bound checkpoint が既にある場合だけ追加します。固定した
+`--resume`は対象 command 自身のhash-bound checkpointが既にある場合だけ追加します。ただし上記の
+レビュー済み救済claim-only recoveryだけは例外です。固定した
 手法とgateは [`docs/sae_track_plan_v1.ja.md`](docs/sae_track_plan_v1.ja.md) にあります。

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import torch
 
+from typo_robust_training.sae import runner as runner_module
 from typo_robust_training.sae.data import PreparedSaeSources
 from typo_robust_training.sae.model import SparseAutoencoder
 from typo_robust_training.sae.runner import (
@@ -77,6 +79,119 @@ class _Runtime:
 
     def provenance(self):
         return {"runtime": "fake-sae-runtime/v1"}
+
+
+class _CrashAfterFirstStepTracker(_Tracker):
+    def log_optimizer_step(self, metrics, *, optimizer_step: int) -> None:
+        super().log_optimizer_step(metrics, optimizer_step=optimizer_step)
+        raise RuntimeError("simulated crash before the first checkpoint")
+
+
+def _install_minimal_training_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    retry: bool,
+    minimum_training_tokens: int = 4,
+) -> dict[str, object]:
+    protocol = SimpleNamespace(
+        config_sha256="a" * 64,
+        model="model",
+        model_revision="b" * 40,
+        expansion_factor=2,
+        d_model=2,
+        d_sae=4,
+        learning_rate=1e-3,
+        adam_betas=(0.9, 0.999),
+        adam_epsilon=1e-8,
+        probe_layers=(5,),
+        activation_subsample_layers=(5,),
+        seeds_by_layer={5: (42,)},
+        minimum_training_tokens=minimum_training_tokens,
+        protected_student_token_budget=10_000_000,
+        statistics_tokens=1,
+        activation_subsample_tokens=2,
+        activation_batch_size=2,
+    )
+    preregistration = SimpleNamespace(
+        sha256="c" * 64,
+        sae_gpu_id=0,
+        retry_inputs=SimpleNamespace() if retry else None,
+    )
+    prepared = PreparedSaeSources(
+        sources=(SimpleNamespace(record_id="record", token_count=minimum_training_tokens + 1),),
+        reserved=(SimpleNamespace(record_id="reserved", token_count=1),),
+        input_paths=(tmp_path / "source.jsonl",),
+        input_sha256=("d" * 64,),
+        input_record_ids=frozenset({"record"}),
+        input_source_ids=frozenset({"source"}),
+        input_group_ids=frozenset({"group"}),
+        record_id_sha256="e" * 64,
+        source_stream_sha256="f" * 64,
+        source_tokens=minimum_training_tokens + 1,
+        protected_eligible_records=1,
+        protected_eligible_source_tokens=minimum_training_tokens + 1,
+        protected_eligible_record_ids_sha256="e" * 64,
+        protected_normalized_duplicates_removed=0,
+    )
+
+    def write_sources(*, output_dir: Path, **_kwargs):
+        (output_dir / "source_registry.json").write_bytes(
+            runner_module._source_registry_bytes(
+                protocol=protocol,
+                preregistration=preregistration,
+                prepared=prepared,
+            )
+        )
+        return prepared
+
+    monkeypatch.setattr(runner_module, "load_sae_protocol", lambda _path: protocol)
+    monkeypatch.setattr(
+        runner_module,
+        "load_sae_preregistration",
+        lambda _path, protocol: preregistration,
+    )
+    if retry:
+        monkeypatch.setattr(runner_module, "_prepare_inputs", lambda **_kwargs: prepared)
+        monkeypatch.setattr(runner_module, "_write_source_registry", write_sources)
+        monkeypatch.setattr(
+            runner_module,
+            "load_wp2_retry_lineage",
+            lambda *_args, **_kwargs: SimpleNamespace(),
+        )
+        monkeypatch.setattr(
+            runner_module,
+            "hold_wp2_retry_training_lease",
+            lambda _lineage: nullcontext(),
+        )
+        monkeypatch.setattr(
+            runner_module,
+            "_require_unchanged_source_files",
+            lambda _prepared: None,
+        )
+        monkeypatch.setattr(
+            runner_module,
+            "record_wp2_retry_training_completion",
+            lambda *_args, **_kwargs: None,
+        )
+    else:
+        monkeypatch.setattr(runner_module, "_load_inputs", write_sources)
+    monkeypatch.setattr(
+        runner_module,
+        "_load_l1_selection",
+        lambda *_args, **_kwargs: {5: 0.1},
+    )
+    selection = tmp_path / "selection.json"
+    selection.write_text("{}\n", encoding="utf-8")
+    return {
+        "config_path": tmp_path / "config.json",
+        "registry_path": tmp_path / "registry.json",
+        "training_data_paths": (tmp_path / "source.jsonl",),
+        "l1_selection_path": selection,
+        "gpu_id": "0",
+        "wandb_project": "test-sae",
+        "wandb_entity": None,
+    }
 
 
 class _MultiBufferCalibrationRuntime:
@@ -171,14 +286,15 @@ def test_sae_calibration_closes_tracker_when_runtime_initialization_fails(
         retry_inputs=None,
     )
     prepared = PreparedSaeSources(
-        sources=(SimpleNamespace(),),
-        reserved=(SimpleNamespace(),),
+        sources=(SimpleNamespace(record_id="record", token_count=1),),
+        reserved=(SimpleNamespace(record_id="reserved", token_count=1),),
         input_paths=(tmp_path / "source.jsonl",),
         input_sha256=("d" * 64,),
         input_record_ids=frozenset({"record"}),
         input_source_ids=frozenset({"source"}),
         input_group_ids=frozenset({"group"}),
         record_id_sha256="e" * 64,
+        source_stream_sha256="f" * 64,
         source_tokens=10,
         protected_eligible_records=1,
         protected_eligible_source_tokens=10,
@@ -246,14 +362,15 @@ def test_sae_calibration_streams_and_replays_multiple_frozen_buffers(
     )
     preregistration = SimpleNamespace(sha256="c" * 64, sae_gpu_id=0)
     prepared = PreparedSaeSources(
-        sources=(SimpleNamespace(),),
-        reserved=(SimpleNamespace(),),
+        sources=(SimpleNamespace(record_id="record", token_count=1),),
+        reserved=(SimpleNamespace(record_id="reserved", token_count=1),),
         input_paths=(tmp_path / "source.jsonl",),
         input_sha256=("d" * 64,),
         input_record_ids=frozenset({"record"}),
         input_source_ids=frozenset({"source"}),
         input_group_ids=frozenset({"group"}),
         record_id_sha256="e" * 64,
+        source_stream_sha256="f" * 64,
         source_tokens=4,
         protected_eligible_records=1,
         protected_eligible_source_tokens=4,
@@ -328,14 +445,15 @@ def test_sae_calibration_preserves_metrics_when_no_candidate_is_selectable(
     )
     preregistration = SimpleNamespace(sha256="c" * 64, sae_gpu_id=0)
     prepared = PreparedSaeSources(
-        sources=(SimpleNamespace(),),
-        reserved=(SimpleNamespace(),),
+        sources=(SimpleNamespace(record_id="record", token_count=1),),
+        reserved=(SimpleNamespace(record_id="reserved", token_count=1),),
         input_paths=(tmp_path / "source.jsonl",),
         input_sha256=("d" * 64,),
         input_record_ids=frozenset({"record"}),
         input_source_ids=frozenset({"source"}),
         input_group_ids=frozenset({"group"}),
         record_id_sha256="e" * 64,
+        source_stream_sha256="f" * 64,
         source_tokens=4,
         protected_eligible_records=1,
         protected_eligible_source_tokens=4,
@@ -414,14 +532,15 @@ def test_sae_training_writes_hash_bound_models_and_resumes_exactly(
         retry_inputs=None,
     )
     prepared = PreparedSaeSources(
-        sources=(SimpleNamespace(),),
-        reserved=(SimpleNamespace(),),
+        sources=(SimpleNamespace(record_id="record", token_count=1),),
+        reserved=(SimpleNamespace(record_id="reserved", token_count=1),),
         input_paths=(tmp_path / "source.jsonl",),
         input_sha256=("d" * 64,),
         input_record_ids=frozenset({"record"}),
         input_source_ids=frozenset({"source"}),
         input_group_ids=frozenset({"group"}),
         record_id_sha256="e" * 64,
+        source_stream_sha256="f" * 64,
         source_tokens=10,
         protected_eligible_records=1,
         protected_eligible_source_tokens=10,
@@ -518,6 +637,7 @@ def test_wp2_retry_claim_precedes_runtime_and_model_initialization(
         activation_subsample_layers=(5,),
         seeds_by_layer={5: (42,)},
         minimum_training_tokens=2,
+        protected_student_token_budget=10_000_000,
         statistics_tokens=1,
         activation_subsample_tokens=0,
         activation_batch_size=2,
@@ -528,14 +648,15 @@ def test_wp2_retry_claim_precedes_runtime_and_model_initialization(
         retry_inputs=SimpleNamespace(),
     )
     prepared = PreparedSaeSources(
-        sources=(SimpleNamespace(),),
-        reserved=(SimpleNamespace(),),
+        sources=(SimpleNamespace(record_id="record", token_count=1),),
+        reserved=(SimpleNamespace(record_id="reserved", token_count=1),),
         input_paths=(tmp_path / "source.jsonl",),
         input_sha256=("d" * 64,),
         input_record_ids=frozenset({"record"}),
         input_source_ids=frozenset({"source"}),
         input_group_ids=frozenset({"group"}),
         record_id_sha256="e" * 64,
+        source_stream_sha256="f" * 64,
         source_tokens=3,
         protected_eligible_records=1,
         protected_eligible_source_tokens=3,
@@ -548,10 +669,12 @@ def test_wp2_retry_claim_precedes_runtime_and_model_initialization(
         return prepared
 
     claim_created = False
+    claimed_bindings: dict[str, object] = {}
 
-    def fake_claim(*_args, **_kwargs):
+    def fake_claim(*_args, training_bindings, **_kwargs):
         nonlocal claim_created
         claim_created = True
+        claimed_bindings.update(training_bindings)
         return SimpleNamespace(sha256="f" * 64)
 
     def runtime_factory(**kwargs):
@@ -585,6 +708,14 @@ def test_wp2_retry_claim_precedes_runtime_and_model_initialization(
         lambda *_args, **_kwargs: SimpleNamespace(),
     )
     monkeypatch.setattr(
+        "typo_robust_training.sae.runner.hold_wp2_retry_training_lease",
+        lambda _lineage: nullcontext(),
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner._require_unchanged_source_files",
+        lambda _prepared: None,
+    )
+    monkeypatch.setattr(
         "typo_robust_training.sae.runner.claim_wp2_retry_training",
         fake_claim,
     )
@@ -611,6 +742,16 @@ def test_wp2_retry_claim_precedes_runtime_and_model_initialization(
     )
 
     assert claim_created is True
+    assert claimed_bindings["source_stream_sha256"] == prepared.source_stream_sha256
+    assert claimed_bindings["selected_l1_sha256"] == runner_module._selected_l1_sha256(
+        {5: 0.1}
+    )
+    assert claimed_bindings["source_inputs"] == [
+        {"path": str(prepared.input_paths[0].resolve()), "sha256": "d" * 64}
+    ]
+    assert claimed_bindings["wandb_project"] == "test-sae"
+    assert claimed_bindings["wandb_entity"] is None
+    assert isinstance(claimed_bindings["implementation_sha256"], str)
 
 
 def test_retry_resume_does_not_mutate_output_before_claim_comparison(
@@ -622,6 +763,7 @@ def test_retry_resume_does_not_mutate_output_before_claim_comparison(
         model="model",
         model_revision="b" * 40,
         minimum_training_tokens=2,
+        protected_student_token_budget=10_000_000,
         statistics_tokens=1,
     )
     preregistration = SimpleNamespace(
@@ -635,14 +777,15 @@ def test_retry_resume_does_not_mutate_output_before_claim_comparison(
     source_registry.write_text('{"original": true}\n', encoding="utf-8")
     before = source_registry.read_bytes()
     prepared = PreparedSaeSources(
-        sources=(SimpleNamespace(),),
-        reserved=(SimpleNamespace(),),
+        sources=(SimpleNamespace(record_id="record", token_count=1),),
+        reserved=(SimpleNamespace(record_id="reserved", token_count=1),),
         input_paths=(tmp_path / "source.jsonl",),
         input_sha256=("d" * 64,),
         input_record_ids=frozenset({"record"}),
         input_source_ids=frozenset({"source"}),
         input_group_ids=frozenset({"group"}),
         record_id_sha256="e" * 64,
+        source_stream_sha256="f" * 64,
         source_tokens=3,
         protected_eligible_records=1,
         protected_eligible_source_tokens=3,
@@ -679,6 +822,14 @@ def test_retry_resume_does_not_mutate_output_before_claim_comparison(
         lambda *_args, **_kwargs: SimpleNamespace(),
     )
     monkeypatch.setattr(
+        "typo_robust_training.sae.runner.hold_wp2_retry_training_lease",
+        lambda _lineage: nullcontext(),
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.sae.runner._require_unchanged_source_files",
+        lambda _prepared: None,
+    )
+    monkeypatch.setattr(
         "typo_robust_training.sae.runner.claim_wp2_retry_training",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("resume differs")),
     )
@@ -701,6 +852,286 @@ def test_retry_resume_does_not_mutate_output_before_claim_comparison(
         )
 
     assert source_registry.read_bytes() == before
+
+
+def test_retry_resume_replays_from_zero_after_claim_before_output_crash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _install_minimal_training_fixture(tmp_path, monkeypatch, retry=True)
+    output = tmp_path / "retry-training"
+    claim_calls: list[bool] = []
+    claimed_output: Path | None = None
+    claimed_bindings: dict[str, object] | None = None
+
+    def exact_claim(*_args, output_dir: Path, training_bindings, resume: bool, **_kwargs):
+        nonlocal claimed_output, claimed_bindings
+        claim_calls.append(resume)
+        if not resume:
+            claimed_output = output_dir
+            claimed_bindings = dict(training_bindings)
+        else:
+            assert output_dir == claimed_output
+            assert dict(training_bindings) == claimed_bindings
+        return SimpleNamespace(sha256="f" * 64)
+
+    original_prepare_output = runner_module._prepare_output
+    crash_pending = True
+
+    def crash_after_claim(path: Path, *, resume: bool) -> Path:
+        nonlocal crash_pending
+        if crash_pending:
+            crash_pending = False
+            raise RuntimeError("simulated crash after claim before output creation")
+        return original_prepare_output(path, resume=resume)
+
+    tracker_kwargs: list[dict[str, object]] = []
+
+    def tracker_factory(**kwargs):
+        checkpoint = json.loads((output / "checkpoint.json").read_text(encoding="utf-8"))
+        assert checkpoint["cursor"]["trained_tokens"] == 0
+        tracker_kwargs.append(dict(kwargs))
+        return _Tracker()
+
+    monkeypatch.setattr(runner_module, "claim_wp2_retry_training", exact_claim)
+    monkeypatch.setattr(runner_module, "_prepare_output", crash_after_claim)
+
+    with pytest.raises(RuntimeError, match="before output creation"):
+        run_train_saes(SaeTrainingRunConfig(**base, output_dir=output))
+    assert not output.exists()
+
+    result = run_train_saes(
+        SaeTrainingRunConfig(**base, output_dir=output, resume=True),
+        runtime_factory=_Runtime,
+        tracker_factory=tracker_factory,
+    )
+
+    assert claim_calls == [False, True]
+    assert result.trained_tokens == 4
+    assert tracker_kwargs[-1]["resume"] is False
+
+
+def test_retry_resume_replays_from_durable_zero_checkpoint_in_the_same_wandb_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _install_minimal_training_fixture(tmp_path, monkeypatch, retry=True)
+    output = tmp_path / "retry-training"
+    claimed_output: Path | None = None
+    claimed_bindings: dict[str, object] | None = None
+
+    def exact_claim(*_args, output_dir: Path, training_bindings, resume: bool, **_kwargs):
+        nonlocal claimed_output, claimed_bindings
+        if not resume:
+            claimed_output = output_dir
+            claimed_bindings = dict(training_bindings)
+        else:
+            assert output_dir == claimed_output
+            assert dict(training_bindings) == claimed_bindings
+        return SimpleNamespace(sha256="f" * 64)
+
+    tracker_kwargs: list[dict[str, object]] = []
+    trackers: list[_Tracker] = []
+
+    def crashing_tracker_factory(**kwargs):
+        tracker_kwargs.append(dict(kwargs))
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "wandb_run.json").write_text(
+            '{"schema_version": "test-wandb-run/v1"}\n', encoding="utf-8"
+        )
+        tracker = _CrashAfterFirstStepTracker()
+        trackers.append(tracker)
+        return tracker
+
+    monkeypatch.setattr(runner_module, "claim_wp2_retry_training", exact_claim)
+    with pytest.raises(RuntimeError, match="before the first checkpoint"):
+        run_train_saes(
+            SaeTrainingRunConfig(**base, output_dir=output),
+            runtime_factory=_Runtime,
+            tracker_factory=crashing_tracker_factory,
+        )
+    checkpoint = json.loads((output / "checkpoint.json").read_text(encoding="utf-8"))
+    assert checkpoint["schema_version"] == "robustness-sae-initial-training-checkpoint/v1"
+    assert checkpoint["cursor"]["trained_tokens"] == 0
+    registry_before = (output / "source_registry.json").read_bytes()
+    activation_before = next((output / "activation_subsample").rglob("*.pt")).read_bytes()
+
+    def resumed_tracker_factory(**kwargs):
+        tracker_kwargs.append(dict(kwargs))
+        tracker = _Tracker()
+        trackers.append(tracker)
+        return tracker
+
+    result = run_train_saes(
+        SaeTrainingRunConfig(**base, output_dir=output, resume=True),
+        runtime_factory=_Runtime,
+        tracker_factory=resumed_tracker_factory,
+    )
+
+    assert result.trained_tokens == 4
+    assert tracker_kwargs[-1]["resume"] is True
+    assert tracker_kwargs[-1]["resume_optimizer_step"] == 0
+    assert trackers[-1].steps == [1, 2]
+    assert (output / "source_registry.json").read_bytes() == registry_before
+    assert next((output / "activation_subsample").rglob("*.pt")).read_bytes() == (
+        activation_before
+    )
+
+
+@pytest.mark.parametrize(
+    ("artifact_name", "is_directory"),
+    (
+        ("checkpoint.0.pt", False),
+        ("wandb_run.json", False),
+        (".wandb", True),
+        ("activation_subsample", True),
+        ("sae-layer-5-seed-42.pt", False),
+        ("run.json", False),
+        ("unknown.bin", False),
+    ),
+)
+def test_retry_claim_only_resume_rejects_orphan_runtime_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    artifact_name: str,
+    is_directory: bool,
+) -> None:
+    base = _install_minimal_training_fixture(tmp_path, monkeypatch, retry=True)
+    output = tmp_path / "retry-training"
+    output.mkdir()
+    artifact = output / artifact_name
+    if is_directory:
+        artifact.mkdir()
+    else:
+        artifact.write_bytes(b"orphan")
+    monkeypatch.setattr(
+        runner_module,
+        "claim_wp2_retry_training",
+        lambda *_args, **_kwargs: SimpleNamespace(sha256="f" * 64),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="unexpected pre-checkpoint artifact|invalid strict JSON",
+    ):
+        run_train_saes(
+            SaeTrainingRunConfig(**base, output_dir=output, resume=True),
+            runtime_factory=_Runtime,
+            tracker_factory=lambda **_kwargs: _Tracker(),
+        )
+
+
+def test_non_retry_resume_still_requires_a_checkpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _install_minimal_training_fixture(tmp_path, monkeypatch, retry=False)
+    output = tmp_path / "ordinary-training"
+    output.mkdir()
+
+    with pytest.raises(ValueError, match="requires checkpoint.json"):
+        run_train_saes(
+            SaeTrainingRunConfig(**base, output_dir=output, resume=True),
+            runtime_factory=_Runtime,
+            tracker_factory=lambda **_kwargs: _Tracker(),
+        )
+
+
+def test_retry_resume_with_missing_output_checks_claim_before_creating_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _install_minimal_training_fixture(tmp_path, monkeypatch, retry=True)
+    output = tmp_path / "missing-retry-training"
+    monkeypatch.setattr(
+        runner_module,
+        "claim_wp2_retry_training",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("resume differs")),
+    )
+
+    with pytest.raises(ValueError, match="resume differs"):
+        run_train_saes(
+            SaeTrainingRunConfig(**base, output_dir=output, resume=True),
+            runtime_factory=_Runtime,
+            tracker_factory=lambda **_kwargs: _Tracker(),
+        )
+
+    assert not output.exists()
+
+
+def test_retry_rejects_a_manifest_changed_after_it_was_loaded(tmp_path: Path) -> None:
+    source = tmp_path / "source.jsonl"
+    source.write_text('{"text":"first"}\n', encoding="utf-8")
+    prepared = SimpleNamespace(
+        input_paths=(source,),
+        input_sha256=(hashlib.sha256(source.read_bytes()).hexdigest(),),
+    )
+    source.write_text('{"text":"second"}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="manifest changed while it was being loaded"):
+        runner_module._require_unchanged_source_files(prepared)
+
+
+def test_retry_rejects_an_l1_file_changed_while_its_values_are_loaded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _install_minimal_training_fixture(tmp_path, monkeypatch, retry=True)
+    selection = Path(base["l1_selection_path"])
+    claim_reached = False
+
+    def mutating_load(*_args, **_kwargs):
+        selection.write_text('{"changed":true}\n', encoding="utf-8")
+        return {5: 0.1}
+
+    def claim(*_args, **_kwargs):
+        nonlocal claim_reached
+        claim_reached = True
+        return SimpleNamespace(sha256="f" * 64)
+
+    monkeypatch.setattr(runner_module, "_load_l1_selection", mutating_load)
+    monkeypatch.setattr(runner_module, "claim_wp2_retry_training", claim)
+
+    with pytest.raises(ValueError, match="L1 selection changed while it was being loaded"):
+        run_train_saes(
+            SaeTrainingRunConfig(**base, output_dir=tmp_path / "retry-training"),
+            runtime_factory=_Runtime,
+            tracker_factory=lambda **_kwargs: _Tracker(),
+        )
+    assert claim_reached is False
+
+
+def test_retry_rejects_implementation_drift_immediately_after_the_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = _install_minimal_training_fixture(tmp_path, monkeypatch, retry=True)
+    digests = iter(("1" * 64, "2" * 64))
+    runtime_reached = False
+
+    monkeypatch.setattr(
+        runner_module,
+        "retry_implementation_sha256",
+        lambda: next(digests),
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "claim_wp2_retry_training",
+        lambda *_args, **_kwargs: SimpleNamespace(sha256="f" * 64),
+    )
+
+    def runtime_factory(**_kwargs):
+        nonlocal runtime_reached
+        runtime_reached = True
+        return _Runtime(**_kwargs)
+
+    with pytest.raises(ValueError, match="implementation changed after the global claim"):
+        run_train_saes(
+            SaeTrainingRunConfig(**base, output_dir=tmp_path / "retry-training"),
+            runtime_factory=runtime_factory,
+            tracker_factory=lambda **_kwargs: _Tracker(),
+        )
+    assert runtime_reached is False
 
 
 def test_sae_checkpoint_metadata_failure_preserves_previous_generation(
