@@ -754,9 +754,13 @@ def run_adapter_training(
             elif isinstance(evidence, LocalizationEvidence):
                 presentation_layers = evidence.adapter_layers
             elif protocol.condition == "global-state-alignment":
-                if protocol.decoder_layers is None:
-                    raise ValueError("global state presentation requires decoder layers")
-                presentation_layers = tuple(range(protocol.decoder_layers))
+                # Cycle 1 predates the explicit decoder-layer inventory and its
+                # Legacy presentation intentionally carries no layer label.
+                presentation_layers = (
+                    tuple(range(protocol.decoder_layers))
+                    if protocol.decoder_layers is not None
+                    else ()
+                )
             else:
                 presentation_layers = ()
             tracker = start_wandb_training_tracker(
