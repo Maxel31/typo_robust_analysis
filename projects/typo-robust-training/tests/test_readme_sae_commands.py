@@ -7,6 +7,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 README_NAMES = ("README.md", "README.ja.md")
@@ -14,6 +16,19 @@ README_NAMES = ("README.md", "README.ja.md")
 
 def _bash_blocks(text: str) -> tuple[str, ...]:
     return tuple(re.findall(r"```bash\n(.*?)\n```", text, flags=re.DOTALL))
+
+
+def _sae_gpu_blocks(text: str) -> tuple[str, ...]:
+    sae_section = text.split("## 7.", maxsplit=1)[1]
+    return tuple(block for block in _bash_blocks(sae_section) if "CUDA_VISIBLE_DEVICES=" in block)
+
+
+def _assert_every_sae_gpu_block_pins_gpu_zero(text: str) -> None:
+    gpu_blocks = _sae_gpu_blocks(text)
+    assert len(gpu_blocks) == 3
+    for block_index, block in enumerate(gpu_blocks):
+        assignments = re.findall(r'(?m)^SAE_GPU_ID="([^"]+)"$', block)
+        assert assignments == ["0"], f"SAE GPU block {block_index} must assign literal SAE_GPU_ID=0"
 
 
 def test_readmes_document_separate_wp1_and_wp2_commands_and_gpu_zero() -> None:
@@ -46,7 +61,7 @@ def test_sae_subshell_pins_gpu_zero_without_clobbering_caller_state(
         ]
         sae_section = text.split("## 7.", maxsplit=1)[1]
         sae_blocks = _bash_blocks(sae_section)
-        gpu_blocks = [block for block in sae_blocks if "CUDA_VISIBLE_DEVICES=" in block]
+        gpu_blocks = _sae_gpu_blocks(text)
 
         assert len(sae_blocks) == 4
         assert all(block.strip().startswith("(") for block in sae_blocks)
@@ -198,3 +213,20 @@ def test_every_sae_gpu_reference_uses_the_gpu_zero_pin() -> None:
         assert set(cuda_references) == {'"${SAE_GPU_ID}"'}
         assert set(gpu_id_references) == {'"${SAE_GPU_ID}"'}
         assert set(wandb_references) == {'"${SAE_WANDB_PROJECT}"'}
+        _assert_every_sae_gpu_block_pins_gpu_zero(text)
+
+
+def test_gpu_zero_contract_rejects_each_sae_block_pinned_to_a_training_gpu() -> None:
+    for filename in README_NAMES:
+        text = (PROJECT_ROOT / filename).read_text(encoding="utf-8")
+        for block_index, block in enumerate(_sae_gpu_blocks(text)):
+            mutated_block = block.replace('SAE_GPU_ID="0"', 'SAE_GPU_ID="5"', 1)
+            assert mutated_block != block
+            assert re.findall(r'(?m)^SAE_GPU_ID="([^"]+)"$', mutated_block) == ["5"]
+            mutated = text.replace(block, mutated_block, 1)
+
+            with pytest.raises(
+                AssertionError,
+                match=f"SAE GPU block {block_index} must assign literal SAE_GPU_ID=0",
+            ):
+                _assert_every_sae_gpu_block_pins_gpu_zero(mutated)

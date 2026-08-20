@@ -111,6 +111,70 @@ def _plugin_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _evaluation_producers_by_role(readme: str) -> dict[str, dict[Path, argparse.Namespace]]:
+    parser = _plugin_parser()
+    commands = [parser.parse_args(tokens) for tokens in _documented_plugin_invocations(readme)]
+    training_commands = [
+        (index, command)
+        for index, command in enumerate(commands)
+        if command.command.startswith("train-")
+    ]
+    producers_by_role: dict[str, dict[Path, argparse.Namespace]] = {}
+
+    for consumer_index, evaluation in enumerate(commands):
+        if evaluation.command != "evaluate-typo-robustness":
+            continue
+
+        role = evaluation.evaluation_role
+        assert role not in producers_by_role, f"duplicate evaluation role: {role}"
+        producers: dict[Path, argparse.Namespace] = {}
+        for checkpoint in evaluation.checkpoints:
+            matching = [
+                (producer_index, producer)
+                for producer_index, producer in training_commands
+                if producer.output_dir == checkpoint.parent
+            ]
+            assert matching, f"{role} checkpoint has no documented producer: {checkpoint}"
+            assert len(matching) == 1, (
+                f"{role} checkpoint has ambiguous documented producers: {checkpoint}"
+            )
+            producer_index, producer = matching[0]
+            assert producer_index < consumer_index, (
+                f"{role} checkpoint is consumed before its producer: {checkpoint}"
+            )
+            producers[checkpoint] = producer
+        producers_by_role[role] = producers
+
+    assert producers_by_role
+    return producers_by_role
+
+
+def _move_documented_command_after_block(
+    readme: str,
+    *,
+    producer_marker: str,
+    consumer_marker: str,
+) -> str:
+    producer_marker_index = readme.index(producer_marker)
+    producer_start = readme.rfind("CUDA_VISIBLE_DEVICES=", 0, producer_marker_index)
+    producer_output = readme.index("--output-dir", producer_marker_index)
+    producer_end = readme.index("\n", producer_output)
+    producer_command = readme[producer_start:producer_end]
+    without_producer = readme[:producer_start] + readme[producer_end + 1 :]
+    consumer = next(
+        match
+        for match in re.finditer(r"```bash\n.*?\n```", without_producer, flags=re.DOTALL)
+        if consumer_marker in match.group()
+    )
+    return (
+        without_producer[: consumer.end()]
+        + "\n\n```bash\n"
+        + producer_command
+        + "\n```"
+        + without_producer[consumer.end() :]
+    )
+
+
 def test_documented_invocation_extractor_ignores_project_path_prefix() -> None:
     readme = """```bash
 uv run --project projects/typo-cot \\
@@ -198,46 +262,110 @@ def test_documented_evaluation_command_matches_the_installed_plugin_cli(
 
 
 @pytest.mark.parametrize("readme_name", ["README.md", "README.ja.md"])
-def test_evaluated_checkpoint_has_a_documented_training_producer(
+def test_every_evaluated_checkpoint_has_one_preceding_training_producer(
     readme_name: str,
 ) -> None:
     readme = (PROJECT_ROOT / readme_name).read_text(encoding="utf-8")
-    invocations = _documented_plugin_invocations(readme)
-    parser = _plugin_parser()
+    producers_by_role = _evaluation_producers_by_role(readme)
 
-    evaluation_tokens = [
-        tokens for tokens in invocations if tokens[0] == "evaluate-typo-robustness"
-    ]
-    assert len(evaluation_tokens) == 2
-    evaluations = [parser.parse_args(tokens) for tokens in evaluation_tokens]
-    evaluation = next(item for item in evaluations if item.evaluation_role == "tune")
-    assert len(evaluation.checkpoints) == 4
-    assert all(checkpoint.name == "adapter" for checkpoint in evaluation.checkpoints)
-
-    producers = {}
-    for tokens in invocations:
-        if not tokens[0].startswith("train-"):
-            continue
-        parsed = parser.parse_args(tokens)
-        for checkpoint in evaluation.checkpoints:
-            if parsed.output_dir == checkpoint.parent:
-                producers[checkpoint] = parsed
-
-    assert set(producers) == set(evaluation.checkpoints)
-    assert {producer._training_condition for producer in producers.values()} == {
+    assert set(producers_by_role) == {"tune", "pre-pr-gate"}
+    assert len(producers_by_role["tune"]) == 4
+    assert len(producers_by_role["pre-pr-gate"]) == 6
+    assert all(
+        checkpoint.name == "adapter"
+        for producers in producers_by_role.values()
+        for checkpoint in producers
+    )
+    assert {
+        producer._training_condition
+        for producers in producers_by_role.values()
+        for producer in producers.values()
+    } == {
         "output-matching",
         "localized-state-distillation",
         "random-window-state-distillation",
         "global-state-alignment",
     }
-    assert all(producer.wandb_project == "${WANDB_PROJECT}" for producer in producers.values())
+    assert all(
+        producer.wandb_project == "${WANDB_PROJECT}"
+        for producers in producers_by_role.values()
+        for producer in producers.values()
+    )
     localized = [
         producer
-        for producer in producers.values()
+        for producer in producers_by_role["tune"].values()
         if producer._training_condition == "localized-state-distillation"
     ]
     assert len(localized) == 1
     assert localized[0].window_validation is not None
+
+
+@pytest.mark.parametrize("readme_name", ["README.md", "README.ja.md"])
+def test_producer_order_contract_rejects_a_training_block_after_its_consumer(
+    readme_name: str,
+) -> None:
+    readme = (PROJECT_ROOT / readme_name).read_text(encoding="utf-8")
+    mutated = _move_documented_command_after_block(
+        readme,
+        producer_marker="configs/cycle3/gemma4b-all-layer-state-10m.yaml",
+        consumer_marker="--evaluation-role tune",
+    )
+    parsed = [
+        _plugin_parser().parse_args(tokens) for tokens in _documented_plugin_invocations(mutated)
+    ]
+    producer_index = next(
+        index
+        for index, command in enumerate(parsed)
+        if command.command == "train-global-state-alignment"
+        and "configs/cycle3/gemma4b-all-layer-state-10m.yaml" in str(command.config)
+    )
+    consumer_index = next(
+        index
+        for index, command in enumerate(parsed)
+        if command.command == "evaluate-typo-robustness" and command.evaluation_role == "tune"
+    )
+    assert producer_index > consumer_index
+
+    with pytest.raises(AssertionError, match="consumed before its producer"):
+        _evaluation_producers_by_role(mutated)
+
+
+@pytest.mark.parametrize("readme_name", ["README.md", "README.ja.md"])
+def test_pre_pr_contract_rejects_a_checkpoint_without_a_training_producer(
+    readme_name: str,
+) -> None:
+    readme = (PROJECT_ROOT / readme_name).read_text(encoding="utf-8")
+    pre_pr_block = next(
+        block
+        for block in re.findall(r"```bash\n(.*?)\n```", readme, flags=re.DOTALL)
+        if "--evaluation-role pre-pr-gate" in block
+    )
+    mutated_block = pre_pr_block.replace(
+        '  --checkpoint "${TRAIN_ROOT}/training/cycle3/output-matching/seed-42/adapter" \\\n',
+        '  --checkpoint "${TRAIN_ROOT}/training/cycle3/output-matching/seed-42/adapter" \\\n'
+        '  --checkpoint "${TRAIN_ROOT}/training/cycle3/output-matching/seed-43/adapter" \\\n',
+        1,
+    )
+    assert mutated_block != pre_pr_block
+    mutated = readme.replace(pre_pr_block, mutated_block, 1)
+    bogus_checkpoint = Path("${TRAIN_ROOT}/training/cycle3/output-matching/seed-43/adapter")
+    parsed = [
+        _plugin_parser().parse_args(tokens) for tokens in _documented_plugin_invocations(mutated)
+    ]
+    pre_pr = next(
+        command
+        for command in parsed
+        if command.command == "evaluate-typo-robustness"
+        and command.evaluation_role == "pre-pr-gate"
+    )
+    assert bogus_checkpoint in pre_pr.checkpoints
+    assert not any(
+        command.command.startswith("train-") and command.output_dir == bogus_checkpoint.parent
+        for command in parsed
+    )
+
+    with pytest.raises(AssertionError, match="has no documented producer"):
+        _evaluation_producers_by_role(mutated)
 
 
 def _descriptor_for_documented_checkpoint(path: Path) -> AdapterDescriptor:
