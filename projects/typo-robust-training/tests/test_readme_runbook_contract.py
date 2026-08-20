@@ -136,7 +136,7 @@ def test_sae_runbook_has_no_ephemeral_paths_and_fails_closed_before_gpu(
     text = (PROJECT_ROOT / readme_name).read_text(encoding="utf-8")
     bash = "\n".join(_bash_blocks(text))
     sae = text.split("## 7.", maxsplit=1)[1]
-    first_gpu = sae.index('CUDA_VISIBLE_DEVICES="${GPU_ID}"')
+    first_gpu = sae.index('CUDA_VISIBLE_DEVICES="${SAE_GPU_ID}"')
 
     assert "/diskthalys/" not in bash
     assert "/tmp/typo-rebuttal-manifest" not in bash
@@ -152,12 +152,31 @@ def test_sae_runbook_has_no_ephemeral_paths_and_fails_closed_before_gpu(
     ):
         assert guard in sae[:first_gpu]
     for repository_artifact in (
-        'TRAINING_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m/training_sources.jsonl"',
-        'EVALUATION_DATA="${TRAIN_ROOT}/evaluation-data/robustness-v1"',
-        'LOCALIZATION_DATA="${TRAIN_ROOT}/localization/generic-joint-window-v1/pairs"',
+        'SAE_TRAINING_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m/training_sources.jsonl"',
+        'SAE_EVALUATION_DATA="${TRAIN_ROOT}/evaluation-data/robustness-v1"',
+        'SAE_LOCALIZATION_DATA="${TRAIN_ROOT}/localization/generic-joint-window-v1/pairs"',
     ):
         assert repository_artifact in sae[:first_gpu]
     assert "separately reviewed" in sae or "別途レビュー済み" in sae
+
+
+@pytest.mark.parametrize("readme_name", README_NAMES)
+def test_residual_window_artifact_reference_names_its_producer_section(
+    readme_name: str,
+) -> None:
+    text = (PROJECT_ROOT / readme_name).read_text(encoding="utf-8")
+    sections = re.findall(
+        r"(?ms)^## (\d+)\. (.*?)(?=^## \d+\.|\Z)",
+        text,
+    )
+    producer_section = next(
+        section_number
+        for section_number, section_body in sections
+        if "select-generic-joint-patch-window" in section_body
+    )
+    artifact_references = re.findall(r"Section (\d+)(?: artifacts|のartifact)", text)
+
+    assert artifact_references == [producer_section]
 
 
 @pytest.mark.parametrize("readme_name", README_NAMES)

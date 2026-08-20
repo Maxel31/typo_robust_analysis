@@ -6,11 +6,15 @@ import argparse
 import re
 import shlex
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 import typo_cot.cli as typo_cot_cli
 from typo_robust_training.cli import register_commands
+from typo_robust_training.evaluation.checkpoints import AdapterDescriptor, PatchWindow
+from typo_robust_training.evaluation.config import load_robustness_evaluation_config
+from typo_robust_training.evaluation.runner import _validate_injected_inputs
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -204,8 +208,9 @@ def test_evaluated_checkpoint_has_a_documented_training_producer(
     evaluation_tokens = [
         tokens for tokens in invocations if tokens[0] == "evaluate-typo-robustness"
     ]
-    assert len(evaluation_tokens) == 1
-    evaluation = parser.parse_args(evaluation_tokens[0])
+    assert len(evaluation_tokens) == 2
+    evaluations = [parser.parse_args(tokens) for tokens in evaluation_tokens]
+    evaluation = next(item for item in evaluations if item.evaluation_role == "tune")
     assert len(evaluation.checkpoints) == 4
     assert all(checkpoint.name == "adapter" for checkpoint in evaluation.checkpoints)
 
@@ -233,6 +238,101 @@ def test_evaluated_checkpoint_has_a_documented_training_producer(
     ]
     assert len(localized) == 1
     assert localized[0].window_validation is not None
+
+
+def _descriptor_for_documented_checkpoint(path: Path) -> AdapterDescriptor:
+    checkpoint = str(path)
+    condition_by_fragment = {
+        "/output-matching/": "output-matching",
+        "/causal-window-state-distillation/": "localized-state-distillation",
+        "/random-window-state-distillation/": "random-window-state-distillation",
+        "/all-layer-state-distillation/": "global-state-alignment",
+    }
+    condition = next(
+        value for fragment, value in condition_by_fragment.items() if fragment in checkpoint
+    )
+    seed_match = re.search(r"/seed-(42|43|44)/", checkpoint)
+    assert seed_match is not None
+    localization_sha256 = (
+        "f" * 64
+        if condition in {"localized-state-distillation", "random-window-state-distillation"}
+        else None
+    )
+    config_sha256 = {
+        "output-matching": "1" * 64,
+        "localized-state-distillation": "2" * 64,
+        "random-window-state-distillation": "3" * 64,
+        "global-state-alignment": "4" * 64,
+    }[condition]
+    return AdapterDescriptor(
+        path=path,
+        condition=condition,
+        seed=int(seed_match.group(1)),
+        config_sha256=config_sha256,
+        training_data_sha256="a" * 64,
+        data_identity_sha256="b" * 64,
+        localization_sha256=localization_sha256,
+        adapter_sha256="c" * 64,
+    )
+
+
+@pytest.mark.parametrize("readme_name", ["README.md", "README.ja.md"])
+def test_pre_pr_evaluation_is_documented_after_the_complete_proposal_seed_inventory(
+    readme_name: str,
+) -> None:
+    readme = (PROJECT_ROOT / readme_name).read_text(encoding="utf-8")
+    invocations = _documented_plugin_invocations(readme)
+    parser = _plugin_parser()
+    parsed = [parser.parse_args(tokens) for tokens in invocations]
+    protocol = load_robustness_evaluation_config(PROJECT_ROOT / "configs/gemma4b-evaluation.yaml")
+
+    tune_index = next(
+        index
+        for index, command in enumerate(parsed)
+        if command.command == "evaluate-typo-robustness" and command.evaluation_role == "tune"
+    )
+    pre_pr_index = next(
+        index
+        for index, command in enumerate(parsed)
+        if command.command == "evaluate-typo-robustness"
+        and command.evaluation_role == "pre-pr-gate"
+    )
+    proposal_training = {
+        command.seed: index
+        for index, command in enumerate(parsed)
+        if command.command == "train-localized-state-distillation"
+        and "configs/cycle3/gemma4b-causal-window-10m.yaml" in str(command.config)
+    }
+
+    assert set(proposal_training) == set(protocol.seed_inventory)
+    assert tune_index < proposal_training[43] < pre_pr_index
+    assert tune_index < proposal_training[44] < pre_pr_index
+
+    pre_pr = parsed[pre_pr_index]
+    descriptors = tuple(_descriptor_for_documented_checkpoint(path) for path in pre_pr.checkpoints)
+    localized_seeds = {
+        descriptor.seed
+        for descriptor in descriptors
+        if descriptor.condition == "localized-state-distillation"
+    }
+    assert localized_seeds == set(protocol.seed_inventory)
+
+    _validate_injected_inputs(
+        SimpleNamespace(
+            checkpoint_paths=pre_pr.checkpoints,
+            evaluation_role=pre_pr.evaluation_role,
+        ),
+        protocol=protocol,
+        data_bundle=None,
+        corpus_bundle=None,
+        descriptors=descriptors,
+        patch_window=PatchWindow(
+            start=0,
+            stop=6,
+            artifact_sha256="9" * 64,
+            localization_sha256="f" * 64,
+        ),
+    )
 
 
 @pytest.mark.parametrize("readme_name", ["README.md", "README.ja.md"])

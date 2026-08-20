@@ -264,7 +264,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 
 最後のcommandは、失敗したcomponent-level Cycle 1 ablationを再現する目的だけで保持します。
 そのrelative-MSE objectiveとcomponent-selected LoRAは確証用の提案手法ではありません。
-Section 2のartifactを使う有界なresidual-window objectiveは別の機能単位変更として公開し、
+Section 3のartifactを使う有界なresidual-window objectiveは別の機能単位変更として公開し、
 過去の失敗したtargetが現在のtargetへ暗黙に混入しないようにします。
 
 上のcommandはversion 1 pilotの再現用であり、確証用比較として報告しません。seed 42、43、44の
@@ -377,11 +377,67 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 
 `base`は常に同じpair上で自動評価されるため、この例では同一pair上で5条件を比較します。
 各checkpoint pathには学習commandが書き出したhash-boundな
-`training_runtime.json`が必要です。手法を変更している間は`--evaluation-role tune`だけを
-使用します。全hyperparameterとcheckpointを固定した後に限り、同じcommandを
-`--evaluation-role pre-pr-gate --confirm-sealed-role`として一度だけ実行します。
-`final-test`は、合格したPR前checkpointを固定した後にだけ開封します。封印roleへのaccessは
-immutableなdata artifactの隣へ記録され、暗黙に繰り返せません。
+`training_runtime.json`が必要です。この最初のcommandは反復可能なseed 42の`tune`比較であり、
+sealed roleに必要なcheckpoint inventoryを満たしません。
+
+tune結果に基づいて手法とhyperparameterを固定した後に限り、固定評価protocolが要求する
+提案手法の残り2 seedを生成します。
+
+```bash
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-localized-state-distillation \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-causal-window-10m.yaml" \
+  --training-data "${CYCLE3_DATA}" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --monitor-data "${EVALUATION_DATA}" \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --seed 43 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --output-dir "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-43"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-localized-state-distillation \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-causal-window-10m.yaml" \
+  --training-data "${CYCLE3_DATA}" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --monitor-data "${EVALUATION_DATA}" \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --seed 44 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --output-dir "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-44"
+```
+
+一度だけ開封するPR前gateは、上の2 producerが完了した後にだけ実行できます。提案手法の
+checkpointはseed 42/43/44の全inventoryを渡し、matched baselineとscope controlには固定済みの
+seed 42 checkpointを渡します。
+
+```bash
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot evaluate-typo-robustness \
+  --config "${TRAIN_PROJECT}/configs/gemma4b-evaluation.yaml" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --training-data "${CYCLE3_DATA}" \
+  --evaluation-data "${EVALUATION_DATA}" \
+  --evaluation-role pre-pr-gate \
+  --confirm-sealed-role \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/output-matching/seed-42/adapter" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-42/adapter" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-43/adapter" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-44/adapter" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/random-window-state-distillation/seed-42/adapter" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/all-layer-state-distillation/seed-42/adapter" \
+  --splits same-task unseen-task unseen-content unseen-typo \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/evaluation/pre-pr-gate/cycle3-comparison"
+```
+
+`final-test`は、合格したPR前checkpoint inventoryを固定した後に、この全inventory commandの
+roleを`--evaluation-role final-test`へ変更し、別のfinal-test output directoryを指定してだけ
+実行します。封印roleへのaccessはimmutableなdata artifactの隣へ記録され、暗黙に繰り返せません。
 
 generic-text windowには、合格した独立validation artifactも必須です。評価器は両fileを
 run identityへ結合し、過去のreasoning-task selectorへ暗黙にfallbackしません。
@@ -418,9 +474,12 @@ character 5-gram近重複検査を行います。このデータ準備commandは
 registry-v1はlineage証拠専用です。これとレビュー済みregistryを混在させると、bindされた
 preregistration SHAが変わり、validationがtraining runを拒否します。最初のblockは、外部契約
 または先行するrepository artifactが欠けている場合、data準備やGPU commandより前に失敗します。
+以下の各SAE command blockは独立したsubshellで実行します。GPU 0とSAE用W&B projectはblock内だけで
+有効になり、`exit 2`もsubshellだけを終了するため、callerの`GPU_ID`、`WANDB_PROJECT`、
+`EVALUATION_DATA`は変更されません。
 
 ```bash
-GPU_ID="0"
+(
 : "${SAE_ROOT:?Set SAE_ROOT to a provisioned absolute external artifact directory}"
 : "${ROOTED_REGISTRY:?Set ROOTED_REGISTRY to the separately reviewed absolute registry path}"
 case "${SAE_ROOT}" in /*) ;; *) echo "SAE_ROOT must be absolute" >&2; exit 2 ;; esac
@@ -428,37 +487,44 @@ case "${ROOTED_REGISTRY}" in /*) ;; *) echo "ROOTED_REGISTRY must be absolute" >
 [ -d "${SAE_ROOT}" ] || { echo "SAE_ROOT does not exist: ${SAE_ROOT}" >&2; exit 2; }
 [ -f "${ROOTED_REGISTRY}" ] || { echo "reviewed ROOTED_REGISTRY does not exist: ${ROOTED_REGISTRY}" >&2; exit 2; }
 
-TRAINING_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m/training_sources.jsonl"
-EVALUATION_DATA="${TRAIN_ROOT}/evaluation-data/robustness-v1"
-LOCALIZATION_DATA="${TRAIN_ROOT}/localization/generic-joint-window-v1/pairs"
-SUPPLEMENT_DATA="${SAE_ROOT}/clean-corpus/sae_clean_supplement.jsonl"
-WANDB_PROJECT="typo-robustness-sae"
-for REQUIRED_INPUT in "${TRAINING_DATA}" "${EVALUATION_DATA}" "${LOCALIZATION_DATA}"; do
+SAE_TRAINING_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m/training_sources.jsonl"
+SAE_EVALUATION_DATA="${TRAIN_ROOT}/evaluation-data/robustness-v1"
+SAE_LOCALIZATION_DATA="${TRAIN_ROOT}/localization/generic-joint-window-v1/pairs"
+for REQUIRED_INPUT in "${SAE_TRAINING_DATA}" "${SAE_EVALUATION_DATA}" "${SAE_LOCALIZATION_DATA}"; do
   [ -e "${REQUIRED_INPUT}" ] || { echo "required prior artifact does not exist: ${REQUIRED_INPUT}" >&2; exit 2; }
 done
 
 uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-sae-clean-corpus \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
   --registry "${ROOTED_REGISTRY}" \
-  --existing-data "${TRAINING_DATA}" \
-  --exclude-data "${EVALUATION_DATA}" \
-  --exclude-data "${LOCALIZATION_DATA}" \
+  --existing-data "${SAE_TRAINING_DATA}" \
+  --exclude-data "${SAE_EVALUATION_DATA}" \
+  --exclude-data "${SAE_LOCALIZATION_DATA}" \
   --training-budget minimum \
   --output-dir "${SAE_ROOT}/clean-corpus"
+)
 ```
 
 続いて、同じ統合clean streamを使い、事前登録した3点のL1係数を較正します。
 
 ```bash
-CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+(
+: "${SAE_ROOT:?Set SAE_ROOT to a provisioned absolute external artifact directory}"
+: "${ROOTED_REGISTRY:?Set ROOTED_REGISTRY to the separately reviewed absolute registry path}"
+SAE_GPU_ID="0"
+SAE_WANDB_PROJECT="typo-robustness-sae"
+SAE_TRAINING_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m/training_sources.jsonl"
+SAE_SUPPLEMENT_DATA="${SAE_ROOT}/clean-corpus/sae_clean_supplement.jsonl"
+CUDA_VISIBLE_DEVICES="${SAE_GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot calibrate-sparse-autoencoder-l1 \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
   --registry "${ROOTED_REGISTRY}" \
-  --training-data "${TRAINING_DATA}" \
-  --training-data "${SUPPLEMENT_DATA}" \
-  --gpu-id "${GPU_ID}" \
-  --wandb-project "${WANDB_PROJECT}" \
+  --training-data "${SAE_TRAINING_DATA}" \
+  --training-data "${SAE_SUPPLEMENT_DATA}" \
+  --gpu-id "${SAE_GPU_ID}" \
+  --wandb-project "${SAE_WANDB_PROJECT}" \
   --output-dir "${SAE_ROOT}/l1-calibration"
+)
 ```
 
 続いて層 5 の 2 初期値 seed と層 20 の SAE を学習します。この command は typo/task record を
@@ -467,16 +533,24 @@ source token を 100M 以上にするため追加データが必要な場合は�
 manifestを `--training-data` の繰り返しで追加します。
 
 ```bash
-CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+(
+: "${SAE_ROOT:?Set SAE_ROOT to a provisioned absolute external artifact directory}"
+: "${ROOTED_REGISTRY:?Set ROOTED_REGISTRY to the separately reviewed absolute registry path}"
+SAE_GPU_ID="0"
+SAE_WANDB_PROJECT="typo-robustness-sae"
+SAE_TRAINING_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m/training_sources.jsonl"
+SAE_SUPPLEMENT_DATA="${SAE_ROOT}/clean-corpus/sae_clean_supplement.jsonl"
+CUDA_VISIBLE_DEVICES="${SAE_GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-sparse-autoencoders \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
   --registry "${ROOTED_REGISTRY}" \
-  --training-data "${TRAINING_DATA}" \
-  --training-data "${SUPPLEMENT_DATA}" \
+  --training-data "${SAE_TRAINING_DATA}" \
+  --training-data "${SAE_SUPPLEMENT_DATA}" \
   --l1-selection "${SAE_ROOT}/l1-calibration/l1_selection.json" \
-  --gpu-id "${GPU_ID}" \
-  --wandb-project "${WANDB_PROJECT}" \
+  --gpu-id "${SAE_GPU_ID}" \
+  --wandb-project "${SAE_WANDB_PROJECT}" \
   --output-dir "${SAE_ROOT}/training"
+)
 ```
 
 凍結済みの10M-token activation subsampleは4層のbfloat16 residual streamを保存するため、
@@ -488,15 +562,22 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 測らず、評価 tier も開封しません。
 
 ```bash
-CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+(
+: "${SAE_ROOT:?Set SAE_ROOT to a provisioned absolute external artifact directory}"
+: "${ROOTED_REGISTRY:?Set ROOTED_REGISTRY to the separately reviewed absolute registry path}"
+SAE_GPU_ID="0"
+SAE_TRAINING_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m/training_sources.jsonl"
+SAE_SUPPLEMENT_DATA="${SAE_ROOT}/clean-corpus/sae_clean_supplement.jsonl"
+CUDA_VISIBLE_DEVICES="${SAE_GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot validate-sparse-autoencoders \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
   --registry "${ROOTED_REGISTRY}" \
-  --validation-data "${TRAINING_DATA}" \
-  --validation-data "${SUPPLEMENT_DATA}" \
+  --validation-data "${SAE_TRAINING_DATA}" \
+  --validation-data "${SAE_SUPPLEMENT_DATA}" \
   --checkpoint-dir "${SAE_ROOT}/training" \
-  --gpu-id "${GPU_ID}" \
+  --gpu-id "${SAE_GPU_ID}" \
   --output-dir "${SAE_ROOT}/validation"
+)
 ```
 
 初回WP-2 validationは、output作成やGPU/runtime初期化より前にproject rootへ排他的な予約fileを
