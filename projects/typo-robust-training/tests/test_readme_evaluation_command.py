@@ -157,7 +157,8 @@ def test_initial_evaluation_command_does_not_request_resume(readme_name: str) ->
     assert "--resume" not in command
     assert "--evaluation-protocol" in command
     assert "--evaluation-data" in command
-    assert "gemma4b-cycle3-64m" in command
+    assert '--training-data "${CYCLE3_DATA}"' in command
+    assert 'CYCLE3_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m"' in readme
     assert "--window-validation" in command
     assert "--resume" in readme.split(command, maxsplit=1)[1]
 
@@ -205,22 +206,33 @@ def test_evaluated_checkpoint_has_a_documented_training_producer(
     ]
     assert len(evaluation_tokens) == 1
     evaluation = parser.parse_args(evaluation_tokens[0])
-    assert len(evaluation.checkpoints) == 1
-    (checkpoint,) = evaluation.checkpoints
-    assert checkpoint.name == "adapter"
+    assert len(evaluation.checkpoints) == 4
+    assert all(checkpoint.name == "adapter" for checkpoint in evaluation.checkpoints)
 
-    producers = []
+    producers = {}
     for tokens in invocations:
-        if tokens[0] != "train-localized-state-distillation":
+        if not tokens[0].startswith("train-"):
             continue
         parsed = parser.parse_args(tokens)
-        if parsed.output_dir == checkpoint.parent:
-            producers.append(parsed)
+        for checkpoint in evaluation.checkpoints:
+            if parsed.output_dir == checkpoint.parent:
+                producers[checkpoint] = parsed
 
-    assert len(producers) == 1
-    assert producers[0]._training_condition == "localized-state-distillation"
-    assert producers[0].wandb_project == "${WANDB_PROJECT}"
-    assert producers[0].window_validation is not None
+    assert set(producers) == set(evaluation.checkpoints)
+    assert {producer._training_condition for producer in producers.values()} == {
+        "output-matching",
+        "localized-state-distillation",
+        "random-window-state-distillation",
+        "global-state-alignment",
+    }
+    assert all(producer.wandb_project == "${WANDB_PROJECT}" for producer in producers.values())
+    localized = [
+        producer
+        for producer in producers.values()
+        if producer._training_condition == "localized-state-distillation"
+    ]
+    assert len(localized) == 1
+    assert localized[0].window_validation is not None
 
 
 @pytest.mark.parametrize("readme_name", ["README.md", "README.ja.md"])
