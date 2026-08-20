@@ -267,10 +267,10 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 Section 3のartifactを使う有界なresidual-window objectiveは別の機能単位変更として公開し、
 過去の失敗したtargetが現在のtargetへ暗黙に混入しないようにします。
 
-上のcommandはversion 1 pilotの再現用であり、確証用比較として報告しません。seed 42、43、44の
-matched output-only baselineとcontrolは、後続の有界residual-window学習機能で導入します。
-すべてのteacher/student条件で、Teacherはclean入力を受け取りfreezeしたままとし、
-宣言したStudentのLoRA parameterだけを変更できます。
+上のcommandはversion 1 pilotの再現用であり、確証用比較として報告しません。後続の有界な
+residual-window学習機能では提案手法をseed 42、43、44で実行し、matched output-only baselineと
+scope controlはseed 42に固定します。すべてのteacher/student条件で、Teacherはclean入力を受け取り
+freezeしたままとし、宣言したStudentのLoRA parameterだけを変更できます。
 
 公開する全学習commandではonline W&B trackingを必須にします。API keyは
 `WANDB_API_KEY`からだけ渡し、`WANDB_ENTITY`は任意です。完了したoptimizer stepごとに、

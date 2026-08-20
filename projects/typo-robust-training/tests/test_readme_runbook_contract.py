@@ -15,6 +15,17 @@ from typo_robust_training.cli import register_commands
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 README_NAMES = ("README.md", "README.ja.md")
+SEED_INVENTORY_PROMISES = {
+    "README.md": (
+        "The later bounded residual-window training feature supplies proposed-method "
+        "seeds 42, 43, and 44; its matched output-only baseline and scope controls "
+        "remain frozen at seed 42."
+    ),
+    "README.ja.md": (
+        "後続の有界な residual-window学習機能では提案手法をseed 42、43、44で実行し、"
+        "matched output-only baselineと scope controlはseed 42に固定します。"
+    ),
+}
 
 
 def _bash_blocks(text: str) -> tuple[str, ...]:
@@ -41,6 +52,48 @@ def _plugin_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _normalized_prose(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _assert_seed_inventory_promise(readme_name: str, text: str) -> None:
+    assert _normalized_prose(SEED_INVENTORY_PROMISES[readme_name]) in _normalized_prose(text)
+
+
+def _cycle3_seed_inventory(text: str) -> dict[str, set[int]]:
+    parser = _plugin_parser()
+    inventory: dict[str, set[int]] = {}
+    for tokens in _documented_invocations(text):
+        command = parser.parse_args(tokens)
+        if not command.command.startswith("train-") or "configs/cycle3/" not in str(command.config):
+            continue
+        inventory.setdefault(command._training_condition, set()).add(command.seed)
+    return inventory
+
+
+def _assert_sae_assignments_are_portable(text: str) -> None:
+    sae_section = text.split("## 7.", maxsplit=1)[1]
+    assignments = re.findall(r"(?m)^(SAE_[A-Z0-9_]+)=(.+)$", sae_section)
+    assert assignments
+    safe_literals = {
+        "SAE_GPU_ID": '"0"',
+        "SAE_WANDB_PROJECT": '"typo-robustness-sae"',
+    }
+    rooted_value = re.compile(r'^"\$\{(?:SAE_ROOT|TRAIN_ROOT|TRAIN_PROJECT)\}(?:/[^"\n]*)?"$')
+    for name, value in assignments:
+        if name in safe_literals:
+            assert value == safe_literals[name]
+            continue
+        assert rooted_value.fullmatch(value), (
+            f"{name} must be rooted in SAE_ROOT, TRAIN_ROOT, or TRAIN_PROJECT: {value}"
+        )
+        assert "/../" not in value and not value.endswith('/.."')
+
+
+def _assert_bilingual_executable_blocks_match(english: str, japanese: str) -> None:
+    assert _bash_blocks(english) == _bash_blocks(japanese)
+
+
 @pytest.mark.parametrize("readme_name", README_NAMES)
 def test_every_documented_command_parses_with_the_installed_cli(readme_name: str) -> None:
     text = (PROJECT_ROOT / readme_name).read_text(encoding="utf-8")
@@ -51,6 +104,70 @@ def test_every_documented_command_parses_with_the_installed_cli(readme_name: str
     for tokens in invocations:
         parsed = parser.parse_args(tokens)
         assert parsed.command == tokens[0]
+
+
+@pytest.mark.parametrize("readme_name", README_NAMES)
+def test_confirmatory_seed_inventory_promise_matches_the_runbook(
+    readme_name: str,
+) -> None:
+    text = (PROJECT_ROOT / readme_name).read_text(encoding="utf-8")
+
+    _assert_seed_inventory_promise(readme_name, text)
+    assert _cycle3_seed_inventory(text) == {
+        "output-matching": {42},
+        "localized-state-distillation": {42, 43, 44},
+        "random-window-state-distillation": {42},
+        "global-state-alignment": {42},
+    }
+
+
+@pytest.mark.parametrize("readme_name", README_NAMES)
+def test_seed_inventory_contract_rejects_a_three_seed_baseline_control_promise(
+    readme_name: str,
+) -> None:
+    text = (PROJECT_ROOT / readme_name).read_text(encoding="utf-8")
+    replacements = {
+        "README.md": (
+            "baseline and scope controls remain frozen at seed 42",
+            "baseline and scope controls run at seeds 42, 43, and 44",
+        ),
+        "README.ja.md": (
+            "baselineと\nscope controlはseed 42に固定します",
+            "baselineと\nscope controlもseed 42、43、44で実行します",
+        ),
+    }
+    correct, contradictory = replacements[readme_name]
+    mutated = text.replace(correct, contradictory, 1)
+
+    assert mutated != text
+    assert contradictory in mutated
+    with pytest.raises(AssertionError):
+        _assert_seed_inventory_promise(readme_name, mutated)
+
+
+def test_english_and_japanese_executable_blocks_are_identical() -> None:
+    english = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    japanese = (PROJECT_ROOT / "README.ja.md").read_text(encoding="utf-8")
+
+    _assert_bilingual_executable_blocks_match(english, japanese)
+
+
+def test_bilingual_contract_rejects_a_japanese_only_training_seed_change() -> None:
+    english = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    japanese = (PROJECT_ROOT / "README.ja.md").read_text(encoding="utf-8")
+    all_layer_block = next(
+        block
+        for block in _bash_blocks(japanese)
+        if "configs/cycle3/gemma4b-all-layer-state-10m.yaml" in block
+    )
+    mutated_block = all_layer_block.replace("--seed 42", "--seed 43", 1)
+    mutated_japanese = japanese.replace(all_layer_block, mutated_block, 1)
+
+    assert mutated_block != all_layer_block
+    assert "--seed 43" in mutated_block
+    assert "all-layer-state-distillation/seed-42" in mutated_block
+    with pytest.raises(AssertionError):
+        _assert_bilingual_executable_blocks_match(english, mutated_japanese)
 
 
 @pytest.mark.parametrize("readme_name", README_NAMES)
@@ -142,6 +259,7 @@ def test_sae_runbook_has_no_ephemeral_paths_and_fails_closed_before_gpu(
 
     assert "/diskthalys/" not in bash
     assert "/tmp/typo-rebuttal-manifest" not in bash
+    _assert_sae_assignments_are_portable(text)
     assert not re.search(r"(?m)^SAE_ROOT=", sae)
     assert not re.search(r"(?m)^ROOTED_REGISTRY=", sae)
     assert len(gpu_blocks) == 3
@@ -165,6 +283,31 @@ def test_sae_runbook_has_no_ephemeral_paths_and_fails_closed_before_gpu(
     ):
         assert repository_artifact in build_block
     assert "separately reviewed" in sae or "別途レビュー済み" in sae
+
+
+@pytest.mark.parametrize("readme_name", README_NAMES)
+def test_sae_portability_contract_rejects_an_ephemeral_absolute_assignment(
+    readme_name: str,
+) -> None:
+    text = (PROJECT_ROOT / readme_name).read_text(encoding="utf-8")
+    calibration_block = next(
+        block
+        for block in _bash_blocks(text.split("## 7.", maxsplit=1)[1])
+        if "calibrate-sparse-autoencoder-l1" in block
+    )
+    portable = 'SAE_TRAINING_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m/training_sources.jsonl"'
+    ephemeral = (
+        'SAE_TRAINING_DATA="/diskfoo/ssd14tc/operator/typo_artifacts/repo/'
+        "projects/typo-robust-training/results/data/gemma4b-cycle3-64m/"
+        'training_sources.jsonl"'
+    )
+    mutated_block = calibration_block.replace(portable, ephemeral, 1)
+    mutated = text.replace(calibration_block, mutated_block, 1)
+
+    assert mutated_block != calibration_block
+    assert ephemeral in mutated
+    with pytest.raises(AssertionError, match="must be rooted in"):
+        _assert_sae_assignments_are_portable(mutated)
 
 
 @pytest.mark.parametrize("readme_name", README_NAMES)

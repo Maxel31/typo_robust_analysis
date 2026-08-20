@@ -301,10 +301,10 @@ change, so the historical failure cannot silently select the active target.
 
 The commands above reproduce the version-1 pilot and must not be reported as
 the confirmatory comparison. The later bounded residual-window training
-feature supplies its matched output-only baseline and controls for seeds 42,
-43, and 44. In every teacher/student condition, the teacher receives clean
-input, stays frozen, and is never activation-patched; only declared student
-LoRA parameters may change.
+feature supplies proposed-method seeds 42, 43, and 44; its matched output-only
+baseline and scope controls remain frozen at seed 42. In every teacher/student
+condition, the teacher receives clean input, stays frozen, and is never
+activation-patched; only declared student LoRA parameters may change.
 
 Every public training command requires online W&B tracking. Supply the API key
 only through `WANDB_API_KEY`; `WANDB_ENTITY` is optional. At each completed
