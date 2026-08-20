@@ -345,6 +345,7 @@ baseline、PR前の実測gateは
 GPU_ID=0
 TRAIN_PROJECT=projects/typo-robust-training
 TRAIN_ROOT=projects/typo-robust-training/results
+EVALUATION_DATA="${TRAIN_ROOT}/evaluation-data/robustness-v1"
 
 uv sync --project "${TRAIN_PROJECT}" --locked
 
@@ -403,12 +404,16 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot evaluate-typo-robustness \
   --config "${TRAIN_PROJECT}/configs/gemma4b-evaluation.yaml" \
-  --data-manifest "${TRAIN_ROOT}/data/gemma4b-sanity/evaluation_manifest.json" \
-  --base-model google/gemma-3-4b-it \
-  --checkpoints "${TRAIN_ROOT}/training" \
-  --splits same-task unseen-task unseen-typo \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --evaluation-data "${EVALUATION_DATA}" \
+  --evaluation-role tune \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-42/adapter" \
+  --splits same-task unseen-task unseen-content unseen-typo \
   --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/evaluation/gemma4b"
+  --output-dir "${TRAIN_ROOT}/evaluation/tune/targeted-seed-42"
 ```
 
 ## clean/editedペアを生成する

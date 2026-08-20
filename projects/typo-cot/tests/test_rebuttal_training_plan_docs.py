@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import re
 from pathlib import Path
 
@@ -110,7 +111,14 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
         "subword-position-patching",
         "held-out-window-evaluation",
     }
-    assert set(TRAINING_COMMANDS) <= registered
+    plugin_names = {
+        entry_point.name
+        for entry_point in importlib.metadata.entry_points(group="typo_cot.commands")
+    }
+    expected_training_commands = (
+        set(TRAINING_COMMANDS) if "robustness-training" in plugin_names else set()
+    )
+    assert set(TRAINING_COMMANDS).intersection(registered) == expected_training_commands
     assert get_experiment("build-rebuttal-manifest").status == "implemented"
     assert get_experiment("six-setting-patch-controls").status == "implemented"
     assert get_experiment("source-write-coordinate-grid").status == "implemented"

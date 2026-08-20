@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import importlib.util
 import subprocess
 import tomllib
@@ -248,6 +249,26 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/models/prompts.py"),
     Path("src/typo_cot/models/wrapper.py"),
 }
+
+OPTIONAL_TRAINING_COMMANDS = {
+    "build-robustness-training-data",
+    "build-sae-clean-corpus",
+    "calibrate-sparse-autoencoder-l1",
+    "evaluate-typo-robustness",
+    "freeze-generic-localization-pairs",
+    "freeze-robustness-evaluation",
+    "localize-robustness-components",
+    "select-distillation-layers",
+    "select-generic-joint-patch-window",
+    "train-global-state-alignment",
+    "train-localized-state-distillation",
+    "train-noisy-language-model",
+    "train-output-matching",
+    "train-random-window-state-distillation",
+    "train-sparse-autoencoders",
+    "validate-generic-joint-patch-window",
+    "validate-sparse-autoencoders",
+}
 PUBLIC_CONFIG_FILES = {
     Path("configs/rebuttal/held-out-window-evaluation.yaml"),
     Path("configs/rebuttal/multitoken-kl-readout.yaml"),
@@ -436,7 +457,7 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
     subparsers = next(
         action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
     )
-    assert set(subparsers.choices) == {
+    expected = {
         "answer-line-deletion",
         "build-one-token-tables",
         "build-rebuttal-manifest",
@@ -485,6 +506,13 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
         "subword-position-patching",
         "held-out-window-evaluation",
     }
+    plugin_names = {
+        entry_point.name
+        for entry_point in importlib.metadata.entry_points(group="typo_cot.commands")
+    }
+    if "robustness-training" not in plugin_names:
+        expected.difference_update(OPTIONAL_TRAINING_COMMANDS)
+    assert set(subparsers.choices) == expected
 
 
 def test_legacy_development_documents_are_not_tracked() -> None:
