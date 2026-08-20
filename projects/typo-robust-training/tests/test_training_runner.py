@@ -27,10 +27,12 @@ from typo_robust_training.training.runner import (
     normalized_accumulation_scales,
     run_adapter_training,
 )
+from typo_robust_training.training.tracking import WandbRunPresentation
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BASE_CONFIG = PROJECT_ROOT / "configs/baselines/noisy-language-model.yaml"
+LEGACY_GLOBAL_STATE_CONFIG = PROJECT_ROOT / "configs/baselines/global-state-alignment.yaml"
 CYCLE2_OUTPUT_CONFIG = PROJECT_ROOT / "configs/cycle2/gemma4b-output-matching-100step.yaml"
 CYCLE3_CAUSAL_CONFIG = PROJECT_ROOT / "configs/cycle3/gemma4b-causal-window-10m.yaml"
 EVALUATION_PROTOCOL = PROJECT_ROOT / "configs/robustness-evaluation-v1.yaml"
@@ -239,6 +241,28 @@ class _CalibrationFailureRuntime(_Cycle2Runtime):
     def calibrate_state_weight(self, pairs: tuple[TrainingPair, ...]) -> None:
         assert len(pairs) == 8
         raise FloatingPointError("state calibration produced an invalid gradient norm")
+
+
+class _LegacyGlobalStateRuntime(_Runtime):
+    def train_micro_step(
+        self,
+        pair: TrainingPair,
+        *,
+        loss_scale: float,
+        measure_gradient_ratio: bool = False,
+        output_loss_scale: float | None = None,
+        state_loss_scale: float | None = None,
+    ) -> TrainingMicroStepResult:
+        assert loss_scale == pytest.approx(1.0 / 32.0)
+        assert measure_gradient_ratio is False
+        assert output_loss_scale is None
+        assert state_loss_scale is None
+        self.seen.append((pair.epoch, pair.record_id, pair.typo_text))
+        return TrainingMicroStepResult(
+            losses={"answer": 1.0, "output": 1.0, "state": 1.0, "clean": 1.0},
+            total_loss=3.0,
+            student_tokens=7,
+        )
 
 
 def test_runner_resume_matches_uninterrupted_sample_sequence(tmp_path: Path) -> None:
@@ -883,3 +907,47 @@ def test_runner_uploads_only_aggregate_optimizer_step_telemetry(tmp_path: Path) 
     ]
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["tracking"] == tracker.provenance()
+
+
+def test_legacy_global_state_readme_config_reaches_wandb_tracker_initialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = _Tracker()
+    presentations: list[WandbRunPresentation] = []
+
+    def start_tracker(**kwargs: object) -> _Tracker:
+        presentation = kwargs["presentation"]
+        assert isinstance(presentation, WandbRunPresentation)
+        presentations.append(presentation)
+        return tracker
+
+    monkeypatch.setattr(
+        "typo_robust_training.training.runner.start_wandb_training_tracker",
+        start_tracker,
+    )
+    result = run_adapter_training(
+        AdapterTrainingRunConfig(
+            condition="global-state-alignment",
+            config_path=LEGACY_GLOBAL_STATE_CONFIG,
+            training_data_dir=tmp_path,
+            layer_selection_path=None,
+            component_selection_path=None,
+            seed=42,
+            gpu_id="3",
+            wandb_project="typo-robustness-training",
+            wandb_entity="fixture-entity",
+            output_dir=tmp_path / "legacy-global-state",
+        ),
+        runtime=_LegacyGlobalStateRuntime(),
+        data_bundle=_bundle(tmp_path),
+    )
+
+    assert result.optimizer_steps == 100
+    assert len(presentations) == 1
+    presentation = presentations[0]
+    assert presentation.name == (
+        "Legacy · Global relative-MSE state pilot · Gemma-3-4B-IT · 100 steps · seed 42"
+    )
+    assert "condition:global-state-alignment" in presentation.tags
+    assert "State layers:" not in presentation.notes
