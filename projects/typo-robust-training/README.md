@@ -6,11 +6,11 @@ The method is prospective. Implementation is reviewed in feature-scoped pull
 requests, while generated data, checkpoints, and experimental results remain
 local artifacts until the frozen evaluation protocol permits a claim.
 
-The scientific order is fixed as:
+The confirmatory Cycle 3 order is fixed as:
 
 ```text
-training/evaluation data -> generic-text causal layer localization
-                         -> adapter training -> held-out evaluation
+64M training data -> frozen evaluation text -> generic-text causal localization
+                  -> baseline/proposal/control training -> held-out evaluation
 ```
 
 The confirmatory target is a model-specific residual-stream window selected by
@@ -117,7 +117,50 @@ The command writes:
 Corpus text, generated pairs, checkpoints, and run outputs are local artifacts
 under `results/` and are never committed.
 
-## 2. Freeze and select the confirmatory causal window
+### Build the confirmatory Cycle 3 training stream
+
+The sanity build above is not the confirmatory training producer. Build the
+full, hash-bound 64M-token clean source inventory before freezing evaluation,
+localizing the causal window, or starting any Cycle 3 adapter. This is a CPU
+data-preparation command; it does not run a model or open a sealed role.
+
+```bash
+CYCLE3_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m"
+
+uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-robustness-training-data \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-data-64m.yaml" \
+  --output-dir "${CYCLE3_DATA}"
+```
+
+## 2. Freeze the independent evaluation study
+
+Freeze the exact clean/typo texts after the Cycle 3 training inventory exists
+and before any training command consumes monitor data. The source config must
+be the byte-identical v3 config used to build the exclusion data; this binds
+every evaluation item to the training, diagnostic, and tune IDs it must
+exclude. This step runs no model and reveals no model output.
+
+```bash
+EVALUATION_DATA="${TRAIN_ROOT}/evaluation-data/robustness-v1"
+SOURCE_CONFIG="${TRAIN_PROJECT}/configs/cycle3/gemma4b-data-64m.yaml"
+
+uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot freeze-robustness-evaluation \
+  --protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --source-config "${SOURCE_CONFIG}" \
+  --exclude-data "${CYCLE3_DATA}" \
+  --output-dir "${EVALUATION_DATA}"
+```
+
+The command writes hash-bound `tune`, one-use `pre_pr_gate`, and one-use
+`final_test` task and corpus manifests. Exact typo strings are shared by Base,
+the output-distribution-matching baseline, and every proposed adapter. Task
+IDs, corpus groups, natural-typo repositories, and corrected words are
+disjoint across training/tune/sealed roles. The committed protocol and its
+gate definitions are described in
+[`../typo-cot/docs/robustness_evaluation_protocol_v1.md`](../typo-cot/docs/robustness_evaluation_protocol_v1.md).
+
+## 3. Freeze and select the confirmatory causal window
 
 The selector first freezes 200 selection and 200 validation FineWeb-Edu pairs
 that are disjoint from training and every evaluation tier. Each document gets
@@ -135,7 +178,8 @@ LOCALIZATION_ROOT="${TRAIN_ROOT}/localization/generic-joint-window-v1"
 uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot freeze-generic-localization-pairs \
   --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-generic-joint-window.yaml" \
-  --exclude-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --exclude-data "${CYCLE3_DATA}" \
+  --exclude-data "${EVALUATION_DATA}" \
   --output-dir "${LOCALIZATION_ROOT}/pairs"
 
 CUDA_VISIBLE_DEVICES="${GPU_SELECT}" uv run --project "${TRAIN_PROJECT}" --locked \
@@ -181,7 +225,7 @@ This command records the historical composite-score window using diagnostic
 reasoning data. Its answer and harm terms are not used by the confirmatory
 generic-text selector above.
 
-## 3. Reproduce the exploratory neuron/head causal analysis
+## 4. Reproduce the exploratory neuron/head causal analysis
 
 This command reproduces the component-level study that preceded the current
 residual-window method. It is an ablation and negative-result audit: its output
@@ -205,9 +249,9 @@ Activation difference and gradient attribution only shortlist components.
 patch has a beneficial direction on at least two tasks and passes the frozen
 clean-harm rule. This historical selection artifact is retained for analysis;
 the proposed adapter uses the independently validated generic-text residual
-window from Section 2.
+window from Section 3.
 
-## 4. Train baseline adapters and reproduce the historical Cycle 1 ablation
+## 5. Train adapters and controls
 
 ```bash
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
@@ -252,15 +296,15 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 The last command is retained solely to reproduce the failed component-level
 Cycle 1 ablation. Its relative-MSE objective and component-selected LoRA are
 not the confirmatory method. The bounded residual-window objective that
-consumes the Section 2 artifacts is published as a separate feature-scoped
+consumes the Section 3 artifacts is published as a separate feature-scoped
 change, so the historical failure cannot silently select the active target.
 
 The commands above reproduce the version-1 pilot and must not be reported as
 the confirmatory comparison. The later bounded residual-window training
-feature supplies its matched output-only baseline and controls for seeds 42,
-43, and 44. In every teacher/student condition, the teacher receives clean
-input, stays frozen, and is never activation-patched; only declared student
-LoRA parameters may change.
+feature supplies proposed-method seeds 42, 43, and 44; its matched output-only
+baseline and scope controls remain frozen at seed 42. In every teacher/student
+condition, the teacher receives clean input, stays frozen, and is never
+activation-patched; only declared student LoRA parameters may change.
 
 Every public training command requires online W&B tracking. Supply the API key
 only through `WANDB_API_KEY`; `WANDB_ENTITY` is optional. At each completed
@@ -292,18 +336,28 @@ residual-window comparison.
 
 Cycle 3 holds the frozen self-teacher, training stream, all-linear LoRA
 capacity, optimizer, exact clean:noisy alternation, and 10M student-token
-budget constant. The proposed condition differs from output-distribution
-matching only by a bounded residual-state cosine loss at the independently
-selected causal window. The random-window and all-layer controls change only
-the state-loss layer scope.
+budget constant. The proposed condition differs from the output-distribution
+matching baseline only by a bounded residual-state cosine loss at the
+independently selected causal window. The random-window and all-layer controls
+change only the state-loss layer scope.
 
 ```bash
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-output-matching \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-output-matching-10m.yaml" \
+  --training-data "${CYCLE3_DATA}" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --monitor-data "${EVALUATION_DATA}" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --output-dir "${TRAIN_ROOT}/training/cycle3/output-matching/seed-42"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-localized-state-distillation \
   --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-causal-window-10m.yaml" \
-  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --training-data "${CYCLE3_DATA}" \
   --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
-  --monitor-data "${TRAIN_ROOT}/evaluation-data/robustness-v1" \
+  --monitor-data "${EVALUATION_DATA}" \
   --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
   --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
   --seed 42 --gpu-id "${GPU_ID}" \
@@ -313,9 +367,9 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-random-window-state-distillation \
   --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-random-window-10m.yaml" \
-  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --training-data "${CYCLE3_DATA}" \
   --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
-  --monitor-data "${TRAIN_ROOT}/evaluation-data/robustness-v1" \
+  --monitor-data "${EVALUATION_DATA}" \
   --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
   --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
   --seed 42 --gpu-id "${GPU_ID}" \
@@ -325,46 +379,19 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-global-state-alignment \
   --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-all-layer-state-10m.yaml" \
-  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --training-data "${CYCLE3_DATA}" \
   --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
-  --monitor-data "${TRAIN_ROOT}/evaluation-data/robustness-v1" \
+  --monitor-data "${EVALUATION_DATA}" \
   --seed 42 --gpu-id "${GPU_ID}" \
   --wandb-project "${WANDB_PROJECT}" \
   --output-dir "${TRAIN_ROOT}/training/cycle3/all-layer-state-distillation/seed-42"
 ```
 
-Run the three conditions serially when only one GPU is available. Add `--resume`
+Run the four conditions serially when only one GPU is available. Add `--resume`
 only when the same output directory already contains an exact compatible
-checkpoint. W&B uses descriptive names beginning with `Proposed method`,
-`Random-window control`, and `All-layer control`; each name also includes the
-operation, layer range, model, token budget, and seed.
-
-## 5. Freeze the independent evaluation study
-
-Freeze the exact clean/typo texts before comparing any adapter. The source
-config must be the byte-identical v3 config used to build the exclusion data;
-this binds every evaluation item to the training, diagnostic, and tune IDs it
-must exclude. This step runs no model and reveals no model output.
-
-```bash
-EVALUATION_DATA="${TRAIN_ROOT}/evaluation-data/robustness-v1"
-SOURCE_CONFIG="${TRAIN_PROJECT}/configs/cycle3/gemma4b-data-64m.yaml"
-
-uv run --project "${TRAIN_PROJECT}" --locked \
-  typo-cot freeze-robustness-evaluation \
-  --protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
-  --source-config "${SOURCE_CONFIG}" \
-  --exclude-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
-  --output-dir "${EVALUATION_DATA}"
-```
-
-The command writes hash-bound `tune`, one-use `pre_pr_gate`, and one-use
-`final_test` task and corpus manifests. Exact typo strings are shared by Base,
-the output-distribution-matching baseline, and every proposed adapter. Task
-IDs, corpus groups, natural-typo repositories, and corrected words are
-disjoint across training/tune/sealed roles. The committed protocol and its
-gate definitions are described in
-[`../typo-cot/docs/robustness_evaluation_protocol_v1.md`](../typo-cot/docs/robustness_evaluation_protocol_v1.md).
+checkpoint. W&B uses descriptive names beginning with `Kojima baseline`,
+`Proposed method`, `Random-window control`, and `All-layer control`; each name
+also includes the operation, layer range, model, token budget, and seed.
 
 ## 6. Evaluate held-out robustness
 
@@ -373,25 +400,85 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot evaluate-typo-robustness \
   --config "${TRAIN_PROJECT}/configs/gemma4b-evaluation.yaml" \
   --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
-  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --training-data "${CYCLE3_DATA}" \
   --evaluation-data "${EVALUATION_DATA}" \
   --evaluation-role tune \
   --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
   --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/output-matching/seed-42/adapter" \
   --checkpoint "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-42/adapter" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/random-window-state-distillation/seed-42/adapter" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/all-layer-state-distillation/seed-42/adapter" \
   --splits same-task unseen-task unseen-content unseen-typo \
   --gpu-id "${GPU_ID}" \
-  --output-dir "${TRAIN_ROOT}/evaluation/tune/targeted-seed-42"
+  --output-dir "${TRAIN_ROOT}/evaluation/tune/cycle3-comparison-seed-42"
 ```
 
-`base` is always evaluated automatically. Repeat `--checkpoint` to compare
-multiple completed adapters; each path must contain the hash-bound
-`training_runtime.json` written by its training command. Use only `tune` while
-changing the method. After all hyperparameters and the checkpoint are frozen,
-run the same command once with `--evaluation-role pre-pr-gate` and
-`--confirm-sealed-role`; use `final-test` only after the passing pre-PR
-checkpoint is frozen. Sealed-role access is recorded next to the immutable data
-artifacts and cannot be silently repeated.
+`base` is always evaluated automatically, so the example compares five model
+conditions on identical pairs. Each checkpoint path must contain the hash-bound
+`training_runtime.json` written by its training command. This first command is
+the repeatable seed-42 `tune` comparison; it is not a valid sealed-role
+checkpoint inventory.
+
+Only after the tune result freezes the method and hyperparameters, produce the
+remaining proposed-method seeds required by the frozen evaluation protocol:
+
+```bash
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-localized-state-distillation \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-causal-window-10m.yaml" \
+  --training-data "${CYCLE3_DATA}" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --monitor-data "${EVALUATION_DATA}" \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --seed 43 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --output-dir "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-43"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-localized-state-distillation \
+  --config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-causal-window-10m.yaml" \
+  --training-data "${CYCLE3_DATA}" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --monitor-data "${EVALUATION_DATA}" \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --seed 44 --gpu-id "${GPU_ID}" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --output-dir "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-44"
+```
+
+The one-use pre-PR gate is executable only after both producers above complete.
+It must receive the complete proposed-method seed inventory 42/43/44; the
+matched baseline and scope controls remain the frozen seed-42 checkpoints:
+
+```bash
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot evaluate-typo-robustness \
+  --config "${TRAIN_PROJECT}/configs/gemma4b-evaluation.yaml" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --training-data "${CYCLE3_DATA}" \
+  --evaluation-data "${EVALUATION_DATA}" \
+  --evaluation-role pre-pr-gate \
+  --confirm-sealed-role \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/output-matching/seed-42/adapter" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-42/adapter" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-43/adapter" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-44/adapter" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/random-window-state-distillation/seed-42/adapter" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/all-layer-state-distillation/seed-42/adapter" \
+  --splits same-task unseen-task unseen-content unseen-typo \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/evaluation/pre-pr-gate/cycle3-comparison"
+```
+
+Use `final-test` only after the passing pre-PR checkpoint inventory is frozen,
+by rerunning this complete-inventory command with `--evaluation-role
+final-test` and a new final-test output directory. Sealed-role access is
+recorded next to the immutable data artifacts and cannot be silently repeated.
 
 The generic-text window must include its independent passing validation
 artifact. The evaluator binds both files into the run identity; it will not
@@ -430,44 +517,73 @@ rejects exact identity/content overlap, and applies the frozen character-5gram
 near-duplicate check. This is a separate data-preparation command and uses no
 GPU:
 
-Use one separately reviewed `ROOTED_REGISTRY` containing `wp2_project_root`
-and `wp2_project_root_identity` for all four commands below. The checked-in
-legacy registry-v1 is evidence only. Mixing the two changes the bound
-preregistration SHA, so validation rejects that training run.
+This section cannot run from repository artifacts alone. Before executing it,
+an operator must provision an absolute external artifact directory as
+`SAE_ROOT` and supply a separately reviewed absolute `ROOTED_REGISTRY` that
+contains `wp2_project_root` and `wp2_project_root_identity`. The checked-in
+legacy registry-v1 is evidence only. Mixing it with the reviewed registry
+changes the bound preregistration SHA, so validation rejects that training run.
+Every block fails before data preparation or GPU execution when its external
+contract or command-specific preceding artifact is invalid or missing. Each SAE
+command block below runs in its own subshell: GPU 0 and the SAE W&B project are
+local to that block, every `exit 2` exits only the subshell, and the caller's
+`GPU_ID`, `WANDB_PROJECT`, and `EVALUATION_DATA` remain unchanged.
 
 ```bash
-GPU_ID="0"
-SAE_ROOT="/diskthalys/ssd14tc/sfukuhata/typo_sae_artifacts/gemma4b-v1"
-TRAINING_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-training/results/data/gemma4b-cycle3-64m/training_sources.jsonl"
-EVALUATION_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-training/results/evaluation-data/robustness-v1"
-LOCALIZATION_DATA="/tmp/typo-rebuttal-manifest.vi6lNI/repo/projects/typo-robust-training/results/localization/generic-joint-window-v1/pairs"
-SUPPLEMENT_DATA="${SAE_ROOT}/clean-corpus/sae_clean_supplement.jsonl"
-WANDB_PROJECT="typo-robustness-sae"
-ROOTED_REGISTRY="/absolute/path/to/reviewed/rooted-sae-preregistration.yaml"
+(
+: "${SAE_ROOT:?Set SAE_ROOT to a provisioned absolute external artifact directory}"
+: "${ROOTED_REGISTRY:?Set ROOTED_REGISTRY to the separately reviewed absolute registry path}"
+case "${SAE_ROOT}" in /*) ;; *) echo "SAE_ROOT must be absolute" >&2; exit 2 ;; esac
+case "${ROOTED_REGISTRY}" in /*) ;; *) echo "ROOTED_REGISTRY must be absolute" >&2; exit 2 ;; esac
+[ -d "${SAE_ROOT}" ] || { echo "SAE_ROOT does not exist: ${SAE_ROOT}" >&2; exit 2; }
+[ -f "${ROOTED_REGISTRY}" ] || { echo "reviewed ROOTED_REGISTRY does not exist: ${ROOTED_REGISTRY}" >&2; exit 2; }
+
+SAE_TRAINING_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m/training_sources.jsonl"
+SAE_EVALUATION_DATA="${TRAIN_ROOT}/evaluation-data/robustness-v1"
+SAE_LOCALIZATION_DATA="${TRAIN_ROOT}/localization/generic-joint-window-v1/pairs"
+for REQUIRED_INPUT in "${SAE_TRAINING_DATA}" "${SAE_EVALUATION_DATA}" "${SAE_LOCALIZATION_DATA}"; do
+  [ -e "${REQUIRED_INPUT}" ] || { echo "required prior artifact does not exist: ${REQUIRED_INPUT}" >&2; exit 2; }
+done
 
 uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-sae-clean-corpus \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
   --registry "${ROOTED_REGISTRY}" \
-  --existing-data "${TRAINING_DATA}" \
-  --exclude-data "${EVALUATION_DATA}" \
-  --exclude-data "${LOCALIZATION_DATA}" \
+  --existing-data "${SAE_TRAINING_DATA}" \
+  --exclude-data "${SAE_EVALUATION_DATA}" \
+  --exclude-data "${SAE_LOCALIZATION_DATA}" \
   --training-budget minimum \
   --output-dir "${SAE_ROOT}/clean-corpus"
+)
 ```
 
 Then calibrate the three preregistered L1 coefficients on the same combined
 clean stream:
 
 ```bash
-CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+(
+: "${SAE_ROOT:?Set SAE_ROOT to a provisioned absolute external artifact directory}"
+: "${ROOTED_REGISTRY:?Set ROOTED_REGISTRY to the separately reviewed absolute registry path}"
+case "${SAE_ROOT}" in /*) ;; *) echo "SAE_ROOT must be absolute" >&2; exit 2 ;; esac
+case "${ROOTED_REGISTRY}" in /*) ;; *) echo "ROOTED_REGISTRY must be absolute" >&2; exit 2 ;; esac
+[ -d "${SAE_ROOT}" ] || { echo "SAE_ROOT does not exist: ${SAE_ROOT}" >&2; exit 2; }
+[ -f "${ROOTED_REGISTRY}" ] || { echo "reviewed ROOTED_REGISTRY does not exist: ${ROOTED_REGISTRY}" >&2; exit 2; }
+SAE_GPU_ID="0"
+SAE_WANDB_PROJECT="typo-robustness-sae"
+SAE_TRAINING_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m/training_sources.jsonl"
+SAE_SUPPLEMENT_DATA="${SAE_ROOT}/clean-corpus/sae_clean_supplement.jsonl"
+for REQUIRED_INPUT in "${SAE_TRAINING_DATA}" "${SAE_SUPPLEMENT_DATA}"; do
+  [ -f "${REQUIRED_INPUT}" ] || { echo "required SAE input file does not exist: ${REQUIRED_INPUT}" >&2; exit 2; }
+done
+CUDA_VISIBLE_DEVICES="${SAE_GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot calibrate-sparse-autoencoder-l1 \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
   --registry "${ROOTED_REGISTRY}" \
-  --training-data "${TRAINING_DATA}" \
-  --training-data "${SUPPLEMENT_DATA}" \
-  --gpu-id "${GPU_ID}" \
-  --wandb-project "${WANDB_PROJECT}" \
+  --training-data "${SAE_TRAINING_DATA}" \
+  --training-data "${SAE_SUPPLEMENT_DATA}" \
+  --gpu-id "${SAE_GPU_ID}" \
+  --wandb-project "${SAE_WANDB_PROJECT}" \
   --output-dir "${SAE_ROOT}/l1-calibration"
+)
 ```
 
 Train the two layer-5 initialization seeds and the layer-20 SAE. The
@@ -477,38 +593,70 @@ manifest by repeating `--training-data` when needed to reach at least 100M
 unique source tokens.
 
 ```bash
-CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+(
+: "${SAE_ROOT:?Set SAE_ROOT to a provisioned absolute external artifact directory}"
+: "${ROOTED_REGISTRY:?Set ROOTED_REGISTRY to the separately reviewed absolute registry path}"
+case "${SAE_ROOT}" in /*) ;; *) echo "SAE_ROOT must be absolute" >&2; exit 2 ;; esac
+case "${ROOTED_REGISTRY}" in /*) ;; *) echo "ROOTED_REGISTRY must be absolute" >&2; exit 2 ;; esac
+[ -d "${SAE_ROOT}" ] || { echo "SAE_ROOT does not exist: ${SAE_ROOT}" >&2; exit 2; }
+[ -f "${ROOTED_REGISTRY}" ] || { echo "reviewed ROOTED_REGISTRY does not exist: ${ROOTED_REGISTRY}" >&2; exit 2; }
+SAE_GPU_ID="0"
+SAE_WANDB_PROJECT="typo-robustness-sae"
+SAE_TRAINING_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m/training_sources.jsonl"
+SAE_SUPPLEMENT_DATA="${SAE_ROOT}/clean-corpus/sae_clean_supplement.jsonl"
+SAE_L1_SELECTION="${SAE_ROOT}/l1-calibration/l1_selection.json"
+for REQUIRED_INPUT in "${SAE_TRAINING_DATA}" "${SAE_SUPPLEMENT_DATA}" "${SAE_L1_SELECTION}"; do
+  [ -f "${REQUIRED_INPUT}" ] || { echo "required SAE input file does not exist: ${REQUIRED_INPUT}" >&2; exit 2; }
+done
+CUDA_VISIBLE_DEVICES="${SAE_GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot train-sparse-autoencoders \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
   --registry "${ROOTED_REGISTRY}" \
-  --training-data "${TRAINING_DATA}" \
-  --training-data "${SUPPLEMENT_DATA}" \
-  --l1-selection "${SAE_ROOT}/l1-calibration/l1_selection.json" \
-  --gpu-id "${GPU_ID}" \
-  --wandb-project "${WANDB_PROJECT}" \
+  --training-data "${SAE_TRAINING_DATA}" \
+  --training-data "${SAE_SUPPLEMENT_DATA}" \
+  --l1-selection "${SAE_L1_SELECTION}" \
+  --gpu-id "${SAE_GPU_ID}" \
+  --wandb-project "${SAE_WANDB_PROJECT}" \
   --output-dir "${SAE_ROOT}/training"
+)
 ```
 
 The frozen 10M-token activation subsample stores four bfloat16 residual streams
 and requires about 205 GB of disk. A 1M-token shuffle buffer can temporarily use
 more than 41 GB of host RAM while it is joined and permuted. Before starting,
-ensure that `SAE_ROOT` has at least 220 GB free and the host has at least 48 GB
-available RAM. The configured shared volume currently satisfies these bounds.
+the operator must verify that the provisioned `SAE_ROOT` has at least 220 GB
+free and the host has at least 48 GB available RAM.
 
 Finally compute held-in firing probabilities, reconstruction-error scale, and
 the frozen WP-2 acceptance report. This command evaluates only clean LM data;
 it does not run task accuracy or open any evaluation tier.
 
 ```bash
-CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+(
+: "${SAE_ROOT:?Set SAE_ROOT to a provisioned absolute external artifact directory}"
+: "${ROOTED_REGISTRY:?Set ROOTED_REGISTRY to the separately reviewed absolute registry path}"
+case "${SAE_ROOT}" in /*) ;; *) echo "SAE_ROOT must be absolute" >&2; exit 2 ;; esac
+case "${ROOTED_REGISTRY}" in /*) ;; *) echo "ROOTED_REGISTRY must be absolute" >&2; exit 2 ;; esac
+[ -d "${SAE_ROOT}" ] || { echo "SAE_ROOT does not exist: ${SAE_ROOT}" >&2; exit 2; }
+[ -f "${ROOTED_REGISTRY}" ] || { echo "reviewed ROOTED_REGISTRY does not exist: ${ROOTED_REGISTRY}" >&2; exit 2; }
+SAE_GPU_ID="0"
+SAE_TRAINING_DATA="${TRAIN_ROOT}/data/gemma4b-cycle3-64m/training_sources.jsonl"
+SAE_SUPPLEMENT_DATA="${SAE_ROOT}/clean-corpus/sae_clean_supplement.jsonl"
+SAE_CHECKPOINT_DIR="${SAE_ROOT}/training"
+for REQUIRED_INPUT in "${SAE_TRAINING_DATA}" "${SAE_SUPPLEMENT_DATA}"; do
+  [ -f "${REQUIRED_INPUT}" ] || { echo "required SAE input file does not exist: ${REQUIRED_INPUT}" >&2; exit 2; }
+done
+[ -d "${SAE_CHECKPOINT_DIR}" ] || { echo "SAE checkpoint directory does not exist: ${SAE_CHECKPOINT_DIR}" >&2; exit 2; }
+CUDA_VISIBLE_DEVICES="${SAE_GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot validate-sparse-autoencoders \
   --config "${TRAIN_PROJECT}/configs/sae/gemma4b-sae-v1.yaml" \
   --registry "${ROOTED_REGISTRY}" \
-  --validation-data "${TRAINING_DATA}" \
-  --validation-data "${SUPPLEMENT_DATA}" \
-  --checkpoint-dir "${SAE_ROOT}/training" \
-  --gpu-id "${GPU_ID}" \
+  --validation-data "${SAE_TRAINING_DATA}" \
+  --validation-data "${SAE_SUPPLEMENT_DATA}" \
+  --checkpoint-dir "${SAE_CHECKPOINT_DIR}" \
+  --gpu-id "${SAE_GPU_ID}" \
   --output-dir "${SAE_ROOT}/validation"
+)
 ```
 
 The first WP-2 validation reserves its attempt with an exclusive project-root
