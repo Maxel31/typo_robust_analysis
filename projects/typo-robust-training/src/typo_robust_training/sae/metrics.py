@@ -33,8 +33,8 @@ class SaeStatisticsAccumulator:
         self.dead_probability_below = float(dead_probability_below)
         self._torch = torch
         self._tokens = 0
-        self._input_sum = None
-        self._input_squared_sum = 0.0
+        self._input_mean = None
+        self._input_m2 = 0.0
         self._error_sum = 0.0
         self._feature_counts = torch.zeros(d_sae, dtype=torch.int64)
         self._l0_counts = torch.zeros(d_sae + 1, dtype=torch.int64)
@@ -53,16 +53,26 @@ class SaeStatisticsAccumulator:
             or int(features.shape[1]) != self.d_sae
         ):
             raise ValueError("SAE statistics tensor shapes differ")
-        values = inputs.detach().float().cpu()
-        recon = reconstruction.detach().float().cpu()
+        values = inputs.detach().to(dtype=torch.float64, device="cpu")
+        recon = reconstruction.detach().to(dtype=torch.float64, device="cpu")
         active = features.detach().cpu() > 0
         count = int(values.shape[0])
         if count == 0:
             return
+        batch_mean = values.mean(dim=0)
+        batch_m2 = float(((values - batch_mean) ** 2).sum().item())
+        if self._input_mean is None:
+            self._input_mean = batch_mean
+            self._input_m2 = batch_m2
+        else:
+            previous_tokens = self._tokens
+            total_tokens = previous_tokens + count
+            delta = batch_mean - self._input_mean
+            self._input_m2 += batch_m2 + float((delta**2).sum().item()) * (
+                previous_tokens * count / total_tokens
+            )
+            self._input_mean = self._input_mean + delta * (count / total_tokens)
         self._tokens += count
-        summed = values.sum(dim=0)
-        self._input_sum = summed if self._input_sum is None else self._input_sum + summed
-        self._input_squared_sum += float((values**2).sum().item())
         errors = ((values - recon) ** 2).sum(dim=-1)
         self._error_sum += float(errors.sum().item())
         self._errors.extend(float(value) for value in errors.tolist())
@@ -92,10 +102,9 @@ class SaeStatisticsAccumulator:
         return (lower + upper) / 2.0
 
     def finalize(self) -> SaeStatistics:
-        if self._tokens == 0 or self._input_sum is None:
+        if self._tokens == 0 or self._input_mean is None:
             raise ValueError("SAE statistics contain no tokens")
-        mean_correction = float((self._input_sum**2).sum().item()) / self._tokens
-        total_variance = self._input_squared_sum - mean_correction
+        total_variance = self._input_m2
         if total_variance <= 0.0:
             raise ValueError("SAE validation activations have zero variance")
         probabilities = tuple(
