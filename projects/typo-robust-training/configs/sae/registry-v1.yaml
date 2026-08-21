@@ -1,0 +1,97 @@
+{
+  "schema_version": "robustness-sae-preregistry/v1",
+  "registered_at": "2026-08-13T00:00:00+09:00",
+  "track": "diagnostic-and-future-study-only",
+  "non_interference": {
+    "protected_gpu_ids": [5, 6],
+    "sae_gpu_id": 0,
+    "gpu_reassignment_amendment": {
+      "amended_at": "2026-08-15T04:00:00+09:00",
+      "trigger": "operator reassigned the waiting SAE job to available GPU 0 after GPU 1 became externally occupied",
+      "from_gpu_id": 1,
+      "to_gpu_id": 0,
+      "scientific_configuration_changed": false,
+      "wp2_or_wp5_gate_changed": false
+    },
+    "protected_runs": [
+      "Output distribution matching (Kojima-style baseline), seed 42, 10M student tokens",
+      "Causal-window localized state distillation, seed 42, 10M student tokens"
+    ],
+    "prohibited_changes": [
+      "training configuration",
+      "rho or lambda_state",
+      "data stream",
+      "restart or termination",
+      "task-accuracy evaluation before completion"
+    ]
+  },
+  "l1_calibration_amendment": {
+    "amended_at": "2026-08-15T04:00:00+09:00",
+    "trigger": "the preregistered one-million-token calibration completed with no in-range candidate; the single lambda/token amendment jointly widens the coefficient grid and raises the budget to ten deterministic one-million-token buffers",
+    "failed_wandb_run_id": "cc36b12ad5150642",
+    "original_coefficients": [0.0001, 0.0003, 0.001],
+    "observed_median_l0_by_layer": {
+      "5": [5465.0, 5330.0, 4874.0],
+      "20": [3890.0, 3881.0, 3856.0]
+    },
+    "adjusted_coefficients": [0.01, 0.1, 1.0],
+    "original_calibration_tokens": 1000000,
+    "adjusted_calibration_tokens": 10000000,
+    "calibration_shuffle_buffer_activations": 1000000,
+    "calibration_activation_buffers": 10,
+    "calibration_activation_batch_size": 2048,
+    "calibration_tokens_changed": true,
+    "model_forward_completed": true,
+    "wp2_or_wp5_gate_changed": false,
+    "remaining_adjustments": 0
+  },
+  "data_contract": {
+    "allowed": "clean FineWeb-Edu train split only",
+    "forbidden_roles": ["tune", "pre_pr_gate", "final_test", "localization-selection", "localization-validation"],
+    "source_manifest_sha256": "ed99e962f02564369ac9878ef7db1d3d9e7b7c4e4876f8e39938cbe4fbe73967",
+    "current_run_exclusion_rule": "stable-training-order-prefix/v1:seed=42:epoch=0:records=30000",
+    "initial_eligible_records": 126901,
+    "initial_eligible_source_tokens": 51735090,
+    "initial_eligible_record_ids_sha256": "c89904867b60a3ae870d6c48aa7d5c0035ebb8783665d6ef62006a7514b9e190",
+    "deduplication_amendment": {
+      "amended_at": "2026-08-15T00:00:00+09:00",
+      "trigger": "pre-run corpus construction rejected duplicate normalized content before producing any artifact or model forward",
+      "rule": "retain every reserved-prefix exclusion; then retain the first eligible record in sae-clean-source-order/v1 for each normalized content hash",
+      "eligible_records_removed": 131,
+      "source_manifest_changed": false,
+      "wp2_or_wp5_gate_changed": false
+    },
+    "identity_replay_amendment": {
+      "amended_at": "2026-08-15T02:00:00+09:00",
+      "trigger": "calibration input validation found protected record IDs replayed with different segmentation before runtime initialization",
+      "rule": "retain every raw protected record, source, and group ID in the supplement exclusion inventory, including normalized-content duplicates removed from the eligible stream",
+      "overlapping_record_ids_observed": 8,
+      "model_forward_started": false
+    },
+    "selected_record_id_sha256": null
+  },
+  "wp2_gates": {
+    "fvu_max": 0.35,
+    "median_l0_inclusive": [30, 150],
+    "dead_feature_probability_below": 0.00001,
+    "dead_feature_rate_max": 0.20,
+    "splice_documents": 200,
+    "splice_kl_median_max_nats_per_token": 0.15,
+    "statistics_required": ["feature_firing_probabilities", "reconstruction_error_median"],
+    "maximum_retrains_after_failure": 1
+  },
+  "wp3_predictions": {
+    "P1": "At layer 20, paired L0(typo-clean) is positive.",
+    "P2": "The layer-0-to-5 full-state patch moves layer-20 L0 and energy toward clean."
+  },
+  "wp4_predictions": {
+    "P3": "Localized state distillation suppresses layer-20 paired L0 and energy more than output matching.",
+    "P4": "Both conditions retain small clean-side energy drift."
+  },
+  "wp5_gates": {
+    "G1_feature_sufficiency": "median(R_z) >= 0.50 * median(R_full)",
+    "G2_spurious_suppression": "median(R_sup) >= 0.25 * median(R_full)",
+    "G3_seed_robustness": "G1 and G2 directions reproduce with the second layer-5 SAE seed",
+    "decision": "Only G1 and G3 permit a feature-targeted successor-study draft; no successor training is authorized."
+  }
+}

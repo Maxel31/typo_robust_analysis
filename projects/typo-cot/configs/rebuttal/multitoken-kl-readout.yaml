@@ -1,0 +1,43 @@
+{
+  "schema_version": "multitoken-kl-readout-config/v1",
+  "window": {
+    "start": 0,
+    "stop": 6
+  },
+  "teacher_forcing": {
+    "tokens": 16,
+    "target_source": "clean-continuation-token-ids/v1",
+    "prompt_prefix_validation": "exact-token-id-prefix/v1",
+    "model_inputs": "prompt-plus-first-15-target-token-ids/v1",
+    "short_continuation_policy": "record-unavailable-before-forward/v1",
+    "prompt_prefix_mismatch_policy": "record-unavailable-before-forward/v1"
+  },
+  "readout": {
+    "divergence": "kl-clean-to-condition/v1",
+    "primary_token_range": {
+      "start": 2,
+      "stop": 16
+    },
+    "secondary_token_ranges": [
+      {
+        "start": 2,
+        "stop": 4
+      },
+      {
+        "start": 2,
+        "stop": 8
+      }
+    ],
+    "denominator_epsilon": 1e-9,
+    "logits_materialized_dtype": "float32",
+    "kl_dtype": "float64",
+    "negative_restoration": "retain",
+    "negative_kl_roundoff_tolerance": 1e-12
+  },
+  "statistics": {
+    "setting_estimator": "median-pair-score/v1",
+    "pair_bootstrap_replicates": 10000,
+    "bootstrap_seed": 42,
+    "confidence_level": 0.95
+  }
+}

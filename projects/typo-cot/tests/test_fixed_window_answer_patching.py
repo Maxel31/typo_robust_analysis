@@ -544,6 +544,8 @@ def test_runtime_generation_explicitly_freezes_greedy_decoding() -> None:
     runtime = object.__new__(HuggingFaceFixedWindowAnswerPatchingRuntime)
     calls: list[dict[str, object]] = []
     runtime.config = SimpleNamespace(benchmark="gsm8k")
+    runtime.effective_eos_token_ids = (20,)
+    runtime.effective_eos_token_ids_source = "fixture"
     runtime.model = SimpleNamespace(
         generate=lambda **kwargs: calls.append(kwargs) or torch.tensor([[10, 11, 20]])
     )
@@ -560,6 +562,7 @@ def test_runtime_generation_explicitly_freezes_greedy_decoding() -> None:
 
     assert generation.value == "2"
     assert generation.is_correct is True
+    assert generation.termination == "eos"
     assert len(calls) == 1
     assert torch.equal(calls[0].pop("input_ids"), torch.tensor([[10, 11]]))
     assert torch.equal(
@@ -578,7 +581,35 @@ def test_runtime_generation_explicitly_freezes_greedy_decoding() -> None:
         "return_dict_in_generate": False,
         "output_scores": False,
         "pad_token_id": 0,
+        "eos_token_id": [20],
     }
+
+
+def test_runtime_generation_disables_positional_fallback_at_length_cap() -> None:
+    runtime = object.__new__(HuggingFaceFixedWindowAnswerPatchingRuntime)
+    runtime.config = SimpleNamespace(benchmark="gsm8k")
+    runtime.effective_eos_token_ids = (20,)
+    runtime.effective_eos_token_ids_source = "fixture"
+    runtime.model = SimpleNamespace(
+        generate=lambda **_kwargs: torch.tensor([[10, 11, *([7] * 512)]])
+    )
+    runtime.tokenizer = SimpleNamespace(
+        pad_token_id=0,
+        decode=lambda token_ids, **kwargs: (
+            "The unfinished calculation currently reaches 2 dollars."
+        ),
+    )
+
+    generation = runtime._generate(
+        input_ids=torch.tensor([[10, 11]]),
+        attention_mask=torch.ones(1, 2, dtype=torch.long),
+        correct_answer="2",
+    )
+
+    assert generation.termination == "length-cap"
+    assert generation.value == ""
+    assert generation.is_extracted is False
+    assert generation.is_correct is False
 
 
 def test_runtime_provenance_records_numpy_for_bootstrap_reproduction(
@@ -589,6 +620,8 @@ def test_runtime_provenance_records_numpy_for_bootstrap_reproduction(
     runtime.revision = "revision"
     runtime.num_layers = 12
     runtime.device = "cuda:0"
+    runtime.effective_eos_token_ids = (2, 3)
+    runtime.effective_eos_token_ids_source = "fixture"
     runtime.model = SimpleNamespace(
         config=SimpleNamespace(_commit_hash="revision"),
         get_decoder=lambda: SimpleNamespace(layers=[]),
@@ -613,6 +646,11 @@ def test_runtime_provenance_records_numpy_for_bootstrap_reproduction(
     provenance = runtime.provenance()
 
     assert provenance["numpy"] == "version:numpy"
+    assert provenance["effective_eos_token_ids"] == [2, 3]
+    assert provenance["effective_eos_token_ids_source"] == "fixture"
+    assert provenance["answer_extraction"] == (
+        "primary-then-empty-only-fallback-cap-aware/v2"
+    )
 
 
 def test_runner_uses_direction_specific_denominators_and_unextractable_is_failure(

@@ -52,6 +52,27 @@ each operation.
 GPU experiments use the paper-locked `lrp` environment. CPU-only catalog
 inspection and contract tests require no model download.
 
+## ARR additions and robustness training
+
+The analysis contracts for the ARR rebuttal additions and prospective
+typo-robustness training are frozen before result generation in
+[`rebuttal_analysis_plan_v1.md`](projects/typo-cot/docs/rebuttal_analysis_plan_v1.md)
+and
+[`robustness_training_plan_v1.md`](projects/typo-cot/docs/robustness_training_plan_v1.md).
+The CPU-only `build-rebuttal-manifest` command validates and freezes the exact
+six-setting source cohort. The GPU `six-setting-patch-controls`,
+`source-write-coordinate-grid`, `multitoken-kl-readout`, and
+`patch-harm-audit` commands run the first result-producing additions with
+hash-bound inputs and resumable checkpoints. The CPU-only
+`tokenization-severity-analysis` then stratifies all three patch arms without
+additional inference. The GPU-only `subword-position-patching` separately
+compares first-, final-, and all-subword transfers, and
+`held-out-window-evaluation` selects a six-layer window on diagnostic IDs
+before evaluating it on disjoint IDs. The package README gives one descriptive
+command and explicit outputs for each operation.
+Training is published only after held-out evaluation demonstrates a robustness
+improvement while preserving clean performance.
+
 ## Repository map
 
 ```text
@@ -64,6 +85,7 @@ inspection and contract tests require no model download.
 └── projects/typo-cot/
     ├── README.md                   # package setup and current commands
     ├── README.ja.md                # Japanese setup and current commands
+    ├── configs/                    # frozen public experiment protocols
     ├── docs/                       # paper contract and provenance
     ├── results/                    # ignored local outputs (.gitkeep only)
     ├── src/typo_cot/               # importable implementation

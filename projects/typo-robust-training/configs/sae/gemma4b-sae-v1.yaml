@@ -1,0 +1,73 @@
+{
+  "schema_version": "robustness-sae-training-config/v1",
+  "model": {
+    "id": "google/gemma-3-4b-it",
+    "revision": "093f9f388b31de276ce2de164bdc2081324b9767",
+    "dtype": "bfloat16",
+    "d_model": 2560,
+    "decoder_layers": 34,
+    "probe_layers": [5, 20],
+    "activation_subsample_layers": [5, 11, 20, 26]
+  },
+  "data": {
+    "source": "fineweb_edu",
+    "dataset": "HuggingFaceFW/fineweb-edu",
+    "subset": "sample-10BT",
+    "revision": "fc9850dff5e2d0f8f776efe41b24a1c49556cfc5",
+    "split": "train",
+    "clean_only": true,
+    "max_sequence_length": 512,
+    "document_character_limit": 8192,
+    "near_duplicate_shingle_size": 5,
+    "near_duplicate_jaccard_threshold": 0.99,
+    "supplement_stream_order": "pinned-unshuffled-stream/v1",
+    "minimum_training_tokens": 100000000,
+    "preferred_training_tokens": 200000000,
+    "statistics_tokens": 10000000,
+    "activation_subsample_tokens": 10000000,
+    "shuffle_buffer_activations": 1000000,
+    "current_run_exclusion": {
+      "rule": "stable-training-order-prefix/v1",
+      "seed": 42,
+      "epoch": 0,
+      "reserved_records": 30000,
+      "declared_student_token_budget": 10000000
+    }
+  },
+  "sae": {
+    "expansion_factor": 16,
+    "activation": "relu",
+    "regularizer": "l1",
+    "l1_coefficients": [0.01, 0.1, 1.0],
+    "l1_calibration_tokens": 10000000,
+    "l1_selection_rule": "in-range-median-l0-then-lowest-fvu/v1",
+    "optimizer": "adam",
+    "learning_rate": 0.0003,
+    "adam_betas": [0.9, 0.999],
+    "adam_epsilon": 1e-8,
+    "precision": "float32",
+    "activation_batch_size": 2048,
+    "decoder_normalization": "unit-column-every-step/v1",
+    "seeds_by_layer": {
+      "5": [42, 43],
+      "20": [42]
+    }
+  },
+  "acceptance": {
+    "fvu_max": 0.35,
+    "median_l0_min": 30,
+    "median_l0_max": 150,
+    "dead_feature_probability_below": 0.00001,
+    "dead_feature_rate_max": 0.20,
+    "splice_documents": 200,
+    "splice_kl_median_max": 0.15,
+    "maximum_gate_retrains": 1
+  },
+  "feature_kill_test": {
+    "feature_sufficiency_ratio_min": 0.50,
+    "spurious_suppression_ratio_min": 0.25,
+    "requires_layer5_seed_replication": true,
+    "bootstrap_replicates": 10000,
+    "bootstrap_seed": 42
+  }
+}

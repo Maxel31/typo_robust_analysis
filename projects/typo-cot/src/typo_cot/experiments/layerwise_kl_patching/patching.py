@@ -155,6 +155,27 @@ def capture_block_outputs(
     outputs.  Every hook is removed even when the supplied forward raises.
     """
 
+    captured, _output = capture_block_outputs_with_forward(
+        layers,
+        positions=positions,
+        forward=forward,
+    )
+    return captured
+
+
+def capture_block_outputs_with_forward(
+    layers: Sequence[nn.Module],
+    *,
+    positions: Sequence[int],
+    forward: Callable[[], Any],
+) -> tuple[list[torch.Tensor], Any]:
+    """Capture residual rows and return the same forward's model output.
+
+    This is the single-pass form of :func:`capture_block_outputs`.  It keeps
+    donor capture and downstream logits tied to one identical forward without
+    retaining activation graphs in the detached CPU donor tensors.
+    """
+
     decoder_layers = _validated_layers(layers)
     token_positions = _positions_tuple(positions)
     if not callable(forward):
@@ -176,7 +197,7 @@ def capture_block_outputs(
         for layer_index, layer in enumerate(decoder_layers):
             handles.append(layer.register_forward_hook(make_hook(layer_index)))
         with torch.no_grad():
-            forward()
+            output = forward()
     finally:
         for handle in handles:
             handle.remove()
@@ -184,7 +205,7 @@ def capture_block_outputs(
     missing = [index for index, values in enumerate(captured) if values is None]
     if missing:
         raise RuntimeError(f"forward did not execute decoder block(s): {missing}")
-    return [values for values in captured if values is not None]
+    return [values for values in captured if values is not None], output
 
 
 class BlockOutputPatch:

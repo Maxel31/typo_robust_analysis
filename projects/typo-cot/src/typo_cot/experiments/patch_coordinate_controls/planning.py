@@ -10,9 +10,13 @@ invariants can be checked before GPU work starts.
 
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+
+from typo_cot.data.matched_donors import (
+    MatchedDonorCandidate,
+    plan_cyclic_derangement,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,8 +122,7 @@ def assign_cross_item_donors(items: Iterable[DonorItem]) -> dict[tuple[str, str]
     because silently dropping it would change the paired denominator.
     """
 
-    groups: dict[tuple[str, int], list[str]] = defaultdict(list)
-    seen: set[tuple[str, str]] = set()
+    candidates: list[MatchedDonorCandidate] = []
     for item in items:
         if not isinstance(item, DonorItem):
             raise TypeError("cross-item donor entries must be DonorItem instances")
@@ -137,24 +140,21 @@ def assign_cross_item_donors(items: Iterable[DonorItem]) -> dict[tuple[str, str]
                 f"targeting={item.targeting!r}, sample_id={item.sample_id!r}, "
                 f"n_positions={item.n_positions!r}"
             )
-        recipient_key = (item.targeting, item.sample_id)
-        if recipient_key in seen:
-            raise ValueError(f"duplicate cross-item donor recipient: {recipient_key!r}")
-        seen.add(recipient_key)
-        groups[(item.targeting, item.n_positions)].append(item.sample_id)
-
-    donors: dict[tuple[str, str], str] = {}
-    for (targeting, n_positions), sample_ids in sorted(groups.items()):
-        sample_ids.sort()
-        if len(sample_ids) == 1:
-            raise ValueError(
-                "cross-item donor stratum is singleton: "
-                f"targeting={targeting!r}, n_positions={n_positions}, "
-                f"sample_id={sample_ids[0]!r}"
+        candidates.append(
+            MatchedDonorCandidate(
+                stratum=(item.targeting, str(item.n_positions)),
+                identity=(item.targeting, item.sample_id),
             )
-        for index, sample_id in enumerate(sample_ids):
-            donors[(targeting, sample_id)] = sample_ids[(index + 1) % len(sample_ids)]
-    return donors
+        )
+
+    plan = plan_cyclic_derangement(candidates, reject_singletons=True)
+    return {
+        (targeting, sample_id): donor_sample_id
+        for (
+            (targeting, sample_id),
+            (_donor_targeting, donor_sample_id),
+        ) in plan.assignments
+    }
 
 
 __all__ = [

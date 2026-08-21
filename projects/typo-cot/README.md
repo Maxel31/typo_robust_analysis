@@ -61,6 +61,407 @@ operation-specific arguments, cohort, intervention, readout, outputs, compute
 class, and implementation status. Direct experiment runners are added in
 separate reviewed PRs; only entries marked `implemented` are runnable.
 
+## Implemented ARR manifest and coordinate controls
+
+`build-rebuttal-manifest` is implemented and CPU-only. It accepts the twelve
+completed `prepare-edited-pairs` sources and six completed fixed-window runs
+that reproduce the paper's six-setting reference. It fails closed unless their
+schemas, hashes, one revision per model, one benchmark cohort across models,
+paper-wide (not explicit sample-ID) cohort selection, selected-anchor audit,
+uncapped harm cohort, explicit alignment-ineligible coverage, and the paper's
+1,241-pair/800-restoration totals agree. It does not run a model or inspect any
+new intervention result.
+
+The manifest also requires the complete fixed-window producer protocol, not
+only its schema version. Every baseline and patched generation must record its
+effective EOS IDs and explicit `eos` or `length-cap` termination. The builder
+then re-extracts every answer, disables positional fallback for capped text,
+and recomputes each restoration event. Hash-valid but semantically inconsistent
+records are rejected.
+
+```bash
+PAIR_ROOT=projects/typo-cot/results/prepare-edited-pairs
+FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+uv run --project projects/typo-cot typo-cot build-rebuttal-manifest \
+  --prepared-pairs-root "${PAIR_ROOT}" \
+  --fixed-window-root "${FIXED_ROOT}" \
+  --output-dir "${REBUTTAL_ROOT}/manifest"
+```
+
+The command writes `pair_manifest.jsonl`, `cohort_ids.json`,
+`source_audit.json`, and `run.json`. These generated artifacts remain local and
+are inputs to every result-producing ARR command below.
+
+`six-setting-patch-controls` is implemented and GPU-only. It reuses the
+hash-validated correct-coordinate outcomes from the six fixed-window runs and
+generates the prospective strict offset-2 and deterministic cross-item arms.
+The primary analysis uses only each setting's common-valid pairs, runs 12 exact
+McNemar tests with one Holm family, and computes paired and equal-setting nested
+bootstrap intervals. Use exactly one physical GPU; `--limit-per-setting` is a
+non-confirmatory smoke-test option and `--resume` verifies and reuses completed
+pair checkpoints.
+
+The reused correct arm and both new arms use the same termination-aware
+primary-then-empty-only fallback. Positional rules are disabled at the length
+cap. Effective EOS IDs and termination are validated for the reused arm and
+recorded for every new generation before paired scoring.
+
+```bash
+GPU_ID=0
+FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot six-setting-patch-controls \
+  --config projects/typo-cot/configs/rebuttal/six-setting-patch-controls.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --fixed-window-root "${FIXED_ROOT}" \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/six-setting-patch-controls"
+```
+
+The command writes `control_records.jsonl`, `pair_status_records.jsonl`,
+`six_setting_control_table.csv`, `common_denominator_flow.csv`,
+`multiplicity_table.csv`, `macro_average.json`,
+`risk_difference_forest.svg`, and a hash-bound `run.json`.
+
+`source-write-coordinate-grid` is implemented and GPU-only. It separates donor
+content from write location over the primary Gemma/GSM8K and prespecified
+replication Mistral/MMLU cohorts. The common-valid denominator requires the
+complete correct and strict offset coordinate plans. It reuses fixed `E->E`
+events and generates `E->O`, `O->E`, and `O->O`, then reports Cochran's Q and
+the two prespecified paired contrasts per cohort with one Holm family.
+All four arms use the fixed-window producer's termination-aware extraction
+contract. Positional fallback is disabled at the length cap, and termination
+remains recorded for every new generation.
+`--limit-per-cohort` is available only for non-confirmatory smoke tests.
+
+```bash
+GPU_ID=0
+FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot source-write-coordinate-grid \
+  --config projects/typo-cot/configs/rebuttal/source-write-coordinate-grid.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --fixed-window-root "${FIXED_ROOT}" \
+  --cohorts primary replication \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/source-write-coordinate-grid"
+```
+
+The command writes `source_write_grid_records.jsonl`,
+`pair_status_records.jsonl`, `source_write_grid_table.csv`,
+`source_write_contrasts.csv`, and a hash-bound `run.json`.
+
+`multitoken-kl-readout` is implemented and GPU-only. For every restoration
+pair in the six-setting manifest, it first tokenizes the stored clean
+continuation. A pair with fewer than 16 continuation tokens is recorded as
+`clean_continuation_lt_16`; a pair whose prompt token IDs are not an exact
+prefix after appending the continuation is recorded as
+`clean_prompt_not_exact_token_prefix`. Both checks happen before any model
+forward. These pairs are excluded from the readout denominator while remaining
+in the 1,241-pair audit trail. The output reports `n_target_available` per
+setting and `target_available_pairs` overall.
+For every available pair, the command teacher-forces the same first 16 token
+IDs after the clean, typo, and patched-typo prompts. The patch copies the
+edited-word state over layers `[0,6)`. The primary per-pair score compares the
+mean `KL(clean || patched)` with `KL(clean || typo)` over tokens 2--16,
+deliberately excluding the first CoT token used by the original targeting
+metric. Secondary outputs cover tokens 2--4, tokens 2--8, token-wise raw KL
+reduction, and the paired first-token versus tokens 2--16 difference. Near-zero untreated
+denominators are excluded according to the frozen analysis plan; negative
+restoration values are retained. `--limit-per-setting` is available only for
+non-confirmatory smoke tests, and `--resume` verifies input-content-addressed,
+hash-bound pair checkpoints before reuse.
+Per-token diagnostic labels use the tokenizer's native vocabulary pieces,
+rather than independently decoding byte fragments as if each were text.
+
+```bash
+GPU_ID=0
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot multitoken-kl-readout \
+  --config projects/typo-cot/configs/rebuttal/multitoken-kl-readout.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --teacher-forced-tokens 16 \
+  --primary-token-range 2:16 \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/multitoken-kl-readout"
+```
+
+The command writes `multitoken_kl_records.jsonl`, `setting_metrics.csv`,
+`token_position_trajectory.csv`, `token_position_trajectory.svg`,
+`multitoken_summary.json`, and a hash-bound `run.json`.
+
+`patch-harm-audit` is implemented and GPU-only. It selects every aligned
+clean-correct/typo-correct pair in the manifest without a per-setting cap,
+copies the clean edited-word-final states to the corresponding typo positions
+over layers `[0,6)`, and greedily regenerates the patched answer. The stored,
+deterministically re-extracted typo answer is the pre-intervention baseline.
+`preserve` means patched-correct; `harm` means patched-incorrect and therefore
+includes unextractable generations, which are also reported separately.
+`answer_changed` compares the canonical extracted values and is true for an
+unextractable patched answer because the baseline answer is extracted.
+
+The command also combines the complete harm audit with the manifest-bound
+800/1,241 fixed-window repair partition. This output is explicitly labelled a
+`repair-harm-conditional-composite`, not population net accuracy, because the
+manifest retains prepared typo-wrong records outside that paper denominator.
+`--limit-per-setting` exists only for a non-confirmatory smoke test; composite
+transition estimates are unavailable whenever that limit is used. `--resume`
+reuses only input-content-addressed checkpoints after hash and runtime
+validation.
+
+```bash
+GPU_ID=0
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot patch-harm-audit \
+  --config projects/typo-cot/configs/rebuttal/patch-harm-audit.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --cohort clean-correct-typo-correct \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/patch-harm-audit"
+```
+
+The command writes `patch_harm_records.jsonl`, `setting_harm_table.csv`,
+`repair_harm_composite.csv`, `patch_harm_summary.json`, and a hash-bound
+`run.json`.
+
+`tokenization-severity-analysis` is implemented and CPU-only. It accepts only
+a complete, hash-validated six-setting controls run over the exact manifest;
+non-confirmatory limited runs are rejected. Without additional model
+inference, every restoration pair is assigned to exactly one bin in each of
+four prespecified dimensions:
+
+- all edited words keep their subtoken count / at least one count changes;
+- typo-side fragmentation increases for at least one edited word / does not;
+- one / two / three-to-four aligned edits; and
+- all clean edited words are single-token / at least one is multi-token.
+
+For every bin, including empty and tiny cells, the long-form table reports all
+three arms using both each arm's planned-valid denominator and the common-valid
+denominator shared by correct, offset, and cross-item. Rows are emitted for the
+overall cohort and separately for all six settings, so pooled rates never hide
+setting composition.
+
+```bash
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+uv run --project projects/typo-cot typo-cot tokenization-severity-analysis \
+  --config projects/typo-cot/configs/rebuttal/tokenization-severity-analysis.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --controls-run "${REBUTTAL_ROOT}/six-setting-patch-controls" \
+  --output-dir "${REBUTTAL_ROOT}/tokenization-severity-analysis"
+```
+
+The command writes `tokenization_severity_records.jsonl`,
+`tokenization_severity_table.csv`, `tokenization_severity_summary.json`, and a
+hash-bound `run.json`.
+
+`subword-position-patching` is implemented and GPU-only for the 172-pair
+Gemma-3-4B/GSM8K primary restoration cohort. It freshly generates all three
+paired modes over layers `[0,6)`: the first subtoken of every edited word, the
+final subtoken, and all aligned subtokens. A mode succeeds when its extracted
+patched answer equals the manifest's stored, deterministically re-extracted
+clean answer.
+
+The confirmatory `equal-count-primary` subset requires every edited word to
+have the same clean and typo subtoken count; `all` then uses exact within-word
+ordinal correspondence. This is one pair-level label shared by all three modes,
+so first/final/all rates remain paired on the same denominator. Count-mismatched
+pairs are never pooled into that primary rate. They are reported separately as
+`mismatch-monotone-secondary`: each typo subtoken receives the clean state at
+the nearest normalized within-word position, preserving both endpoints; when
+either side has one token, the clean word-final state is used. The per-pair
+records retain every source/write mapping, termination reason, extracted
+answer, and the historical final-token event for audit. `--limit` is a
+non-confirmatory smoke option, and `--resume` reuses only hash-bound complete
+pair checkpoints.
+
+The equal-count primary subset reports Cochran's Q plus all three paired mode
+contrasts with exact McNemar tests, 10,000-pair bootstrap confidence intervals,
+and Holm correction. Mismatch-subset inference is explicitly exploratory and
+is not included in the primary Holm family.
+
+```bash
+GPU_ID=0
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot subword-position-patching \
+  --config projects/typo-cot/configs/rebuttal/subword-position-patching.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --modes first final all \
+  --token-count-policy equal-count-primary \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/subword-position-patching"
+```
+
+The command writes `subword_patch_records.jsonl`,
+`subword_patch_table.csv`, `subword_patch_contrasts.csv`, `subword_alignment_flow.csv`,
+`subword_patch_summary.json`, and a hash-bound `run.json`.
+An empty table cell uses JSON `null` and a blank CSV value together with
+`restoration_rate_defined=false`; it is never represented as a numeric zero.
+
+## Held-out layer-window evaluation
+
+`held-out-window-evaluation` is implemented and GPU-only. It addresses the
+paper's explicit limitation that
+`[0,6)` was selected data-adaptively. It uses the outcome-independent,
+stratified `window_selection` and `window_evaluation` ID lists already frozen
+by `build-rebuttal-manifest`. The split unit is `(task, sample_id)`, so the same
+benchmark sample remains in one phase across every model and typo-targeting
+condition as well as being pair-ID disjoint.
+
+The diagnostic phase compares five prespecified six-layer candidates:
+`[0,6)`, `[6,12)`, `[12,18)`, `[18,24)`, and `[22,28)`. Matching the paper's
+12-cell depth evidence, it keeps Attribution-4 and Random-4 separate within
+each of the six model--task settings. For each model--task--target-rule cell
+and candidate it takes the median normalized restoration of the clean first-
+CoT-token distribution, then selects the largest equal-12-cell macro mean.
+The runner-up is fixed by the same score; exact score ties prefer the lower
+layer start. Unavailable targets and untreated KL values at or below `1e-9`
+remain visible but do not enter selection. Every one of the 12 cells must have
+at least one score for every candidate. A smoke run therefore requires
+`--limit-per-setting` of at least `2` and deterministically retains one record
+from each targeting condition before filling any remaining budget. The command
+commits and hashes `window_selection.json` before any held-out model call.
+
+The evaluation phase generates answers once under the selected and runner-up
+windows on the disjoint IDs. It reports per-setting paired risk differences,
+exact McNemar tests with one six-test Holm family, paired bootstrap intervals,
+and an equal-setting nested-bootstrap macro difference. The mechanical
+`initial_six_advantage_reproduced` flag is true only when `[0,6)` wins the
+diagnostic phase and the held-out macro interval is strictly above zero. This
+new test never relabels the paper's historical `[0,6)` result as prespecified.
+
+```bash
+GPU_ID=0
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot held-out-window-evaluation \
+  --config projects/typo-cot/configs/rebuttal/held-out-window-evaluation.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --cohort-ids "${REBUTTAL_ROOT}/manifest/cohort_ids.json" \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/held-out-window-evaluation"
+```
+
+The command writes `window_selection_records.jsonl`, the pre-evaluation
+`window_selection.json`, `held_out_window_records.jsonl`,
+`held_out_window_table.csv`, `held_out_window_contrasts.csv`,
+`held_out_window_summary.json`, `pair_status_records.jsonl`, and a hash-bound
+`run.json`. `--resume` can reuse only complete pair checkpoints and the exact
+committed diagnostic selection.
+
+## Frozen interfaces for typo-robustness training
+
+Training uses a separately locked project so adding PEFT does not change the
+paper reproduction environment. The data roles, leakage controls, hierarchical
+layer/component localization, losses, baselines, and pre-PR empirical gate are
+fixed in
+[`docs/robustness_training_plan_v1.md`](docs/robustness_training_plan_v1.md).
+The separately locked training project implements and registers the commands
+below. This block is an **interface catalog, not a sequential or self-contained
+pipeline**: its examples intentionally cover artifacts from multiple study
+cycles. Use the end-to-end runbook in
+[`projects/typo-robust-training/README.md`](../typo-robust-training/README.md)
+for each prerequisite's required provenance and interface. Some prerequisites,
+including the prebuilt 64M training-data artifact and other externally frozen
+data, are supplied separately; the runbook
+does not necessarily materialize every prerequisite. A missing
+manifest, corpus, localization record, or checkpoint
+fails explicitly rather than being generated implicitly. Evaluation-tier and
+sealed data opening rules still apply to every empirical run.
+
+```bash
+GPU_ID=0
+TRAIN_PROJECT=projects/typo-robust-training
+TRAIN_ROOT=projects/typo-robust-training/results
+EVALUATION_DATA="${TRAIN_ROOT}/evaluation-data/robustness-v1"
+WANDB_PROJECT=typo-robust-training
+
+uv sync --project "${TRAIN_PROJECT}" --locked
+
+uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-robustness-training-data \
+  --config "${TRAIN_PROJECT}/configs/gemma4b-sanity.yaml" \
+  --output-dir "${TRAIN_ROOT}/data/gemma4b-sanity"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot select-distillation-layers \
+  --config "${TRAIN_PROJECT}/configs/gemma4b-layer-selection.yaml" \
+  --diagnostic-manifest "${TRAIN_ROOT}/data/gemma4b-sanity/diagnostic_manifest.jsonl" \
+  --tasks gsm8k mmlu arc \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/localization/layers"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot localize-robustness-components \
+  --config "${TRAIN_PROJECT}/configs/gemma4b-component-localization.yaml" \
+  --diagnostic-manifest "${TRAIN_ROOT}/data/gemma4b-sanity/diagnostic_manifest.jsonl" \
+  --layer-selection "${TRAIN_ROOT}/localization/layers/layer_selection.json" \
+  --components mlp-neuron attention-head \
+  --causal-readouts answer multitoken-kl \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/localization/components"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-noisy-language-model \
+  --config "${TRAIN_PROJECT}/configs/baselines/noisy-language-model.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/training/noisy-language-model/seed-42"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-output-matching \
+  --config "${TRAIN_PROJECT}/configs/baselines/output-matching.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/training/output-matching/seed-42"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-global-state-alignment \
+  --config "${TRAIN_PROJECT}/configs/baselines/global-state-alignment.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/training/global-state-alignment/seed-42"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-localized-state-distillation \
+  --config "${TRAIN_PROJECT}/configs/gemma4b-targeted-lora.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --layer-selection "${TRAIN_ROOT}/localization/layers/layer_selection.json" \
+  --component-selection "${TRAIN_ROOT}/localization/components/component_selection.json" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/training/localized-state-distillation/seed-42"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot evaluate-typo-robustness \
+  --config "${TRAIN_PROJECT}/configs/gemma4b-evaluation.yaml" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --evaluation-data "${EVALUATION_DATA}" \
+  --evaluation-role tune \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-42/adapter" \
+  --splits same-task unseen-task unseen-content unseen-typo \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/evaluation/tune/targeted-seed-42"
+```
+
 ## Prepare clean/edited pairs
 
 `prepare-edited-pairs` performs the paper's input-preparation operation: greedy
@@ -1430,6 +1831,7 @@ uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/te
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_one_token_prefix_replacement.py
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_build_one_token_tables_*.py
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_edit_count_sensitivity.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_subword_position_patching.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_typo_warning_prompt.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_input_corrector_*.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_restoration_order_*.py

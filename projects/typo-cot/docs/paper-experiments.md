@@ -74,6 +74,14 @@ refactor, a direct command is executable only when its catalog status is
 | `layerwise-kl-patching` | §3.3, §4.1, Appendix B | Selected clean-correct/edited-wrong pairs; complete finite grids with untreated KL > 1e-9; normalized first-CoT-token KL |
 | `layerwise-answer-patching` | §3.2–3.3, §4.1 | Separate eight-setting free-generation scans; at most 300 pooled anchors are rechecked into one fixed n=94–226 denominator per setting |
 | `fixed-window-answer-patching` | §3.3, §4.1, Appendix B | Frozen [0,6) answer patch; [6,12) prespecified MMLU-Pro comparison |
+| `build-rebuttal-manifest` | ARR addition plan v1 | Hash-validated six-setting 1,241/800 reference, selected-anchor and alignment exclusions, uncapped patch-eligible harm cohort, control plans, and held-out IDs |
+| `six-setting-patch-controls` | ARR addition plan v1 | Six-setting correct, strict +2 offset, and deterministic cross-item arms on common-valid denominators; paired inference with Holm correction |
+| `source-write-coordinate-grid` | ARR addition plan v1 | Primary and replication E/O donor-source by E/O write-position grids; common-valid Cochran's Q and prespecified paired contrasts |
+| `multitoken-kl-readout` | ARR addition plan v1 | Same clean tokens 1–16 after clean, typo, and [0,6)-patched typo prompts; primary normalized KL restoration over tokens 2–16 |
+| `patch-harm-audit` | ARR addition plan v1 | All prepared clean-correct/typo-correct aligned pairs; preserve, right-to-wrong harm, answer change, and a conditional repair-harm composite |
+| `tokenization-severity-analysis` | ARR addition plan v1 | Complete 1,241-pair three-arm controls; arm-valid and common-valid rates for every prespecified tokenization stratum, including empty cells |
+| `subword-position-patching` | ARR addition plan v1 | Primary 172-pair first/final/all-subword comparison; exact equal-count paired Cochran/McNemar/bootstrap inference and separate frozen monotone mismatch analysis |
+| `held-out-window-evaluation` | ARR addition plan v1 | Five frozen six-layer candidates selected on diagnostic sample groups, committed before model calls on disjoint held-out sample groups, then compared with six-setting paired inference |
 | `patch-coordinate-controls` | §3.3, §4.1, Appendix B | Primary 172 pairs; correct, +2 offset, cross-item, and identity controls |
 | `patch-position-controls` | §3.3, §4.1, Table 5, Appendix B | Gemma-3-4B/GSM8K Attribution-4 layerwise-KL cohort (published n=109), held common across edited-word, prompt-final, and question-final positions |
 | `patch-text-combination` | §3.5, §4.1, Table 2 | Descriptive patch absent/present × zero/full clean text on 172 pairs |
@@ -185,6 +193,68 @@ uv run --extra lrp typo-cot fixed-window-answer-patching \
   --layers 0:6 --directions clean-to-edited edited-to-clean \
   --gpu-id 0 \
   --output-dir results/fixed-window-answer-patching/gemma-3-4b-it/gsm8k
+
+uv run typo-cot build-rebuttal-manifest \
+  --prepared-pairs-root results/prepare-edited-pairs \
+  --fixed-window-root results/fixed-window-answer-patching \
+  --output-dir results/rebuttal/manifest
+
+CUDA_VISIBLE_DEVICES=0 \
+uv run --project projects/typo-cot --extra lrp typo-cot six-setting-patch-controls \
+  --config projects/typo-cot/configs/rebuttal/six-setting-patch-controls.yaml \
+  --manifest results/rebuttal/manifest/pair_manifest.jsonl \
+  --fixed-window-root results/fixed-window-answer-patching \
+  --gpu-id 0 \
+  --output-dir results/rebuttal/six-setting-patch-controls
+
+CUDA_VISIBLE_DEVICES=0 \
+uv run --project projects/typo-cot --extra lrp typo-cot source-write-coordinate-grid \
+  --config projects/typo-cot/configs/rebuttal/source-write-coordinate-grid.yaml \
+  --manifest results/rebuttal/manifest/pair_manifest.jsonl \
+  --fixed-window-root results/fixed-window-answer-patching \
+  --cohorts primary replication \
+  --gpu-id 0 \
+  --output-dir results/rebuttal/source-write-coordinate-grid
+
+CUDA_VISIBLE_DEVICES=0 \
+uv run --project projects/typo-cot --extra lrp typo-cot multitoken-kl-readout \
+  --config projects/typo-cot/configs/rebuttal/multitoken-kl-readout.yaml \
+  --manifest results/rebuttal/manifest/pair_manifest.jsonl \
+  --teacher-forced-tokens 16 \
+  --primary-token-range 2:16 \
+  --gpu-id 0 \
+  --output-dir results/rebuttal/multitoken-kl-readout
+
+CUDA_VISIBLE_DEVICES=0 \
+uv run --project projects/typo-cot --extra lrp typo-cot patch-harm-audit \
+  --config projects/typo-cot/configs/rebuttal/patch-harm-audit.yaml \
+  --manifest results/rebuttal/manifest/pair_manifest.jsonl \
+  --cohort clean-correct-typo-correct \
+  --gpu-id 0 \
+  --output-dir results/rebuttal/patch-harm-audit
+
+uv run --project projects/typo-cot typo-cot tokenization-severity-analysis \
+  --config projects/typo-cot/configs/rebuttal/tokenization-severity-analysis.yaml \
+  --manifest results/rebuttal/manifest/pair_manifest.jsonl \
+  --controls-run results/rebuttal/six-setting-patch-controls \
+  --output-dir results/rebuttal/tokenization-severity-analysis
+
+CUDA_VISIBLE_DEVICES=0 \
+uv run --project projects/typo-cot --extra lrp typo-cot subword-position-patching \
+  --config projects/typo-cot/configs/rebuttal/subword-position-patching.yaml \
+  --manifest results/rebuttal/manifest/pair_manifest.jsonl \
+  --modes first final all \
+  --token-count-policy equal-count-primary \
+  --gpu-id 0 \
+  --output-dir results/rebuttal/subword-position-patching
+
+CUDA_VISIBLE_DEVICES=0 \
+uv run --project projects/typo-cot --extra lrp typo-cot held-out-window-evaluation \
+  --config projects/typo-cot/configs/rebuttal/held-out-window-evaluation.yaml \
+  --manifest results/rebuttal/manifest/pair_manifest.jsonl \
+  --cohort-ids results/rebuttal/manifest/cohort_ids.json \
+  --gpu-id 0 \
+  --output-dir results/rebuttal/held-out-window-evaluation
 
 CUDA_VISIBLE_DEVICES=0 \
 uv run --project projects/typo-cot --extra lrp typo-cot patch-coordinate-controls \

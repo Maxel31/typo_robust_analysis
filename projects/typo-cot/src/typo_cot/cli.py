@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import sys
 from collections.abc import Sequence
@@ -19,6 +20,10 @@ from typo_cot.experiments.answer_line_deletion import (
     AnswerLineDeletionConfig,
     AnswerLineDeletionRunError,
     run_answer_line_deletion,
+)
+from typo_cot.experiments.build_rebuttal_manifest import (
+    BuildRebuttalManifestConfig,
+    run_build_rebuttal_manifest,
 )
 from typo_cot.experiments.clean_prefix_scan import (
     CleanPrefixScanConfig,
@@ -44,6 +49,11 @@ from typo_cot.experiments.fixed_window_answer_patching import (
     FixedWindowAnswerPatchingRunError,
     parse_layer_window,
     run_fixed_window_answer_patching,
+)
+from typo_cot.experiments.held_out_window_evaluation import (
+    HeldOutWindowConfig,
+    HeldOutWindowRunError,
+    run_held_out_window_evaluation,
 )
 from typo_cot.experiments.input_corrector_audit import (
     CORRECTOR_IDS,
@@ -76,6 +86,16 @@ from typo_cot.experiments.model_scale_cot_swap import (
     ModelScaleCotSwapConfig,
     ModelScaleCotSwapInputError,
     run_model_scale_cot_swap,
+)
+from typo_cot.experiments.multitoken_kl_readout import (
+    MultiTokenKLReadoutConfig,
+    MultiTokenKLReadoutRunError,
+    run_multitoken_kl_readout,
+)
+from typo_cot.experiments.patch_harm_audit import (
+    PatchHarmAuditConfig,
+    PatchHarmAuditRunError,
+    run_patch_harm_audit,
 )
 from typo_cot.experiments.one_token_prefix_replacement import (
     POSITION_CONTROLS as ONE_TOKEN_POSITION_CONTROLS,
@@ -125,10 +145,29 @@ from typo_cot.experiments.restoration_order_accuracy import (
     build_restoration_order_table,
     run_restoration_order_accuracy,
 )
+from typo_cot.experiments.six_setting_patch_controls import (
+    SixSettingPatchControlsConfig,
+    SixSettingPatchControlsRunError,
+    run_six_setting_patch_controls,
+)
+from typo_cot.experiments.source_write_coordinate_grid import (
+    SourceWriteCoordinateGridConfig,
+    SourceWriteCoordinateGridRunError,
+    run_source_write_coordinate_grid,
+)
+from typo_cot.experiments.subword_position_patching import (
+    SubwordPositionPatchingConfig,
+    SubwordPositionPatchingRunError,
+    run_subword_position_patching,
+)
 from typo_cot.experiments.targeting_fidelity_audit import (
     TargetingFidelityAuditConfig,
     TargetingFidelityAuditError,
     run_targeting_fidelity_audit,
+)
+from typo_cot.experiments.tokenization_severity_analysis import (
+    TokenizationSeverityConfig,
+    run_tokenization_severity_analysis,
 )
 from typo_cot.experiments.typo_warning_prompt import (
     BuildTypoWarningSummaryConfig,
@@ -164,6 +203,30 @@ def _edit_count(value: str) -> int:
     return parsed
 
 
+def _inclusive_token_range(value: str) -> tuple[int, int]:
+    parts = value.split(":")
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError("must use START:STOP")
+    try:
+        start, stop = (int(part) for part in parts)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must use integer START:STOP") from exc
+    if start <= 0 or stop < start:
+        raise argparse.ArgumentTypeError("must be a positive inclusive START:STOP range")
+    return start, stop
+
+
+def _register_command_plugins(
+    commands: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    """Load optional command packages installed in the active environment."""
+
+    entry_points = importlib.metadata.entry_points(group="typo_cot.commands")
+    for entry_point in sorted(entry_points, key=lambda candidate: candidate.name):
+        registrar = entry_point.load()
+        registrar(commands)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="typo-cot",
@@ -187,6 +250,120 @@ def _parser() -> argparse.ArgumentParser:
     show_parser = actions.add_parser("show", help="Show one operation's public contract.")
     show_parser.add_argument("experiment", type=_experiment)
     _add_format_argument(show_parser)
+
+    rebuttal_manifest = commands.add_parser(
+        "build-rebuttal-manifest",
+        help="Validate and freeze the six-setting rebuttal pair/cohort manifest.",
+    )
+    rebuttal_manifest.add_argument("--prepared-pairs-root", required=True, type=Path)
+    rebuttal_manifest.add_argument("--fixed-window-root", required=True, type=Path)
+    rebuttal_manifest.add_argument("--output-dir", required=True, type=Path)
+
+    six_setting_controls = commands.add_parser(
+        "six-setting-patch-controls",
+        help="Run correct, offset, and cross-item patch arms over all six settings.",
+    )
+    six_setting_controls.add_argument("--config", required=True, type=Path)
+    six_setting_controls.add_argument("--manifest", required=True, type=Path)
+    six_setting_controls.add_argument("--fixed-window-root", required=True, type=Path)
+    six_setting_controls.add_argument("--gpu-id", required=True)
+    six_setting_controls.add_argument("--output-dir", required=True, type=Path)
+    six_setting_controls.add_argument("--limit-per-setting", type=_positive_int)
+    six_setting_controls.add_argument("--resume", action="store_true")
+
+    source_write_grid = commands.add_parser(
+        "source-write-coordinate-grid",
+        help="Separate edited/offset donor sources from edited/offset write positions.",
+    )
+    source_write_grid.add_argument("--config", required=True, type=Path)
+    source_write_grid.add_argument("--manifest", required=True, type=Path)
+    source_write_grid.add_argument("--fixed-window-root", required=True, type=Path)
+    source_write_grid.add_argument(
+        "--cohorts",
+        required=True,
+        nargs="+",
+        choices=("primary", "replication"),
+    )
+    source_write_grid.add_argument("--gpu-id", required=True)
+    source_write_grid.add_argument("--output-dir", required=True, type=Path)
+    source_write_grid.add_argument("--limit-per-cohort", type=_positive_int)
+    source_write_grid.add_argument("--resume", action="store_true")
+
+    multitoken_readout = commands.add_parser(
+        "multitoken-kl-readout",
+        help="Measure teacher-forced KL restoration over clean continuation tokens.",
+    )
+    multitoken_readout.add_argument("--config", required=True, type=Path)
+    multitoken_readout.add_argument("--manifest", required=True, type=Path)
+    multitoken_readout.add_argument("--teacher-forced-tokens", required=True, type=_positive_int)
+    multitoken_readout.add_argument(
+        "--primary-token-range", required=True, type=_inclusive_token_range
+    )
+    multitoken_readout.add_argument("--gpu-id", required=True)
+    multitoken_readout.add_argument("--output-dir", required=True, type=Path)
+    multitoken_readout.add_argument("--limit-per-setting", type=_positive_int)
+    multitoken_readout.add_argument("--resume", action="store_true")
+
+    harm_audit = commands.add_parser(
+        "patch-harm-audit",
+        help="Audit whether the fixed clean-to-typo patch breaks typo-correct answers.",
+    )
+    harm_audit.add_argument("--config", required=True, type=Path)
+    harm_audit.add_argument("--manifest", required=True, type=Path)
+    harm_audit.add_argument(
+        "--cohort",
+        required=True,
+        choices=("clean-correct-typo-correct",),
+    )
+    harm_audit.add_argument("--gpu-id", required=True)
+    harm_audit.add_argument("--output-dir", required=True, type=Path)
+    harm_audit.add_argument("--limit-per-setting", type=_positive_int)
+    harm_audit.add_argument("--resume", action="store_true")
+
+    severity = commands.add_parser(
+        "tokenization-severity-analysis",
+        help="Stratify three-arm patch outcomes by prespecified tokenization severity.",
+    )
+    severity.add_argument("--config", required=True, type=Path)
+    severity.add_argument("--manifest", required=True, type=Path)
+    severity.add_argument("--controls-run", required=True, type=Path)
+    severity.add_argument("--output-dir", required=True, type=Path)
+    severity.add_argument("--resume", action="store_true")
+
+    subword = commands.add_parser(
+        "subword-position-patching",
+        help="Compare first, final, and all-subword patches in the primary cohort.",
+    )
+    subword.add_argument("--config", required=True, type=Path)
+    subword.add_argument("--manifest", required=True, type=Path)
+    subword.add_argument(
+        "--modes",
+        required=True,
+        nargs="+",
+        choices=("first", "final", "all"),
+        help="Frozen mode grid; must be exactly: first final all",
+    )
+    subword.add_argument(
+        "--token-count-policy",
+        required=True,
+        choices=("equal-count-primary",),
+    )
+    subword.add_argument("--gpu-id", required=True)
+    subword.add_argument("--output-dir", required=True, type=Path)
+    subword.add_argument("--limit", type=_positive_int)
+    subword.add_argument("--resume", action="store_true")
+
+    held_out_window = commands.add_parser(
+        "held-out-window-evaluation",
+        help="Select a layer window, commit it, and evaluate disjoint sample IDs.",
+    )
+    held_out_window.add_argument("--config", required=True, type=Path)
+    held_out_window.add_argument("--manifest", required=True, type=Path)
+    held_out_window.add_argument("--cohort-ids", required=True, type=Path)
+    held_out_window.add_argument("--gpu-id", required=True)
+    held_out_window.add_argument("--output-dir", required=True, type=Path)
+    held_out_window.add_argument("--limit-per-setting", type=_positive_int)
+    held_out_window.add_argument("--resume", action="store_true")
 
     pairs = commands.add_parser(
         "prepare-edited-pairs",
@@ -383,9 +560,7 @@ def _parser() -> argparse.ArgumentParser:
         "restoration-order-accuracy",
         help="Regenerate answers while restoring edit groups in three Table 13 orders.",
     )
-    restoration_order.add_argument(
-        "--model", required=True, choices=RESTORATION_ORDER_MODELS
-    )
+    restoration_order.add_argument("--model", required=True, choices=RESTORATION_ORDER_MODELS)
     restoration_order.add_argument(
         "--benchmark", required=True, choices=RESTORATION_ORDER_BENCHMARKS
     )
@@ -564,6 +739,7 @@ def _parser() -> argparse.ArgumentParser:
     patch_text.add_argument("--limit", type=_positive_int)
     patch_text.add_argument("--output-dir", required=True, type=Path)
     patch_text.add_argument("--resume", action="store_true")
+    _register_command_plugins(commands)
     return parser
 
 
@@ -609,6 +785,9 @@ def _print_spec(spec: ExperimentSpec, output_format: str) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the public CLI and return a process exit code."""
     args = _parser().parse_args(argv)
+    plugin_handler = getattr(args, "_typo_cot_plugin_handler", None)
+    if plugin_handler is not None:
+        return int(plugin_handler(args))
     if args.command == "experiments" and args.catalog_action == "list":
         _print_list(args.format)
         return 0
@@ -617,6 +796,258 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command == "experiments" and args.catalog_action == "show":
         _print_spec(args.experiment, args.format)
+        return 0
+    if args.command == "build-rebuttal-manifest":
+        try:
+            result = run_build_rebuttal_manifest(
+                BuildRebuttalManifestConfig(
+                    prepared_pairs_root=args.prepared_pairs_root,
+                    fixed_window_root=args.fixed_window_root,
+                    output_dir=args.output_dir,
+                )
+            )
+        except (FileExistsError, OSError, RuntimeError, ValueError) as exc:
+            print(f"build-rebuttal-manifest: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.pair_records:,} validated pair record(s), "
+            f"{result.restoration_pairs:,} restoration pair(s), and "
+            f"{result.fixed_window_successes:,} fixed-window restoration(s): "
+            f"{result.pair_manifest_path}"
+        )
+        print(
+            f"fixed-window selected/excluded anchors: "
+            f"{result.fixed_selected_anchors:,}/{result.fixed_excluded_anchors:,}; "
+            f"prepared typo-wrong outside paper denominator: "
+            f"{result.prepared_wrong_outside_restoration:,}"
+        )
+        print(f"cohort IDs: {result.cohort_ids_path}")
+        print(f"source audit: {result.source_audit_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "six-setting-patch-controls":
+        try:
+            result = run_six_setting_patch_controls(
+                SixSettingPatchControlsConfig(
+                    protocol_path=args.config,
+                    manifest_path=args.manifest,
+                    fixed_window_root=args.fixed_window_root,
+                    output_dir=args.output_dir,
+                    gpu_id=args.gpu_id,
+                    limit_per_setting=args.limit_per_setting,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            SixSettingPatchControlsRunError,
+        ) as exc:
+            print(f"six-setting-patch-controls: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.control_records:,} arm record(s) for "
+            f"{result.pairs:,} pair(s) across {result.settings} settings: "
+            f"{result.control_records_path}"
+        )
+        print(f"control table: {result.control_table_path}")
+        print(f"multiplicity table: {result.multiplicity_table_path}")
+        print(f"forest plot: {result.forest_plot_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "source-write-coordinate-grid":
+        try:
+            result = run_source_write_coordinate_grid(
+                SourceWriteCoordinateGridConfig(
+                    protocol_path=args.config,
+                    manifest_path=args.manifest,
+                    fixed_window_root=args.fixed_window_root,
+                    cohorts=tuple(args.cohorts),
+                    gpu_id=args.gpu_id,
+                    output_dir=args.output_dir,
+                    limit_per_cohort=args.limit_per_cohort,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            SourceWriteCoordinateGridRunError,
+        ) as exc:
+            print(f"source-write-coordinate-grid: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.grid_records:,} arm record(s) for {result.pairs:,} pair(s) "
+            f"across {result.cohorts} cohort(s): {result.records_path}"
+        )
+        print(f"grid table: {result.grid_table_path}")
+        print(f"contrasts: {result.contrasts_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "multitoken-kl-readout":
+        try:
+            result = run_multitoken_kl_readout(
+                MultiTokenKLReadoutConfig(
+                    protocol_path=args.config,
+                    manifest_path=args.manifest,
+                    teacher_forced_tokens=args.teacher_forced_tokens,
+                    primary_token_range=args.primary_token_range,
+                    gpu_id=args.gpu_id,
+                    output_dir=args.output_dir,
+                    limit_per_setting=args.limit_per_setting,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            MultiTokenKLReadoutRunError,
+        ) as exc:
+            print(f"multitoken-kl-readout: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"wrote {result.pairs:,} pair record(s), including "
+            f"{result.target_available_pairs:,} with 16-token targets and "
+            f"{result.primary_valid_pairs:,} primary-valid pair(s): {result.records_path}"
+        )
+        print(f"setting metrics: {result.setting_metrics_path}")
+        print(f"token trajectory: {result.trajectory_path}")
+        print(f"trajectory plot: {result.trajectory_plot_path}")
+        print(f"summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "patch-harm-audit":
+        try:
+            result = run_patch_harm_audit(
+                PatchHarmAuditConfig(
+                    protocol_path=args.config,
+                    manifest_path=args.manifest,
+                    cohort=args.cohort,
+                    gpu_id=args.gpu_id,
+                    output_dir=args.output_dir,
+                    limit_per_setting=args.limit_per_setting,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            PatchHarmAuditRunError,
+        ) as exc:
+            print(f"patch-harm-audit: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"audited {result.evaluated_pairs:,}/{result.harm_pairs:,} "
+            f"typo-correct pair(s): {result.records_path}"
+        )
+        print(
+            f"preserved/harmed/changed/unextractable: "
+            f"{result.preserve:,}/{result.harm:,}/{result.answer_changed:,}/"
+            f"{result.unextractable:,}"
+        )
+        print(f"setting harm table: {result.setting_table_path}")
+        print(f"conditional repair-harm composite: {result.composite_path}")
+        print(f"summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "tokenization-severity-analysis":
+        try:
+            result = run_tokenization_severity_analysis(
+                TokenizationSeverityConfig(
+                    protocol_path=args.config,
+                    manifest_path=args.manifest,
+                    controls_run=args.controls_run,
+                    output_dir=args.output_dir,
+                    resume=args.resume,
+                )
+            )
+        except (FileExistsError, OSError, RuntimeError, ValueError) as exc:
+            print(f"tokenization-severity-analysis: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"stratified {result.pairs:,} pair(s) into {result.table_rows:,} "
+            f"arm/cell row(s): {result.table_path}"
+        )
+        print(f"empty severity cells retained: {result.empty_cells:,}")
+        print(f"per-pair records: {result.records_path}")
+        print(f"summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "subword-position-patching":
+        try:
+            result = run_subword_position_patching(
+                SubwordPositionPatchingConfig(
+                    protocol_path=args.config,
+                    manifest_path=args.manifest,
+                    modes=tuple(args.modes),
+                    token_count_policy=args.token_count_policy,
+                    gpu_id=args.gpu_id,
+                    output_dir=args.output_dir,
+                    limit=args.limit,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            SubwordPositionPatchingRunError,
+        ) as exc:
+            print(f"subword-position-patching: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"generated first/final/all patches for {result.evaluated_pairs:,}/"
+            f"{result.pairs:,} pair(s): {result.records_path}"
+        )
+        print(
+            f"equal-count primary / mismatch secondary: "
+            f"{result.primary_pairs:,}/{result.secondary_pairs:,}"
+        )
+        print(f"subword table: {result.table_path}")
+        print(f"paired contrasts: {result.contrasts_path}")
+        print(f"alignment flow: {result.flow_path}")
+        print(f"summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
+        return 0
+    if args.command == "held-out-window-evaluation":
+        try:
+            result = run_held_out_window_evaluation(
+                HeldOutWindowConfig(
+                    protocol_path=args.config,
+                    manifest_path=args.manifest,
+                    cohort_ids_path=args.cohort_ids,
+                    gpu_id=args.gpu_id,
+                    output_dir=args.output_dir,
+                    limit_per_setting=args.limit_per_setting,
+                    resume=args.resume,
+                )
+            )
+        except (
+            FileExistsError,
+            OSError,
+            RuntimeError,
+            ValueError,
+            HeldOutWindowRunError,
+        ) as exc:
+            print(f"held-out-window-evaluation: error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"selected on {result.selection_pairs:,} pair(s) and evaluated "
+            f"{result.evaluation_pairs:,} held-out pair(s): {result.selection_path}"
+        )
+        print(f"held-out table: {result.table_path}")
+        print(f"paired contrasts: {result.contrasts_path}")
+        print(f"summary: {result.summary_path}")
+        print(f"run manifest: {result.run_path}")
         return 0
     if args.command == "prepare-edited-pairs":
         try:

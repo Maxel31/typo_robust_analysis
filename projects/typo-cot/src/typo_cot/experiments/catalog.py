@@ -219,6 +219,310 @@ PAPER_EXPERIMENTS: tuple[ExperimentSpec, ...] = (
         status="implemented",
     ),
     ExperimentSpec(
+        slug="build-rebuttal-manifest",
+        title="Freeze the six-setting rebuttal cohorts and controls",
+        paper_question="ARR addition",
+        paper_sections=("Rebuttal analysis plan v1",),
+        summary=(
+            "Validate the prepared-pair and fixed-window producer artifacts, normalize "
+            "all six settings, and freeze cohort, offset, donor, and held-out identities."
+        ),
+        cohort=(
+            "The exact six GSM8K/MMLU Table 6 settings: 1,241 clean-correct, "
+            "typo-wrong restoration pairs plus the uncapped alignment-eligible "
+            "clean-correct, typo-correct harm cohort; alignment-ineligible records and "
+            "selected-anchor exclusions remain explicit."
+        ),
+        intervention="No model intervention; hash-bound CPU validation and planning only.",
+        readout=(
+            "Normalized per-pair manifest, cohort IDs, deterministic control plans, and "
+            "source-integrity audit."
+        ),
+        required_arguments=(
+            "--prepared-pairs-root",
+            "--fixed-window-root",
+            "--output-dir",
+        ),
+        outputs=(
+            "pair_manifest.jsonl",
+            "cohort_ids.json",
+            "source_audit.json",
+            "run.json",
+        ),
+        compute="cpu",
+        status="implemented",
+    ),
+    ExperimentSpec(
+        slug="six-setting-patch-controls",
+        title="Run answer-level specificity controls in all six settings",
+        paper_question="ARR addition",
+        paper_sections=("Rebuttal analysis plan v1: Six-setting patch controls",),
+        summary=(
+            "Compare the fixed [0,6) correct-coordinate patch against strict +2-token "
+            "offset and deterministic cross-item donor controls in every setting."
+        ),
+        cohort=(
+            "The exact 1,241-pair restoration manifest, with paired inference restricted "
+            "to each setting's frozen common-valid subset."
+        ),
+        intervention=(
+            "Reuse the fixed correct-coordinate outcome and generate prospective offset-2 "
+            "and cross-item clean-to-typo residual-state patches."
+        ),
+        readout=(
+            "Restoration rates, paired risk differences, exact McNemar tests, Holm-adjusted "
+            "p-values, and equal-setting nested-bootstrap intervals."
+        ),
+        required_arguments=(
+            "--config",
+            "--manifest",
+            "--fixed-window-root",
+            "--gpu-id",
+            "--output-dir",
+        ),
+        outputs=(
+            "control_records.jsonl",
+            "pair_status_records.jsonl",
+            "six_setting_control_table.csv",
+            "common_denominator_flow.csv",
+            "multiplicity_table.csv",
+            "macro_average.json",
+            "risk_difference_forest.svg",
+            "run.json",
+        ),
+        compute="gpu",
+        status="implemented",
+    ),
+    ExperimentSpec(
+        slug="source-write-coordinate-grid",
+        title="Separate patch donor source from write position",
+        paper_question="ARR addition",
+        paper_sections=("Rebuttal analysis plan v1: Source/write coordinate grid",),
+        summary=(
+            "Run the edited/offset donor-source by edited/offset write-position 2x2 grid "
+            "over the primary and prespecified replication cohorts."
+        ),
+        cohort=(
+            "Primary Gemma-3-4B/GSM8K and replication Mistral-7B/MMLU restoration "
+            "pairs with valid correct and strict +2 offset coordinates."
+        ),
+        intervention=(
+            "Reuse fixed E-to-E outcomes and generate E-to-O, O-to-E, and O-to-O "
+            "residual-state patches over layers [0,6)."
+        ),
+        readout=(
+            "Four-arm restoration rates, Cochran's Q, and prespecified paired "
+            "risk-difference/McNemar contrasts with Holm correction."
+        ),
+        required_arguments=(
+            "--config",
+            "--manifest",
+            "--fixed-window-root",
+            "--cohorts",
+            "--gpu-id",
+            "--output-dir",
+        ),
+        outputs=(
+            "source_write_grid_records.jsonl",
+            "pair_status_records.jsonl",
+            "source_write_grid_table.csv",
+            "source_write_contrasts.csv",
+            "run.json",
+        ),
+        compute="gpu",
+        status="implemented",
+    ),
+    ExperimentSpec(
+        slug="multitoken-kl-readout",
+        title="Measure patch restoration beyond the first CoT token",
+        paper_question="ARR addition",
+        paper_sections=("Rebuttal analysis plan v1: Multi-token distributional readout",),
+        summary=(
+            "Teacher-force one clean 16-token continuation after clean, typo, and patched "
+            "prompts, then measure token-wise KL restoration beyond the adjacent readout."
+        ),
+        cohort="All 1,241 restoration pairs in the exact six-setting rebuttal manifest.",
+        intervention=(
+            "Copy clean edited-word-final residual states to aligned typo coordinates over "
+            "layers [0,6) in a single teacher-forced forward."
+        ),
+        readout=(
+            "Primary R_2:16, secondary R_2:4/R_2:8, first-versus-later difference, "
+            "and token-wise raw KL-reduction trajectories with pair-bootstrap intervals."
+        ),
+        required_arguments=(
+            "--config",
+            "--manifest",
+            "--teacher-forced-tokens",
+            "--primary-token-range",
+            "--gpu-id",
+            "--output-dir",
+        ),
+        outputs=(
+            "multitoken_kl_records.jsonl",
+            "setting_metrics.csv",
+            "token_position_trajectory.csv",
+            "token_position_trajectory.svg",
+            "multitoken_summary.json",
+            "run.json",
+        ),
+        compute="gpu",
+        status="implemented",
+    ),
+    ExperimentSpec(
+        slug="patch-harm-audit",
+        title="Audit whether clean-state patches break typo-correct answers",
+        paper_question="ARR addition",
+        paper_sections=("Rebuttal analysis plan v1: Correct-answer harm audit",),
+        summary=(
+            "Apply the frozen [0,6) correct-coordinate clean-to-typo patch to every "
+            "prepared clean-correct/typo-correct aligned pair and measure side effects."
+        ),
+        cohort=(
+            "All uncapped alignment-eligible clean-correct/typo-correct pairs in the "
+            "six-setting rebuttal manifest; smoke limits are explicitly non-confirmatory."
+        ),
+        intervention=(
+            "Copy clean edited-word-final residual states to the aligned typo coordinates "
+            "over layers [0,6), then regenerate with the paper's deterministic decoder."
+        ),
+        readout=(
+            "Preserve, right-to-wrong harm, answer change, unextractable outputs, and a "
+            "clearly labelled conditional repair-harm composite."
+        ),
+        required_arguments=(
+            "--config",
+            "--manifest",
+            "--cohort",
+            "--gpu-id",
+            "--output-dir",
+        ),
+        outputs=(
+            "patch_harm_records.jsonl",
+            "setting_harm_table.csv",
+            "repair_harm_composite.csv",
+            "patch_harm_summary.json",
+            "run.json",
+        ),
+        compute="gpu",
+        status="implemented",
+    ),
+    ExperimentSpec(
+        slug="tokenization-severity-analysis",
+        title="Stratify patch outcomes by tokenization severity",
+        paper_question="ARR addition",
+        paper_sections=("Rebuttal analysis plan v1: Low-compute analyses",),
+        summary=(
+            "Join the complete three-arm control outcomes to aligned edit token spans and "
+            "report every prespecified tokenization-severity cell without new inference."
+        ),
+        cohort="All 1,241 restoration pairs in the exact six-setting rebuttal manifest.",
+        intervention=(
+            "No new intervention; consume the completed correct, offset-2, and cross-item "
+            "answer-level outcomes after hash and denominator validation."
+        ),
+        readout=(
+            "Arm-valid and common-valid restoration counts/rates for subtoken-count change, "
+            "fragmentation increase, edit-count, and clean-word tokenization strata."
+        ),
+        required_arguments=(
+            "--config",
+            "--manifest",
+            "--controls-run",
+            "--output-dir",
+        ),
+        outputs=(
+            "tokenization_severity_records.jsonl",
+            "tokenization_severity_table.csv",
+            "tokenization_severity_summary.json",
+            "run.json",
+        ),
+        compute="cpu",
+        status="implemented",
+    ),
+    ExperimentSpec(
+        slug="subword-position-patching",
+        title="Compare first, final, and all edited-word subtoken patches",
+        paper_question="ARR addition",
+        paper_sections=("Rebuttal analysis plan v1: Low-compute analyses",),
+        summary=(
+            "Freshly regenerate three clean-to-typo patch modes while separating exact "
+            "equal-count alignments from a prespecified count-mismatch analysis."
+        ),
+        cohort=(
+            "The 172 Gemma-3-4B/GSM8K primary restoration pairs, partitioned into an "
+            "equal-subtoken-count primary subset and a mismatch secondary subset."
+        ),
+        intervention=(
+            "Copy first, final, or all aligned edited-word residual states over layers "
+            "[0,6); all-subword mismatch mapping uses frozen normalized positions."
+        ),
+        readout=(
+            "Clean-answer restoration by mode and subset, paired Cochran/McNemar/bootstrap "
+            "inference, source/write mappings, and a historical final-token audit."
+        ),
+        required_arguments=(
+            "--config",
+            "--manifest",
+            "--modes",
+            "--token-count-policy",
+            "--gpu-id",
+            "--output-dir",
+        ),
+        outputs=(
+            "subword_patch_records.jsonl",
+            "subword_patch_table.csv",
+            "subword_patch_contrasts.csv",
+            "subword_alignment_flow.csv",
+            "subword_patch_summary.json",
+            "run.json",
+        ),
+        compute="gpu",
+        status="implemented",
+    ),
+    ExperimentSpec(
+        slug="held-out-window-evaluation",
+        title="Select and test a layer window on disjoint sample IDs",
+        paper_question="ARR addition",
+        paper_sections=("Rebuttal analysis plan v1: Held-out window test",),
+        summary=(
+            "Score five frozen six-layer candidates over twelve model--task--target-rule "
+            "diagnostic cells, commit the winner and runner-up, then compare them on "
+            "untouched sample groups."
+        ),
+        cohort=(
+            "The 1,241 six-setting restoration pairs, split outcome-independently by "
+            "task and shared sample ID across models and typo-targeting conditions."
+        ),
+        intervention=(
+            "Use first-clean-continuation-token KL restoration only for diagnostic "
+            "selection, then freely generate selected and runner-up answer patches."
+        ),
+        readout=(
+            "Frozen selection artifact, six held-out paired risk differences, exact "
+            "McNemar tests with Holm correction, and an equal-setting nested-bootstrap CI."
+        ),
+        required_arguments=(
+            "--config",
+            "--manifest",
+            "--cohort-ids",
+            "--gpu-id",
+            "--output-dir",
+        ),
+        outputs=(
+            "window_selection_records.jsonl",
+            "window_selection.json",
+            "held_out_window_records.jsonl",
+            "held_out_window_table.csv",
+            "held_out_window_contrasts.csv",
+            "held_out_window_summary.json",
+            "pair_status_records.jsonl",
+            "run.json",
+        ),
+        compute="gpu",
+        status="implemented",
+    ),
+    ExperimentSpec(
         slug="patch-coordinate-controls",
         title="Compare edited-word patches with coordinate and donor controls",
         paper_question="RQ1",

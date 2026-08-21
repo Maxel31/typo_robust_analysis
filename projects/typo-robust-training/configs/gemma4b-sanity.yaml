@@ -1,0 +1,149 @@
+{
+  "schema_version": "robustness-training-data-config/v1",
+  "stage": "sanity",
+  "seed": 42,
+  "model": "google/gemma-3-4b-it",
+  "model_revision": "093f9f388b31de276ce2de164bdc2081324b9767",
+  "training": {
+    "token_budget": 1000000,
+    "max_sequence_length": 512,
+    "mixture": {
+      "fineweb_edu": 0.85,
+      "reasoning": 0.10,
+      "natural_typo": 0.05
+    },
+    "explicit_clean_pair_probability": 0.10
+  },
+  "preprocessing": {
+    "document_character_window": 8192
+  },
+  "typos": {
+    "edit_count_probabilities": {"1": 0.50, "2": 0.30, "3-4": 0.20},
+    "training_operations": [
+      "keyboard-neighbor-substitution",
+      "deletion",
+      "insertion",
+      "duplication",
+      "natural-statistics-substitution"
+    ],
+    "operation_probabilities": {
+      "keyboard-neighbor-substitution": 0.20,
+      "deletion": 0.20,
+      "insertion": 0.20,
+      "duplication": 0.20,
+      "natural-statistics-substitution": 0.20
+    },
+    "held_out_operations": ["adjacent-transposition"],
+    "minimum_word_letters": 2,
+    "distinct_words": true
+  },
+  "splits": {
+    "fineweb_content": {
+      "train": 0.80,
+      "tune": 0.10,
+      "pre_pr_gate": 0.05,
+      "final_test": 0.05
+    },
+    "natural_repository": {"train": 0.70, "tune": 0.10, "held_out": 0.20},
+    "held_out_repository_evaluation": {"pre_pr_gate": 0.50, "final_test": 0.50}
+  },
+  "sampling": {
+    "diagnostic_per_task": 250,
+    "fixed_pairs_per_source_split": 200
+  },
+  "streaming": {
+    "shuffle_buffer_size": 10000
+  },
+  "sources": {
+    "fineweb_edu": {
+      "dataset": "HuggingFaceFW/fineweb-edu",
+      "revision": "fc9850dff5e2d0f8f776efe41b24a1c49556cfc5",
+      "subset": "sample-10BT",
+      "splits": ["train"],
+      "role": "primary-clean-training-and-held-out-content",
+      "license": "odc-by-1.0",
+      "streaming": true,
+      "task": null
+    },
+    "gsm8k": {
+      "dataset": "openai/gsm8k",
+      "revision": "740312add88f781978c0658806c59bc2815b9866",
+      "subset": "main",
+      "splits": ["train", "test"],
+      "role": "reasoning-training-diagnostic-and-same-task-evaluation",
+      "license": "mit",
+      "streaming": false,
+      "task": "gsm8k"
+    },
+    "mmlu": {
+      "dataset": "cais/mmlu",
+      "revision": "c30699e8356da336a370243923dbaf21066bb9fe",
+      "subset": "all",
+      "splits": ["dev", "validation", "test"],
+      "role": "reasoning-training-diagnostic-and-same-task-evaluation",
+      "license": "mit",
+      "streaming": false,
+      "task": "mmlu"
+    },
+    "arc": {
+      "dataset": "allenai/ai2_arc",
+      "revision": "210d026faf9955653af8916fad021475a3f00453",
+      "subset": "ARC-Challenge",
+      "splits": ["train", "validation", "test"],
+      "role": "reasoning-training-diagnostic-and-same-task-evaluation",
+      "license": "cc-by-sa-4.0",
+      "streaming": false,
+      "task": "arc"
+    },
+    "github_typo_corpus": {
+      "dataset": "https://github.com/mhagiwara/github-typo-corpus",
+      "revision": "240c4c0716fde62934edc2445c326e0896d8d109",
+      "subset": "v1.0.0",
+      "splits": ["corpus"],
+      "role": "approved-natural-training-generator-statistics-and-held-out-evaluation",
+      "license": "per-origin-repository",
+      "streaming": true,
+      "task": null
+    },
+    "dolma": {
+      "dataset": "allenai/dolma",
+      "revision": "7f48140530a023e9ea4c5cfb141160922727d4d3",
+      "subset": "v1_5-sample",
+      "splits": ["train"],
+      "role": "unseen-domain-evaluation-only",
+      "license": "odc-by-1.0-and-origin-terms",
+      "streaming": true,
+      "task": null
+    },
+    "mmlu_pro": {
+      "dataset": "TIGER-Lab/MMLU-Pro",
+      "revision": "b189ec765aa7ed75c8acfea42df31fdae71f97be",
+      "subset": "default",
+      "splits": ["test"],
+      "role": "unseen-task-evaluation-only",
+      "license": "mit",
+      "streaming": false,
+      "task": "mmlu_pro"
+    },
+    "math_500": {
+      "dataset": "HuggingFaceH4/MATH-500",
+      "revision": "6e4ed1a2a79af7d8630a6b768ec859cb5af4d3be",
+      "subset": "default",
+      "splits": ["test"],
+      "role": "unseen-task-evaluation-only",
+      "license": "upstream-math-benchmark-terms",
+      "streaming": false,
+      "task": "math_500"
+    },
+    "commonsense_qa": {
+      "dataset": "tau/commonsense_qa",
+      "revision": "94630fe30dad47192a8546eb75f094926d47e155",
+      "subset": "default",
+      "splits": ["validation"],
+      "role": "unseen-task-evaluation-only",
+      "license": "mit",
+      "streaming": false,
+      "task": "commonsense_qa"
+    }
+  }
+}

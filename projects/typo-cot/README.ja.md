@@ -55,6 +55,377 @@ uv run --project projects/typo-cot typo-cot experiments show clean-prefix-scan -
 コホート、介入、readout、出力、CPU/GPU区分、実装状態が含まれます。
 `implemented` の操作だけが実行可能で、`catalogued` は公開runnerが未実装です。
 
+## 実装済みのARR manifestと座標control
+
+`build-rebuttal-manifest` は実装済みのCPU専用コマンドです。論文の6設定を再現した、
+完了済み `prepare-edited-pairs` source 12個とfixed-window run 6個を受け取ります。
+schema、hash、モデルごとに一つのrevision、全モデルで共通のbenchmark cohort、
+明示sample-IDではない論文全体のcohort選択、selected-anchor audit、上限なしの
+harm cohort、alignment不可例の明示的な記録、および論文の1,241 pair／800回復と
+一致しなければfail-closedで停止します。modelは実行せず、新しい介入結果も読みません。
+
+manifestはschema versionだけでなく、fixed-window producerの完全なprotocolも
+検証します。すべてのbaseline／patched生成にはeffective EOS IDと`eos`または
+`length-cap`の停止理由が必要です。builderは各回答を再抽出し、上限到達テキストでは
+positional fallbackを無効化して、回復eventを再計算します。hashが正しくても意味的に
+矛盾するrecordは拒否します。
+
+```bash
+PAIR_ROOT=projects/typo-cot/results/prepare-edited-pairs
+FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+uv run --project projects/typo-cot typo-cot build-rebuttal-manifest \
+  --prepared-pairs-root "${PAIR_ROOT}" \
+  --fixed-window-root "${FIXED_ROOT}" \
+  --output-dir "${REBUTTAL_ROOT}/manifest"
+```
+
+出力は `pair_manifest.jsonl`、`cohort_ids.json`、`source_audit.json`、`run.json`
+です。これらはgitに含めないローカル生成物で、以下のARR結果生成コマンドすべての
+入力になります。
+
+`six-setting-patch-controls` は実装済みのGPU専用コマンドです。hash検証済みの
+fixed-window runからcorrect-coordinate結果を再利用し、事前規定した厳密な
+offset-2 armと決定的cross-item armを新規生成します。主解析は各設定のcommon-valid
+pairだけを使い、12個のexact McNemar検定を1つのHolm familyとして補正し、paired
+bootstrapと設定等重みnested bootstrapの区間を計算します。物理GPUは必ず1台だけ
+指定してください。`--limit-per-setting` は非confirmatoryなsmoke test用、
+`--resume` は検証済みpair checkpointの再利用用です。
+
+再利用するcorrect armと2つの新規armは、同じtermination-awareな
+primary-then-empty-only fallbackを使います。length capではpositional規則を無効化し、
+再利用armのeffective EOS IDとterminationを検証するとともに、すべての新規生成でも
+terminationを記録してからpaired比較を行います。
+
+```bash
+GPU_ID=0
+FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot six-setting-patch-controls \
+  --config projects/typo-cot/configs/rebuttal/six-setting-patch-controls.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --fixed-window-root "${FIXED_ROOT}" \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/six-setting-patch-controls"
+```
+
+出力は `control_records.jsonl`、`pair_status_records.jsonl`、
+`six_setting_control_table.csv`、`common_denominator_flow.csv`、
+`multiplicity_table.csv`、`macro_average.json`、
+`risk_difference_forest.svg`、hashで拘束した `run.json` です。
+
+`source-write-coordinate-grid` は実装済みのGPU専用コマンドです。primaryの
+Gemma/GSM8Kと、事前規定したreplicationのMistral/MMLUで、donor内容とwrite位置を
+分離します。4 arm共通分母にはcorrect座標planと厳密なoffset座標planの両方が完全に
+有効なpairだけを使います。固定済み `E->E` eventを再利用し、`E->O`、`O->E`、
+`O->O` を生成した後、各cohortのCochran's Qと2つの事前規定paired contrastを1つの
+Holm familyとして報告します。4 armすべてでfixed-window producerと同じ
+termination-awareな回答抽出契約を使い、length capではpositional fallbackを
+無効化します。新規生成のterminationも記録します。
+`--limit-per-cohort` は非confirmatoryなsmoke test専用です。
+
+```bash
+GPU_ID=0
+FIXED_ROOT=projects/typo-cot/results/fixed-window-answer-patching
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot source-write-coordinate-grid \
+  --config projects/typo-cot/configs/rebuttal/source-write-coordinate-grid.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --fixed-window-root "${FIXED_ROOT}" \
+  --cohorts primary replication \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/source-write-coordinate-grid"
+```
+
+出力は `source_write_grid_records.jsonl`、`pair_status_records.jsonl`、
+`source_write_grid_table.csv`、`source_write_contrasts.csv`、hashで拘束した
+`run.json` です。
+
+`multitoken-kl-readout` は実装済みのGPU専用コマンドです。6設定manifestの各
+restoration pairについて、まず保存済みclean continuationをtokenizeします。
+continuationが16 token未満のpairは、model forwardの前に
+`clean_continuation_lt_16` として記録します。また、continuation追加後にclean promptの
+token IDが厳密なprefixにならないpairは、同じくmodel forwardの前に
+`clean_prompt_not_exact_token_prefix` として記録します。どちらも1,241 pairの監査記録には
+残したままreadoutの統計分母から除外します。settingごとの
+`n_target_available` と全体の `target_available_pairs` を出力します。評価可能なpairでは、
+先頭16個の同一token IDをclean、typo、patch済みtypo promptへteacher-forceします。patchは
+edited-word stateをlayer `[0,6)` でコピーします。primaryのpair単位scoreは、元の
+targeting metricに使った最初のCoT tokenを意図的に除外し、token 2--16における
+`KL(clean || patched)` の平均を `KL(clean || typo)` の平均と比較します。secondary
+出力はtoken 2--4、token 2--8、tokenごとのraw KL reduction、first tokenとtoken
+2--16のpaired差です。未介入側の分母がほぼ0のpairは固定済み解析計画に従って除外し、
+負のrestoration値は保持します。`--limit-per-setting` は非confirmatoryなsmoke test
+専用で、`--resume` は入力内容でaddressしhashで拘束したpair checkpointを検証して
+から再利用します。
+token単位の診断labelには、byte断片を独立したtextとしてdecodeせず、tokenizer固有の
+語彙pieceを使います。
+
+```bash
+GPU_ID=0
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot multitoken-kl-readout \
+  --config projects/typo-cot/configs/rebuttal/multitoken-kl-readout.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --teacher-forced-tokens 16 \
+  --primary-token-range 2:16 \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/multitoken-kl-readout"
+```
+
+出力は `multitoken_kl_records.jsonl`、`setting_metrics.csv`、
+`token_position_trajectory.csv`、`token_position_trajectory.svg`、
+`multitoken_summary.json`、hashで拘束した `run.json` です。
+
+`patch-harm-audit` は実装済みのGPU専用コマンドです。manifestに含まれるalignment可能な
+clean-correct/typo-correct pairをsettingごとの上限なしで全件選び、clean側のedited-word-final
+stateを対応するtypo位置へlayer `[0,6)` でコピーして、patch済み回答をgreedy生成します。
+介入前baselineには、決定的に再抽出済みの保存typo回答を使います。`preserve` はpatch後も
+正答、`harm` はpatch後の誤答であり、抽出不能generationも含めて分母に残し、別途件数を
+報告します。`answer_changed` は正規化した抽出値を比較するため、介入前回答が抽出済みで
+patch後が抽出不能ならtrueです。
+
+さらに、完全なharm監査とmanifestで拘束したfixed-windowの800/1,241 repair partitionを
+結合します。この値は、paper denominator外のprepared typo-wrong recordがmanifestに残るため、
+population net accuracyではなく `repair-harm-conditional-composite` と明記します。
+`--limit-per-setting` は非confirmatory smoke test専用で、この引数を使ったrunではcompositeの
+transition推定値を出しません。`--resume` は入力内容でaddressし、hashとruntimeを検証した
+checkpointだけを再利用します。
+
+```bash
+GPU_ID=0
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot patch-harm-audit \
+  --config projects/typo-cot/configs/rebuttal/patch-harm-audit.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --cohort clean-correct-typo-correct \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/patch-harm-audit"
+```
+
+出力は `patch_harm_records.jsonl`、`setting_harm_table.csv`、
+`repair_harm_composite.csv`、`patch_harm_summary.json`、hashで拘束した
+`run.json` です。
+
+`tokenization-severity-analysis` は実装済みのCPU専用コマンドです。完全な6設定manifestと、
+そのmanifest全件を処理したhash検証済みcontrols runだけを受理し、非confirmatoryなlimit付き
+runは拒否します。追加のmodel推論は行わず、各restoration pairを次の4 dimensionで必ず1つの
+binへ割り当てます。
+
+- 全edited wordでsubtoken数が不変／少なくとも1 editで変化
+- 少なくとも1 editでtypo側fragmentationが増加／増加なし
+- aligned edit数が1／2／3–4
+- clean edited wordが全てsingle-token／少なくとも1語がmulti-token
+
+0件や少数件のcellも省略しません。各binについてcorrect・offset・cross-itemの3 armを、
+それぞれのplanned-valid分母と、3 arm全てが有効なcommon-valid分母の両方で報告します。
+overallに加えて6設定別の行も出すため、pooled rateがsetting構成を隠しません。
+
+```bash
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+uv run --project projects/typo-cot typo-cot tokenization-severity-analysis \
+  --config projects/typo-cot/configs/rebuttal/tokenization-severity-analysis.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --controls-run "${REBUTTAL_ROOT}/six-setting-patch-controls" \
+  --output-dir "${REBUTTAL_ROOT}/tokenization-severity-analysis"
+```
+
+出力は `tokenization_severity_records.jsonl`、`tokenization_severity_table.csv`、
+`tokenization_severity_summary.json`、hashで拘束した `run.json` です。
+
+`subword-position-patching` は実装済みのGPU専用コマンドで、Gemma-3-4B/GSM8Kの
+primary restoration cohort 172件を対象にします。layer `[0,6)` で、各edited wordの
+first subtoken、final subtoken、全aligned subtokenの3 modeを同一pair上で新規生成します。
+抽出したpatch済み回答がmanifestに保存された決定的再抽出済みclean回答と一致すれば成功です。
+
+confirmatoryな `equal-count-primary` subsetでは、全edited wordについてclean/typoのsubtoken数が
+一致することを要求し、`all` modeは語内ordinalをそのまま対応させます。token数不一致pairを
+primary rateへ混ぜません。このpair-level labelは3 modeで共通にし、first/final/allを同一分母で
+paired比較します。不一致pairは `mismatch-monotone-secondary` として別集計し、
+各typo subtokenへ正規化した語内位置が最も近いclean stateを割り当てて両endpointを保持します。
+片側が1 tokenの場合はclean word-final stateを使います。per-pair recordには全source/write対応、
+停止理由、抽出回答、監査用のhistorical final-token eventを残します。`--limit` は
+non-confirmatory smoke専用で、`--resume` はhashで拘束した完全なpair checkpointだけを再利用します。
+
+equal-count primary subsetではCochran's Qに加え、3つのpaired mode contrastすべてについて
+exact McNemar test、10,000回pair bootstrap CI、Holm補正を報告します。mismatch subsetの
+推測統計はexploratoryと明記し、primary Holm familyには含めません。
+
+```bash
+GPU_ID=0
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot subword-position-patching \
+  --config projects/typo-cot/configs/rebuttal/subword-position-patching.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --modes first final all \
+  --token-count-policy equal-count-primary \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/subword-position-patching"
+```
+
+出力は `subword_patch_records.jsonl`、`subword_patch_table.csv`、
+`subword_patch_contrasts.csv`、
+`subword_alignment_flow.csv`、`subword_patch_summary.json`、hashで拘束した
+`run.json` です。
+空cellのrateはJSONでは `null`、CSVでは空欄とし、同時に
+`restoration_rate_defined=false` を出力します。数値0として扱いません。
+
+## held-out layer-window評価
+
+`held-out-window-evaluation` は実装済みのGPU専用コマンドです。論文の `[0,6)` が
+data-adaptiveに選ばれたという
+明記済みの制約を検証します。`build-rebuttal-manifest` がoutcomeを使わず層別化して
+固定した `window_selection` と `window_evaluation` のID listを使い、同じpairが両phaseへ
+入ることを禁止します。分割単位は `(task, sample_id)` であるため、同じbenchmark
+sampleはモデルやtypo-targeting条件が異なっても必ず同じphaseに入ります。
+
+診断phaseは、事前固定した5つの6層候補 `[0,6)`、`[6,12)`、`[12,18)`、
+`[18,24)`、`[22,28)` を比較します。論文の12 cellのdepth evidenceに合わせ、6つの
+model--task setting内でもAttribution-4とRandom-4を分けます。model--task--target-rule
+cellごと・候補ごとにclean first-CoT-token分布のnormalized restorationのmedianを求め、
+12 cellを等重みとしたmacro meanが最大の候補を選びます。同じscoreでrunner-upも固定し、
+scoreが完全に同じ場合は開始層が小さい候補を優先します。targetを利用できないpairと
+untreated KLが `1e-9` 以下のpairは記録に残しますが選択には使いません。全候補について
+12 cellの各cellに少なくとも1件のscoreを要求します。そのためsmoke runの
+`--limit-per-setting` は2以上とし、まず各targeting条件から1件ずつ決定的に残してから
+残りのbudgetを埋めます。held-out model callを始める前に `window_selection.json` を
+commitしてhashを記録します。
+
+評価phaseは、分離されたID上でselected windowとrunner-up windowによる回答を一度だけ
+生成します。setting別のpaired risk difference、6検定を1 familyとしたHolm補正付き
+exact McNemar test、paired bootstrap区間、setting等重みnested-bootstrap macro差を
+報告します。`initial_six_advantage_reproduced` は、診断phaseで `[0,6)` が選ばれ、かつ
+held-out macro区間の下限が0より大きい場合だけtrueです。この追加実験によって論文の
+historicalな `[0,6)` 結果をprespecifiedへ読み替えることはありません。
+
+```bash
+GPU_ID=0
+REBUTTAL_ROOT=projects/typo-cot/results/rebuttal
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project projects/typo-cot --extra lrp \
+  typo-cot held-out-window-evaluation \
+  --config projects/typo-cot/configs/rebuttal/held-out-window-evaluation.yaml \
+  --manifest "${REBUTTAL_ROOT}/manifest/pair_manifest.jsonl" \
+  --cohort-ids "${REBUTTAL_ROOT}/manifest/cohort_ids.json" \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${REBUTTAL_ROOT}/held-out-window-evaluation"
+```
+
+出力は `window_selection_records.jsonl`、評価開始前に固定される
+`window_selection.json`、`held_out_window_records.jsonl`、
+`held_out_window_table.csv`、`held_out_window_contrasts.csv`、
+`held_out_window_summary.json`、`pair_status_records.jsonl`、hashで拘束した
+`run.json` です。`--resume` は完全なpair checkpointと、完全一致する診断phaseの
+selectionだけを再利用できます。
+
+## typo頑健化学習の固定インターフェース
+
+PEFTを追加しても論文再現環境を変更しないよう、学習には別のlockfileを持つprojectを
+使用します。datasetの役割、leakage防止、layerからcomponentへ進む局所化、loss、
+baseline、PR前の実測gateは
+[`docs/robustness_training_plan_v1.md`](docs/robustness_training_plan_v1.md) で固定しています。
+以下のcommandは、別lockfileを持つ学習projectが実装・登録済みです。このblockは
+**逐次実行できる自己完結pipelineではなく、複数のstudy cycleを含むinterface catalog**
+です。各前提資産に必要なprovenanceとinterfaceは
+[`projects/typo-robust-training/README.ja.md`](../typo-robust-training/README.ja.md)
+で定義します。事前構築済みの64M training-data artifactや外部で凍結されたdataなど、
+一部の前提資産は別途供給されるため、このrunbookが必ずしもすべての前提資産を
+生成するわけではありません。
+manifest、corpus、localization record、checkpointが不足している場合は、暗黙に生成せず
+明示的に失敗します。実測runでは、評価tierとsealed dataの開封規則を引き続き遵守してください。
+
+```bash
+GPU_ID=0
+TRAIN_PROJECT=projects/typo-robust-training
+TRAIN_ROOT=projects/typo-robust-training/results
+EVALUATION_DATA="${TRAIN_ROOT}/evaluation-data/robustness-v1"
+WANDB_PROJECT=typo-robust-training
+
+uv sync --project "${TRAIN_PROJECT}" --locked
+
+uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-robustness-training-data \
+  --config "${TRAIN_PROJECT}/configs/gemma4b-sanity.yaml" \
+  --output-dir "${TRAIN_ROOT}/data/gemma4b-sanity"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot select-distillation-layers \
+  --config "${TRAIN_PROJECT}/configs/gemma4b-layer-selection.yaml" \
+  --diagnostic-manifest "${TRAIN_ROOT}/data/gemma4b-sanity/diagnostic_manifest.jsonl" \
+  --tasks gsm8k mmlu arc \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/localization/layers"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot localize-robustness-components \
+  --config "${TRAIN_PROJECT}/configs/gemma4b-component-localization.yaml" \
+  --diagnostic-manifest "${TRAIN_ROOT}/data/gemma4b-sanity/diagnostic_manifest.jsonl" \
+  --layer-selection "${TRAIN_ROOT}/localization/layers/layer_selection.json" \
+  --components mlp-neuron attention-head \
+  --causal-readouts answer multitoken-kl \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/localization/components"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-noisy-language-model \
+  --config "${TRAIN_PROJECT}/configs/baselines/noisy-language-model.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/training/noisy-language-model/seed-42"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-output-matching \
+  --config "${TRAIN_PROJECT}/configs/baselines/output-matching.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/training/output-matching/seed-42"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-global-state-alignment \
+  --config "${TRAIN_PROJECT}/configs/baselines/global-state-alignment.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/training/global-state-alignment/seed-42"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot train-localized-state-distillation \
+  --config "${TRAIN_PROJECT}/configs/gemma4b-targeted-lora.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-sanity" \
+  --layer-selection "${TRAIN_ROOT}/localization/layers/layer_selection.json" \
+  --component-selection "${TRAIN_ROOT}/localization/components/component_selection.json" \
+  --wandb-project "${WANDB_PROJECT}" \
+  --seed 42 --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/training/localized-state-distillation/seed-42"
+
+CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
+  typo-cot evaluate-typo-robustness \
+  --config "${TRAIN_PROJECT}/configs/gemma4b-evaluation.yaml" \
+  --evaluation-protocol "${TRAIN_PROJECT}/configs/robustness-evaluation-v1.yaml" \
+  --training-data "${TRAIN_ROOT}/data/gemma4b-cycle3-64m" \
+  --evaluation-data "${EVALUATION_DATA}" \
+  --evaluation-role tune \
+  --layer-selection "${TRAIN_ROOT}/localization/generic-joint-window-v1/selection/window_selection.json" \
+  --window-validation "${TRAIN_ROOT}/localization/generic-joint-window-v1/validation/window_validation.json" \
+  --checkpoint "${TRAIN_ROOT}/training/cycle3/causal-window-state-distillation/seed-42/adapter" \
+  --splits same-task unseen-task unseen-content unseen-typo \
+  --gpu-id "${GPU_ID}" \
+  --output-dir "${TRAIN_ROOT}/evaluation/tune/targeted-seed-42"
+```
+
 ## clean/editedペアを生成する
 
 `prepare-edited-pairs` は論文の入力準備を行います。clean入力でのgreedy生成、
@@ -1007,6 +1378,7 @@ uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/te
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_one_token_prefix_replacement.py
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_build_one_token_tables_*.py
 uv run --project projects/typo-cot pytest projects/typo-cot/tests/test_edit_count_sensitivity.py
+uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_subword_position_patching.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_typo_warning_prompt.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_input_corrector_*.py
 uv run --project projects/typo-cot --extra lrp pytest projects/typo-cot/tests/test_restoration_order_*.py

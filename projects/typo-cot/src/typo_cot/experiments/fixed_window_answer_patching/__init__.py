@@ -2,6 +2,7 @@
 
 from typo_cot.experiments.fixed_window_answer_patching.runner import (
     DIRECTION_NAMES,
+    FIXED_WINDOW_ANSWER_PATCHING_PROTOCOL,
     FixedWindowAnswerPatchingConfig,
     FixedWindowAnswerPatchingResult,
     FixedWindowAnswerPatchingRunError,
@@ -12,6 +13,7 @@ from typo_cot.experiments.fixed_window_answer_patching.runner import (
 
 __all__ = [
     "DIRECTION_NAMES",
+    "FIXED_WINDOW_ANSWER_PATCHING_PROTOCOL",
     "FixedWindowAnswerPatchingConfig",
     "FixedWindowAnswerPatchingResult",
     "FixedWindowAnswerPatchingRunError",

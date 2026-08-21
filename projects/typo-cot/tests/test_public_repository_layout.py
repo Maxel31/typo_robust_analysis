@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import importlib.util
 import subprocess
 import tomllib
@@ -17,7 +18,7 @@ PROJECT_PREFIX = "projects/typo-cot/"
 OBSOLETE_REPOSITORY_ROOTS = {"_sample_project", "datasets", "scripts", "utils"}
 OBSOLETE_REPOSITORY_PATHS = {Path(".env.example"), Path("projects/.gitkeep")}
 
-LEGACY_PROJECT_DIRECTORIES = {"analysis", "configs", "scripts"}
+LEGACY_PROJECT_DIRECTORIES = {"analysis", "scripts"}
 LEGACY_PACKAGE_DIRECTORIES = {
     "analysis",
     "attribution",
@@ -83,12 +84,14 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/data/__init__.py"),
     Path("src/typo_cot/data/cohorts.py"),
     Path("src/typo_cot/data/loader.py"),
+    Path("src/typo_cot/data/matched_donors.py"),
     Path("src/typo_cot/evaluation/__init__.py"),
     Path("src/typo_cot/evaluation/extractor.py"),
     Path("src/typo_cot/evaluation/fallback.py"),
     Path("src/typo_cot/evaluation/generation.py"),
     Path("src/typo_cot/experiments/__init__.py"),
     Path("src/typo_cot/experiments/catalog.py"),
+    Path("src/typo_cot/experiments/rebuttal_runtime.py"),
     Path("src/typo_cot/experiments/answer_line_deletion/__init__.py"),
     Path("src/typo_cot/experiments/answer_line_deletion/planning.py"),
     Path("src/typo_cot/experiments/answer_line_deletion/protocol.py"),
@@ -102,6 +105,11 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/experiments/build_one_token_tables/runner.py"),
     Path("src/typo_cot/experiments/build_one_token_tables/source.py"),
     Path("src/typo_cot/experiments/build_one_token_tables/statistics.py"),
+    Path("src/typo_cot/experiments/build_rebuttal_manifest/__init__.py"),
+    Path("src/typo_cot/experiments/build_rebuttal_manifest/planning.py"),
+    Path("src/typo_cot/experiments/build_rebuttal_manifest/protocol.py"),
+    Path("src/typo_cot/experiments/build_rebuttal_manifest/records.py"),
+    Path("src/typo_cot/experiments/build_rebuttal_manifest/runner.py"),
     Path("src/typo_cot/experiments/clean_prefix_scan/__init__.py"),
     Path("src/typo_cot/experiments/clean_prefix_scan/metrics.py"),
     Path("src/typo_cot/experiments/clean_prefix_scan/planning.py"),
@@ -154,6 +162,17 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/experiments/restoration_order_accuracy/runtime.py"),
     Path("src/typo_cot/experiments/restoration_order_accuracy/source.py"),
     Path("src/typo_cot/experiments/restoration_order_accuracy/statistics.py"),
+    Path("src/typo_cot/experiments/six_setting_patch_controls/__init__.py"),
+    Path("src/typo_cot/experiments/six_setting_patch_controls/protocol.py"),
+    Path("src/typo_cot/experiments/six_setting_patch_controls/runner.py"),
+    Path("src/typo_cot/experiments/six_setting_patch_controls/runtime.py"),
+    Path("src/typo_cot/experiments/six_setting_patch_controls/source.py"),
+    Path("src/typo_cot/experiments/six_setting_patch_controls/statistics.py"),
+    Path("src/typo_cot/experiments/source_write_coordinate_grid/__init__.py"),
+    Path("src/typo_cot/experiments/source_write_coordinate_grid/protocol.py"),
+    Path("src/typo_cot/experiments/source_write_coordinate_grid/runner.py"),
+    Path("src/typo_cot/experiments/source_write_coordinate_grid/runtime.py"),
+    Path("src/typo_cot/experiments/source_write_coordinate_grid/statistics.py"),
     Path("src/typo_cot/experiments/layerwise_answer_patching/__init__.py"),
     Path("src/typo_cot/experiments/layerwise_answer_patching/metrics.py"),
     Path("src/typo_cot/experiments/layerwise_answer_patching/patching.py"),
@@ -170,6 +189,30 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/experiments/model_scale_cot_swap/render.py"),
     Path("src/typo_cot/experiments/model_scale_cot_swap/runner.py"),
     Path("src/typo_cot/experiments/model_scale_cot_swap/source.py"),
+    Path("src/typo_cot/experiments/multitoken_kl_readout/__init__.py"),
+    Path("src/typo_cot/experiments/multitoken_kl_readout/metrics.py"),
+    Path("src/typo_cot/experiments/multitoken_kl_readout/protocol.py"),
+    Path("src/typo_cot/experiments/multitoken_kl_readout/runner.py"),
+    Path("src/typo_cot/experiments/multitoken_kl_readout/runtime.py"),
+    Path("src/typo_cot/experiments/multitoken_kl_readout/statistics.py"),
+    Path("src/typo_cot/experiments/patch_harm_audit/__init__.py"),
+    Path("src/typo_cot/experiments/patch_harm_audit/protocol.py"),
+    Path("src/typo_cot/experiments/patch_harm_audit/runner.py"),
+    Path("src/typo_cot/experiments/patch_harm_audit/runtime.py"),
+    Path("src/typo_cot/experiments/tokenization_severity_analysis/__init__.py"),
+    Path("src/typo_cot/experiments/tokenization_severity_analysis/protocol.py"),
+    Path("src/typo_cot/experiments/tokenization_severity_analysis/runner.py"),
+    Path("src/typo_cot/experiments/tokenization_severity_analysis/source.py"),
+    Path("src/typo_cot/experiments/subword_position_patching/__init__.py"),
+    Path("src/typo_cot/experiments/subword_position_patching/planning.py"),
+    Path("src/typo_cot/experiments/subword_position_patching/protocol.py"),
+    Path("src/typo_cot/experiments/subword_position_patching/runner.py"),
+    Path("src/typo_cot/experiments/subword_position_patching/runtime.py"),
+    Path("src/typo_cot/experiments/subword_position_patching/statistics.py"),
+    Path("src/typo_cot/experiments/held_out_window_evaluation/__init__.py"),
+    Path("src/typo_cot/experiments/held_out_window_evaluation/protocol.py"),
+    Path("src/typo_cot/experiments/held_out_window_evaluation/runner.py"),
+    Path("src/typo_cot/experiments/held_out_window_evaluation/runtime.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/__init__.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/metrics.py"),
     Path("src/typo_cot/experiments/patch_coordinate_controls/planning.py"),
@@ -205,6 +248,35 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/models/__init__.py"),
     Path("src/typo_cot/models/prompts.py"),
     Path("src/typo_cot/models/wrapper.py"),
+}
+
+OPTIONAL_TRAINING_COMMANDS = {
+    "build-robustness-training-data",
+    "build-sae-clean-corpus",
+    "calibrate-sparse-autoencoder-l1",
+    "evaluate-typo-robustness",
+    "freeze-generic-localization-pairs",
+    "freeze-robustness-evaluation",
+    "localize-robustness-components",
+    "select-distillation-layers",
+    "select-generic-joint-patch-window",
+    "train-global-state-alignment",
+    "train-localized-state-distillation",
+    "train-noisy-language-model",
+    "train-output-matching",
+    "train-random-window-state-distillation",
+    "train-sparse-autoencoders",
+    "validate-generic-joint-patch-window",
+    "validate-sparse-autoencoders",
+}
+PUBLIC_CONFIG_FILES = {
+    Path("configs/rebuttal/held-out-window-evaluation.yaml"),
+    Path("configs/rebuttal/multitoken-kl-readout.yaml"),
+    Path("configs/rebuttal/patch-harm-audit.yaml"),
+    Path("configs/rebuttal/tokenization-severity-analysis.yaml"),
+    Path("configs/rebuttal/subword-position-patching.yaml"),
+    Path("configs/rebuttal/six-setting-patch-controls.yaml"),
+    Path("configs/rebuttal/source-write-coordinate-grid.yaml"),
 }
 
 
@@ -247,14 +319,14 @@ def test_obsolete_workspace_scaffolding_is_not_tracked() -> None:
     assert tracked.isdisjoint(OBSOLETE_REPOSITORY_PATHS)
 
 
-def test_root_workspace_contains_only_the_reproduction_package() -> None:
+def test_root_workspace_isolates_training_from_the_reproduction_package() -> None:
     with (REPOSITORY_ROOT / "pyproject.toml").open("rb") as stream:
         root_project = tomllib.load(stream)
 
     assert root_project["project"]["dependencies"] == []
     assert "sources" not in root_project["tool"]["uv"]
     assert root_project["tool"]["uv"]["workspace"]["members"] == ["projects/typo-cot"]
-    assert "exclude" not in root_project["tool"]["uv"]["workspace"]
+    assert root_project["tool"]["uv"]["workspace"]["exclude"] == ["projects/typo-robust-training"]
 
 
 def test_development_dependencies_match_the_public_test_toolchain() -> None:
@@ -306,6 +378,11 @@ def test_public_source_tree_is_the_reviewed_runtime_closure() -> None:
     assert tracked_sources == PUBLIC_SOURCE_FILES
 
 
+def test_public_configs_are_the_reviewed_protocol_closure() -> None:
+    tracked_configs = {path for path in _tracked_existing_paths() if path.parts[0] == "configs"}
+    assert tracked_configs == PUBLIC_CONFIG_FILES
+
+
 def test_submitted_warning_input_manifest_is_the_only_public_package_data() -> None:
     tracked_package_data = {
         path
@@ -324,7 +401,7 @@ def test_retired_packages_are_not_importable() -> None:
 
 def test_root_guide_matches_the_reduced_project_scope() -> None:
     root_readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
-    assert "│   ├── configs/" not in root_readme
+    assert "    ├── configs/" in root_readme
     assert "`projects/typo-cot` depends on the `typo-utils`" not in root_readme
 
 
@@ -380,30 +457,62 @@ def test_cli_only_exposes_reviewed_public_commands() -> None:
     subparsers = next(
         action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
     )
-    assert set(subparsers.choices) == {
+    expected = {
         "answer-line-deletion",
         "build-one-token-tables",
+        "build-rebuttal-manifest",
+        "build-robustness-training-data",
+        "build-sae-clean-corpus",
         "build-typo-warning-summary",
         "build-input-corrector-summary",
         "build-restoration-order-table",
         "clean-prefix-scan",
+        "calibrate-sparse-autoencoder-l1",
         "one-token-prefix-replacement",
         "experiments",
         "cot-swap",
         "edit-count-sensitivity",
         "fixed-window-answer-patching",
+        "freeze-generic-localization-pairs",
+        "freeze-robustness-evaluation",
         "layerwise-answer-patching",
         "layerwise-kl-patching",
+        "localize-robustness-components",
         "model-scale-cot-swap",
         "patch-coordinate-controls",
         "patch-position-controls",
         "patch-text-combination",
         "prepare-edited-pairs",
         "targeting-fidelity-audit",
+        "train-sparse-autoencoders",
+        "train-global-state-alignment",
+        "train-localized-state-distillation",
+        "train-noisy-language-model",
+        "train-output-matching",
+        "train-random-window-state-distillation",
         "typo-warning-prompt",
+        "evaluate-typo-robustness",
         "input-corrector-audit",
         "restoration-order-accuracy",
+        "select-distillation-layers",
+        "select-generic-joint-patch-window",
+        "six-setting-patch-controls",
+        "source-write-coordinate-grid",
+        "multitoken-kl-readout",
+        "patch-harm-audit",
+        "tokenization-severity-analysis",
+        "validate-generic-joint-patch-window",
+        "validate-sparse-autoencoders",
+        "subword-position-patching",
+        "held-out-window-evaluation",
     }
+    plugin_names = {
+        entry_point.name
+        for entry_point in importlib.metadata.entry_points(group="typo_cot.commands")
+    }
+    if "robustness-training" not in plugin_names:
+        expected.difference_update(OPTIONAL_TRAINING_COMMANDS)
+    assert set(subparsers.choices) == expected
 
 
 def test_legacy_development_documents_are_not_tracked() -> None:

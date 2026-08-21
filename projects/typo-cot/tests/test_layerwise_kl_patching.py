@@ -24,6 +24,7 @@ from typo_cot.experiments.layerwise_kl_patching.metrics import (
 from typo_cot.experiments.layerwise_kl_patching.patching import (
     BlockOutputPatch,
     capture_block_outputs,
+    capture_block_outputs_with_forward,
     find_decoder_layers,
 )
 from typo_cot.experiments.layerwise_kl_patching.runtime import (
@@ -207,7 +208,9 @@ class FakeRuntime:
             ),
         }
         default.update(self.scans.get(sample_id, {}))
-        return PairScan(sample_id=sample_id, directions={name: default[name] for name in directions})
+        return PairScan(
+            sample_id=sample_id, directions={name: default[name] for name in directions}
+        )
 
 
 def _config(pairs_path: Path, output_dir: Path, **changes: object) -> LayerwiseKLPatchingConfig:
@@ -413,9 +416,7 @@ class _AddBlock(nn.Module):
 class _ToyDecoder(nn.Module):
     def __init__(self, *, tuple_output: bool = False) -> None:
         super().__init__()
-        self.layers = nn.ModuleList(
-            [_AddBlock(1.0, tuple_output=tuple_output), _AddBlock(10.0)]
-        )
+        self.layers = nn.ModuleList([_AddBlock(1.0, tuple_output=tuple_output), _AddBlock(10.0)])
 
 
 class _ToyModel(nn.Module):
@@ -477,6 +478,29 @@ def test_capture_and_patch_preserve_tuple_outputs_and_remove_hooks_on_error() ->
     assert model(hidden)[:, :, 0].tolist() == [[11.0, 11.0, 11.0]]
 
 
+def test_capture_with_forward_returns_donors_and_output_from_one_pass() -> None:
+    model = _ToyModel(tuple_output=True)
+    layers = find_decoder_layers(model)
+    hidden = torch.zeros(1, 3, 1)
+    calls = 0
+
+    def forward() -> torch.Tensor:
+        nonlocal calls
+        calls += 1
+        return model(hidden)
+
+    captured, output = capture_block_outputs_with_forward(
+        layers,
+        positions=(1,),
+        forward=forward,
+    )
+
+    assert calls == 1
+    assert captured[0][:, 0].tolist() == [1.0]
+    assert captured[1][:, 0].tolist() == [11.0]
+    assert output[:, :, 0].tolist() == [[11.0, 11.0, 11.0]]
+
+
 def test_find_decoder_layers_rejects_an_ambiguous_or_mismatched_stack() -> None:
     model = _ToyModel()
     model.config.num_hidden_layers = 3
@@ -485,7 +509,7 @@ def test_find_decoder_layers_rejects_an_ambiguous_or_mismatched_stack() -> None:
 
     ambiguous = SimpleNamespace(
         config=SimpleNamespace(num_hidden_layers=1),
-        named_modules=lambda: iter((('vision.layers', nn.ModuleList([_AddBlock(1.0)])),)),
+        named_modules=lambda: iter((("vision.layers", nn.ModuleList([_AddBlock(1.0)])),)),
     )
     with pytest.raises(ValueError, match="text decoder"):
         find_decoder_layers(ambiguous)
@@ -571,9 +595,7 @@ def test_direction_validity_is_independent_and_nonfinite_layer_excludes_complete
         }
     )
 
-    result = run_layerwise_kl_patching(
-        _config(pairs_path, tmp_path / "output"), runtime=runtime
-    )
+    result = run_layerwise_kl_patching(_config(pairs_path, tmp_path / "output"), runtime=runtime)
 
     assert result.included_grids == 0
     assert result.layer_records == 0
@@ -717,17 +739,13 @@ def test_strict_json_rejects_duplicate_keys_and_nonfinite_constants(tmp_path: Pa
 
     pairs_path.write_text(original[:-1] + ',"unexpected":NaN}\n', encoding="utf-8")
     with pytest.raises(ValueError, match="non-standard JSON constant"):
-        run_layerwise_kl_patching(
-            _config(pairs_path, tmp_path / "nan-out"), runtime=FakeRuntime()
-        )
+        run_layerwise_kl_patching(_config(pairs_path, tmp_path / "nan-out"), runtime=FakeRuntime())
 
 
 def test_runtime_failure_keeps_checkpoints_and_resume_skips_completed_pairs(
     tmp_path: Path,
 ) -> None:
-    pairs_path = _write_pair_source(
-        tmp_path / "source", [_pair("a-complete"), _pair("b-fails")]
-    )
+    pairs_path = _write_pair_source(tmp_path / "source", [_pair("a-complete"), _pair("b-fails")])
     output_dir = tmp_path / "output"
     config = _config(pairs_path, output_dir)
     first_runtime = FakeRuntime(error_for="b-fails")

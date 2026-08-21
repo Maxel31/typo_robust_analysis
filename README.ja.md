@@ -51,6 +51,23 @@ compute class、必須引数、出力、実装状態を確認できます。
 GPU実験には論文に固定された `lrp` 環境を使用します。CPUだけで行うカタログ確認と
 契約テストには、モデルのダウンロードは不要です。
 
+## ARR追加実験とtypo頑健化学習
+
+ARR rebuttalの追加実験と、今後のtypo頑健化学習については、結果生成より先に
+[`rebuttal_analysis_plan_v1.md`](projects/typo-cot/docs/rebuttal_analysis_plan_v1.md)
+と
+[`robustness_training_plan_v1.md`](projects/typo-cot/docs/robustness_training_plan_v1.md)
+で解析契約を固定しています。CPU専用の `build-rebuttal-manifest` が論文6設定の
+source cohortを検証・固定し、GPU用の `six-setting-patch-controls`、
+`source-write-coordinate-grid`、`multitoken-kl-readout`、`patch-harm-audit` が
+hashで入力を拘束したcheckpoint再開可能な最初の追加実験を実行し、CPU専用の
+`tokenization-severity-analysis` が追加推論なしで3つのpatch armを層別化します。
+GPU専用の `subword-position-patching` はfirst・final・all-subword転送を別々に比較します。
+`held-out-window-evaluation` は診断用IDだけで6層windowを選び、分離されたIDで評価します。
+パッケージREADMEには各操作について内容が分かるコマンドと明示的な出力を記載します。
+学習機能は、held-out評価でclean性能を維持しながら頑健性が改善したことを確認してから
+公開します。
+
 ## リポジトリ構成
 
 ```text
@@ -63,6 +80,7 @@ GPU実験には論文に固定された `lrp` 環境を使用します。CPUだ�
 └── projects/typo-cot/
     ├── README.md                   # 英語版のセットアップと実行コマンド
     ├── README.ja.md                # 日本語版のセットアップと実行コマンド
+    ├── configs/                    # 固定済みの公開実験protocol
     ├── docs/                       # 論文の実験契約とprovenance
     ├── results/                    # git対象外のローカル出力（.gitkeepのみ追跡）
     ├── src/typo_cot/               # import可能な実装
