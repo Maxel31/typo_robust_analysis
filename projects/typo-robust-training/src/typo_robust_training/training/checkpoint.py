@@ -39,6 +39,11 @@ class EpochSourceOrderCache:
             self._epoch = epoch
         return self._ordered
 
+    def matches(self, sources: Sequence[TrainingSource], *, seed: int) -> bool:
+        """Return whether this cache is bound to the exact stream and seed."""
+
+        return self._sources is sources and self._seed == seed
+
 
 _BINDINGS_V1 = {
     "config_sha256",
@@ -156,7 +161,7 @@ def next_training_source(
     if order_cache is None:
         ordered = stable_epoch_sources(rows, seed=seed, epoch=epoch)
     else:
-        if order_cache._sources != rows or order_cache._seed != seed:
+        if not order_cache.matches(rows, seed=seed):
             raise ValueError("training source order cache does not match the stream")
         ordered = order_cache.for_epoch(epoch)
     source = ordered[cursor.source_index]
