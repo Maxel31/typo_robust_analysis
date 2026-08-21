@@ -13,6 +13,33 @@ from typo_robust_training.data.config import strict_loads
 from typo_robust_training.training.pairs import TrainingSource, stable_epoch_sources
 
 
+class EpochSourceOrderCache:
+    """Cache one deterministic source order for the current training epoch.
+
+    Source ordering is intentionally run-local: calibration and the main stream
+    each create their own cache, while retries within an epoch reuse the same
+    tuple.  Keeping only one epoch avoids retaining the full corpus once a
+    cursor advances.
+    """
+
+    __slots__ = ("_sources", "_seed", "_epoch", "_ordered")
+
+    def __init__(self, sources: Sequence[TrainingSource], *, seed: int) -> None:
+        rows = tuple(sources)
+        if not rows or any(not isinstance(source, TrainingSource) for source in rows):
+            raise ValueError("training source cache requires non-empty validated sources")
+        self._sources = rows
+        self._seed = seed
+        self._epoch: int | None = None
+        self._ordered: tuple[TrainingSource, ...] | None = None
+
+    def for_epoch(self, epoch: int) -> tuple[TrainingSource, ...]:
+        if self._epoch != epoch or self._ordered is None:
+            self._ordered = stable_epoch_sources(self._sources, seed=self._seed, epoch=epoch)
+            self._epoch = epoch
+        return self._ordered
+
+
 _BINDINGS_V1 = {
     "config_sha256",
     "training_data_sha256",
@@ -116,6 +143,7 @@ def next_training_source(
     *,
     cursor: TrainingCursor,
     seed: int,
+    order_cache: EpochSourceOrderCache | None = None,
 ) -> tuple[TrainingSource, int, TrainingCursor]:
     """Consume one source and return a cursor pointing to the exact successor."""
 
@@ -125,7 +153,12 @@ def next_training_source(
     if cursor.source_index >= len(rows):
         raise ValueError("training cursor source_index is outside the epoch")
     epoch = cursor.epoch
-    ordered = stable_epoch_sources(rows, seed=seed, epoch=epoch)
+    if order_cache is None:
+        ordered = stable_epoch_sources(rows, seed=seed, epoch=epoch)
+    else:
+        if order_cache._sources != rows or order_cache._seed != seed:
+            raise ValueError("training source order cache does not match the stream")
+        ordered = order_cache.for_epoch(epoch)
     source = ordered[cursor.source_index]
     next_index = cursor.source_index + 1
     next_epoch = epoch
@@ -238,6 +271,7 @@ def load_training_checkpoint(
 
 
 __all__ = [
+    "EpochSourceOrderCache",
     "LoadedTrainingCheckpoint",
     "TrainingCursor",
     "load_training_checkpoint",

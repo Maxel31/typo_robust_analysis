@@ -17,6 +17,7 @@ from typing import Protocol
 from typo_robust_training.data.perturb import TypoGenerator, eligible_word_spans
 from typo_robust_training.integrity import sha256_tree
 from typo_robust_training.training.checkpoint import (
+    EpochSourceOrderCache,
     TrainingCursor,
     load_training_checkpoint,
     next_training_source,
@@ -257,6 +258,7 @@ def _state_calibration_pairs(
     if required == 0:
         return ()
     cursor = TrainingCursor(0, 0, 0, 0, 0)
+    order_cache = EpochSourceOrderCache(bundle.sources, seed=seed)
     pairs: list[TrainingPair] = []
     while len(pairs) < required:
         pair, _epoch, cursor = _next_usable_training_pair(
@@ -265,6 +267,7 @@ def _state_calibration_pairs(
             seed=seed,
             protocol=protocol,
             runtime=runtime,
+            order_cache=order_cache,
         )
         if not pair.is_noop:
             pairs.append(pair)
@@ -356,6 +359,7 @@ def _next_usable_training_pair(
     seed: int,
     protocol: AdapterTrainingProtocol,
     runtime: AdapterTrainingRuntime,
+    order_cache: EpochSourceOrderCache | None = None,
 ) -> tuple[TrainingPair, int, TrainingCursor]:
     """Advance past unusable sources without consuming a training micro-step."""
 
@@ -365,6 +369,7 @@ def _next_usable_training_pair(
             bundle.sources,
             cursor=source_cursor,
             seed=seed,
+            order_cache=order_cache,
         )
         pair = _materialize_usable_pair(
             source=source,
@@ -693,6 +698,7 @@ def run_adapter_training(
             optimizer_steps=cursor.optimizer_steps,
             interval=protocol.checkpoint_every_optimizer_steps,
         )
+    order_cache = EpochSourceOrderCache(bundle.sources, seed=config.seed)
     provenance = dict(runtime.provenance())
     started_at = _now()
     run_base: dict[str, object] = {
@@ -815,6 +821,7 @@ def run_adapter_training(
                     seed=config.seed,
                     protocol=protocol,
                     runtime=runtime,
+                    order_cache=order_cache,
                 )
                 pending.append((accumulation_index, epoch, pair))
                 cursor = next_cursor
