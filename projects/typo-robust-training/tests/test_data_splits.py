@@ -6,6 +6,7 @@ from collections import defaultdict
 
 import pytest
 
+import typo_robust_training.data.splits as splits_module
 from typo_robust_training.data.records import CleanRecord
 from typo_robust_training.data.splits import (
     NearDuplicateTextIndex,
@@ -75,6 +76,69 @@ def test_near_duplicate_clusters_are_order_independent_and_split_atomically() ->
     leaked["row-1"] = "final_test" if leaked["row-0"] != "final_test" else "train"
     with pytest.raises(ValueError, match="near-duplicate cluster"):
         validate_group_disjointness(records, leaked, clusters=forward)
+
+
+def test_exact_duplicates_are_collapsed_before_minhash_candidate_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = tuple(
+        _record(
+            index,
+            (
+                "  THE airport is located in Chicago and serves many passengers.  "
+                if index % 2
+                else "the airport is located in Chicago\nand serves many passengers."
+            ),
+        )
+        for index in range(128)
+    )
+    signature_calls = 0
+    find_calls = 0
+    original_signature = splits_module._minhash_signature
+    original_find = splits_module._UnionFind.find
+
+    def counted_signature(shingles: frozenset[int], *, components: int = 32) -> tuple[int, ...]:
+        nonlocal signature_calls
+        signature_calls += 1
+        return original_signature(shingles, components=components)
+
+    def counted_find(union_find: splits_module._UnionFind, value: str) -> str:
+        nonlocal find_calls
+        find_calls += 1
+        return original_find(union_find, value)
+
+    monkeypatch.setattr(splits_module, "_minhash_signature", counted_signature)
+    monkeypatch.setattr(splits_module._UnionFind, "find", counted_find)
+
+    clusters = cluster_near_duplicates(records, shingle_size=3, threshold=0.80)
+
+    assert signature_calls == 1
+    assert find_calls <= 8 * len(records)
+    assert len(set(clusters.values())) == 1
+
+
+def test_exact_and_near_duplicate_mapping_is_order_independent() -> None:
+    records = (
+        _record(0, "The airport is located in Chicago and serves many passengers."),
+        _record(1, "  THE AIRPORT is located in Chicago\nand serves many passengers.  "),
+        _record(2, "The airport is located in Chicago and serves many passenger."),
+        _record(3, "A completely unrelated discussion of medieval history."),
+    )
+    orders = (
+        records,
+        tuple(reversed(records)),
+        tuple(records[index] for index in (2, 0, 3, 1)),
+    )
+
+    mappings = [cluster_near_duplicates(order, shingle_size=3, threshold=0.80) for order in orders]
+
+    assert all(mapping == mappings[0] for mapping in mappings[1:])
+    assert mappings[0] == {
+        "row-0": "row-0",
+        "row-1": "row-0",
+        "row-2": "row-0",
+        "row-3": "row-3",
+    }
 
 
 def test_near_duplicate_text_index_reuses_the_clustering_rule() -> None:
