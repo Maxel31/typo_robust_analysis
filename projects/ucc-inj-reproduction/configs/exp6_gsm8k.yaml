@@ -1,0 +1,16 @@
+# UCC-Inj exp6 faithful reproduction: GSM8K test has 1,319 questions.
+# Use CUDA_VISIBLE_DEVICES=0 or =1 and set device: cuda:0 in the visible namespace.
+exp6:
+  model: google/gemma-3-4b-it
+  dataset: openai/gsm8k
+  dataset_config: main
+  split: test
+  question_field: question
+  seed: 42
+  noise_levels: [1, 2, 3]
+  limit: null
+  max_length: 2048
+  device: cuda:0
+  dtype: bfloat16
+  trust_remote_code: false
+  add_generation_prompt: false
