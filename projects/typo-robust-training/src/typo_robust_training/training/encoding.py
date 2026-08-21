@@ -148,6 +148,12 @@ def _answer_targets(
     span: tuple[int, int] | None,
     required: bool,
 ) -> tuple[tuple[int, int], ...]:
+    def unavailable() -> tuple[tuple[int, int], ...]:
+        message = "reasoning answer suffix was truncated or has no retained target tokens"
+        if required:
+            raise UnusableTrainingPairError(message)
+        return ()
+
     if span is None:
         return ()
     start, stop = span
@@ -159,16 +165,23 @@ def _answer_targets(
         (token_stop for _token_start, token_stop in offsets),
         default=0,
     ):
-        if required:
-            raise ValueError("reasoning answer suffix was truncated from the training sequence")
-        return ()
+        return unavailable()
     targets = tuple(
         (index - 1, ids[index])
         for index, (token_start, token_stop) in enumerate(offsets)
-        if index > 0 and token_stop > token_start and start <= token_start and token_stop <= stop
+        # Fast tokenizers may legally merge the answer's leading whitespace
+        # into the first answer token.  Such a token crosses the left answer
+        # boundary, but still contains answer content and must be retained.
+        if (
+            index > 0
+            and token_stop > token_start
+            and token_stop > start
+            and token_start < stop
+            and token_stop <= stop
+        )
     )
     if not targets:
-        raise ValueError("reasoning answer suffix was truncated from the training sequence")
+        return unavailable()
     return targets
 
 
