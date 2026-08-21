@@ -5,6 +5,10 @@ from __future__ import annotations
 import re
 
 import pytest
+from tokenizers import AddedToken, Tokenizer
+from tokenizers.models import WordLevel
+from tokenizers.pre_tokenizers import Whitespace
+from transformers import PreTrainedTokenizerFast
 
 from typo_robust_training.data.records import TypoEdit
 from typo_robust_training.training.encoding import encode_training_pair, render_training_pair
@@ -48,6 +52,29 @@ class _MarkupTokenizer(_WordTokenizer):
             "attention_mask": [1] * len(ids),
             "offset_mapping": offsets,
         }
+
+
+def _fast_answer_tokenizer() -> PreTrainedTokenizerFast:
+    vocabulary = {
+        "[UNK]": 0,
+        "Question": 1,
+        "The": 2,
+        "airport": 3,
+        "arport": 4,
+        "works": 5,
+        ".": 6,
+        "Answer": 7,
+        " 72": 8,
+    }
+    backend = Tokenizer(WordLevel(vocabulary, unk_token="[UNK]"))
+    backend.pre_tokenizer = Whitespace()
+    return PreTrainedTokenizerFast(
+        tokenizer_object=backend,
+        unk_token="[UNK]",
+        additional_special_tokens=[
+            AddedToken(" 72", single_word=False, lstrip=False, rstrip=False)
+        ],
+    )
 
 
 def _pair(*, task: str | None = None, answer: str | None = None) -> TrainingPair:
@@ -196,13 +223,34 @@ def test_encoding_skips_answer_ce_when_the_answer_suffix_is_truncated() -> None:
     assert encoding.typo_edit_positions
     assert encoding.answer_targets == ()
 
-    with pytest.raises(ValueError, match="answer suffix was truncated"):
+    with pytest.raises(UnusableTrainingPairError, match="answer suffix was truncated"):
         encode_training_pair(
             _pair(task="gsm8k", answer="72"),
             tokenizer=_WordTokenizer(),
             max_length=6,
             require_answer_targets=True,
         )
+
+
+def test_fast_tokenizer_keeps_answer_token_that_crosses_left_boundary() -> None:
+    encoding = encode_training_pair(
+        _pair(task="gsm8k", answer="72"),
+        tokenizer=_fast_answer_tokenizer(),
+        max_length=512,
+        require_answer_targets=True,
+    )
+
+    assert encoding.answer_targets
+
+
+def test_optional_answer_target_is_empty_when_fast_tokenizer_truncates_answer() -> None:
+    encoding = encode_training_pair(
+        _pair(task="gsm8k", answer="72"),
+        tokenizer=_fast_answer_tokenizer(),
+        max_length=6,
+    )
+
+    assert encoding.answer_targets == ()
 
 
 def test_encoding_maps_an_edited_word_inside_a_punctuation_token() -> None:
