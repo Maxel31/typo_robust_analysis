@@ -7,8 +7,10 @@ import json
 from pathlib import Path
 
 import pytest
+import typo_robust_training.training.checkpoint as checkpoint_module
 
 from typo_robust_training.training.checkpoint import (
+    EpochSourceOrderCache,
     TrainingCursor,
     load_training_checkpoint,
     next_training_source,
@@ -91,6 +93,44 @@ def test_checkpoint_resume_reproduces_the_exact_next_sample_sequence(tmp_path: P
     suffix, _ = _consume(sources, resumed.cursor, count=18)
     assert prefix + suffix == uninterrupted
     assert resumed.state_path == state.resolve()
+
+
+def test_epoch_order_cache_hashes_once_for_retries_and_once_on_rollover(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sources = tuple(_clean_source(f"{index:064x}") for index in range(5))
+    calls: list[int] = []
+    original = checkpoint_module.stable_epoch_sources
+
+    def counted(rows, *, seed: int, epoch: int):
+        calls.append(epoch)
+        return original(rows, seed=seed, epoch=epoch)
+
+    monkeypatch.setattr(checkpoint_module, "stable_epoch_sources", counted)
+    cache = EpochSourceOrderCache(sources, seed=42)
+    first = cache.for_epoch(0)
+    assert cache.for_epoch(0) is first
+    # A retry can request the same epoch repeatedly; it must not rehash.
+    assert cache.for_epoch(0) is first
+    second = cache.for_epoch(1)
+    assert second != first
+    assert cache.for_epoch(1) is second
+    assert calls == [0, 1]
+
+
+def test_cached_resume_sequence_matches_uncached_sequence() -> None:
+    sources = tuple(_clean_source(f"{index:064x}") for index in range(7))
+    start = TrainingCursor(0, 0, 0, 0, 0)
+    expected, _ = _consume(sources, start, count=31)
+    cache = EpochSourceOrderCache(sources, seed=42)
+    current = start
+    actual: list[tuple[int, str]] = []
+    for _ in range(31):
+        source, epoch, current = next_training_source(
+            sources, cursor=current, seed=42, order_cache=cache
+        )
+        actual.append((epoch, source.record_id))
+    assert tuple(actual) == expected
 
 
 def test_checkpoint_rejects_binding_or_runtime_state_tampering(tmp_path: Path) -> None:
