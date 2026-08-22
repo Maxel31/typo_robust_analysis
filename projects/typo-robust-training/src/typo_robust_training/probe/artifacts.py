@@ -757,6 +757,30 @@ class ProbeTransitionArtifact:
     def suffix_layers(self) -> tuple[int, ...]:
         return tuple(range(self.selected_transition_layer, self.decoder_layers))
 
+    @property
+    def cohort_identities_by_role(self) -> Mapping[str, frozenset[str]]:
+        """Compatibility view over the stronger parent identity inventory."""
+
+        return MappingProxyType(
+            {
+                "fit": self.identity_inventory.fit,
+                "selection": self.identity_inventory.selection,
+                "validation": self.identity_inventory.validation,
+            }
+        )
+
+    @property
+    def protected_identities(self) -> frozenset[str]:
+        """Protected identities bound to the attested split registry."""
+
+        return self.identity_inventory.protected
+
+    @property
+    def all_reserved_identities(self) -> frozenset[str]:
+        """Every transitive identity unavailable to a downstream diagnostic."""
+
+        return self.identity_inventory.all
+
 
 def _validation_peak(trajectory: ProbeSeedTrajectory) -> int:
     drops = trajectory.transition_drop

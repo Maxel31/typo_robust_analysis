@@ -328,6 +328,12 @@ def test_artifact_recomputes_selection_and_resolves_suffix(tmp_path: Path) -> No
     assert result.probe_seeds == (42, 43)
     assert all(value > 0.0 for value in result.validation_ci_lower_by_seed.values())
     assert result.artifact_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert set(result.cohort_identities_by_role) == {"fit", "selection", "validation"}
+    assert result.protected_identities
+    assert result.all_reserved_identities == frozenset().union(
+        result.protected_identities,
+        *result.cohort_identities_by_role.values(),
+    )
 
 
 def test_training_consumer_loads_the_real_validated_artifact_bundle(tmp_path: Path) -> None:
