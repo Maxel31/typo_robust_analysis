@@ -190,3 +190,117 @@ def test_cycle2_checkpoint_binds_frozen_monitor_protocol_and_data(tmp_path: Path
     changed = {**bindings, "monitor_data_sha256": "f" * 64}
     with pytest.raises(ValueError, match="bindings differ"):
         load_training_checkpoint(checkpoint, expected_bindings=changed)
+
+
+def test_v4_checkpoint_binds_method_evidence_on_resume(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "checkpoint.json"
+    state = tmp_path / "state.pt"
+    state.write_bytes(b"v4-state")
+    bindings = {
+        "config_sha256": "a" * 64,
+        "training_data_sha256": "b" * 64,
+        "localization_sha256": None,
+        "monitor_protocol_sha256": "c" * 64,
+        "monitor_data_sha256": "d" * 64,
+        "method_evidence_sha256": "e" * 64,
+        "seed": 42,
+    }
+    write_training_checkpoint(
+        checkpoint,
+        cursor=TrainingCursor(0, 0, 0, 0, 0),
+        state_path=state,
+        bindings=bindings,
+    )
+    payload = json.loads(checkpoint.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "robustness-training-checkpoint/v4"
+    assert payload["bindings"]["method_evidence_sha256"] == "e" * 64
+
+    loaded = load_training_checkpoint(checkpoint, expected_bindings=bindings)
+    assert loaded.state_path == state.resolve()
+    with pytest.raises(ValueError, match="bindings differ"):
+        load_training_checkpoint(
+            checkpoint,
+            expected_bindings={**bindings, "method_evidence_sha256": "f" * 64},
+        )
+
+    payload["schema_version"] = "robustness-training-checkpoint/v3"
+    checkpoint.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="fields or schema differ"):
+        load_training_checkpoint(checkpoint, expected_bindings=bindings)
+
+
+def test_v4_checkpoint_rejects_missing_or_malformed_method_evidence(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "checkpoint.json"
+    state = tmp_path / "state.pt"
+    state.write_bytes(b"v4-state")
+    common = {
+        "config_sha256": "a" * 64,
+        "training_data_sha256": "b" * 64,
+        "localization_sha256": None,
+        "monitor_protocol_sha256": "c" * 64,
+        "monitor_data_sha256": "d" * 64,
+        "seed": 42,
+    }
+    with pytest.raises(ValueError, match="method_evidence_sha256 differs"):
+        write_training_checkpoint(
+            checkpoint,
+            cursor=TrainingCursor(0, 0, 0, 0, 0),
+            state_path=state,
+            bindings={**common, "method_evidence_sha256": None},
+        )
+    with pytest.raises(ValueError, match="method_evidence_sha256 differs"):
+        write_training_checkpoint(
+            checkpoint,
+            cursor=TrainingCursor(0, 0, 0, 0, 0),
+            state_path=state,
+            bindings={**common, "method_evidence_sha256": "not-a-digest"},
+        )
+
+
+def test_method_evidence_checkpoint_can_bind_an_injected_runtime_without_monitor(
+    tmp_path: Path,
+) -> None:
+    checkpoint = tmp_path / "checkpoint.json"
+    state = tmp_path / "state.pt"
+    state.write_bytes(b"injected-runtime-state")
+    bindings = {
+        "config_sha256": "a" * 64,
+        "training_data_sha256": "b" * 64,
+        "localization_sha256": None,
+        "method_evidence_sha256": "c" * 64,
+        "seed": 42,
+    }
+    write_training_checkpoint(
+        checkpoint,
+        cursor=TrainingCursor(0, 0, 0, 0, 0),
+        state_path=state,
+        bindings=bindings,
+    )
+    assert json.loads(checkpoint.read_text(encoding="utf-8"))["schema_version"] == (
+        "robustness-training-checkpoint/v3"
+    )
+    assert load_training_checkpoint(checkpoint, expected_bindings=bindings).state_path == (
+        state.resolve()
+    )
+
+
+def test_checkpoint_rejects_mixed_localization_and_method_evidence_namespaces(
+    tmp_path: Path,
+) -> None:
+    checkpoint = tmp_path / "checkpoint.json"
+    state = tmp_path / "state.pt"
+    state.write_bytes(b"mixed-evidence-state")
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        write_training_checkpoint(
+            checkpoint,
+            cursor=TrainingCursor(0, 0, 0, 0, 0),
+            state_path=state,
+            bindings={
+                "config_sha256": "a" * 64,
+                "training_data_sha256": "b" * 64,
+                "localization_sha256": "c" * 64,
+                "method_evidence_sha256": "d" * 64,
+                "seed": 42,
+            },
+        )

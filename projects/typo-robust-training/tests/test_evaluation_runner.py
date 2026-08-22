@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -25,9 +26,11 @@ from typo_robust_training.evaluation.records import (
 )
 from typo_robust_training.evaluation.runner import (
     RobustnessEvaluationRunConfig,
+    _experiment_binding,
     _validate_injected_inputs,
     run_robustness_evaluation,
 )
+from typo_robust_training.integrity import sha256_tree
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -139,6 +142,84 @@ def _descriptors(root: Path) -> tuple[AdapterDescriptor, ...]:
         )
         for seed in (42, 43, 44)
     )
+
+
+def _v4_descriptors(
+    root: Path,
+    *,
+    condition: str = "probe-transition-output-matching",
+    evidence_sha256: str = "8" * 64,
+) -> tuple[AdapterDescriptor, ...]:
+    return tuple(
+        AdapterDescriptor(
+            path=root / f"seed-{seed}" / "adapter",
+            condition=condition,
+            seed=seed,
+            config_sha256="d" * 64,
+            training_data_sha256="e" * 64,
+            data_identity_sha256="c" * 64,
+            localization_sha256=None,
+            adapter_sha256=f"{seed:064x}",
+            method_evidence_sha256=evidence_sha256,
+        )
+        for seed in (42, 43, 44)
+    )
+
+
+def _completed_adapter(
+    root: Path,
+    *,
+    condition: str,
+    seed: int,
+    localization_sha256: str | None = None,
+    method_evidence_sha256: str | None = None,
+) -> Path:
+    """Write the minimal completed adapter consumed by the production loader."""
+
+    protocol = load_robustness_evaluation_config(CONFIG)
+    output = root / condition / f"seed-{seed}"
+    adapter = output / "adapter"
+    adapter.mkdir(parents=True)
+    (adapter / "adapter_model.safetensors").write_bytes(b"adapter-weights")
+    (adapter / "adapter_config.json").write_text(
+        json.dumps(
+            {
+                "base_model_name_or_path": protocol.model,
+                "peft_type": "LORA",
+                "task_type": "CAUSAL_LM",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (adapter / "training_runtime.json").write_text(
+        json.dumps(
+            {
+                "runtime": "HuggingFaceAdapterTrainingRuntime/v2",
+                "model": protocol.model,
+                "requested_revision": protocol.model_revision,
+                "condition": condition,
+                "seed": seed,
+                "teacher_frozen": True,
+                "student_base_frozen": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    run = {
+        "schema_version": "robustness-adapter-training-run/v1",
+        "status": "completed",
+        "condition": condition,
+        "seed": seed,
+        "config_sha256": "d" * 64,
+        "training_data_sha256": "e" * 64,
+        "data_identity_sha256": "c" * 64,
+        "localization_sha256": localization_sha256,
+        "outputs": {"adapter": {"sha256": sha256_tree(adapter)}},
+    }
+    if method_evidence_sha256 is not None:
+        run["method_evidence_sha256"] = method_evidence_sha256
+    (output / "run.json").write_text(json.dumps(run), encoding="utf-8")
+    return adapter
 
 
 class _Runtime:
@@ -264,6 +345,115 @@ def test_runner_rejects_legacy_evaluation_data_without_frozen_registry(tmp_path:
         run_robustness_evaluation(
             _config(tmp_path, tmp_path / "out", resume=False),
             runtime_factory=_RuntimeFactory(),
+        )
+
+
+def test_method_evidence_is_bound_into_evaluation_identity_without_changing_legacy(
+    tmp_path: Path,
+) -> None:
+    protocol = load_robustness_evaluation_config(CONFIG)
+    window = PatchWindow(start=0, stop=6, artifact_sha256="9" * 64)
+    legacy = _experiment_binding(
+        protocol=protocol,
+        study_protocol_sha256="7" * 64,
+        descriptors=_descriptors(tmp_path),
+        patch_window=window,
+        training_sources_sha256=None,
+    )
+    expected_legacy_payload = {
+        "schema_version": "robustness-evaluation-experiment-binding/v2",
+        "config_sha256": protocol.config_sha256,
+        "study_protocol_sha256": "7" * 64,
+        "patch_window_sha256": "9" * 64,
+        "patch_layers": list(range(6)),
+        "training_sources_sha256": None,
+        "adapters": [
+            {
+                "condition_id": item.condition_id,
+                "adapter_sha256": item.adapter_sha256,
+                "config_sha256": item.config_sha256,
+                "training_data_sha256": item.training_data_sha256,
+                "data_identity_sha256": item.data_identity_sha256,
+                "localization_sha256": item.localization_sha256,
+            }
+            for item in sorted(_descriptors(tmp_path), key=lambda item: item.condition_id)
+        ],
+    }
+    expected_legacy = hashlib.sha256(
+        json.dumps(
+            expected_legacy_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    assert legacy == expected_legacy
+    # Adding the optional field with null must not perturb a historical binding.
+    explicit_legacy = tuple(
+        replace(item, method_evidence_sha256=None) for item in _descriptors(tmp_path)
+    )
+    assert (
+        _experiment_binding(
+            protocol=protocol,
+            study_protocol_sha256="7" * 64,
+            descriptors=explicit_legacy,
+            patch_window=window,
+            training_sources_sha256=None,
+        )
+        == legacy
+    )
+    first = _experiment_binding(
+        protocol=protocol,
+        study_protocol_sha256="7" * 64,
+        descriptors=_v4_descriptors(tmp_path, evidence_sha256="8" * 64),
+        patch_window=window,
+        training_sources_sha256=None,
+    )
+    second = _experiment_binding(
+        protocol=protocol,
+        study_protocol_sha256="7" * 64,
+        descriptors=_v4_descriptors(tmp_path, evidence_sha256="9" * 64),
+        patch_window=window,
+        training_sources_sha256=None,
+    )
+    assert first != second
+
+
+def test_evaluation_resume_rejects_method_evidence_drift(tmp_path: Path) -> None:
+    output = tmp_path / "method-resume"
+    bundle = _bundle(tmp_path)
+    corpus = _corpus_bundle(tmp_path)
+    window = PatchWindow(start=0, stop=6, artifact_sha256="9" * 64)
+    descriptors = _v4_descriptors(tmp_path, evidence_sha256="8" * 64)
+    config = replace(
+        _config(tmp_path, output, resume=False),
+        checkpoint_paths=tuple(item.path for item in descriptors),
+    )
+    with pytest.raises(RuntimeError, match="injected evaluation interruption"):
+        run_robustness_evaluation(
+            config,
+            runtime_factory=_RuntimeFactory(fail_after=1),
+            data_bundle=bundle,
+            corpus_bundle=corpus,
+            descriptors=descriptors,
+            patch_window=window,
+        )
+    failed = json.loads((output / "run.json").read_text(encoding="utf-8"))
+    assert failed["adapters"][0]["method_evidence_sha256"] == "8" * 64
+
+    changed = _v4_descriptors(tmp_path, evidence_sha256="7" * 64)
+    with pytest.raises(ValueError, match="resume run binding differs"):
+        run_robustness_evaluation(
+            replace(
+                config,
+                resume=True,
+                checkpoint_paths=tuple(item.path for item in changed),
+            ),
+            runtime_factory=_RuntimeFactory(),
+            data_bundle=bundle,
+            corpus_bundle=corpus,
+            descriptors=changed,
+            patch_window=window,
         )
 
 
@@ -590,5 +780,95 @@ def test_sealed_evaluation_requires_localized_checkpoint_for_every_seed(
             data_bundle=None,
             corpus_bundle=None,
             descriptors=(descriptors[0],),
+            patch_window=PatchWindow(0, 6, "9" * 64, "f" * 64),
+        )
+
+
+@pytest.mark.parametrize(
+    "condition",
+    (
+        "probe-transition-output-matching",
+        "probe-transition-state-distillation",
+        "causal-probe-subspace-distillation",
+    ),
+)
+def test_non_tune_evaluation_requires_every_seed_for_each_v4_condition_present(
+    tmp_path: Path,
+    condition: str,
+) -> None:
+    legacy = _descriptors(tmp_path / "legacy")
+    method = _v4_descriptors(tmp_path / "method", condition=condition)
+    incomplete = (*legacy, method[0])
+    config = replace(
+        _config(tmp_path, tmp_path / "sealed", resume=False),
+        evaluation_role="pre-pr-gate",
+        checkpoint_paths=tuple(item.path for item in incomplete),
+        splits=("same-task", "unseen-task", "unseen-content", "unseen-typo"),
+        confirm_sealed_role=True,
+    )
+
+    with pytest.raises(ValueError, match=rf"{condition}.*complete seed inventory"):
+        _validate_injected_inputs(
+            config,
+            protocol=load_robustness_evaluation_config(CONFIG),
+            data_bundle=None,
+            corpus_bundle=None,
+            descriptors=incomplete,
+            patch_window=PatchWindow(0, 6, "9" * 64, "f" * 64),
+        )
+
+    complete = (*legacy, *method)
+    complete_config = replace(
+        config,
+        checkpoint_paths=tuple(item.path for item in complete),
+    )
+    resolved, _, _, _ = _validate_injected_inputs(
+        complete_config,
+        protocol=load_robustness_evaluation_config(CONFIG),
+        data_bundle=None,
+        corpus_bundle=None,
+        descriptors=complete,
+        patch_window=PatchWindow(0, 6, "9" * 64, "f" * 64),
+    )
+    assert resolved == complete
+
+
+def test_non_tune_production_loader_path_rejects_one_of_three_v4_seeds(
+    tmp_path: Path,
+) -> None:
+    legacy_paths = tuple(
+        _completed_adapter(
+            tmp_path,
+            condition="localized-state-distillation",
+            seed=seed,
+            localization_sha256="f" * 64,
+        )
+        for seed in (42, 43, 44)
+    )
+    method_path = _completed_adapter(
+        tmp_path,
+        condition="probe-transition-output-matching",
+        seed=42,
+        method_evidence_sha256="8" * 64,
+    )
+    checkpoint_paths = (*legacy_paths, method_path)
+    config = replace(
+        _config(tmp_path, tmp_path / "sealed-production", resume=False),
+        evaluation_role="pre-pr-gate",
+        checkpoint_paths=checkpoint_paths,
+        splits=("same-task", "unseen-task", "unseen-content", "unseen-typo"),
+        confirm_sealed_role=True,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="probe-transition-output-matching.*complete seed inventory",
+    ):
+        _validate_injected_inputs(
+            config,
+            protocol=load_robustness_evaluation_config(CONFIG),
+            data_bundle=None,
+            corpus_bundle=None,
+            descriptors=None,
             patch_window=PatchWindow(0, 6, "9" * 64, "f" * 64),
         )

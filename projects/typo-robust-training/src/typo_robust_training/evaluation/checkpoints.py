@@ -13,6 +13,11 @@ from typo_robust_training.data.config import strict_loads
 from typo_robust_training.evaluation.config import RobustnessEvaluationProtocol
 from typo_robust_training.integrity import sha256_file as _sha256_file
 from typo_robust_training.integrity import sha256_tree
+from typo_robust_training.training.provenance import (
+    METHOD_EVIDENCE_CONDITIONS,
+    SUPPORTED_ADAPTER_CONDITIONS,
+    validate_condition_evidence,
+)
 
 
 _SHA64 = re.compile(r"[0-9a-f]{64}")
@@ -22,7 +27,12 @@ _CONDITIONS = (
     "global-state-alignment",
     "localized-state-distillation",
     "random-window-state-distillation",
+    "probe-transition-output-matching",
+    "probe-transition-state-distillation",
+    "causal-probe-subspace-distillation",
 )
+if frozenset(_CONDITIONS) != SUPPORTED_ADAPTER_CONDITIONS:  # pragma: no cover - import invariant
+    raise RuntimeError("evaluation adapter condition order is incomplete")
 
 
 def _object(path: Path, *, artifact: str) -> Mapping[str, object]:
@@ -44,6 +54,7 @@ class AdapterDescriptor:
     data_identity_sha256: str
     localization_sha256: str | None
     adapter_sha256: str
+    method_evidence_sha256: str | None = None
 
     @property
     def condition_id(self) -> str:
@@ -130,19 +141,14 @@ def load_adapter_descriptors(
         )
         if len(weights) != 1:
             raise ValueError("evaluation adapter must contain exactly one PEFT weight file")
-        localization = _digest(
-            run.get("localization_sha256"),
-            field="localization_sha256",
-            optional=True,
-        )
-        if (
-            condition
-            in {
-                "localized-state-distillation",
-                "random-window-state-distillation",
-            }
-        ) != (localization is not None):
-            raise ValueError("evaluation adapter localization provenance differs")
+        try:
+            localization, method_evidence = validate_condition_evidence(
+                condition=condition,
+                localization_sha256=run.get("localization_sha256"),
+                method_evidence_sha256=run.get("method_evidence_sha256"),
+            )
+        except ValueError as exc:
+            raise ValueError(f"evaluation {exc}") from exc
         outputs = run.get("outputs")
         adapter_output = outputs.get("adapter") if isinstance(outputs, Mapping) else None
         adapter_sha256 = sha256_tree(path)
@@ -165,6 +171,7 @@ def load_adapter_descriptors(
                 ),
                 localization_sha256=localization,
                 adapter_sha256=adapter_sha256,
+                method_evidence_sha256=method_evidence,
             )
         )
     identities = [descriptor.condition_id for descriptor in descriptors]
@@ -178,6 +185,14 @@ def load_adapter_descriptors(
         }
         if len(config_hashes) > 1:
             raise ValueError(f"evaluation {condition} training configuration differs across seeds")
+        if condition in METHOD_EVIDENCE_CONDITIONS:
+            evidence_hashes = {
+                descriptor.method_evidence_sha256
+                for descriptor in descriptors
+                if descriptor.condition == condition
+            }
+            if len(evidence_hashes) > 1:
+                raise ValueError(f"evaluation {condition} method evidence differs across seeds")
     condition_order = {condition: index for index, condition in enumerate(_CONDITIONS)}
     return tuple(sorted(descriptors, key=lambda item: (condition_order[item.condition], item.seed)))
 

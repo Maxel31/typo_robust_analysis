@@ -39,6 +39,7 @@ def _adapter(
     condition: str,
     seed: int,
     runtime_version: str = "v1",
+    method_evidence_sha256: str | None = None,
 ) -> Path:
     output = root / condition / f"seed-{seed}"
     adapter = output / "adapter"
@@ -81,6 +82,11 @@ def _adapter(
                 "localization_sha256": "c" * 64
                 if condition == "localized-state-distillation"
                 else None,
+                **(
+                    {"method_evidence_sha256": method_evidence_sha256}
+                    if method_evidence_sha256 is not None
+                    else {}
+                ),
                 "outputs": {"adapter": {"sha256": _tree_sha256(adapter)}},
             }
         ),
@@ -220,6 +226,67 @@ def test_adapter_loader_rejects_post_completion_mutation_or_mixed_seed_configs(
     run_path.write_text(json.dumps(run), encoding="utf-8")
     with pytest.raises(ValueError, match="configuration differs across seeds"):
         load_adapter_descriptors((seed_43, seed_44), protocol=PROTOCOL)
+
+
+@pytest.mark.parametrize(
+    "condition",
+    (
+        "probe-transition-output-matching",
+        "probe-transition-state-distillation",
+        "causal-probe-subspace-distillation",
+    ),
+)
+def test_v4_adapter_requires_generic_method_evidence(
+    tmp_path: Path,
+    condition: str,
+) -> None:
+    missing = _adapter(tmp_path / "missing", condition=condition, seed=42)
+    with pytest.raises(ValueError, match="method evidence provenance"):
+        load_adapter_descriptors((missing,), protocol=PROTOCOL)
+
+    adapter = _adapter(
+        tmp_path / "valid",
+        condition=condition,
+        seed=42,
+        method_evidence_sha256="9" * 64,
+    )
+    descriptor = load_adapter_descriptors((adapter,), protocol=PROTOCOL)[0]
+    assert descriptor.method_evidence_sha256 == "9" * 64
+    assert descriptor.localization_sha256 is None
+
+
+def test_v4_adapter_rejects_mixed_seed_evidence_and_unsupported_condition(
+    tmp_path: Path,
+) -> None:
+    seed_42 = _adapter(
+        tmp_path,
+        condition="probe-transition-output-matching",
+        seed=42,
+        method_evidence_sha256="8" * 64,
+    )
+    seed_43 = _adapter(
+        tmp_path,
+        condition="probe-transition-output-matching",
+        seed=43,
+        method_evidence_sha256="9" * 64,
+    )
+    with pytest.raises(ValueError, match="method evidence differs across seeds"):
+        load_adapter_descriptors((seed_42, seed_43), protocol=PROTOCOL)
+
+    unsupported = _adapter(tmp_path, condition="invented-method", seed=44)
+    with pytest.raises(ValueError, match="condition is unsupported"):
+        load_adapter_descriptors((unsupported,), protocol=PROTOCOL)
+
+
+def test_legacy_adapter_manifest_does_not_require_method_evidence(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path, condition="output-matching", seed=42)
+    run = json.loads((adapter.parent / "run.json").read_text(encoding="utf-8"))
+    run.pop("method_evidence_sha256", None)
+    (adapter.parent / "run.json").write_text(json.dumps(run), encoding="utf-8")
+
+    descriptor = load_adapter_descriptors((adapter,), protocol=PROTOCOL)[0]
+    assert descriptor.localization_sha256 is None
+    assert descriptor.method_evidence_sha256 is None
 
 
 def test_patch_window_rejects_model_or_revision_drift(tmp_path: Path) -> None:
