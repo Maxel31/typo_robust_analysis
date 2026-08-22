@@ -182,10 +182,9 @@ def load_adapter_descriptors(
                 raise ValueError("evaluation adapter runtime method evidence differs from run")
         elif runtime_method_evidence is not None:
             raise ValueError("evaluation legacy adapter runtime contains method evidence")
-        if condition == "probe-transition-single-layer-state-distillation":
-            run_runtime = run.get("runtime")
-            if not isinstance(run_runtime, Mapping) or dict(run_runtime) != dict(runtime):
-                raise ValueError("evaluation adapter run/runtime provenance differs")
+        run_runtime = run.get("runtime")
+        if not isinstance(run_runtime, Mapping) or dict(run_runtime) != dict(runtime):
+            raise ValueError("evaluation adapter run/runtime provenance differs")
         outputs = run.get("outputs")
         adapter_output = outputs.get("adapter") if isinstance(outputs, Mapping) else None
         adapter_sha256 = sha256_tree(path)

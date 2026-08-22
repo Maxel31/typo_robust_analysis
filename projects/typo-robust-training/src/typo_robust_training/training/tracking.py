@@ -79,6 +79,16 @@ _ARM_PRESENTATION = {
         "control",
         "Scope control: output matching plus residual-state alignment at every decoder layer.",
     ),
+    "probe-semantic-subspace-distillation": (
+        "Probe-subspace proposal",
+        "Rank-16 semantic-subspace distillation",
+        "probe-semantic-subspace-distillation",
+        "proposed-probe-semantic-subspace",
+        "proposed",
+        "Proposed arm: output matching plus frozen-classifier forward-KL alignment "
+        "in the validated rank-16 probe semantic subspace at the edited-word-final "
+        "probe-transition coordinate.",
+    ),
 }
 
 _LEGACY_ARM_PRESENTATION = {

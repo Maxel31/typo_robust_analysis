@@ -186,11 +186,28 @@ class AdapterTrainingRuntime(Protocol):
 
     def save_state(self, path: Path) -> None: ...
 
-    def load_state(self, path: Path) -> None: ...
+    def load_state(
+        self,
+        path: Path,
+        *,
+        expected_state_calibration: Mapping[str, object] | None = None,
+    ) -> None: ...
 
     def save_adapter(self, path: Path) -> None: ...
 
     def provenance(self) -> Mapping[str, object]: ...
+
+
+def _resolved_method_presentation_layers(
+    *, condition: str, method: training_methods.ResolvedTrainingMethod
+) -> tuple[int, ...]:
+    """Expose the scientific intervention coordinate, not the LoRA support."""
+
+    return (
+        method.state_layers
+        if condition == "probe-semantic-subspace-distillation"
+        else method.adapter_layers
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -841,7 +858,27 @@ def run_adapter_training(
                     runtime=runtime,
                 ),
             )
-        runtime.load_state(checkpoint.state_path)
+            runtime.load_state(checkpoint.state_path)
+        elif protocol.calibration_micro_batches:
+            calibration = getattr(runtime, "calibrate_state_weight", None)
+            if not callable(calibration):
+                raise TypeError("state training runtime cannot revalidate its loss weight")
+            expected_state_calibration = dict(
+                calibration(
+                    _state_calibration_pairs(
+                        bundle=bundle,
+                        protocol=protocol,
+                        seed=config.seed,
+                        runtime=runtime,
+                    )
+                )
+            )
+            runtime.load_state(
+                checkpoint.state_path,
+                expected_state_calibration=expected_state_calibration,
+            )
+        else:
+            runtime.load_state(checkpoint.state_path)
     order_cache = EpochSourceOrderCache(bundle.sources, seed=config.seed)
     provenance = dict(runtime.provenance())
     started_at = _now()
@@ -909,7 +946,10 @@ def run_adapter_training(
             elif isinstance(evidence, LocalizationEvidence):
                 presentation_layers = evidence.adapter_layers
             elif resolved_method is not None:
-                presentation_layers = resolved_method.adapter_layers
+                presentation_layers = _resolved_method_presentation_layers(
+                    condition=protocol.condition,
+                    method=resolved_method,
+                )
             elif protocol.condition == "global-state-alignment":
                 # Cycle 1 predates the explicit decoder-layer inventory and its
                 # Legacy presentation intentionally carries no layer label.

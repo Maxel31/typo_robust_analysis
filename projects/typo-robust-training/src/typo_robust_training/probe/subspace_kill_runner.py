@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Protocol
@@ -62,9 +62,6 @@ class _KillRuntime(Protocol):
     ) -> Mapping[int, SubspaceKillScoreRow]: ...
 
     def provenance(self, *, pca_fit_activations_sha256: str) -> Mapping[str, object]: ...
-
-
-RuntimeFactory = Callable[..., _KillRuntime]
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,9 +317,6 @@ def _summary_payload(summary: SemanticSubspaceKillSummary) -> Mapping[str, objec
 
 def run_semantic_subspace_kill_test(
     config: SemanticSubspaceKillRunConfig,
-    *,
-    runtime_factory: RuntimeFactory = HuggingFaceSemanticSubspaceKillRuntime,
-    checkout_attestor: Callable[[str], RuntimeCheckoutAttestation] = attest_runtime_checkout,
 ) -> SemanticSubspaceKillRunResult:
     """Run once from preregistered inputs and write raw, independently reloadable evidence."""
 
@@ -348,7 +342,7 @@ def run_semantic_subspace_kill_test(
 
     # This must precede both CUDA initialization and any output creation.  The
     # parent producer revision is intentionally independent and may be older.
-    checkout = checkout_attestor(protocol.kill_runtime_code_revision)
+    checkout = attest_runtime_checkout(protocol.kill_runtime_code_revision)
 
     semantic = {
         seed: derive_artifact_semantic_subspace(parent, seed=seed, rank=protocol.rank)
@@ -364,7 +358,7 @@ def run_semantic_subspace_kill_test(
         for seed in parent.probe_seeds
     }
 
-    runtime = runtime_factory(
+    runtime: _KillRuntime = HuggingFaceSemanticSubspaceKillRuntime(
         protocol=protocol,
         parent=parent,
         semantic_by_seed=semantic,

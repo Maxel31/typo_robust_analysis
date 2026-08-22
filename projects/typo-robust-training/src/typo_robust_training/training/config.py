@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 from dataclasses import dataclass
@@ -98,6 +99,71 @@ _OBJECTIVE_V2 = _OBJECTIVE | {
     "state_window_policy",
 }
 _GRADIENT_RATIO_GUARD_OPTIMIZER_STEPS = 50
+_V6_FROZEN_SECTIONS: Mapping[str, object] = {
+    "model": {
+        "id": "google/gemma-3-4b-it",
+        "revision": "093f9f388b31de276ce2de164bdc2081324b9767",
+        "dtype": "bfloat16",
+        "decoder_layers": 34,
+    },
+    "sequence": {
+        "max_length": 512,
+        "on_the_fly_typo": "record-epoch-counter-based/v1",
+        "natural_pairs": "fixed-clean-typo-source-pairs/v1",
+        "answer_format": "no-hard-answer-target/v1",
+        "pairing_policy": "exact-alternating-clean-noisy/v1",
+    },
+    "adapter": {
+        "method": "lora",
+        "rank": 16,
+        "alpha": 8,
+        "dropout": 0,
+        "target_modules": list(_TARGET_MODULES),
+        "layer_scope": "probe-transition-suffix",
+        "layer_policy": "validated-probe-semantic-subspace-suffix/v1",
+        "bias": "none",
+        "task_type": "CAUSAL_LM",
+    },
+    "optimization": {
+        "optimizer": "adamw",
+        "learning_rate": 0.0001,
+        "weight_decay": 0.01,
+        "warmup_ratio": 0.0,
+        "scheduler": "constant-with-warmup",
+        "gradient_checkpointing": True,
+        "micro_batch_size": 1,
+        "gradient_accumulation_steps": 32,
+        "max_optimizer_steps": 10000,
+        "max_student_tokens": 10000000,
+        "max_grad_norm": 1.0,
+        "checkpoint_every_optimizer_steps": 50,
+        "log_every_micro_steps": 1,
+        "seed_inventory": [42, 43, 44],
+        "resume_contract": "exact-next-sample-and-rng/v1",
+    },
+    "objective": {
+        "weights": {
+            "noisy_language_model": 0,
+            "answer": 0,
+            "output": 1,
+            "state": 1,
+            "clean": 0,
+        },
+        "state_scope": "probe-semantic-subspace-edited-word-final-token",
+        "state_distance": "frozen-probe-classifier-forward-kl/v1",
+        "output_scope": "aligned-non-edited-next-token/v1",
+        "noisy_language_model_scope": "all-nonpadding-next-tokens/v1",
+        "temperature": 1.0,
+        "epsilon": 1e-8,
+        "state_gradient_ratio": 0.05,
+        "calibration_micro_batches": 8,
+        "state_window_policy": "single-probe-transition-layer/v1",
+    },
+}
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def _mapping(value: object, *, field: str, fields: set[str]) -> Mapping[str, object]:
@@ -375,6 +441,12 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     condition = _string(root["condition"], field="condition")
     if condition not in _CONDITIONS:
         raise ValueError("training condition is unsupported")
+    if schema_version.endswith("/v6"):
+        if condition != "probe-semantic-subspace-distillation":
+            raise ValueError("semantic training condition differs from the frozen template")
+        for section, expected in _V6_FROZEN_SECTIONS.items():
+            if _canonical_json(root[section]) != _canonical_json(expected):
+                raise ValueError(f"semantic training {section} differs from the frozen template")
 
     expected_method_evidence_sha256: str | None = None
     if schema_version.endswith(("/v4", "/v5", "/v6")):
@@ -455,7 +527,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         lora_rank != 16 or lora_alpha != 8.0 or dropout != 0.0
     ):
         raise ValueError("probe-transition LoRA must use rank 16, alpha 8, and dropout 0")
-    if schema_version.endswith("/v5") and (
+    if schema_version.endswith("/v6") and (
         lora_rank != 16
         or lora_alpha != 8.0
         or dropout != 0.0
@@ -554,6 +626,12 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         raise ValueError("objective.output_scope differs")
     if objective["noisy_language_model_scope"] != "all-nonpadding-next-tokens/v1":
         raise ValueError("objective.noisy_language_model_scope differs")
+    temperature = _number(
+        objective["temperature"], field="objective.temperature", minimum=1e-12
+    )
+    epsilon = _number(objective["epsilon"], field="objective.epsilon", minimum=1e-12)
+    if schema_version.endswith("/v6") and (temperature != 1.0 or epsilon != 1e-8):
+        raise ValueError("semantic distillation temperature and epsilon differ")
 
     if not schema_version.endswith("/v1"):
         ratio_raw = objective["state_gradient_ratio"]
@@ -682,8 +760,8 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         state_distance=str(objective["state_distance"]),
         output_scope=str(objective["output_scope"]),
         noisy_language_model_scope=str(objective["noisy_language_model_scope"]),
-        temperature=_number(objective["temperature"], field="objective.temperature", minimum=1e-12),
-        epsilon=_number(objective["epsilon"], field="objective.epsilon", minimum=1e-12),
+        temperature=temperature,
+        epsilon=epsilon,
         state_gradient_ratio=gradient_ratio,
         gradient_ratio_guard_optimizer_steps=(
             0 if schema_version.endswith("/v1") else _GRADIENT_RATIO_GUARD_OPTIMIZER_STEPS

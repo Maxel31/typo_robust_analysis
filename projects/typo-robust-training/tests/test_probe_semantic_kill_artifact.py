@@ -49,6 +49,14 @@ _ATTESTATION = RuntimeCheckoutAttestation(
     revision=_KILL_REVISION,
     typo_robust_training_tree="d" * 40,
     typo_cot_tree="e" * 40,
+    typo_cot_runtime_sources=(
+        "projects/typo-cot/src/typo_cot/__init__.py",
+        "projects/typo-cot/src/typo_cot/experiments/__init__.py",
+        "projects/typo-cot/src/typo_cot/experiments/layerwise_kl_patching/__init__.py",
+        "projects/typo-cot/src/typo_cot/experiments/layerwise_kl_patching/patching.py",
+        "projects/typo-cot/src/typo_cot/models/__init__.py",
+        "projects/typo-cot/src/typo_cot/models/wrapper.py",
+    ),
 )
 
 
@@ -338,7 +346,8 @@ def _child_bundle(tmp_path: Path) -> tuple[Path, dict[str, Path], dict[str, obje
     files = dict(parent_files)
     cohort_rows: list[dict[str, object]] = []
     for index in range(200):
-        word = f"novelword{index:03d}"
+        suffix = chr(ord("a") + index // 26) + chr(ord("a") + index % 26)
+        word = f"novelword{suffix}"
         clean = f"Independent diagnostic {index} contains {word} and enough continuation tokens."
         start = clean.index(word)
         operation = index % 3
@@ -718,6 +727,53 @@ def test_cohort_overlap_with_any_parent_identity_is_rejected(tmp_path: Path) -> 
         kill_artifacts._load_cohort(files["kill-cohort"], parent=parent)
 
 
+def test_kill_cohort_rejects_non_neighbor_substitution_and_partial_word_span(
+    tmp_path: Path,
+) -> None:
+    """A generic one-character substitution or substring cannot impersonate the protocol."""
+
+    _path, files, _payload = _child_bundle(tmp_path)
+    parent = load_probe_transition_artifact(files["artifact"])
+    original = json.loads(files["kill-cohort"].read_text())
+
+    non_neighbor = json.loads(json.dumps(original))
+    row = non_neighbor["records"][0]
+    start, stop = row["typo_word_char_span"]
+    typo_word = row["typo_text"][start:stop]
+    typo_word = "z" + typo_word[1:]
+    row["typo_text"] = row["typo_text"][:start] + typo_word + row["typo_text"][stop:]
+    row["normalized_noisy_sha256"] = normalized_content_sha256(row["typo_text"])
+    _write(files["kill-cohort"], non_neighbor)
+    with pytest.raises(ValueError, match="case-preserving neighbor"):
+        kill_artifacts._load_cohort(files["kill-cohort"], parent=parent)
+
+    partial_span = json.loads(json.dumps(original))
+    partial_span["records"][0]["clean_word_char_span"][0] += 1
+    partial_span["records"][0]["typo_word_char_span"][0] += 1
+    _write(files["kill-cohort"], partial_span)
+    with pytest.raises(ValueError, match="exactly one word span"):
+        kill_artifacts._load_cohort(files["kill-cohort"], parent=parent)
+
+    forbidden_span = json.loads(json.dumps(original))
+    row = forbidden_span["records"][0]
+    clean = "Visit https://novelwordaa.example and retain enough continuation tokens."
+    typo = clean.replace("novelwordaa", "movelwordaa")
+    start = clean.index("novelwordaa")
+    row.update(
+        {
+            "clean_text": clean,
+            "typo_text": typo,
+            "normalized_clean_sha256": normalized_content_sha256(clean),
+            "normalized_noisy_sha256": normalized_content_sha256(typo),
+            "clean_word_char_span": [start, start + len("novelwordaa")],
+            "typo_word_char_span": [start, start + len("movelwordaa")],
+        }
+    )
+    _write(files["kill-cohort"], forbidden_span)
+    with pytest.raises(ValueError, match="outside generator eligibility"):
+        kill_artifacts._load_cohort(files["kill-cohort"], parent=parent)
+
+
 class _PassingKillRuntime:
     def __init__(self, **kwargs: object) -> None:
         self.protocol = kwargs["protocol"]
@@ -775,12 +831,22 @@ class _PassingKillRuntime:
         return {seed: SubspaceKillScoreRow(**row) for seed in self.parent.probe_seeds}
 
 
-def test_runner_produces_self_contained_revalidated_evidence(tmp_path: Path) -> None:
+def test_runner_produces_self_contained_revalidated_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _child, files, _payload = _child_bundle(tmp_path)
     output = tmp_path / "produced"
     # A pre-existing arbitrary activation tensor is not an input to the runner.
     files["pca"].unlink()
 
+    monkeypatch.setattr(kill_artifacts, "attest_runtime_checkout", _attest)
+    monkeypatch.setattr(
+        "typo_robust_training.probe.subspace_kill_runner.attest_runtime_checkout", _attest
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.probe.subspace_kill_runner.HuggingFaceSemanticSubspaceKillRuntime",
+        _PassingKillRuntime,
+    )
     result = run_semantic_subspace_kill_test(
         SemanticSubspaceKillRunConfig(
             config_path=files["kill-config"],
@@ -790,8 +856,6 @@ def test_runner_produces_self_contained_revalidated_evidence(tmp_path: Path) -> 
             gpu_id="7",
             output_dir=output,
         ),
-        runtime_factory=_PassingKillRuntime,
-        checkout_attestor=_attest,
     )
 
     assert result.passed is True
@@ -817,4 +881,17 @@ def test_runner_api_makes_caller_supplied_pca_activations_impossible(tmp_path: P
             pca_fit_activations_path=files["pca"],  # type: ignore[call-arg]
             gpu_id="7",
             output_dir=tmp_path / "must-not-run",
+        )
+
+    with pytest.raises(TypeError, match="unexpected keyword"):
+        run_semantic_subspace_kill_test(
+            SemanticSubspaceKillRunConfig(
+                config_path=files["kill-config"],
+                parent_probe_artifact_path=files["artifact"],
+                cohort_manifest_path=files["kill-cohort"],
+                pca_fit_manifest_path=files["pca-manifest"],
+                gpu_id="7",
+                output_dir=tmp_path / "must-not-run-runtime",
+            ),
+            runtime_factory=_PassingKillRuntime,  # type: ignore[call-arg]
         )

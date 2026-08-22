@@ -17,6 +17,8 @@ from typo_robust_training.training.methods import (
     resolve_training_method,
 )
 from typo_robust_training.training.runtime import _resolve_probe_transition_runtime_method
+from typo_robust_training.training.runner import _resolved_method_presentation_layers
+from typo_robust_training.training.tracking import build_wandb_run_presentation
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,17 +76,33 @@ def test_semantic_protocol_and_suffix_are_exact(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("path", "value"),
     [
+        ("condition", "probe-transition-output-matching"),
         ("objective__state_gradient_ratio", 0.1),
         ("objective__calibration_micro_batches", 7),
         ("objective__weights__answer", 1),
         ("objective__weights__state", 0),
         ("objective__state_scope", "none"),
         ("objective__state_distance", "cosine-residual/v1"),
+        ("objective__temperature", 9.0),
+        ("objective__epsilon", 0.25),
         ("adapter__layer_scope", "all-decoder-layers"),
         ("adapter__layer_policy", "validated-linear-probe-transition-suffix/v1"),
         ("adapter__rank", 8),
         ("adapter__alpha", 16),
         ("adapter__dropout", 0.1),
+        ("model__id", "different/model"),
+        ("model__decoder_layers", 35),
+        ("sequence__max_length", 256),
+        ("optimization__learning_rate", 1.0),
+        ("optimization__weight_decay", 99.0),
+        ("optimization__warmup_ratio", 1.0),
+        ("optimization__gradient_checkpointing", False),
+        ("optimization__gradient_accumulation_steps", 2),
+        ("optimization__max_optimizer_steps", 1),
+        ("optimization__max_student_tokens", 1),
+        ("optimization__max_grad_norm", 2.0),
+        ("optimization__checkpoint_every_optimizer_steps", 1),
+        ("optimization__log_every_micro_steps", 2),
     ],
 )
 def test_semantic_protocol_rejects_rho_loss_and_scope_drift(
@@ -132,6 +150,33 @@ def test_semantic_cli_requires_explicit_kill_evidence() -> None:
     )
     assert args._training_condition == "probe-semantic-subspace-distillation"
     assert args.probe_selection == Path("kill.json")
+
+
+def test_semantic_config_reaches_standard_wandb_presentation(tmp_path: Path) -> None:
+    """A valid semantic run must not fail while constructing its standard tracker identity."""
+
+    protocol = load_adapter_training_config(_bound(tmp_path))
+    method = resolve_training_method(protocol, evidence=_evidence())
+    presentation = build_wandb_run_presentation(
+        condition=protocol.condition,
+        schema_version=protocol.schema_version,
+        model=protocol.model,
+        seed=42,
+        max_optimizer_steps=protocol.max_optimizer_steps,
+        max_student_tokens=protocol.max_student_tokens,
+        state_gradient_ratio=protocol.state_gradient_ratio,
+        state_layers=method.state_layers,
+    )
+
+    assert presentation.name.startswith(
+        "Probe-subspace proposal · Rank-16 semantic-subspace distillation · L11"
+    )
+    assert presentation.job_type == "proposed-probe-semantic-subspace"
+    assert "arm:probe-semantic-subspace-distillation" in presentation.tags
+    assert "frozen-classifier forward-KL" in presentation.notes
+    assert _resolved_method_presentation_layers(
+        condition=protocol.condition, method=method
+    ) == (11,)
 
 
 def test_semantic_materializer_revalidates_and_binds(

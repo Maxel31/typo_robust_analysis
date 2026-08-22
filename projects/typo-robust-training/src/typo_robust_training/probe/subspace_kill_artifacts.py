@@ -13,7 +13,11 @@ from types import MappingProxyType
 import numpy as np
 
 from typo_robust_training.data.config import strict_loads
-from typo_robust_training.data.perturb import classify_character_edit
+from typo_robust_training.data.perturb import (
+    classify_character_edit,
+    eligible_word_spans,
+    is_keyboard_neighbor_substitution,
+)
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.probe.artifacts import (
     ProbeTransitionArtifact,
@@ -161,8 +165,11 @@ def _span(value: object, *, text: str, field: str) -> tuple[int, int]:
         or len(value) != 2
         or any(isinstance(item, bool) or not isinstance(item, int) for item in value)
         or not 0 <= value[0] < value[1] <= len(text)
+        or any(character.isspace() for character in text[value[0] : value[1]])
+        or (value[0] > 0 and text[value[0] - 1].isalnum())
+        or (value[1] < len(text) and text[value[1]].isalnum())
     ):
-        raise ValueError(f"{field} differs")
+        raise ValueError(f"{field} is not exactly one word span")
     return value[0], value[1]
 
 
@@ -214,6 +221,8 @@ def _load_cohort(path: Path, *, parent: ProbeTransitionArtifact) -> tuple[_KillC
             raise ValueError("semantic kill resolved text hashes differ")
         clean_span = _span(raw["clean_word_char_span"], text=clean, field="clean word span")
         typo_span = _span(raw["typo_word_char_span"], text=typo, field="typo word span")
+        if clean_span not in eligible_word_spans(clean):
+            raise ValueError("semantic kill clean word is outside generator eligibility")
         edit_type = _text(raw["edit_type"], field="semantic kill edit type")
         observed = classify_character_edit(
             clean=clean[slice(*clean_span)], typo=typo[slice(*typo_span)]
@@ -231,6 +240,15 @@ def _load_cohort(path: Path, *, parent: ProbeTransitionArtifact) -> tuple[_KillC
             or clean[clean_span[1] :] != typo[typo_span[1] :]
         ):
             raise ValueError("semantic kill pair does not isolate one registered typo")
+        if edit_type == "keyboard-neighbor-substitution" and not (
+            is_keyboard_neighbor_substitution(
+                clean=clean[slice(*clean_span)],
+                typo=typo[slice(*typo_span)],
+            )
+        ):
+            raise ValueError(
+                "semantic kill keyboard substitution is not a case-preserving neighbor"
+            )
         group = _sha(raw["source_group_sha256"], field="semantic kill source group")
         parent_hash = _sha(raw["parent_source_sha256"], field="semantic kill parent source")
         previous = parent_to_group.setdefault(parent_hash, group)
