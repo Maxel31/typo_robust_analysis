@@ -326,6 +326,10 @@ def test_runtime_factory_loads_base_once_and_switches_only_adapters(
         lambda: empty_cache_calls.append(None),
     )
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.setattr(
+        "typo_robust_training.evaluation.runtime._checkout_source_attestation",
+        lambda: ("a" * 40, "b" * 64),
+    )
 
     factory = HuggingFaceRobustnessEvaluationRuntimeFactory(
         protocol=PROTOCOL,
@@ -396,6 +400,10 @@ def test_runtime_factory_rejects_unattested_model_or_tokenizer_revision(
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.setattr(
+        "typo_robust_training.evaluation.runtime._checkout_source_attestation",
+        lambda: ("a" * 40, "b" * 64),
+    )
 
     with pytest.raises(ValueError, match=message):
         HuggingFaceRobustnessEvaluationRuntimeFactory(

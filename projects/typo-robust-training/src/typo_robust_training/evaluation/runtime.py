@@ -27,6 +27,7 @@ from typo_robust_training.evaluation.records import (
 from typo_robust_training.training.runtime import (
     _require_exact_training_wrapper_revision,
 )
+from typo_robust_training.state_gate.runtime import _checkout_source_attestation
 
 
 def _version(name: str) -> str:
@@ -380,6 +381,7 @@ class HuggingFaceRobustnessEvaluationRuntimeFactory:
             raise TypeError("evaluation runtime factory protocol must be validated")
         if not isinstance(patch_window, PatchWindow):
             raise TypeError("evaluation runtime factory patch window is invalid")
+        self.code_revision, self.source_tree_sha256 = _checkout_source_attestation()
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None and visible != gpu_id:
             raise ValueError(
@@ -989,7 +991,7 @@ class HuggingFaceRobustnessEvaluationRuntime:
 
     def provenance(self) -> dict[str, object]:
         return {
-            "runtime": "HuggingFaceRobustnessEvaluationRuntime/v2",
+            "runtime": "HuggingFaceRobustnessEvaluationRuntime/v3",
             "python": platform.python_version(),
             "torch": _version("torch"),
             "transformers": _version("transformers"),
@@ -998,6 +1000,8 @@ class HuggingFaceRobustnessEvaluationRuntime:
             "requested_revision": self.protocol.model_revision,
             "model_revision": self._factory.model_revision,
             "tokenizer_revision": self._factory.tokenizer_revision,
+            "code_revision": self._factory.code_revision,
+            "source_tree_sha256": self._factory.source_tree_sha256,
             "condition": self.condition,
             "seed": self.seed,
             "adapter_sha256": (None if self.descriptor is None else self.descriptor.adapter_sha256),

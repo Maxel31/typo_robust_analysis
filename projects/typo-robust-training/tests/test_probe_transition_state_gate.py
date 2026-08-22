@@ -688,15 +688,57 @@ def test_gate_runtime_rejects_unknown_or_outside_dependency_source(
     checkout = Path(__file__).resolve()
     while not (checkout / ".git").exists():
         checkout = checkout.parent
+    original_import = __import__("importlib").import_module
+
+    def import_module(name: str, package: str | None = None) -> object:
+        if name == "typo_cot":
+            if origin is None:
+                return SimpleNamespace(__file__=None)
+            return SimpleNamespace(__file__=origin)
+        return original_import(name, package)
+
     monkeypatch.setattr(
-        "typo_robust_training.state_gate.runtime.importlib.util.find_spec",
-        lambda _name: SimpleNamespace(origin=origin) if origin is not None else None,
+        "typo_robust_training.state_gate.runtime.importlib.import_module",
+        import_module,
     )
     monkeypatch.setattr(
         "typo_robust_training.state_gate.runtime.subprocess.run",
         lambda _args, **_kwargs: SimpleNamespace(returncode=0, stdout=f"{checkout}\n"),
     )
-    with pytest.raises(RuntimeError, match="dependency source|outside"):
+    with pytest.raises(RuntimeError, match="source module|outside"):
+        _checkout_code_revision()
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "typo_cot.experiments.layerwise_kl_patching.patching",
+        "typo_cot.models.wrapper",
+    ],
+)
+def test_gate_runtime_rejects_rogue_loaded_typo_cot_submodule(
+    monkeypatch: pytest.MonkeyPatch,
+    module_name: str,
+) -> None:
+    checkout = Path(__file__).resolve()
+    while not (checkout / ".git").exists():
+        checkout = checkout.parent
+    original_import = __import__("importlib").import_module
+
+    def import_module(name: str, package: str | None = None) -> object:
+        if name == module_name:
+            return SimpleNamespace(__file__=f"/tmp/rogue/{name.rsplit('.', 1)[-1]}.py")
+        return original_import(name, package)
+
+    monkeypatch.setattr(
+        "typo_robust_training.state_gate.runtime.importlib.import_module",
+        import_module,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.state_gate.runtime.subprocess.run",
+        lambda _args, **_kwargs: SimpleNamespace(returncode=0, stdout=f"{checkout}\n"),
+    )
+    with pytest.raises(RuntimeError, match="outside"):
         _checkout_code_revision()
 
 

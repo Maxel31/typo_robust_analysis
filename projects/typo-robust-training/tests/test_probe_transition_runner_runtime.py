@@ -457,6 +457,7 @@ def test_runtime_provenance_reports_probe_evidence_hash(
     runtime.student_revision = REVISION
     runtime.tokenizer_revision = REVISION
     runtime.code_revision = "f" * 40
+    runtime.source_tree_sha256 = "e" * 64
     runtime.seed = 42
     runtime.device = "cuda:0"
     runtime.num_decoder_layers = 34

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import deque
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,6 +25,7 @@ from typo_robust_training.training.methods import (
 from typo_robust_training.training.runtime import (
     HuggingFaceAdapterTrainingRuntime,
     _resolve_probe_transition_runtime_method,
+    _validate_replayed_priority_b_calibration,
     validate_resume_state_calibration,
 )
 from typo_robust_training.training.runner import (
@@ -134,7 +136,7 @@ def test_runtime_requires_state_gate_evidence_and_exact_single_layer(
 
 def _calibration(*, state_weight: float = 0.025) -> dict[str, object]:
     return {
-        "schema_version": "state-gradient-calibration/v2",
+        "schema_version": "state-gradient-calibration/v3",
         "micro_batches": 8,
         "noisy_micro_batches": 8,
         "record_ids": [f"record-{index}" for index in range(8)],
@@ -145,6 +147,22 @@ def _calibration(*, state_weight: float = 0.025) -> dict[str, object]:
         "target_gradient_ratio": 0.05,
         "state_weight": state_weight,
         "achieved_initial_ratio": state_weight * 2.0,
+        "replay_relative_tolerance": 1e-6,
+        "replay_absolute_tolerance": 1e-8,
+    }
+
+
+def _self_consistent_forged_calibration() -> dict[str, object]:
+    state_weight = 999.0
+    mean_output = 2.0
+    mean_state = 0.05 * mean_output / state_weight
+    return {
+        **_calibration(state_weight=state_weight),
+        "record_ids": [f"forged-{index}" for index in range(8)],
+        "state_gradient_norms": [mean_state] * 8,
+        "mean_state_gradient_norm": mean_state,
+        "state_weight": state_weight,
+        "achieved_initial_ratio": 0.05,
     }
 
 
@@ -187,6 +205,11 @@ def _resume_state(
         (0.025, {**_calibration(), "record_ids": []}, "calibration records differ"),
         (
             0.025,
+            {**_calibration(), "replay_relative_tolerance": 1e-3},
+            "replay tolerance differs",
+        ),
+        (
+            0.025,
             {**_calibration(), "record_ids": ["duplicate-record"] * 8},
             "calibration records differ",
         ),
@@ -215,6 +238,102 @@ def test_resume_calibration_rejects_zero_999_empty_or_nonfinite_evidence(
         validate_resume_state_calibration(path, protocol=protocol, seed=42)
 
 
+def test_structural_validation_alone_cannot_authenticate_self_consistent_forgery(
+    tmp_path: Path,
+) -> None:
+    """The replay layer, not checkpoint self-consistency, proves initial dosage."""
+
+    protocol = load_adapter_training_config(_bound(tmp_path))
+    forged = _self_consistent_forged_calibration()
+    path = _resume_state(
+        tmp_path / "self-consistent-forgery.pt",
+        protocol=protocol,
+        state_weight=999.0,
+        calibration=forged,
+    )
+    validate_resume_state_calibration(path, protocol=protocol, seed=42)
+
+    with pytest.raises(ValueError, match="replay records differ"):
+        _validate_replayed_priority_b_calibration(
+            protocol=protocol,
+            saved_state_weight=999.0,
+            saved_calibration=forged,
+            replayed_calibration=_calibration(),
+        )
+
+
+def test_runtime_replays_real_calibration_claim_before_authorizing_load(
+    tmp_path: Path,
+) -> None:
+    protocol = load_adapter_training_config(_bound(tmp_path))
+    state_path = _resume_state(tmp_path / "runtime-state.pt", protocol=protocol)
+    runtime = HuggingFaceAdapterTrainingRuntime.__new__(HuggingFaceAdapterTrainingRuntime)
+    runtime.protocol = protocol
+    runtime.seed = 42
+    runtime.state_weight = None
+    runtime.state_calibration = None
+    runtime._torch = torch
+    runtime._prepared_encodings = deque()
+    runtime._verified_resume_state_path = None
+    runtime._verified_resume_state_sha256 = None
+    zeroed: list[bool] = []
+    runtime._measure_state_calibration = lambda pairs: (
+        _calibration() if len(tuple(pairs)) == 8 else pytest.fail("wrong replay dosage")
+    )
+    runtime.zero_grad = lambda: zeroed.append(True)
+    runtime._trainable_parameters = lambda: ()
+    pairs = tuple(SimpleNamespace(record_id=f"record-{index}") for index in range(8))
+
+    runtime.verify_resume_state_calibration(state_path, pairs)
+
+    assert runtime._verified_resume_state_path == state_path.resolve()
+    assert runtime._verified_resume_state_sha256 is not None
+    assert zeroed == [True]
+
+
+def test_runtime_replay_rejects_self_consistent_forged_calibration(
+    tmp_path: Path,
+) -> None:
+    protocol = load_adapter_training_config(_bound(tmp_path))
+    forged = _self_consistent_forged_calibration()
+    state_path = _resume_state(
+        tmp_path / "forged-runtime-state.pt",
+        protocol=protocol,
+        state_weight=999.0,
+        calibration=forged,
+    )
+    runtime = HuggingFaceAdapterTrainingRuntime.__new__(HuggingFaceAdapterTrainingRuntime)
+    runtime.protocol = protocol
+    runtime.seed = 42
+    runtime.state_weight = None
+    runtime.state_calibration = None
+    runtime._torch = torch
+    runtime._prepared_encodings = deque()
+    runtime._verified_resume_state_path = None
+    runtime._verified_resume_state_sha256 = None
+    runtime._measure_state_calibration = lambda _pairs: _calibration()
+    runtime.zero_grad = lambda: None
+    runtime._trainable_parameters = lambda: ()
+
+    with pytest.raises(ValueError, match="replay records differ"):
+        runtime.verify_resume_state_calibration(state_path, tuple(range(8)))
+    assert runtime._verified_resume_state_path is None
+
+
+def test_priority_b_runtime_refuses_direct_checkpoint_load_without_replay(
+    tmp_path: Path,
+) -> None:
+    protocol = load_adapter_training_config(_bound(tmp_path))
+    state_path = _resume_state(tmp_path / "unverified-runtime-state.pt", protocol=protocol)
+    runtime = HuggingFaceAdapterTrainingRuntime.__new__(HuggingFaceAdapterTrainingRuntime)
+    runtime.protocol = protocol
+    runtime._verified_resume_state_path = None
+    runtime._verified_resume_state_sha256 = None
+
+    with pytest.raises(ValueError, match="must pass exact calibration replay"):
+        runtime.load_state(state_path)
+
+
 def test_state_runtime_provenance_binds_gate_evidence(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -237,6 +356,7 @@ def test_state_runtime_provenance_binds_gate_evidence(
     runtime.student_revision = runtime.protocol.model_revision
     runtime.tokenizer_revision = runtime.protocol.model_revision
     runtime.code_revision = "f" * 40
+    runtime.source_tree_sha256 = "e" * 64
     runtime.seed = 42
     runtime.device = "cuda:0"
     runtime.num_decoder_layers = 34
@@ -626,3 +746,124 @@ def test_resume_rejects_invalid_calibration_before_runtime_construction(
             evidence=_evidence(),
         )
     assert runtime_constructed is False
+
+
+def test_runner_replays_initial_eight_noisy_pairs_before_loading_resume_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = json.loads(TEMPLATE.read_text())
+    payload["schema_version"] = "robustness-adapter-training-config/v5"
+    payload["method_evidence"]["artifact_sha256"] = "a" * 64
+    payload["optimization"]["max_optimizer_steps"] = 1
+    payload["optimization"]["checkpoint_every_optimizer_steps"] = 50
+    config_path = tmp_path / "resume-config.json"
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    protocol = load_adapter_training_config(config_path)
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    state_path = _resume_state(output_dir / "runtime-state.pt", protocol=protocol)
+    monitor_protocol_sha = "e" * 64
+    monitor_data_sha = "f" * 64
+    write_training_checkpoint(
+        output_dir / "checkpoint.json",
+        cursor=TrainingCursor(0, 0, 0, 1, protocol.max_student_tokens),
+        state_path=state_path,
+        bindings={
+            "config_sha256": protocol.config_sha256,
+            "training_data_sha256": "d" * 64,
+            "localization_sha256": None,
+            "method_evidence_sha256": "a" * 64,
+            "monitor_protocol_sha256": monitor_protocol_sha,
+            "monitor_data_sha256": monitor_data_sha,
+            "seed": 42,
+        },
+    )
+    (output_dir / "adapter-step-000001").mkdir()
+    monkeypatch.setattr(
+        "typo_robust_training.evaluation.study.load_evaluation_study_protocol",
+        lambda _path: SimpleNamespace(
+            config_sha256=monitor_protocol_sha,
+            tune_fineweb_documents=1,
+            tune_natural_pairs=1,
+            gates={
+                "maximum_clean_kl_nats_per_token": 0.03,
+                "maximum_clean_ppl_ratio": 1.02,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.evaluation.data.load_evaluation_corpus_bundle",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            records=(
+                SimpleNamespace(source="fineweb_edu", kind="clean"),
+                SimpleNamespace(source="github_typo_corpus", kind="natural"),
+            ),
+            manifest_sha256=monitor_data_sha,
+        ),
+    )
+
+    class ReplayRuntime:
+        replayed = False
+        loaded = False
+
+        @staticmethod
+        def pair_is_usable(_pair: object) -> bool:
+            return True
+
+        @staticmethod
+        def retained_clean_character_extent(pair: object) -> int:
+            return len(pair.clean_text)
+
+        def verify_resume_state_calibration(
+            self,
+            path: Path,
+            pairs: tuple[object, ...],
+        ) -> None:
+            assert path == state_path.resolve()
+            assert len(pairs) == 8
+            assert all(not pair.is_noop and pair.edits for pair in pairs)
+            self.replayed = True
+
+        def load_state(self, path: Path) -> None:
+            assert self.replayed
+            assert path == state_path.resolve()
+            self.loaded = True
+
+        @staticmethod
+        def zero_grad() -> None:
+            return None
+
+        @staticmethod
+        def save_state(path: Path) -> None:
+            path.write_text("saved", encoding="utf-8")
+
+        @staticmethod
+        def save_adapter(path: Path) -> None:
+            path.mkdir(parents=True, exist_ok=True)
+            (path / "adapter.txt").write_text("saved", encoding="utf-8")
+
+        @staticmethod
+        def provenance() -> dict[str, object]:
+            return {"runtime": "replay-order-fixture/v1"}
+
+    runtime = ReplayRuntime()
+    with pytest.raises(RuntimeError, match="metrics are missing optimizer step"):
+        run_adapter_training(
+            replace(
+                _run_config(
+                    tmp_path,
+                    config_path=config_path,
+                    state_gate_path=tmp_path / "gate.json",
+                    resume=True,
+                ),
+                output_dir=output_dir,
+                evaluation_protocol_path=tmp_path / "evaluation.json",
+                monitor_data_dir=tmp_path / "monitor",
+            ),
+            runtime=runtime,
+            data_bundle=_training_bundle(tmp_path),
+            evidence=_evidence(),
+        )
+    assert runtime.replayed is True
+    assert runtime.loaded is True

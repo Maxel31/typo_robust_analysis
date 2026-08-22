@@ -174,6 +174,12 @@ class AdapterTrainingRuntime(Protocol):
         pairs: Sequence[TrainingPair],
     ) -> Mapping[str, object]: ...
 
+    def verify_resume_state_calibration(
+        self,
+        path: Path,
+        pairs: Sequence[TrainingPair],
+    ) -> None: ...
+
     def optimizer_step(self, *, max_grad_norm: float) -> tuple[float, float]: ...
 
     def zero_grad(self) -> None: ...
@@ -800,6 +806,19 @@ def run_adapter_training(
             evidence=evidence,
         )
     if checkpoint is not None:
+        if protocol.condition == "probe-transition-single-layer-state-distillation":
+            replay = getattr(runtime, "verify_resume_state_calibration", None)
+            if not callable(replay):
+                raise TypeError("state training runtime cannot replay its calibration")
+            replay(
+                checkpoint.state_path,
+                _state_calibration_pairs(
+                    bundle=bundle,
+                    protocol=protocol,
+                    seed=config.seed,
+                    runtime=runtime,
+                ),
+            )
         runtime.load_state(checkpoint.state_path)
     order_cache = EpochSourceOrderCache(bundle.sources, seed=config.seed)
     provenance = dict(runtime.provenance())

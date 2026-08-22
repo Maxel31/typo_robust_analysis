@@ -154,7 +154,7 @@ def _validate_production_runtime_provenance(
     """Fail closed when a production evaluator cannot attest its loaded snapshot."""
 
     expected = {
-        "runtime": "HuggingFaceRobustnessEvaluationRuntime/v2",
+        "runtime": "HuggingFaceRobustnessEvaluationRuntime/v3",
         "model": protocol.model,
         "requested_revision": protocol.model_revision,
         "model_revision": protocol.model_revision,
@@ -168,6 +168,17 @@ def _validate_production_runtime_provenance(
     }
     if any(provenance.get(field) != value for field, value in expected.items()):
         raise ValueError("evaluation runtime model/tokenizer provenance differs")
+    code_revision = provenance.get("code_revision")
+    source_tree_sha256 = provenance.get("source_tree_sha256")
+    if (
+        not isinstance(code_revision, str)
+        or len(code_revision) != 40
+        or any(character not in "0123456789abcdef" for character in code_revision)
+        or not isinstance(source_tree_sha256, str)
+        or len(source_tree_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in source_tree_sha256)
+    ):
+        raise ValueError("evaluation runtime source provenance differs")
 
 
 def _validate_production_runtime_inventory(

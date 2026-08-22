@@ -360,11 +360,13 @@ def _production_runtime_provenance(
 ) -> dict[str, object]:
     protocol = load_robustness_evaluation_config(CONFIG)
     return {
-        "runtime": "HuggingFaceRobustnessEvaluationRuntime/v2",
+        "runtime": "HuggingFaceRobustnessEvaluationRuntime/v3",
         "model": protocol.model,
         "requested_revision": protocol.model_revision,
         "model_revision": protocol.model_revision,
         "tokenizer_revision": protocol.model_revision,
+        "code_revision": "a" * 40,
+        "source_tree_sha256": "b" * 64,
         "condition": condition,
         "seed": seed,
     }

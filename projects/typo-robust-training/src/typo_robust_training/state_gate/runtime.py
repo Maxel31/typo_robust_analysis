@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import importlib.metadata
-import importlib.util
 import os
 import platform
 import re
@@ -21,24 +21,31 @@ from typo_robust_training.state_gate.config import SingleLayerGateProtocol
 
 _REVISION = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_REQUIRED_TYPO_COT_RUNTIME_MODULES = (
+    "typo_cot",
+    "typo_cot.experiments.layerwise_kl_patching.patching",
+    "typo_cot.models.wrapper",
+)
 
 
 def _checkout_source_attestation() -> tuple[str, str]:
     """Attest both executing source trees and return HEAD plus their tree digest."""
 
     module_path = Path(__file__).resolve()
-    try:
-        dependency_spec = importlib.util.find_spec("typo_cot")
-    except (ImportError, ValueError) as exc:
-        raise RuntimeError(
-            "single-layer gate runtime cannot locate the typo_cot dependency source"
-        ) from exc
-    dependency_file = getattr(dependency_spec, "origin", None)
-    if not isinstance(dependency_file, str) or not dependency_file:
-        raise RuntimeError(
-            "single-layer gate runtime cannot locate the typo_cot dependency source"
-        )
-    dependency_path = Path(dependency_file).resolve()
+    dependency_paths: list[Path] = []
+    for module_name in _REQUIRED_TYPO_COT_RUNTIME_MODULES:
+        try:
+            loaded_module = importlib.import_module(module_name)
+        except (ImportError, ValueError) as exc:
+            raise RuntimeError(
+                "single-layer gate runtime cannot locate a required typo_cot source module"
+            ) from exc
+        dependency_file = getattr(loaded_module, "__file__", None)
+        if not isinstance(dependency_file, str) or not dependency_file:
+            raise RuntimeError(
+                "single-layer gate runtime cannot locate a required typo_cot source module"
+            )
+        dependency_paths.append(Path(dependency_file).resolve())
     root_result = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
         cwd=module_path.parent,
@@ -51,10 +58,12 @@ def _checkout_source_attestation() -> tuple[str, str]:
     checkout_root = Path(root_result.stdout.strip()).resolve()
     try:
         module_relative = module_path.relative_to(checkout_root)
-        dependency_relative = dependency_path.relative_to(checkout_root)
+        dependency_relatives = tuple(
+            dependency_path.relative_to(checkout_root) for dependency_path in dependency_paths
+        )
         package_relatives = (
             module_path.parents[1].relative_to(checkout_root),
-            dependency_path.parent.relative_to(checkout_root),
+            Path("projects/typo-cot/src/typo_cot"),
         )
     except ValueError as exc:
         raise RuntimeError(
@@ -69,7 +78,13 @@ def _checkout_source_attestation() -> tuple[str, str]:
             "single-layer gate runtime source roots differ from the required checkout layout"
         )
 
-    for source_relative in (module_relative, dependency_relative):
+    dependency_root = checkout_root / expected_package_relatives[1]
+    if any(not path.is_relative_to(dependency_root) for path in dependency_paths):
+        raise RuntimeError(
+            "single-layer gate runtime or local dependency is outside the attested checkout"
+        )
+
+    for source_relative in (module_relative, *dependency_relatives):
         tracked_result = subprocess.run(
             ["git", "ls-files", "--error-unmatch", "--", source_relative.as_posix()],
             cwd=checkout_root,
