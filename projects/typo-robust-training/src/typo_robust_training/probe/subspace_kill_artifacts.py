@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
@@ -17,6 +18,10 @@ from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.probe.artifacts import (
     ProbeTransitionArtifact,
     load_probe_transition_artifact,
+)
+from typo_robust_training.probe.attestation import (
+    RuntimeCheckoutAttestation,
+    attest_runtime_checkout,
 )
 from typo_robust_training.probe.subspace import (
     SemanticProbeSubspace,
@@ -109,6 +114,22 @@ def _digest(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             hasher.update(block)
     return hasher.hexdigest()
+
+
+def _fit_records_sha256(parent: ProbeTransitionArtifact) -> str:
+    payload = [
+        {
+            "record_id": row.record_id,
+            "source_group_sha256": row.source_group_sha256,
+            "parent_source_sha256": row.parent_source_sha256,
+            "normalized_clean_sha256": row.normalized_clean_sha256,
+            "clean_text": row.clean_text,
+            "clean_word_char_span": list(row.clean_word_char_span),
+        }
+        for row in parent.fit_records
+    ]
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _reference(value: object, *, root: Path, field: str) -> tuple[Path, str]:
@@ -270,6 +291,15 @@ def _load_pca_manifest(
         rows.append(dict(raw))
     if identities != parent.cohort_identities_by_role["fit"]:
         raise ValueError("semantic kill PCA input is not exactly the parent fit cohort")
+    expected_rows = parent.fit_records
+    if len(rows) != len(expected_rows) or any(
+        row["record_id"] != expected.record_id
+        or row["source_group_sha256"] != expected.source_group_sha256
+        or row["parent_source_sha256"] != expected.parent_source_sha256
+        or row["normalized_clean_sha256"] != expected.normalized_clean_sha256
+        for row, expected in zip(rows, expected_rows, strict=True)
+    ):
+        raise ValueError("semantic kill PCA rows do not exactly replay the parent fit manifest")
     return tuple(rows)
 
 
@@ -279,18 +309,26 @@ def _load_pca_activations(
     protocol: SemanticSubspaceKillProtocol,
     parent: ProbeTransitionArtifact,
     rows: Sequence[Mapping[str, object]],
+    checkout_attestation: RuntimeCheckoutAttestation,
 ) -> np.ndarray:
     from safetensors import safe_open
 
     expected_metadata = {
-        "schema_version": "probe-semantic-pca-fit-activations/v1",
+        "schema_version": "probe-semantic-pca-fit-activations/v2",
         "parent_artifact_sha256": parent.artifact_sha256,
         "pca_manifest_sha256": protocol.pca_manifest_sha256,
         "model": protocol.model,
-        "model_revision": protocol.model_revision,
-        "code_revision": protocol.code_revision,
+        "loaded_model_revision": protocol.model_revision,
+        "loaded_tokenizer_revision": protocol.model_revision,
+        "parent_probe_code_revision": protocol.parent_probe_code_revision,
+        "kill_runtime_code_revision": protocol.kill_runtime_code_revision,
+        "typo_robust_training_tree": checkout_attestation.typo_robust_training_tree,
+        "typo_cot_tree": checkout_attestation.typo_cot_tree,
         "transition_layer": str(parent.selected_transition_layer),
+        "coordinate": protocol.coordinate,
         "hidden_size": str(parent.hidden_size),
+        "rows": str(len(parent.fit_records)),
+        "fit_records_sha256": _fit_records_sha256(parent),
     }
     with safe_open(path, framework="np") as handle:
         if dict(handle.metadata() or {}) != expected_metadata or set(handle.keys()) != {
@@ -313,6 +351,8 @@ def _load_subspaces(
     protocol: SemanticSubspaceKillProtocol,
     parent: ProbeTransitionArtifact,
     pca_activations: np.ndarray,
+    pca_activations_sha256: str,
+    checkout_attestation: RuntimeCheckoutAttestation,
 ) -> tuple[Mapping[int, SemanticProbeSubspace], np.ndarray, np.ndarray, Mapping[int, np.ndarray]]:
     from safetensors import safe_open
 
@@ -346,10 +386,13 @@ def _load_subspaces(
         "parent_artifact_sha256": parent.artifact_sha256,
         "cohort_sha256": protocol.cohort_sha256,
         "pca_manifest_sha256": protocol.pca_manifest_sha256,
-        "pca_activations_sha256": protocol.pca_activations_sha256,
+        "pca_activations_sha256": pca_activations_sha256,
         "model": protocol.model,
         "model_revision": protocol.model_revision,
-        "code_revision": protocol.code_revision,
+        "parent_probe_code_revision": protocol.parent_probe_code_revision,
+        "kill_runtime_code_revision": protocol.kill_runtime_code_revision,
+        "typo_robust_training_tree": checkout_attestation.typo_robust_training_tree,
+        "typo_cot_tree": checkout_attestation.typo_cot_tree,
         "transition_layer": str(parent.selected_transition_layer),
         "rank": str(protocol.rank),
         "random_basis_seed": str(protocol.random_basis_seed),
@@ -391,14 +434,20 @@ def _validate_runtime(
     *,
     protocol: SemanticSubspaceKillProtocol,
     parent: ProbeTransitionArtifact,
+    checkout_attestation: RuntimeCheckoutAttestation,
+    pca_activations_sha256: str,
 ) -> None:
     payload = _json(path, field="semantic kill runtime provenance")
     expected = {
-        "schema_version": "probe-semantic-subspace-kill-runtime/v1",
-        "runtime": "HuggingFaceSemanticSubspaceKillRuntime/v1",
+        "schema_version": "probe-semantic-subspace-kill-runtime/v2",
+        "runtime": "HuggingFaceSemanticSubspaceKillRuntime/v2",
         "model": protocol.model,
-        "model_revision": protocol.model_revision,
-        "code_revision": protocol.code_revision,
+        "loaded_model_revision": protocol.model_revision,
+        "loaded_tokenizer_revision": protocol.model_revision,
+        "parent_probe_code_revision": protocol.parent_probe_code_revision,
+        "kill_runtime_code_revision": protocol.kill_runtime_code_revision,
+        "checkout_attestation": checkout_attestation.as_dict(),
+        "pca_fit_activations_sha256": pca_activations_sha256,
         "transition_layer": parent.selected_transition_layer,
         "hook_site": protocol.hook_site,
         "coordinate": protocol.coordinate,
@@ -481,7 +530,8 @@ def _load_scores(
 class SemanticSubspaceKillArtifact:
     model: str
     model_revision: str
-    code_revision: str
+    parent_probe_code_revision: str
+    kill_runtime_code_revision: str
     decoder_layers: int
     hidden_size: int
     transition_layer: int
@@ -497,7 +547,11 @@ class SemanticSubspaceKillArtifact:
         return tuple(range(self.transition_layer, self.decoder_layers))
 
 
-def load_semantic_subspace_kill_artifact(path: Path) -> SemanticSubspaceKillArtifact:
+def load_semantic_subspace_kill_artifact(
+    path: Path,
+    *,
+    checkout_attestor: Callable[[str], RuntimeCheckoutAttestation] = attest_runtime_checkout,
+) -> SemanticSubspaceKillArtifact:
     """Resolve every input and recompute both seed gates from raw KL outputs."""
 
     supplied = Path(path)
@@ -511,7 +565,8 @@ def load_semantic_subspace_kill_artifact(path: Path) -> SemanticSubspaceKillArti
         "operation",
         "model",
         "model_revision",
-        "code_revision",
+        "parent_probe_code_revision",
+        "kill_runtime_code_revision",
         "decoder_layers",
         "hidden_size",
         "transition_layer",
@@ -522,7 +577,7 @@ def load_semantic_subspace_kill_artifact(path: Path) -> SemanticSubspaceKillArti
         "kill_test_passed",
     }
     if set(payload) != expected_top or (
-        payload["schema_version"] != "probe-semantic-subspace-kill-evidence/v1"
+        payload["schema_version"] != "probe-semantic-subspace-kill-evidence/v2"
         or payload["operation"] != "validate-causal-probe-semantic-subspace"
     ):
         raise ValueError("semantic kill artifact identity differs")
@@ -543,6 +598,7 @@ def load_semantic_subspace_kill_artifact(path: Path) -> SemanticSubspaceKillArti
     protocol = load_semantic_subspace_kill_config(config_path)
     if config_hash != protocol.config_sha256:
         raise ValueError("semantic kill config hash differs")
+    checkout = checkout_attestor(protocol.kill_runtime_code_revision)
     parent_path, parent_hash = _reference(
         references["parent_probe_artifact"], root=root, field="parent probe artifact"
     )
@@ -552,7 +608,8 @@ def load_semantic_subspace_kill_artifact(path: Path) -> SemanticSubspaceKillArti
     identity = {
         "model": protocol.model,
         "model_revision": protocol.model_revision,
-        "code_revision": protocol.code_revision,
+        "parent_probe_code_revision": protocol.parent_probe_code_revision,
+        "kill_runtime_code_revision": protocol.kill_runtime_code_revision,
         "decoder_layers": protocol.decoder_layers,
         "hidden_size": protocol.hidden_size,
         "transition_layer": parent.selected_transition_layer,
@@ -563,7 +620,7 @@ def load_semantic_subspace_kill_artifact(path: Path) -> SemanticSubspaceKillArti
     if any(payload[field] != expected for field, expected in identity.items()) or (
         parent.model != protocol.model
         or parent.model_revision != protocol.model_revision
-        or parent.code_revision != protocol.code_revision
+        or parent.code_revision != protocol.parent_probe_code_revision
         or parent.decoder_layers != protocol.decoder_layers
         or parent.hidden_size != protocol.hidden_size
         or parent.probe_seeds != protocol.reproducibility_probe_seeds
@@ -584,10 +641,12 @@ def load_semantic_subspace_kill_artifact(path: Path) -> SemanticSubspaceKillArti
     pca_path, pca_hash = _reference(
         references["pca_fit_activations"], root=root, field="PCA fit activations"
     )
-    if pca_hash != protocol.pca_activations_sha256:
-        raise ValueError("semantic kill PCA activation hash differs")
     pca_activations = _load_pca_activations(
-        pca_path, protocol=protocol, parent=parent, rows=pca_rows
+        pca_path,
+        protocol=protocol,
+        parent=parent,
+        rows=pca_rows,
+        checkout_attestation=checkout,
     )
     subspaces_path, subspaces_hash = _reference(
         references["subspaces"], root=root, field="semantic subspaces"
@@ -597,11 +656,19 @@ def load_semantic_subspace_kill_artifact(path: Path) -> SemanticSubspaceKillArti
         protocol=protocol,
         parent=parent,
         pca_activations=pca_activations,
+        pca_activations_sha256=pca_hash,
+        checkout_attestation=checkout,
     )
     runtime_path, runtime_hash = _reference(
         references["runtime_provenance"], root=root, field="kill runtime"
     )
-    _validate_runtime(runtime_path, protocol=protocol, parent=parent)
+    _validate_runtime(
+        runtime_path,
+        protocol=protocol,
+        parent=parent,
+        checkout_attestation=checkout,
+        pca_activations_sha256=pca_hash,
+    )
     score_refs = references["scores_by_seed"]
     expected_seed_keys = {str(seed) for seed in parent.probe_seeds}
     if not isinstance(score_refs, Mapping) or set(score_refs) != expected_seed_keys:
@@ -658,7 +725,8 @@ def load_semantic_subspace_kill_artifact(path: Path) -> SemanticSubspaceKillArti
     return SemanticSubspaceKillArtifact(
         model=parent.model,
         model_revision=parent.model_revision,
-        code_revision=parent.code_revision,
+        parent_probe_code_revision=parent.code_revision,
+        kill_runtime_code_revision=protocol.kill_runtime_code_revision,
         decoder_layers=parent.decoder_layers,
         hidden_size=parent.hidden_size,
         transition_layer=parent.selected_transition_layer,

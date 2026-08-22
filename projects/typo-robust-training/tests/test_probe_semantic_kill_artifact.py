@@ -11,6 +11,7 @@ from safetensors.numpy import save_file
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.probe import subspace_kill_artifacts as kill_artifacts
 from typo_robust_training.probe.artifacts import load_probe_transition_artifact
+from typo_robust_training.probe.attestation import RuntimeCheckoutAttestation
 from typo_robust_training.probe.subspace import (
     derive_artifact_semantic_subspace,
     derive_pca_basis,
@@ -41,6 +42,34 @@ def _write(path: Path, payload: object) -> Path:
 
 def _ref(path: Path) -> dict[str, str]:
     return {"relative_path": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+
+_KILL_REVISION = "c" * 40
+_ATTESTATION = RuntimeCheckoutAttestation(
+    revision=_KILL_REVISION,
+    typo_robust_training_tree="d" * 40,
+    typo_cot_tree="e" * 40,
+)
+
+
+def _attest(revision: str) -> RuntimeCheckoutAttestation:
+    if revision != _KILL_REVISION:
+        raise ValueError("wrong test runtime revision")
+    return _ATTESTATION
+
+
+def _load_kill(path: Path):
+    return load_semantic_subspace_kill_artifact(path, checkout_attestor=_attest)
+
+
+def _captured_fit_activations(records: tuple[object, ...], hidden: int) -> np.ndarray:
+    """Deterministic fake-runtime output; never accepted as a caller input."""
+
+    rows: list[np.ndarray] = []
+    for record in records:
+        seed = int(getattr(record, "normalized_clean_sha256")[:16], 16)
+        rows.append(np.random.default_rng(seed).normal(size=hidden).astype(np.float32))
+    return np.stack(rows)
 
 
 def _parent_bundle(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
@@ -358,32 +387,38 @@ def _child_bundle(tmp_path: Path) -> tuple[Path, dict[str, Path], dict[str, obje
         tmp_path / "pca-manifest.json",
         {"schema_version": "probe-semantic-pca-fit-manifest/v1", "records": pca_manifest_rows},
     )
-    activations = np.random.default_rng(55).normal(
-        size=(len(pca_manifest_rows), parent.hidden_size)
-    ).astype(np.float32)
+    activations = _captured_fit_activations(parent.fit_records, parent.hidden_size)
     files["pca"] = tmp_path / "pca.safetensors"
     save_file(
         {"clean_fit_activations": activations},
         files["pca"],
         metadata={
-            "schema_version": "probe-semantic-pca-fit-activations/v1",
+            "schema_version": "probe-semantic-pca-fit-activations/v2",
             "parent_artifact_sha256": parent.artifact_sha256,
             "pca_manifest_sha256": _ref(files["pca-manifest"])["sha256"],
             "model": parent.model,
-            "model_revision": parent.model_revision,
-            "code_revision": parent.code_revision,
+            "loaded_model_revision": parent.model_revision,
+            "loaded_tokenizer_revision": parent.model_revision,
+            "parent_probe_code_revision": parent.code_revision,
+            "kill_runtime_code_revision": _KILL_REVISION,
+            "typo_robust_training_tree": _ATTESTATION.typo_robust_training_tree,
+            "typo_cot_tree": _ATTESTATION.typo_cot_tree,
             "transition_layer": str(parent.selected_transition_layer),
+            "coordinate": "edited-word-final-token/v1",
             "hidden_size": str(parent.hidden_size),
+            "rows": str(len(parent.fit_records)),
+            "fit_records_sha256": kill_artifacts._fit_records_sha256(parent),
         },
     )
     files["kill-config"] = _write(
         tmp_path / "kill-config.json",
         {
-            "schema_version": "probe-semantic-subspace-kill-config/v1",
+            "schema_version": "probe-semantic-subspace-kill-config/v2",
             "model": {
                 "id": parent.model,
                 "revision": parent.model_revision,
-                "code_revision": parent.code_revision,
+                "parent_probe_code_revision": parent.code_revision,
+                "kill_runtime_code_revision": _KILL_REVISION,
                 "decoder_layers": parent.decoder_layers,
                 "hidden_size": parent.hidden_size,
                 "dtype": "bfloat16",
@@ -392,7 +427,6 @@ def _child_bundle(tmp_path: Path) -> tuple[Path, dict[str, Path], dict[str, obje
                 "parent_probe_artifact_sha256": parent.artifact_sha256,
                 "cohort_manifest_sha256": _ref(files["kill-cohort"])["sha256"],
                 "pca_fit_manifest_sha256": _ref(files["pca-manifest"])["sha256"],
-                "pca_fit_activations_sha256": _ref(files["pca"])["sha256"],
             },
             "subspace": {
                 "rank": 16,
@@ -475,7 +509,10 @@ def _child_bundle(tmp_path: Path) -> tuple[Path, dict[str, Path], dict[str, obje
             "pca_activations_sha256": _ref(files["pca"])["sha256"],
             "model": parent.model,
             "model_revision": parent.model_revision,
-            "code_revision": parent.code_revision,
+            "parent_probe_code_revision": parent.code_revision,
+            "kill_runtime_code_revision": _KILL_REVISION,
+            "typo_robust_training_tree": _ATTESTATION.typo_robust_training_tree,
+            "typo_cot_tree": _ATTESTATION.typo_cot_tree,
             "transition_layer": str(parent.selected_transition_layer),
             "rank": "16",
             "random_basis_seed": "101",
@@ -485,11 +522,15 @@ def _child_bundle(tmp_path: Path) -> tuple[Path, dict[str, Path], dict[str, obje
     files["runtime"] = _write(
         tmp_path / "runtime.json",
         {
-            "schema_version": "probe-semantic-subspace-kill-runtime/v1",
-            "runtime": "HuggingFaceSemanticSubspaceKillRuntime/v1",
+            "schema_version": "probe-semantic-subspace-kill-runtime/v2",
+            "runtime": "HuggingFaceSemanticSubspaceKillRuntime/v2",
             "model": parent.model,
-            "model_revision": parent.model_revision,
-            "code_revision": parent.code_revision,
+            "loaded_model_revision": parent.model_revision,
+            "loaded_tokenizer_revision": parent.model_revision,
+            "parent_probe_code_revision": parent.code_revision,
+            "kill_runtime_code_revision": _KILL_REVISION,
+            "checkout_attestation": _ATTESTATION.as_dict(),
+            "pca_fit_activations_sha256": _ref(files["pca"])["sha256"],
             "transition_layer": parent.selected_transition_layer,
             "hook_site": "complete-decoder-block-residual-output",
             "coordinate": "edited-word-final-token/v1",
@@ -549,11 +590,12 @@ def _child_bundle(tmp_path: Path) -> tuple[Path, dict[str, Path], dict[str, obje
             },
         )
     artifact_payload: dict[str, object] = {
-        "schema_version": "probe-semantic-subspace-kill-evidence/v1",
+        "schema_version": "probe-semantic-subspace-kill-evidence/v2",
         "operation": "validate-causal-probe-semantic-subspace",
         "model": parent.model,
         "model_revision": parent.model_revision,
-        "code_revision": parent.code_revision,
+        "parent_probe_code_revision": parent.code_revision,
+        "kill_runtime_code_revision": _KILL_REVISION,
         "decoder_layers": parent.decoder_layers,
         "hidden_size": parent.hidden_size,
         "transition_layer": parent.selected_transition_layer,
@@ -581,11 +623,14 @@ def _child_bundle(tmp_path: Path) -> tuple[Path, dict[str, Path], dict[str, obje
 def test_loader_rederives_bases_and_both_seed_gates_from_raw_kl(tmp_path: Path) -> None:
     path, _files, _payload = _child_bundle(tmp_path)
 
-    artifact = load_semantic_subspace_kill_artifact(path)
+    artifact = _load_kill(path)
 
     assert artifact.transition_layer == 2
     assert artifact.suffix_layers == (2, 3, 4)
     assert artifact.semantic_subspace.rank == 16
+    assert artifact.parent_probe_code_revision == "b" * 40
+    assert artifact.kill_runtime_code_revision == _KILL_REVISION
+    assert artifact.parent_probe_code_revision != artifact.kill_runtime_code_revision
     assert all(summary.passed for summary in artifact.summary_by_seed.values())
     assert artifact.artifact_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -603,7 +648,25 @@ def test_loader_rejects_random_basis_disguised_as_parent_semantics(tmp_path: Pat
     _write(path, payload)
 
     with pytest.raises(ValueError, match="differs from parent re-derivation"):
-        load_semantic_subspace_kill_artifact(path)
+        _load_kill(path)
+
+
+def test_loader_rejects_random_gaussian_substituted_for_runtime_pca_source(
+    tmp_path: Path,
+) -> None:
+    path, files, payload = _child_bundle(tmp_path)
+    from safetensors import safe_open
+
+    with safe_open(files["pca"], framework="np") as handle:
+        metadata = dict(handle.metadata() or {})
+        original = handle.get_tensor("clean_fit_activations")
+    gaussian = np.random.default_rng(999).normal(size=original.shape).astype(np.float32)
+    save_file({"clean_fit_activations": gaussian}, files["pca"], metadata=metadata)
+    payload["references"]["pca_fit_activations"] = _ref(files["pca"])  # type: ignore[index]
+    _write(path, payload)
+
+    with pytest.raises(ValueError, match="stored subspace"):
+        _load_kill(path)
 
 
 def test_loader_rejects_wrong_token_coordinate_before_accepting_stored_pass(tmp_path: Path) -> None:
@@ -615,7 +678,7 @@ def test_loader_rejects_wrong_token_coordinate_before_accepting_stored_pass(tmp_
     _write(path, payload)
 
     with pytest.raises(ValueError, match="wrong token coordinate"):
-        load_semantic_subspace_kill_artifact(path)
+        _load_kill(path)
 
 
 def test_loader_rejects_one_seed_only_pass(tmp_path: Path) -> None:
@@ -628,7 +691,7 @@ def test_loader_rejects_one_seed_only_pass(tmp_path: Path) -> None:
     _write(path, payload)
 
     with pytest.raises(ValueError, match="did not pass both"):
-        load_semantic_subspace_kill_artifact(path)
+        _load_kill(path)
 
 
 def test_kill_config_rejects_substituted_probe_seeds(tmp_path: Path) -> None:
@@ -659,16 +722,29 @@ class _PassingKillRuntime:
     def __init__(self, **kwargs: object) -> None:
         self.protocol = kwargs["protocol"]
         self.parent = kwargs["parent"]
+        self.checkout = kwargs["checkout_attestation"]
+        self.pca_basis = None
 
-    def provenance(self) -> dict[str, object]:
+    def collect_clean_fit_activations(self, records):
+        assert records == self.parent.fit_records
+        return _captured_fit_activations(records, self.parent.hidden_size)
+
+    def bind_pca_basis(self, basis: np.ndarray) -> None:
+        self.pca_basis = basis.copy()
+
+    def provenance(self, *, pca_fit_activations_sha256: str) -> dict[str, object]:
         protocol = self.protocol
         parent = self.parent
         return {
-            "schema_version": "probe-semantic-subspace-kill-runtime/v1",
-            "runtime": "HuggingFaceSemanticSubspaceKillRuntime/v1",
+            "schema_version": "probe-semantic-subspace-kill-runtime/v2",
+            "runtime": "HuggingFaceSemanticSubspaceKillRuntime/v2",
             "model": protocol.model,
-            "model_revision": protocol.model_revision,
-            "code_revision": protocol.code_revision,
+            "loaded_model_revision": protocol.model_revision,
+            "loaded_tokenizer_revision": protocol.model_revision,
+            "parent_probe_code_revision": protocol.parent_probe_code_revision,
+            "kill_runtime_code_revision": protocol.kill_runtime_code_revision,
+            "checkout_attestation": self.checkout.as_dict(),
+            "pca_fit_activations_sha256": pca_fit_activations_sha256,
             "transition_layer": parent.selected_transition_layer,
             "hook_site": protocol.hook_site,
             "coordinate": protocol.coordinate,
@@ -702,6 +778,8 @@ class _PassingKillRuntime:
 def test_runner_produces_self_contained_revalidated_evidence(tmp_path: Path) -> None:
     _child, files, _payload = _child_bundle(tmp_path)
     output = tmp_path / "produced"
+    # A pre-existing arbitrary activation tensor is not an input to the runner.
+    files["pca"].unlink()
 
     result = run_semantic_subspace_kill_test(
         SemanticSubspaceKillRunConfig(
@@ -709,19 +787,34 @@ def test_runner_produces_self_contained_revalidated_evidence(tmp_path: Path) -> 
             parent_probe_artifact_path=files["artifact"],
             cohort_manifest_path=files["kill-cohort"],
             pca_fit_manifest_path=files["pca-manifest"],
-            pca_fit_activations_path=files["pca"],
             gpu_id="7",
             output_dir=output,
         ),
         runtime_factory=_PassingKillRuntime,
+        checkout_attestor=_attest,
     )
 
     assert result.passed is True
-    reloaded = load_semantic_subspace_kill_artifact(result.artifact_path)
+    reloaded = _load_kill(result.artifact_path)
     assert reloaded.transition_layer == 2
     assert all(summary.passed for summary in reloaded.summary_by_seed.values())
     shutil_source = files["weights-42"]
     shutil_source.unlink()
-    assert load_semantic_subspace_kill_artifact(result.artifact_path).artifact_sha256 == (
+    assert _load_kill(result.artifact_path).artifact_sha256 == (
         reloaded.artifact_sha256
     )
+
+
+def test_runner_api_makes_caller_supplied_pca_activations_impossible(tmp_path: Path) -> None:
+    _child, files, _payload = _child_bundle(tmp_path)
+
+    with pytest.raises(TypeError, match="unexpected keyword"):
+        SemanticSubspaceKillRunConfig(
+            config_path=files["kill-config"],
+            parent_probe_artifact_path=files["artifact"],
+            cohort_manifest_path=files["kill-cohort"],
+            pca_fit_manifest_path=files["pca-manifest"],
+            pca_fit_activations_path=files["pca"],  # type: ignore[call-arg]
+            gpu_id="7",
+            output_dir=tmp_path / "must-not-run",
+        )

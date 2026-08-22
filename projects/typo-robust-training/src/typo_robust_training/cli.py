@@ -233,7 +233,6 @@ def _run_probe_semantic_subspace_kill_test(args: argparse.Namespace) -> int:
                 parent_probe_artifact_path=args.parent_probe_artifact,
                 cohort_manifest_path=args.cohort_manifest,
                 pca_fit_manifest_path=args.pca_fit_manifest,
-                pca_fit_activations_path=args.pca_fit_activations,
                 gpu_id=args.gpu_id,
                 output_dir=args.output_dir,
             )
@@ -655,7 +654,6 @@ def register_commands(
     semantic_kill.add_argument("--parent-probe-artifact", required=True, type=Path)
     semantic_kill.add_argument("--cohort-manifest", required=True, type=Path)
     semantic_kill.add_argument("--pca-fit-manifest", required=True, type=Path)
-    semantic_kill.add_argument("--pca-fit-activations", required=True, type=Path)
     semantic_kill.add_argument("--gpu-id", required=True)
     semantic_kill.add_argument("--output-dir", required=True, type=Path)
     semantic_kill.set_defaults(

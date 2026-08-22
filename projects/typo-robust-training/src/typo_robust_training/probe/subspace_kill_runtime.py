@@ -12,7 +12,11 @@ import numpy as np
 
 from typo_robust_training.localization.corpus_targets import clean_corpus_targets
 from typo_robust_training.localization.prompting import word_final_token_positions
-from typo_robust_training.probe.artifacts import ProbeTransitionArtifact
+from typo_robust_training.probe.artifacts import ProbeFitRecord, ProbeTransitionArtifact
+from typo_robust_training.probe.attestation import (
+    RuntimeCheckoutAttestation,
+    attest_loaded_revisions,
+)
 from typo_robust_training.probe.subspace import SemanticProbeSubspace
 from typo_robust_training.probe.subspace_kill_config import SemanticSubspaceKillProtocol
 from typo_robust_training.probe.subspace_kill_scoring import SubspaceKillScoreRow
@@ -112,9 +116,9 @@ class HuggingFaceSemanticSubspaceKillRuntime:
         protocol: SemanticSubspaceKillProtocol,
         parent: ProbeTransitionArtifact,
         semantic_by_seed: Mapping[int, SemanticProbeSubspace],
-        pca_basis: np.ndarray,
         random_basis: np.ndarray,
         complement_by_seed: Mapping[int, np.ndarray],
+        checkout_attestation: RuntimeCheckoutAttestation,
         gpu_id: str,
     ) -> None:
         if not isinstance(protocol, SemanticSubspaceKillProtocol) or not isinstance(
@@ -125,7 +129,8 @@ class HuggingFaceSemanticSubspaceKillRuntime:
             parent.artifact_sha256 != protocol.parent_artifact_sha256
             or parent.model != protocol.model
             or parent.model_revision != protocol.model_revision
-            or parent.code_revision != protocol.code_revision
+            or parent.code_revision != protocol.parent_probe_code_revision
+            or checkout_attestation.revision != protocol.kill_runtime_code_revision
             or set(semantic_by_seed) != set(parent.probe_seeds)
             or set(complement_by_seed) != set(parent.probe_seeds)
         ):
@@ -153,6 +158,9 @@ class HuggingFaceSemanticSubspaceKillRuntime:
         self.model.eval()
         self.model.requires_grad_(False)
         self.tokenizer = wrapper.tokenizer
+        self.loaded_model_revision, self.loaded_tokenizer_revision = attest_loaded_revisions(
+            self.model, self.tokenizer, protocol.model_revision
+        )
         if getattr(self.tokenizer, "is_fast", False) is not True:
             raise ValueError("semantic kill runtime requires a fast tokenizer")
         self.layers = tuple(find_decoder_layers(self.model))
@@ -161,6 +169,7 @@ class HuggingFaceSemanticSubspaceKillRuntime:
         self.device = next(self.model.parameters()).device
         self.protocol = protocol
         self.parent = parent
+        self.checkout_attestation = checkout_attestation
         self._torch = torch
         self._semantic = {
             seed: torch.tensor(
@@ -171,9 +180,7 @@ class HuggingFaceSemanticSubspaceKillRuntime:
             )
             for seed in parent.probe_seeds
         }
-        self._pca = torch.tensor(
-            pca_basis, dtype=torch.float32, device=self.device, requires_grad=False
-        )
+        self._pca = None
         self._random = torch.tensor(
             random_basis, dtype=torch.float32, device=self.device, requires_grad=False
         )
@@ -186,6 +193,62 @@ class HuggingFaceSemanticSubspaceKillRuntime:
             )
             for seed in parent.probe_seeds
         }
+
+    def collect_clean_fit_activations(
+        self, records: tuple[ProbeFitRecord, ...]
+    ) -> np.ndarray:
+        """Recompute the exact parent fit-cohort activations inside this runtime."""
+
+        if records != self.parent.fit_records or not records:
+            raise ValueError("PCA source is not the exact parent probe fit cohort")
+        values: list[np.ndarray] = []
+        layer = self.layers[self.parent.selected_transition_layer]
+        with self._torch.inference_mode():
+            for record in records:
+                ids, mask, _tokens = self._tokenize(record.clean_text)
+                position = word_final_token_positions(
+                    self.tokenizer,
+                    text=record.clean_text,
+                    spans=(record.clean_word_char_span,),
+                )[0]
+                captured: list[Any] = []
+
+                def capture(_module: Any, _inputs: Any, output: Any) -> None:
+                    hidden = _hidden(output)
+                    if position >= int(hidden.shape[1]):
+                        raise RuntimeError("PCA capture token coordinate is outside the sequence")
+                    captured.append(hidden[0, position].detach().float().cpu())
+
+                handle = layer.register_forward_hook(capture)
+                try:
+                    self.model(input_ids=ids, attention_mask=mask, use_cache=False)
+                finally:
+                    handle.remove()
+                if len(captured) != 1:
+                    raise RuntimeError("PCA source capture did not run exactly once")
+                values.append(captured[0].numpy())
+        result = np.ascontiguousarray(np.stack(values), dtype=np.float32)
+        if result.shape != (len(records), self.parent.hidden_size) or not np.isfinite(
+            result
+        ).all():
+            raise RuntimeError("recomputed PCA source activation tensor differs")
+        return result
+
+    def bind_pca_basis(self, basis: np.ndarray) -> None:
+        """Bind the PCA control derived from the runtime-recomputed clean source."""
+
+        if self._pca is not None:
+            raise RuntimeError("PCA basis was already bound")
+        array = np.asarray(basis)
+        if (
+            array.shape != (self.protocol.rank, self.parent.hidden_size)
+            or array.dtype != np.float64
+            or not np.isfinite(array).all()
+        ):
+            raise ValueError("runtime PCA basis differs")
+        self._pca = self._torch.tensor(
+            array, dtype=self._torch.float32, device=self.device, requires_grad=False
+        )
 
     @staticmethod
     def _span(record: Mapping[str, object], side: str) -> tuple[int, int]:
@@ -255,6 +318,8 @@ class HuggingFaceSemanticSubspaceKillRuntime:
     ) -> Mapping[int, SubspaceKillScoreRow]:
         """Return seed-specific raw KL rows while sharing invariant interventions."""
 
+        if self._pca is None:
+            raise RuntimeError("PCA basis must be bound before semantic kill scans")
         clean = record.get("clean_text")
         typo = record.get("typo_text")
         pair_id = record.get("pair_id")
@@ -357,13 +422,17 @@ class HuggingFaceSemanticSubspaceKillRuntime:
                 }
             )
 
-    def provenance(self) -> Mapping[str, object]:
+    def provenance(self, *, pca_fit_activations_sha256: str) -> Mapping[str, object]:
         return {
-            "schema_version": "probe-semantic-subspace-kill-runtime/v1",
-            "runtime": "HuggingFaceSemanticSubspaceKillRuntime/v1",
+            "schema_version": "probe-semantic-subspace-kill-runtime/v2",
+            "runtime": "HuggingFaceSemanticSubspaceKillRuntime/v2",
             "model": self.protocol.model,
-            "model_revision": self.protocol.model_revision,
-            "code_revision": self.protocol.code_revision,
+            "loaded_model_revision": self.loaded_model_revision,
+            "loaded_tokenizer_revision": self.loaded_tokenizer_revision,
+            "parent_probe_code_revision": self.protocol.parent_probe_code_revision,
+            "kill_runtime_code_revision": self.protocol.kill_runtime_code_revision,
+            "checkout_attestation": self.checkout_attestation.as_dict(),
+            "pca_fit_activations_sha256": pca_fit_activations_sha256,
             "transition_layer": self.parent.selected_transition_layer,
             "hook_site": self.protocol.hook_site,
             "coordinate": self.protocol.coordinate,

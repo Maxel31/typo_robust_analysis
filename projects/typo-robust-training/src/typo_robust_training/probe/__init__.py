@@ -1,6 +1,7 @@
 """Behavior-independent linear-probe transition selection."""
 
 from typo_robust_training.probe.artifacts import (
+    ProbeFitRecord,
     ProbeTransitionArtifact,
     ProbeTransitionIdentityInventory,
     load_probe_transition_artifact,
@@ -12,6 +13,7 @@ from typo_robust_training.probe.scoring import (
 )
 
 __all__ = [
+    "ProbeFitRecord",
     "ProbeSeedTrajectory",
     "ProbeTransitionArtifact",
     "ProbeTransitionIdentityInventory",

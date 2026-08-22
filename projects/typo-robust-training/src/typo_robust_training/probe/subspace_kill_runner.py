@@ -14,8 +14,13 @@ import numpy as np
 from typo_robust_training.data.config import strict_loads
 from typo_robust_training.integrity import sha256_file
 from typo_robust_training.probe.artifacts import (
+    ProbeFitRecord,
     ProbeTransitionArtifact,
     load_probe_transition_artifact,
+)
+from typo_robust_training.probe.attestation import (
+    RuntimeCheckoutAttestation,
+    attest_runtime_checkout,
 )
 from typo_robust_training.probe.subspace import (
     SemanticProbeSubspace,
@@ -25,8 +30,8 @@ from typo_robust_training.probe.subspace import (
     deterministic_haar_basis,
 )
 from typo_robust_training.probe.subspace_kill_artifacts import (
+    _fit_records_sha256,
     _load_cohort,
-    _load_pca_activations,
     _load_pca_manifest,
     load_semantic_subspace_kill_artifact,
 )
@@ -46,11 +51,17 @@ from typo_robust_training.training.json_io import write_json_durable
 
 
 class _KillRuntime(Protocol):
+    def collect_clean_fit_activations(
+        self, records: tuple[ProbeFitRecord, ...]
+    ) -> np.ndarray: ...
+
+    def bind_pca_basis(self, basis: np.ndarray) -> None: ...
+
     def scan_pair_all_seeds(
         self, record: Mapping[str, object]
     ) -> Mapping[int, SubspaceKillScoreRow]: ...
 
-    def provenance(self) -> Mapping[str, object]: ...
+    def provenance(self, *, pca_fit_activations_sha256: str) -> Mapping[str, object]: ...
 
 
 RuntimeFactory = Callable[..., _KillRuntime]
@@ -62,7 +73,6 @@ class SemanticSubspaceKillRunConfig:
     parent_probe_artifact_path: Path
     cohort_manifest_path: Path
     pca_fit_manifest_path: Path
-    pca_fit_activations_path: Path
     gpu_id: str
     output_dir: Path
 
@@ -179,6 +189,8 @@ def _write_subspaces(
     pca: np.ndarray,
     random: np.ndarray,
     complement: Mapping[int, np.ndarray],
+    pca_activations_sha256: str,
+    checkout_attestation: RuntimeCheckoutAttestation,
 ) -> None:
     from safetensors.numpy import save_file
 
@@ -203,10 +215,13 @@ def _write_subspaces(
         "parent_artifact_sha256": parent.artifact_sha256,
         "cohort_sha256": protocol.cohort_sha256,
         "pca_manifest_sha256": protocol.pca_manifest_sha256,
-        "pca_activations_sha256": protocol.pca_activations_sha256,
+        "pca_activations_sha256": pca_activations_sha256,
         "model": protocol.model,
         "model_revision": protocol.model_revision,
-        "code_revision": protocol.code_revision,
+        "parent_probe_code_revision": protocol.parent_probe_code_revision,
+        "kill_runtime_code_revision": protocol.kill_runtime_code_revision,
+        "typo_robust_training_tree": checkout_attestation.typo_robust_training_tree,
+        "typo_cot_tree": checkout_attestation.typo_cot_tree,
         "transition_layer": str(parent.selected_transition_layer),
         "rank": str(protocol.rank),
         "random_basis_seed": str(protocol.random_basis_seed),
@@ -215,6 +230,48 @@ def _write_subspaces(
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
         save_file(tensors, temporary, metadata=metadata)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _write_pca_activations(
+    path: Path,
+    *,
+    activations: np.ndarray,
+    protocol: SemanticSubspaceKillProtocol,
+    parent: ProbeTransitionArtifact,
+    checkout_attestation: RuntimeCheckoutAttestation,
+) -> None:
+    """Persist only activations collected by the attested in-process runtime."""
+
+    from safetensors.numpy import save_file
+
+    array = np.ascontiguousarray(activations, dtype=np.float32)
+    if array.shape != (len(parent.fit_records), parent.hidden_size) or not np.isfinite(
+        array
+    ).all():
+        raise ValueError("runtime PCA activation tensor differs")
+    metadata = {
+        "schema_version": "probe-semantic-pca-fit-activations/v2",
+        "parent_artifact_sha256": parent.artifact_sha256,
+        "pca_manifest_sha256": protocol.pca_manifest_sha256,
+        "model": protocol.model,
+        "loaded_model_revision": protocol.model_revision,
+        "loaded_tokenizer_revision": protocol.model_revision,
+        "parent_probe_code_revision": protocol.parent_probe_code_revision,
+        "kill_runtime_code_revision": protocol.kill_runtime_code_revision,
+        "typo_robust_training_tree": checkout_attestation.typo_robust_training_tree,
+        "typo_cot_tree": checkout_attestation.typo_cot_tree,
+        "transition_layer": str(parent.selected_transition_layer),
+        "coordinate": protocol.coordinate,
+        "hidden_size": str(parent.hidden_size),
+        "rows": str(len(parent.fit_records)),
+        "fit_records_sha256": _fit_records_sha256(parent),
+    }
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        save_file({"clean_fit_activations": array}, temporary, metadata=metadata)
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
@@ -265,6 +322,7 @@ def run_semantic_subspace_kill_test(
     config: SemanticSubspaceKillRunConfig,
     *,
     runtime_factory: RuntimeFactory = HuggingFaceSemanticSubspaceKillRuntime,
+    checkout_attestor: Callable[[str], RuntimeCheckoutAttestation] = attest_runtime_checkout,
 ) -> SemanticSubspaceKillRunResult:
     """Run once from preregistered inputs and write raw, independently reloadable evidence."""
 
@@ -276,28 +334,26 @@ def run_semantic_subspace_kill_test(
         raise ValueError("semantic kill cohort differs from preregistration")
     if sha256_file(config.pca_fit_manifest_path) != protocol.pca_manifest_sha256:
         raise ValueError("semantic kill PCA manifest differs from preregistration")
-    if sha256_file(config.pca_fit_activations_path) != protocol.pca_activations_sha256:
-        raise ValueError("semantic kill PCA activations differ from preregistration")
 
-    # These parsers perform every disjointness, coordinate, and PCA provenance check
-    # before the runtime constructor is allowed to initialize CUDA.
+    # These parsers perform every disjointness and coordinate check before CUDA.
     cohort = _load_cohort(config.cohort_manifest_path, parent=parent)
     pca_rows = _load_pca_manifest(config.pca_fit_manifest_path, parent=parent)
-    pca_activations = _load_pca_activations(
-        config.pca_fit_activations_path,
-        protocol=protocol,
-        parent=parent,
-        rows=pca_rows,
-    )
     records = _cohort_records(config.cohort_manifest_path)
     if len(cohort) != len(records):
         raise ValueError("semantic kill parsed cohort coverage differs")
+    if len(pca_rows) != len(parent.fit_records):
+        raise ValueError("semantic kill PCA row coverage differs")
+    if parent.code_revision != protocol.parent_probe_code_revision:
+        raise ValueError("semantic kill parent producer revision differs")
+
+    # This must precede both CUDA initialization and any output creation.  The
+    # parent producer revision is intentionally independent and may be older.
+    checkout = checkout_attestor(protocol.kill_runtime_code_revision)
 
     semantic = {
         seed: derive_artifact_semantic_subspace(parent, seed=seed, rank=protocol.rank)
         for seed in parent.probe_seeds
     }
-    pca = derive_pca_basis(pca_activations, rank=protocol.rank)
     random = deterministic_haar_basis(
         parent.hidden_size, rank=protocol.rank, seed=protocol.random_basis_seed
     )
@@ -307,6 +363,21 @@ def run_semantic_subspace_kill_test(
         )
         for seed in parent.probe_seeds
     }
+
+    runtime = runtime_factory(
+        protocol=protocol,
+        parent=parent,
+        semantic_by_seed=semantic,
+        random_basis=random,
+        complement_by_seed=complement,
+        checkout_attestation=checkout,
+        gpu_id=config.gpu_id,
+    )
+    # No caller-provided activation matrix exists: the exact validated parent
+    # fit cohort is re-forwarded at l* in this attested runtime.
+    pca_activations = runtime.collect_clean_fit_activations(parent.fit_records)
+    pca = derive_pca_basis(pca_activations, rank=protocol.rank)
+    runtime.bind_pca_basis(pca)
 
     output = Path(config.output_dir)
     output.mkdir(parents=True, exist_ok=False)
@@ -325,10 +396,13 @@ def run_semantic_subspace_kill_test(
             inputs / "pca-fit-manifest.json",
             label="semantic kill PCA manifest",
         )
-        copied_pca_activations = _copy_regular(
-            config.pca_fit_activations_path,
-            inputs / "pca-fit-activations.safetensors",
-            label="semantic kill PCA activations",
+        copied_pca_activations = inputs / "pca-fit-activations.safetensors"
+        _write_pca_activations(
+            copied_pca_activations,
+            activations=pca_activations,
+            protocol=protocol,
+            parent=parent,
+            checkout_attestation=checkout,
         )
         copied_parent = _copy_parent_bundle(
             config.parent_probe_artifact_path, output / "parent-probe"
@@ -342,19 +416,19 @@ def run_semantic_subspace_kill_test(
             pca=pca,
             random=random,
             complement=complement,
-        )
-
-        runtime = runtime_factory(
-            protocol=protocol,
-            parent=parent,
-            semantic_by_seed=semantic,
-            pca_basis=pca,
-            random_basis=random,
-            complement_by_seed=complement,
-            gpu_id=config.gpu_id,
+            pca_activations_sha256=sha256_file(copied_pca_activations),
+            checkout_attestation=checkout,
         )
         runtime_path = output / "runtime.json"
-        write_json_durable(runtime_path, dict(runtime.provenance()))
+        pca_activations_sha256 = sha256_file(copied_pca_activations)
+        write_json_durable(
+            runtime_path,
+            dict(
+                runtime.provenance(
+                    pca_fit_activations_sha256=pca_activations_sha256
+                )
+            ),
+        )
         rows_by_seed: dict[int, list[SubspaceKillScoreRow]] = {
             seed: [] for seed in parent.probe_seeds
         }
@@ -370,7 +444,7 @@ def run_semantic_subspace_kill_test(
             "parent_probe_artifact_sha256": parent.artifact_sha256,
             "cohort_sha256": protocol.cohort_sha256,
             "pca_manifest_sha256": protocol.pca_manifest_sha256,
-            "pca_activations_sha256": protocol.pca_activations_sha256,
+            "pca_activations_sha256": pca_activations_sha256,
             "subspaces_sha256": sha256_file(subspaces_path),
             "runtime_provenance_sha256": sha256_file(runtime_path),
         }
@@ -397,11 +471,12 @@ def run_semantic_subspace_kill_test(
         write_json_durable(
             artifact_path,
             {
-                "schema_version": "probe-semantic-subspace-kill-evidence/v1",
+                "schema_version": "probe-semantic-subspace-kill-evidence/v2",
                 "operation": "validate-causal-probe-semantic-subspace",
                 "model": parent.model,
                 "model_revision": parent.model_revision,
-                "code_revision": parent.code_revision,
+                "parent_probe_code_revision": parent.code_revision,
+                "kill_runtime_code_revision": protocol.kill_runtime_code_revision,
                 "decoder_layers": parent.decoder_layers,
                 "hidden_size": parent.hidden_size,
                 "transition_layer": parent.selected_transition_layer,
@@ -435,7 +510,7 @@ def run_semantic_subspace_kill_test(
                     "parent_probe_artifact_sha256": parent.artifact_sha256,
                     "cohort_sha256": protocol.cohort_sha256,
                     "pca_manifest_sha256": protocol.pca_manifest_sha256,
-                    "pca_activations_sha256": protocol.pca_activations_sha256,
+                    "pca_activations_sha256": pca_activations_sha256,
                 },
                 "outputs": {
                     "artifact_sha256": sha256_file(artifact_path),
@@ -454,7 +529,9 @@ def run_semantic_subspace_kill_test(
         if passed:
             # The consumer parser is intentionally stricter than this producer and
             # re-derives every gate from raw KL before evidence can reach training.
-            verified = load_semantic_subspace_kill_artifact(artifact_path)
+            verified = load_semantic_subspace_kill_artifact(
+                artifact_path, checkout_attestor=lambda _revision: checkout
+            )
             if verified.artifact_sha256 != sha256_file(artifact_path):
                 raise RuntimeError("semantic kill produced evidence failed round-trip identity")
         return SemanticSubspaceKillRunResult(

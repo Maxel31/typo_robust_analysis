@@ -60,13 +60,13 @@ def _sha(value: object, *, field: str) -> str:
 class SemanticSubspaceKillProtocol:
     model: str
     model_revision: str
-    code_revision: str
+    parent_probe_code_revision: str
+    kill_runtime_code_revision: str
     decoder_layers: int
     hidden_size: int
     parent_artifact_sha256: str
     cohort_sha256: str
     pca_manifest_sha256: str
-    pca_activations_sha256: str
     rank: int
     primary_probe_seed: int
     reproducibility_probe_seeds: tuple[int, int]
@@ -103,19 +103,28 @@ def load_semantic_subspace_kill_config(path: Path) -> SemanticSubspaceKillProtoc
     except UnicodeDecodeError as exc:
         raise ValueError("semantic kill config must be UTF-8") from exc
     root = _object(payload, field="semantic kill config", keys=_TOP)
-    if root["schema_version"] != "probe-semantic-subspace-kill-config/v1":
+    if root["schema_version"] != "probe-semantic-subspace-kill-config/v2":
         raise ValueError("semantic kill config schema differs")
     model = _object(
         root["model"],
         field="semantic kill model",
-        keys={"id", "revision", "code_revision", "decoder_layers", "hidden_size", "dtype"},
+        keys={
+            "id",
+            "revision",
+            "parent_probe_code_revision",
+            "kill_runtime_code_revision",
+            "decoder_layers",
+            "hidden_size",
+            "dtype",
+        },
     )
     if not isinstance(model["id"], str) or not model["id"]:
         raise ValueError("semantic kill model id must be non-empty")
     if not isinstance(model["revision"], str) or _REVISION.fullmatch(model["revision"]) is None:
         raise ValueError("semantic kill model revision must be pinned")
-    if not isinstance(model["code_revision"], str) or _REVISION.fullmatch(model["code_revision"]) is None:
-        raise ValueError("semantic kill code revision must be pinned")
+    for field in ("parent_probe_code_revision", "kill_runtime_code_revision"):
+        if not isinstance(model[field], str) or _REVISION.fullmatch(model[field]) is None:
+            raise ValueError(f"semantic kill {field} must be pinned")
     if model["dtype"] != "bfloat16":
         raise ValueError("semantic kill model dtype differs")
     inputs = _object(
@@ -125,7 +134,6 @@ def load_semantic_subspace_kill_config(path: Path) -> SemanticSubspaceKillProtoc
             "parent_probe_artifact_sha256",
             "cohort_manifest_sha256",
             "pca_fit_manifest_sha256",
-            "pca_fit_activations_sha256",
         },
     )
     subspace = _object(
@@ -239,7 +247,8 @@ def load_semantic_subspace_kill_config(path: Path) -> SemanticSubspaceKillProtoc
     protocol = SemanticSubspaceKillProtocol(
         model=model["id"],
         model_revision=model["revision"],
-        code_revision=model["code_revision"],
+        parent_probe_code_revision=model["parent_probe_code_revision"],
+        kill_runtime_code_revision=model["kill_runtime_code_revision"],
         decoder_layers=_integer(model["decoder_layers"], field="decoder layers", minimum=2),
         hidden_size=_integer(model["hidden_size"], field="hidden size", minimum=1),
         parent_artifact_sha256=_sha(
@@ -248,9 +257,6 @@ def load_semantic_subspace_kill_config(path: Path) -> SemanticSubspaceKillProtoc
         cohort_sha256=_sha(inputs["cohort_manifest_sha256"], field="cohort hash"),
         pca_manifest_sha256=_sha(
             inputs["pca_fit_manifest_sha256"], field="PCA manifest hash"
-        ),
-        pca_activations_sha256=_sha(
-            inputs["pca_fit_activations_sha256"], field="PCA activations hash"
         ),
         rank=rank,
         primary_probe_seed=primary,
