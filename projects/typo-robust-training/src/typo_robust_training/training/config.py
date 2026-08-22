@@ -455,6 +455,12 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         lora_rank != 16 or lora_alpha != 8.0 or dropout != 0.0
     ):
         raise ValueError("probe-transition LoRA must use rank 16, alpha 8, and dropout 0")
+    if schema_version.endswith("/v5") and (
+        lora_rank != 16
+        or lora_alpha != 8.0
+        or dropout != 0.0
+    ):
+        raise ValueError("semantic training LoRA must be frozen at r16 alpha8 dropout0")
 
     optimization = _mapping(
         root["optimization"],

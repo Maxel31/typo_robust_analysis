@@ -82,6 +82,9 @@ def test_semantic_protocol_and_suffix_are_exact(tmp_path: Path) -> None:
         ("objective__state_distance", "cosine-residual/v1"),
         ("adapter__layer_scope", "all-decoder-layers"),
         ("adapter__layer_policy", "validated-linear-probe-transition-suffix/v1"),
+        ("adapter__rank", 8),
+        ("adapter__alpha", 16),
+        ("adapter__dropout", 0.1),
     ],
 )
 def test_semantic_protocol_rejects_rho_loss_and_scope_drift(
