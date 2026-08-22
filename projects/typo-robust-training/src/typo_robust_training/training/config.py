@@ -14,12 +14,14 @@ from typo_robust_training.data.config import strict_loads
 
 
 _REVISION = re.compile(r"[0-9a-f]{40}")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 _CONDITIONS = (
     "noisy-language-model",
     "output-matching",
     "random-window-state-distillation",
     "global-state-alignment",
     "localized-state-distillation",
+    "probe-transition-output-matching",
 )
 _LOSS_NAMES = ("noisy_language_model", "answer", "output", "state", "clean")
 _TARGET_MODULES = (
@@ -40,6 +42,8 @@ _TOP = {
     "optimization",
     "objective",
 }
+_TOP_V4 = _TOP | {"method_evidence"}
+_METHOD_EVIDENCE_V4 = {"schema_version", "artifact_sha256"}
 _MODEL = {"id", "revision", "dtype"}
 _MODEL_V2 = _MODEL | {"decoder_layers"}
 _SEQUENCE = {
@@ -59,6 +63,7 @@ _ADAPTER = {
     "bias",
     "task_type",
 }
+_ADAPTER_V4 = _ADAPTER | {"layer_policy"}
 _OPTIMIZATION = {
     "optimizer",
     "learning_rate",
@@ -145,6 +150,7 @@ class AdapterTrainingProtocol:
     lora_dropout: float
     lora_target_modules: tuple[str, ...]
     layer_scope: str
+    layer_policy: str
     adapter_bias: str
     adapter_task_type: str
     optimizer: str
@@ -173,6 +179,7 @@ class AdapterTrainingProtocol:
     gradient_ratio_guard_optimizer_steps: int
     calibration_micro_batches: int
     state_window_policy: str
+    expected_method_evidence_sha256: str | None
     config_sha256: str
 
 
@@ -184,11 +191,32 @@ def _validate_condition(
     weights: Mapping[str, float],
     schema_version: str,
     state_window_policy: str,
+    layer_policy: str,
 ) -> None:
+    if schema_version == "robustness-adapter-training-config/v4":
+        if (
+            condition != "probe-transition-output-matching"
+            or layer_scope != "probe-transition-suffix"
+            or layer_policy != "validated-linear-probe-transition-suffix/v1"
+            or state_scope != "none"
+            or state_window_policy != "none"
+            or dict(weights)
+            != {
+                "noisy_language_model": 0.0,
+                "answer": 0.0,
+                "output": 1.0,
+                "state": 0.0,
+                "clean": 0.0,
+            }
+        ):
+            raise ValueError("probe-transition training condition and objective disagree")
+        return
     if schema_version in {
         "robustness-adapter-training-config/v2",
         "robustness-adapter-training-config/v3",
     }:
+        if layer_policy != "legacy/v1":
+            raise ValueError("cycle-2 adapter layer policy differs")
         expected_weights = {
             "noisy_language_model": 0.0,
             "answer": 0.0,
@@ -275,23 +303,45 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         raise ValueError(f"adapter training config is not a file: {resolved}")
     raw = resolved.read_bytes()
     try:
-        root = _mapping(
-            strict_loads(raw.decode("utf-8"), context=str(resolved)),
-            field="config",
-            fields=_TOP,
-        )
+        decoded = strict_loads(raw.decode("utf-8"), context=str(resolved))
     except UnicodeDecodeError as exc:
         raise ValueError(f"adapter training config is not UTF-8: {resolved}") from exc
+    if not isinstance(decoded, Mapping):
+        raise ValueError("config must be an object")
+    root = _mapping(
+        decoded,
+        field="config",
+        fields=(
+            _TOP_V4
+            if decoded.get("schema_version") == "robustness-adapter-training-config/v4"
+            else _TOP
+        ),
+    )
     schema_version = root["schema_version"]
     if schema_version not in {
         "robustness-adapter-training-config/v1",
         "robustness-adapter-training-config/v2",
         "robustness-adapter-training-config/v3",
+        "robustness-adapter-training-config/v4",
     }:
         raise ValueError("adapter training schema_version differs")
     condition = _string(root["condition"], field="condition")
     if condition not in _CONDITIONS:
         raise ValueError("training condition is unsupported")
+
+    expected_method_evidence_sha256: str | None = None
+    if schema_version.endswith("/v4"):
+        method_evidence = _mapping(
+            root["method_evidence"],
+            field="method_evidence",
+            fields=_METHOD_EVIDENCE_V4,
+        )
+        if method_evidence["schema_version"] != "probe-transition-evidence-binding/v1":
+            raise ValueError("method_evidence.schema_version differs")
+        digest = method_evidence["artifact_sha256"]
+        if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
+            raise ValueError("method_evidence.artifact_sha256 must be a lowercase SHA-256")
+        expected_method_evidence_sha256 = digest
 
     model = _mapping(
         root["model"],
@@ -324,7 +374,11 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         if sequence[field] != expected:
             raise ValueError(f"sequence.{field} differs from {expected}")
 
-    adapter = _mapping(root["adapter"], field="adapter", fields=_ADAPTER)
+    adapter = _mapping(
+        root["adapter"],
+        field="adapter",
+        fields=_ADAPTER_V4 if schema_version.endswith("/v4") else _ADAPTER,
+    )
     if adapter["method"] != "lora" or adapter["bias"] != "none":
         raise ValueError("adapter method or bias differs")
     if adapter["task_type"] != "CAUSAL_LM":
@@ -339,7 +393,11 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     optimization = _mapping(
         root["optimization"],
         field="optimization",
-        fields=(_OPTIMIZATION_V3 if schema_version.endswith("/v3") else _OPTIMIZATION),
+        fields=(
+            _OPTIMIZATION_V3
+            if schema_version.endswith(("/v3", "/v4"))
+            else _OPTIMIZATION
+        ),
     )
     expected_optimization = {
         "optimizer": "adamw",
@@ -390,6 +448,11 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     )
     state_scope = _string(objective["state_scope"], field="objective.state_scope")
     layer_scope = _string(adapter["layer_scope"], field="adapter.layer_scope")
+    layer_policy = (
+        _string(adapter["layer_policy"], field="adapter.layer_policy")
+        if schema_version.endswith("/v4")
+        else "legacy/v1"
+    )
     state_window_policy = (
         "legacy/v1"
         if schema_version.endswith("/v1")
@@ -402,9 +465,14 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         weights=weights,
         schema_version=str(schema_version),
         state_window_policy=state_window_policy,
+        layer_policy=layer_policy,
     )
     expected_distance = (
-        "normalized-squared-error/v1" if schema_version.endswith("/v1") else "cosine-residual/v1"
+        "normalized-squared-error/v1"
+        if schema_version.endswith("/v1")
+        else "none"
+        if schema_version.endswith("/v4")
+        else "cosine-residual/v1"
     )
     if objective["state_distance"] != expected_distance:
         raise ValueError("objective.state_distance differs")
@@ -419,9 +487,10 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
             objective["calibration_micro_batches"],
             field="objective.calibration_micro_batches",
         )
-        if condition == "output-matching":
+        state_active = weights["state"] > 0.0 and state_scope != "none"
+        if not state_active:
             if ratio_raw is not None or calibration != 0:
-                raise ValueError("output matching cannot calibrate a state loss")
+                raise ValueError("output-only training cannot calibrate a state loss")
             gradient_ratio = None
         else:
             gradient_ratio = _number(
@@ -471,6 +540,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         lora_dropout=dropout,
         lora_target_modules=_TARGET_MODULES,
         layer_scope=layer_scope,
+        layer_policy=layer_policy,
         adapter_bias="none",
         adapter_task_type="CAUSAL_LM",
         optimizer="adamw",
@@ -492,7 +562,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
                 field="optimization.max_student_tokens",
                 minimum=1,
             )
-            if schema_version.endswith("/v3")
+            if schema_version.endswith(("/v3", "/v4"))
             else None
         ),
         max_grad_norm=_number(optimization["max_grad_norm"], field="optimization.max_grad_norm"),
@@ -521,6 +591,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         ),
         calibration_micro_batches=calibration,
         state_window_policy=state_window_policy,
+        expected_method_evidence_sha256=expected_method_evidence_sha256,
         config_sha256=hashlib.sha256(raw).hexdigest(),
     )
 

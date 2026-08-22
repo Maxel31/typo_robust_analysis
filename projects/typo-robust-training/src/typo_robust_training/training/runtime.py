@@ -30,6 +30,11 @@ from typo_robust_training.training.evidence import (
     LocalizationEvidence,
     ResidualStateEvidence,
 )
+from typo_robust_training.training.methods import (
+    ProbeTransitionTrainingEvidence,
+    ResolvedTrainingMethod,
+    resolve_training_method,
+)
 from typo_robust_training.training.pairs import TrainingPair, UnusableTrainingPairError
 from typo_robust_training.training.runner import (
     TrainingMicroStepResult,
@@ -84,11 +89,7 @@ def _optimizer_group_sizes(state: object) -> tuple[int, ...]:
     if not isinstance(state, Mapping):
         raise ValueError("adapter runtime checkpoint optimizer state differs")
     groups = state.get("param_groups")
-    if (
-        not isinstance(groups, Sequence)
-        or isinstance(groups, (str, bytes))
-        or not groups
-    ):
+    if not isinstance(groups, Sequence) or isinstance(groups, (str, bytes)) or not groups:
         raise ValueError("adapter runtime checkpoint optimizer groups differ")
     sizes: list[int] = []
     for group in groups:
@@ -159,8 +160,7 @@ def _validate_adapter_scope_before_resume(
     current_group_sizes = _optimizer_group_sizes(current_optimizer)
     current_names = tuple(current_optimizer_parameter_names)
     compatible = (
-        checkpoint_tensors == current_tensors
-        and checkpoint_group_sizes == current_group_sizes
+        checkpoint_tensors == current_tensors and checkpoint_group_sizes == current_group_sizes
     )
     if checkpoint_scope is not None:
         if not isinstance(checkpoint_scope, Mapping) or set(checkpoint_scope) != {
@@ -174,9 +174,7 @@ def _validate_adapter_scope_before_resume(
             "schema_version": checkpoint_scope["schema_version"],
             "adapter_tensors": tuple(checkpoint_scope["adapter_tensors"]),
             "optimizer_group_sizes": tuple(checkpoint_scope["optimizer_group_sizes"]),
-            "optimizer_parameter_names": tuple(
-                checkpoint_scope["optimizer_parameter_names"]
-            ),
+            "optimizer_parameter_names": tuple(checkpoint_scope["optimizer_parameter_names"]),
         }
         derived_checkpoint = {
             "schema_version": _ADAPTER_SCOPE_SCHEMA,
@@ -223,6 +221,41 @@ def next_gradient_ratio_violations(
     return violations + 1 if ratio > 0.5 else 0
 
 
+def _resolve_probe_transition_runtime_method(
+    protocol: AdapterTrainingProtocol,
+    evidence: LocalizationEvidence | ResidualStateEvidence | ProbeTransitionTrainingEvidence | None,
+) -> ResolvedTrainingMethod | None:
+    """Fail closed on the v4 evidence and output-only boundary before CUDA setup."""
+
+    is_probe_condition = protocol.condition == "probe-transition-output-matching"
+    if not is_probe_condition:
+        if isinstance(evidence, ProbeTransitionTrainingEvidence):
+            raise ValueError("probe-transition evidence cannot configure this condition")
+        return None
+    if not isinstance(evidence, ProbeTransitionTrainingEvidence):
+        raise ValueError("probe-transition output matching requires probe evidence")
+    resolved = resolve_training_method(protocol, evidence=evidence)
+    expected_weights = {
+        "noisy_language_model": 0.0,
+        "answer": 0.0,
+        "output": 1.0,
+        "state": 0.0,
+        "clean": 0.0,
+    }
+    if (
+        dict(protocol.loss_weights) != expected_weights
+        or resolved.state_layers
+        or resolved.state_target != "none"
+        or protocol.state_scope != "none"
+        or protocol.state_distance != "none"
+        or protocol.loss_weights["state"] != 0.0
+        or protocol.state_gradient_ratio is not None
+        or protocol.calibration_micro_batches != 0
+    ):
+        raise ValueError("probe-transition output matching must disable state training")
+    return resolved
+
+
 class HuggingFaceAdapterTrainingRuntime:
     """Frozen clean teacher plus a typo student whose LoRA is the only update."""
 
@@ -232,12 +265,15 @@ class HuggingFaceAdapterTrainingRuntime:
         protocol: AdapterTrainingProtocol,
         seed: int,
         gpu_id: str,
-        evidence: LocalizationEvidence | ResidualStateEvidence | None,
+        evidence: (
+            LocalizationEvidence | ResidualStateEvidence | ProbeTransitionTrainingEvidence | None
+        ),
     ) -> None:
         if not isinstance(protocol, AdapterTrainingProtocol):
             raise TypeError("training runtime protocol must be AdapterTrainingProtocol")
         if seed not in protocol.seed_inventory:
             raise ValueError("training runtime seed is outside the frozen inventory")
+        resolved_method = _resolve_probe_transition_runtime_method(protocol, evidence)
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None and visible != gpu_id:
             raise ValueError(
@@ -305,7 +341,9 @@ class HuggingFaceAdapterTrainingRuntime:
             )
         ):
             raise ValueError("training model architecture fields are unavailable")
-        if protocol.layer_scope == "all-decoder-layers":
+        if resolved_method is not None:
+            adapter_layers = resolved_method.adapter_layers
+        elif protocol.layer_scope == "all-decoder-layers":
             adapter_layers = tuple(range(self.num_decoder_layers))
         else:
             if not isinstance(evidence, LocalizationEvidence):
@@ -315,7 +353,9 @@ class HuggingFaceAdapterTrainingRuntime:
         self.component_weights = (
             evidence.component_weights if isinstance(evidence, LocalizationEvidence) else None
         )
-        if isinstance(evidence, ResidualStateEvidence):
+        if resolved_method is not None:
+            self.state_layers = resolved_method.state_layers
+        elif isinstance(evidence, ResidualStateEvidence):
             self.state_layers = evidence.state_layers
         elif protocol.state_scope == "all-layers-edited-word-final-tokens":
             self.state_layers = tuple(range(self.num_decoder_layers))
@@ -973,6 +1013,11 @@ class HuggingFaceAdapterTrainingRuntime:
             "decoder_layers": self.num_decoder_layers,
             "adapter_layers": list(self.adapter_layers),
             "state_layers": list(self.state_layers),
+            **(
+                {"method_evidence_sha256": self.evidence.evidence_sha256}
+                if isinstance(self.evidence, ProbeTransitionTrainingEvidence)
+                else {}
+            ),
             "state_weight": self.state_weight,
             "state_calibration": self.state_calibration,
             "adapter_modules": list(self.parameter_report.modules),

@@ -38,6 +38,7 @@ from typo_robust_training.training.evidence import (
     load_residual_state_evidence,
 )
 from typo_robust_training.training.json_io import write_json_atomic as _write_json
+from typo_robust_training.training import methods as training_methods
 from typo_robust_training.training.pairs import (
     TrainingPair,
     TrainingSource,
@@ -84,6 +85,7 @@ class AdapterTrainingRunConfig:
     monitor_data_dir: Path | None = None
     window_validation_path: Path | None = None
     method_evidence_sha256: str | None = None
+    probe_selection_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,7 +201,29 @@ def _load_evidence(
     config: AdapterTrainingRunConfig,
     *,
     protocol: AdapterTrainingProtocol,
-) -> LocalizationEvidence | ResidualStateEvidence | None:
+) -> (
+    LocalizationEvidence
+    | ResidualStateEvidence
+    | training_methods.ProbeTransitionTrainingEvidence
+    | None
+):
+    if protocol.condition == "probe-transition-output-matching":
+        if (
+            config.probe_selection_path is None
+            or protocol.decoder_layers is None
+            or config.layer_selection_path is not None
+            or config.window_validation_path is not None
+            or config.component_selection_path is not None
+        ):
+            raise ValueError("probe-transition training requires only one probe selection artifact")
+        return training_methods.load_probe_transition_training_evidence(
+            config.probe_selection_path,
+            model=protocol.model,
+            model_revision=protocol.model_revision,
+            decoder_layers=protocol.decoder_layers,
+        )
+    if config.probe_selection_path is not None:
+        raise ValueError("non-probe training cannot consume probe-transition evidence")
     if not protocol.schema_version.endswith("/v1"):
         if config.component_selection_path is not None:
             raise ValueError("cycle-2 training cannot consume component selection evidence")
@@ -570,7 +594,12 @@ def run_adapter_training(
     *,
     runtime: AdapterTrainingRuntime | None = None,
     data_bundle: TrainingDataBundle | None = None,
-    evidence: LocalizationEvidence | ResidualStateEvidence | None = None,
+    evidence: (
+        LocalizationEvidence
+        | ResidualStateEvidence
+        | training_methods.ProbeTransitionTrainingEvidence
+        | None
+    ) = None,
     tracker: TrainingTracker | None = None,
 ) -> AdapterTrainingRunResult:
     """Train one explicit condition and checkpoint only completed optimizer steps."""
@@ -637,6 +666,9 @@ def run_adapter_training(
         raise ValueError("cycle-2 training requires the frozen T0 monitor data")
     if evidence is None:
         evidence = _load_evidence(config, protocol=protocol)
+    elif protocol.condition == "probe-transition-output-matching":
+        if not isinstance(evidence, training_methods.ProbeTransitionTrainingEvidence):
+            raise ValueError("injected probe-transition evidence differs from the condition")
     else:
         expected_evidence = protocol.condition in {
             "localized-state-distillation",
@@ -644,6 +676,11 @@ def run_adapter_training(
         }
         if expected_evidence != isinstance(evidence, (LocalizationEvidence, ResidualStateEvidence)):
             raise ValueError("injected localization evidence differs from the condition")
+    resolved_method = (
+        training_methods.resolve_training_method(protocol, evidence=evidence)
+        if isinstance(evidence, training_methods.ProbeTransitionTrainingEvidence)
+        else None
+    )
     localization_sha = (
         evidence.component_selection_sha256
         if isinstance(evidence, LocalizationEvidence)
@@ -651,10 +688,23 @@ def run_adapter_training(
         if isinstance(evidence, ResidualStateEvidence)
         else None
     )
+    resolved_method_sha = (
+        resolved_method.method_evidence_sha256 if resolved_method is not None else None
+    )
+    if (
+        config.method_evidence_sha256 is not None
+        and resolved_method_sha is not None
+        and config.method_evidence_sha256 != resolved_method_sha
+    ):
+        raise ValueError("injected method evidence hash differs from the resolved artifact")
     localization_sha, method_evidence_sha = validate_condition_evidence(
         condition=protocol.condition,
         localization_sha256=localization_sha,
-        method_evidence_sha256=config.method_evidence_sha256,
+        method_evidence_sha256=(
+            resolved_method_sha
+            if resolved_method_sha is not None
+            else config.method_evidence_sha256
+        ),
     )
     bindings = {
         "config_sha256": protocol.config_sha256,
@@ -685,6 +735,19 @@ def run_adapter_training(
     if config.resume and not checkpoint_path.is_file():
         raise ValueError("--resume requires a completed optimizer-boundary checkpoint")
 
+    cursor = TrainingCursor(0, 0, 0, 0, 0)
+    checkpoint = None
+    if config.resume:
+        checkpoint = load_training_checkpoint(
+            checkpoint_path,
+            expected_bindings=bindings,
+        )
+        cursor = checkpoint.cursor
+        _validate_adapter_checkpoints(
+            output_dir,
+            optimizer_steps=cursor.optimizer_steps,
+            interval=protocol.checkpoint_every_optimizer_steps,
+        )
     if runtime is None:
         from typo_robust_training.training.runtime import HuggingFaceAdapterTrainingRuntime
 
@@ -694,19 +757,8 @@ def run_adapter_training(
             gpu_id=config.gpu_id,
             evidence=evidence,
         )
-    cursor = TrainingCursor(0, 0, 0, 0, 0)
-    if config.resume:
-        checkpoint = load_training_checkpoint(
-            checkpoint_path,
-            expected_bindings=bindings,
-        )
-        cursor = checkpoint.cursor
+    if checkpoint is not None:
         runtime.load_state(checkpoint.state_path)
-        _validate_adapter_checkpoints(
-            output_dir,
-            optimizer_steps=cursor.optimizer_steps,
-            interval=protocol.checkpoint_every_optimizer_steps,
-        )
     order_cache = EpochSourceOrderCache(bundle.sources, seed=config.seed)
     provenance = dict(runtime.provenance())
     started_at = _now()
@@ -773,6 +825,8 @@ def run_adapter_training(
                 presentation_layers = evidence.state_layers
             elif isinstance(evidence, LocalizationEvidence):
                 presentation_layers = evidence.adapter_layers
+            elif resolved_method is not None:
+                presentation_layers = resolved_method.adapter_layers
             elif protocol.condition == "global-state-alignment":
                 # Cycle 1 predates the explicit decoder-layer inventory and its
                 # Legacy presentation intentionally carries no layer label.

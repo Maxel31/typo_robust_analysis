@@ -351,6 +351,7 @@ def _run_adapter_training(args: argparse.Namespace) -> int:
                 layer_selection_path=getattr(args, "layer_selection", None),
                 window_validation_path=getattr(args, "window_validation", None),
                 component_selection_path=getattr(args, "component_selection", None),
+                probe_selection_path=getattr(args, "probe_selection", None),
                 seed=args.seed,
                 gpu_id=args.gpu_id,
                 wandb_project=args.wandb_project,
@@ -414,6 +415,7 @@ def _add_training_arguments(
     condition: str,
     requires_layer_selection: bool,
     accepts_component_selection: bool = False,
+    accepts_probe_selection: bool = False,
 ) -> None:
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--training-data", required=True, type=Path)
@@ -422,6 +424,8 @@ def _add_training_arguments(
         parser.add_argument("--window-validation", type=Path)
     if accepts_component_selection:
         parser.add_argument("--component-selection", type=Path)
+    if accepts_probe_selection:
+        parser.add_argument("--probe-selection", required=True, type=Path)
     parser.add_argument("--seed", required=True, type=int)
     parser.add_argument("--gpu-id", required=True)
     parser.add_argument("--wandb-project", required=True)
@@ -608,6 +612,10 @@ def register_commands(
             "random-window-state-distillation",
         ),
         ("train-localized-state-distillation", "localized-state-distillation"),
+        (
+            "train-probe-transition-output-matching",
+            "probe-transition-output-matching",
+        ),
     ):
         training = commands.add_parser(
             command,
@@ -623,6 +631,7 @@ def register_commands(
                 "random-window-state-distillation",
             },
             accepts_component_selection=condition == "localized-state-distillation",
+            accepts_probe_selection=condition == "probe-transition-output-matching",
         )
 
     evaluation = commands.add_parser(
