@@ -25,7 +25,7 @@ LOCALIZATION_EVIDENCE_CONDITIONS = frozenset(
 METHOD_EVIDENCE_CONDITIONS = frozenset(
     {
         "probe-transition-output-matching",
-        "probe-transition-state-distillation",
+        "probe-transition-single-layer-state-distillation",
         "causal-probe-subspace-distillation",
     }
 )

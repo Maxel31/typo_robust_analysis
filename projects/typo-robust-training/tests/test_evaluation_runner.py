@@ -797,7 +797,7 @@ def test_sealed_evaluation_requires_localized_checkpoint_for_every_seed(
     "condition",
     (
         "probe-transition-output-matching",
-        "probe-transition-state-distillation",
+        "probe-transition-single-layer-state-distillation",
         "causal-probe-subspace-distillation",
     ),
 )

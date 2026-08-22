@@ -29,7 +29,7 @@ _CONDITIONS = (
     "localized-state-distillation",
     "random-window-state-distillation",
     "probe-transition-output-matching",
-    "probe-transition-state-distillation",
+    "probe-transition-single-layer-state-distillation",
     "causal-probe-subspace-distillation",
 )
 if frozenset(_CONDITIONS) != SUPPORTED_ADAPTER_CONDITIONS:  # pragma: no cover - import invariant

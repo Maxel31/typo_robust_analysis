@@ -247,7 +247,7 @@ def test_adapter_loader_rejects_post_completion_mutation_or_mixed_seed_configs(
     "condition",
     (
         "probe-transition-output-matching",
-        "probe-transition-state-distillation",
+        "probe-transition-single-layer-state-distillation",
         "causal-probe-subspace-distillation",
     ),
 )

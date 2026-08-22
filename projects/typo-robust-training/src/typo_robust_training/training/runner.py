@@ -86,6 +86,7 @@ class AdapterTrainingRunConfig:
     window_validation_path: Path | None = None
     method_evidence_sha256: str | None = None
     probe_selection_path: Path | None = None
+    state_gate_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +206,7 @@ def _load_evidence(
     LocalizationEvidence
     | ResidualStateEvidence
     | training_methods.ProbeTransitionTrainingEvidence
+    | training_methods.ProbeTransitionStateTrainingEvidence
     | None
 ):
     if protocol.condition == "probe-transition-output-matching":
@@ -214,6 +216,7 @@ def _load_evidence(
             or config.layer_selection_path is not None
             or config.window_validation_path is not None
             or config.component_selection_path is not None
+            or config.state_gate_path is not None
         ):
             raise ValueError("probe-transition training requires only one probe selection artifact")
         return training_methods.load_probe_transition_training_evidence(
@@ -222,7 +225,23 @@ def _load_evidence(
             model_revision=protocol.model_revision,
             decoder_layers=protocol.decoder_layers,
         )
-    if config.probe_selection_path is not None:
+    if protocol.condition == "probe-transition-single-layer-state-distillation":
+        if (
+            config.state_gate_path is None
+            or config.probe_selection_path is not None
+            or config.layer_selection_path is not None
+            or config.window_validation_path is not None
+            or config.component_selection_path is not None
+            or protocol.decoder_layers is None
+        ):
+            raise ValueError("probe-transition state training requires only one gate artifact")
+        return training_methods.load_probe_transition_state_training_evidence(
+            config.state_gate_path,
+            model=protocol.model,
+            model_revision=protocol.model_revision,
+            decoder_layers=protocol.decoder_layers,
+        )
+    if config.probe_selection_path is not None or config.state_gate_path is not None:
         raise ValueError("non-probe training cannot consume probe-transition evidence")
     if not protocol.schema_version.endswith("/v1"):
         if config.component_selection_path is not None:
@@ -598,6 +617,7 @@ def run_adapter_training(
         LocalizationEvidence
         | ResidualStateEvidence
         | training_methods.ProbeTransitionTrainingEvidence
+        | training_methods.ProbeTransitionStateTrainingEvidence
         | None
     ) = None,
     tracker: TrainingTracker | None = None,
@@ -666,8 +686,16 @@ def run_adapter_training(
         raise ValueError("cycle-2 training requires the frozen T0 monitor data")
     if evidence is None:
         evidence = _load_evidence(config, protocol=protocol)
-    elif protocol.condition == "probe-transition-output-matching":
-        if not isinstance(evidence, training_methods.ProbeTransitionTrainingEvidence):
+    elif protocol.condition in {
+        "probe-transition-output-matching",
+        "probe-transition-single-layer-state-distillation",
+    }:
+        expected_type = (
+            training_methods.ProbeTransitionTrainingEvidence
+            if protocol.condition == "probe-transition-output-matching"
+            else training_methods.ProbeTransitionStateTrainingEvidence
+        )
+        if not isinstance(evidence, expected_type):
             raise ValueError("injected probe-transition evidence differs from the condition")
     else:
         expected_evidence = protocol.condition in {
@@ -678,7 +706,13 @@ def run_adapter_training(
             raise ValueError("injected localization evidence differs from the condition")
     resolved_method = (
         training_methods.resolve_training_method(protocol, evidence=evidence)
-        if isinstance(evidence, training_methods.ProbeTransitionTrainingEvidence)
+        if isinstance(
+            evidence,
+            (
+                training_methods.ProbeTransitionTrainingEvidence,
+                training_methods.ProbeTransitionStateTrainingEvidence,
+            ),
+        )
         else None
     )
     localization_sha = (

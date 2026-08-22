@@ -193,6 +193,33 @@ def _run_select_probe_transition(args: argparse.Namespace) -> int:
     return 0 if result.validation_passed else 1
 
 
+def _run_validate_probe_transition_single_layer_gate(args: argparse.Namespace) -> int:
+    from typo_robust_training.state_gate.config import load_single_layer_gate_config
+    from typo_robust_training.state_gate.producer import produce_single_layer_gate_artifact
+    from typo_robust_training.state_gate.runtime import HuggingFaceSingleLayerGateProvider
+
+    try:
+        protocol = load_single_layer_gate_config(args.config)
+        artifact = produce_single_layer_gate_artifact(
+            config_path=args.config,
+            parent_probe_artifact_path=args.parent_probe_artifact,
+            cohort_manifest_path=args.cohort_manifest,
+            protected_registry_path=args.protected_registry,
+            donor_plan_path=args.donor_plan,
+            runtime_manifest_path=args.runtime_manifest,
+            output_dir=args.output_dir,
+            provider=HuggingFaceSingleLayerGateProvider(
+                protocol=protocol,
+                gpu_id=args.gpu_id,
+            ),
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"validate-probe-transition-single-layer-gate: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"single-layer causal gate passed: {artifact.artifact_sha256}")
+    return 0
+
+
 def _run_localize_components(args: argparse.Namespace) -> int:
     from typo_robust_training.localization.component_runner import (
         ComponentLocalizationRunConfig,
@@ -352,6 +379,7 @@ def _run_adapter_training(args: argparse.Namespace) -> int:
                 window_validation_path=getattr(args, "window_validation", None),
                 component_selection_path=getattr(args, "component_selection", None),
                 probe_selection_path=getattr(args, "probe_selection", None),
+                state_gate_path=getattr(args, "state_gate", None),
                 seed=args.seed,
                 gpu_id=args.gpu_id,
                 wandb_project=args.wandb_project,
@@ -390,6 +418,30 @@ def _run_materialize_probe_transition_training_config(args: argparse.Namespace) 
         return 1
     print(f"materialized training config: {args.output_config}")
     print(f"config SHA-256: {protocol.config_sha256}")
+    print(f"method evidence SHA-256: {protocol.expected_method_evidence_sha256}")
+    return 0
+
+
+def _run_materialize_probe_transition_state_training_config(
+    args: argparse.Namespace,
+) -> int:
+    from typo_robust_training.training.methods import (
+        materialize_probe_transition_state_training_config,
+    )
+
+    try:
+        protocol = materialize_probe_transition_state_training_config(
+            args.template,
+            evidence_path=args.state_gate,
+            output_path=args.output_config,
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(
+            f"materialize-probe-transition-state-training-config: error: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"materialized state training config: {args.output_config}")
     print(f"method evidence SHA-256: {protocol.expected_method_evidence_sha256}")
     return 0
 
@@ -436,6 +488,7 @@ def _add_training_arguments(
     requires_layer_selection: bool,
     accepts_component_selection: bool = False,
     accepts_probe_selection: bool = False,
+    accepts_state_gate: bool = False,
 ) -> None:
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--training-data", required=True, type=Path)
@@ -446,6 +499,8 @@ def _add_training_arguments(
         parser.add_argument("--component-selection", type=Path)
     if accepts_probe_selection:
         parser.add_argument("--probe-selection", required=True, type=Path)
+    if accepts_state_gate:
+        parser.add_argument("--state-gate", required=True, type=Path)
     parser.add_argument("--seed", required=True, type=int)
     parser.add_argument("--gpu-id", required=True)
     parser.add_argument("--wandb-project", required=True)
@@ -529,6 +584,22 @@ def register_commands(
     probe_transition.add_argument("--gpu-id", required=True)
     probe_transition.add_argument("--output-dir", required=True, type=Path)
     probe_transition.set_defaults(_typo_cot_plugin_handler=_run_select_probe_transition)
+
+    gate = commands.add_parser(
+        "validate-probe-transition-single-layer-gate",
+        help="Causally validate the frozen probe transition before state KD.",
+    )
+    gate.add_argument("--config", required=True, type=Path)
+    gate.add_argument("--parent-probe-artifact", required=True, type=Path)
+    gate.add_argument("--cohort-manifest", required=True, type=Path)
+    gate.add_argument("--protected-registry", required=True, type=Path)
+    gate.add_argument("--donor-plan", required=True, type=Path)
+    gate.add_argument("--runtime-manifest", required=True, type=Path)
+    gate.add_argument("--gpu-id", required=True)
+    gate.add_argument("--output-dir", required=True, type=Path)
+    gate.set_defaults(
+        _typo_cot_plugin_handler=_run_validate_probe_transition_single_layer_gate
+    )
 
     sae_corpus = commands.add_parser(
         "build-sae-clean-corpus",
@@ -634,6 +705,17 @@ def register_commands(
         _typo_cot_plugin_handler=_run_materialize_probe_transition_training_config
     )
 
+    materialize_state_config = commands.add_parser(
+        "materialize-probe-transition-state-training-config",
+        help="Bind a passed transition-layer causal gate into the state-KD template.",
+    )
+    materialize_state_config.add_argument("--template", required=True, type=Path)
+    materialize_state_config.add_argument("--state-gate", required=True, type=Path)
+    materialize_state_config.add_argument("--output-config", required=True, type=Path)
+    materialize_state_config.set_defaults(
+        _typo_cot_plugin_handler=_run_materialize_probe_transition_state_training_config
+    )
+
     for command, condition in (
         ("train-noisy-language-model", "noisy-language-model"),
         ("train-output-matching", "output-matching"),
@@ -646,6 +728,10 @@ def register_commands(
         (
             "train-probe-transition-output-matching",
             "probe-transition-output-matching",
+        ),
+        (
+            "train-probe-transition-single-layer-state-distillation",
+            "probe-transition-single-layer-state-distillation",
         ),
     ):
         training = commands.add_parser(
@@ -663,6 +749,9 @@ def register_commands(
             },
             accepts_component_selection=condition == "localized-state-distillation",
             accepts_probe_selection=condition == "probe-transition-output-matching",
+            accepts_state_gate=(
+                condition == "probe-transition-single-layer-state-distillation"
+            ),
         )
 
     evaluation = commands.add_parser(
