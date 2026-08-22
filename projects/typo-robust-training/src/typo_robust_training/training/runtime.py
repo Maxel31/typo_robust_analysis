@@ -16,9 +16,10 @@ from pathlib import Path
 import numpy as np
 
 from typo_robust_training.probe.runtime import (
-    _checkout_code_revision,
     _require_exact_model_revision,
 )
+from typo_robust_training.state_gate.runtime import _checkout_source_attestation
+from typo_robust_training.integrity import sha256_file
 from typo_robust_training.training.adapters import (
     TrainableParameterReport,
     attach_lora_adapters,
@@ -35,6 +36,7 @@ from typo_robust_training.training.evidence import (
     ResidualStateEvidence,
 )
 from typo_robust_training.training.methods import (
+    ProbeTransitionStateTrainingEvidence,
     ProbeTransitionTrainingEvidence,
     ResolvedTrainingMethod,
     resolve_training_method,
@@ -114,6 +116,223 @@ def _require_exact_training_wrapper_revision(
 
 _RUNTIME_STATE_SCHEMA = "robustness-adapter-runtime-state/v3"
 _ADAPTER_SCOPE_SCHEMA = "decoder-lora-optimizer-scope/v1"
+_STATE_CALIBRATION_SCHEMA = "state-gradient-calibration/v3"
+_STATE_CALIBRATION_REPLAY_REL_TOL = 1e-6
+_STATE_CALIBRATION_REPLAY_ABS_TOL = 1e-8
+_STATE_CALIBRATION_FIELDS = {
+    "schema_version",
+    "micro_batches",
+    "noisy_micro_batches",
+    "record_ids",
+    "output_gradient_norms",
+    "state_gradient_norms",
+    "mean_output_gradient_norm",
+    "mean_state_gradient_norm",
+    "target_gradient_ratio",
+    "state_weight",
+    "achieved_initial_ratio",
+    "replay_relative_tolerance",
+    "replay_absolute_tolerance",
+}
+
+
+def _positive_finite_number(value: object, *, field: str) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) <= 0.0
+    ):
+        raise ValueError(f"adapter runtime checkpoint {field} differs")
+    return float(value)
+
+
+def _positive_finite_vector(value: object, *, field: str, length: int) -> tuple[float, ...]:
+    if (
+        not isinstance(value, Sequence)
+        or isinstance(value, (str, bytes))
+        or len(value) != length
+    ):
+        raise ValueError(f"adapter runtime checkpoint {field} differs")
+    return tuple(_positive_finite_number(item, field=field) for item in value)
+
+
+def _validate_priority_b_calibration(
+    *,
+    protocol: AdapterTrainingProtocol,
+    state_weight: object,
+    calibration: object,
+) -> None:
+    """Validate the immutable, one-shot Priority B calibration evidence."""
+
+    if protocol.condition != "probe-transition-single-layer-state-distillation":
+        return
+    if protocol.state_gradient_ratio != 0.05 or protocol.calibration_micro_batches != 8:
+        raise ValueError("adapter runtime checkpoint calibration protocol differs")
+    if not isinstance(calibration, Mapping) or set(calibration) != _STATE_CALIBRATION_FIELDS:
+        raise ValueError("adapter runtime checkpoint calibration fields differ")
+    if calibration["schema_version"] != _STATE_CALIBRATION_SCHEMA:
+        raise ValueError("adapter runtime checkpoint calibration schema differs")
+    if calibration["micro_batches"] != 8 or calibration["noisy_micro_batches"] != 8:
+        raise ValueError("adapter runtime checkpoint calibration dosage differs")
+    if (
+        calibration["replay_relative_tolerance"] != _STATE_CALIBRATION_REPLAY_REL_TOL
+        or calibration["replay_absolute_tolerance"] != _STATE_CALIBRATION_REPLAY_ABS_TOL
+    ):
+        raise ValueError("adapter runtime checkpoint calibration replay tolerance differs")
+    record_ids = calibration["record_ids"]
+    if (
+        not isinstance(record_ids, Sequence)
+        or isinstance(record_ids, (str, bytes))
+        or len(record_ids) != 8
+        or any(not isinstance(record_id, str) or not record_id for record_id in record_ids)
+        or len(set(record_ids)) != 8
+    ):
+        raise ValueError("adapter runtime checkpoint calibration records differ")
+    output_norms = _positive_finite_vector(
+        calibration["output_gradient_norms"],
+        field="calibration output gradients",
+        length=8,
+    )
+    state_norms = _positive_finite_vector(
+        calibration["state_gradient_norms"],
+        field="calibration state gradients",
+        length=8,
+    )
+    mean_output = _positive_finite_number(
+        calibration["mean_output_gradient_norm"],
+        field="calibration mean output gradient",
+    )
+    mean_state = _positive_finite_number(
+        calibration["mean_state_gradient_norm"],
+        field="calibration mean state gradient",
+    )
+    if not math.isclose(mean_output, sum(output_norms) / 8, rel_tol=1e-12, abs_tol=1e-12):
+        raise ValueError("adapter runtime checkpoint calibration output mean differs")
+    if not math.isclose(mean_state, sum(state_norms) / 8, rel_tol=1e-12, abs_tol=1e-12):
+        raise ValueError("adapter runtime checkpoint calibration state mean differs")
+    target = _positive_finite_number(
+        calibration["target_gradient_ratio"],
+        field="calibration target ratio",
+    )
+    if target != 0.05:
+        raise ValueError("adapter runtime checkpoint calibration target ratio differs")
+    derived_weight = target * mean_output / mean_state
+    stored_weight = _positive_finite_number(
+        state_weight,
+        field="state weight",
+    )
+    calibration_weight = _positive_finite_number(
+        calibration["state_weight"],
+        field="calibration state weight",
+    )
+    if not math.isclose(stored_weight, derived_weight, rel_tol=1e-12, abs_tol=1e-12) or not math.isclose(
+        calibration_weight,
+        derived_weight,
+        rel_tol=1e-12,
+        abs_tol=1e-12,
+    ):
+        raise ValueError("adapter runtime checkpoint calibrated state weight differs")
+    achieved = _positive_finite_number(
+        calibration["achieved_initial_ratio"],
+        field="calibration achieved ratio",
+    )
+    derived_ratio = stored_weight * mean_state / mean_output
+    if not math.isclose(achieved, derived_ratio, rel_tol=1e-12, abs_tol=1e-12) or not math.isclose(
+        derived_ratio,
+        target,
+        rel_tol=1e-12,
+        abs_tol=1e-12,
+    ):
+        raise ValueError("adapter runtime checkpoint calibration achieved ratio differs")
+
+
+def _validate_replayed_priority_b_calibration(
+    *,
+    protocol: AdapterTrainingProtocol,
+    saved_state_weight: object,
+    saved_calibration: object,
+    replayed_calibration: Mapping[str, object],
+) -> None:
+    """Compare a checkpoint claim with gradients replayed from the bound initial stream."""
+
+    _validate_priority_b_calibration(
+        protocol=protocol,
+        state_weight=saved_state_weight,
+        calibration=saved_calibration,
+    )
+    _validate_priority_b_calibration(
+        protocol=protocol,
+        state_weight=replayed_calibration.get("state_weight"),
+        calibration=replayed_calibration,
+    )
+    assert isinstance(saved_calibration, Mapping)  # established above
+    if tuple(saved_calibration["record_ids"]) != tuple(replayed_calibration["record_ids"]):
+        raise ValueError("adapter runtime checkpoint calibration replay records differ")
+
+    scalar_fields = (
+        "mean_output_gradient_norm",
+        "mean_state_gradient_norm",
+        "state_weight",
+        "achieved_initial_ratio",
+    )
+    vector_fields = ("output_gradient_norms", "state_gradient_norms")
+    for field in scalar_fields:
+        if not math.isclose(
+            float(saved_calibration[field]),
+            float(replayed_calibration[field]),
+            rel_tol=_STATE_CALIBRATION_REPLAY_REL_TOL,
+            abs_tol=_STATE_CALIBRATION_REPLAY_ABS_TOL,
+        ):
+            raise ValueError(f"adapter runtime checkpoint calibration replay {field} differs")
+    for field in vector_fields:
+        saved_values = tuple(float(value) for value in saved_calibration[field])
+        replayed_values = tuple(float(value) for value in replayed_calibration[field])
+        if len(saved_values) != len(replayed_values) or any(
+            not math.isclose(
+                saved,
+                replayed,
+                rel_tol=_STATE_CALIBRATION_REPLAY_REL_TOL,
+                abs_tol=_STATE_CALIBRATION_REPLAY_ABS_TOL,
+            )
+            for saved, replayed in zip(saved_values, replayed_values, strict=True)
+        ):
+            raise ValueError(f"adapter runtime checkpoint calibration replay {field} differs")
+    if not math.isclose(
+        float(saved_state_weight),
+        float(replayed_calibration["state_weight"]),
+        rel_tol=_STATE_CALIBRATION_REPLAY_REL_TOL,
+        abs_tol=_STATE_CALIBRATION_REPLAY_ABS_TOL,
+    ):
+        raise ValueError("adapter runtime checkpoint calibration replay state weight differs")
+
+
+def validate_resume_state_calibration(
+    path: Path,
+    *,
+    protocol: AdapterTrainingProtocol,
+    seed: int,
+) -> None:
+    """Reject invalid Priority B calibration before constructing a GPU runtime."""
+
+    if protocol.condition != "probe-transition-single-layer-state-distillation":
+        return
+    import torch
+
+    payload = torch.load(Path(path).resolve(), map_location="cpu", weights_only=False)
+    if (
+        not isinstance(payload, Mapping)
+        or payload.get("schema_version") != _RUNTIME_STATE_SCHEMA
+        or payload.get("condition") != protocol.condition
+        or payload.get("config_sha256") != protocol.config_sha256
+        or payload.get("seed") != seed
+    ):
+        raise ValueError("adapter runtime checkpoint identity differs")
+    _validate_priority_b_calibration(
+        protocol=protocol,
+        state_weight=payload.get("state_weight"),
+        calibration=payload.get("state_calibration"),
+    )
 
 
 def _optimizer_group_sizes(state: object) -> tuple[int, ...]:
@@ -256,36 +475,78 @@ def next_gradient_ratio_violations(
 
 def _resolve_probe_transition_runtime_method(
     protocol: AdapterTrainingProtocol,
-    evidence: LocalizationEvidence | ResidualStateEvidence | ProbeTransitionTrainingEvidence | None,
+    evidence: (
+        LocalizationEvidence
+        | ResidualStateEvidence
+        | ProbeTransitionTrainingEvidence
+        | ProbeTransitionStateTrainingEvidence
+        | None
+    ),
 ) -> ResolvedTrainingMethod | None:
     """Fail closed on the v4 evidence and output-only boundary before CUDA setup."""
 
-    is_probe_condition = protocol.condition == "probe-transition-output-matching"
+    is_probe_condition = protocol.condition in {
+        "probe-transition-output-matching",
+        "probe-transition-single-layer-state-distillation",
+    }
     if not is_probe_condition:
-        if isinstance(evidence, ProbeTransitionTrainingEvidence):
+        if isinstance(
+            evidence,
+            (ProbeTransitionTrainingEvidence, ProbeTransitionStateTrainingEvidence),
+        ):
             raise ValueError("probe-transition evidence cannot configure this condition")
         return None
-    if not isinstance(evidence, ProbeTransitionTrainingEvidence):
+    if not isinstance(
+        evidence,
+        (ProbeTransitionTrainingEvidence, ProbeTransitionStateTrainingEvidence),
+    ):
         raise ValueError("probe-transition output matching requires probe evidence")
     resolved = resolve_training_method(protocol, evidence=evidence)
-    expected_weights = {
-        "noisy_language_model": 0.0,
-        "answer": 0.0,
-        "output": 1.0,
-        "state": 0.0,
-        "clean": 0.0,
-    }
-    if (
-        dict(protocol.loss_weights) != expected_weights
-        or resolved.state_layers
-        or resolved.state_target != "none"
-        or protocol.state_scope != "none"
-        or protocol.state_distance != "none"
-        or protocol.loss_weights["state"] != 0.0
-        or protocol.state_gradient_ratio is not None
-        or protocol.calibration_micro_batches != 0
-    ):
-        raise ValueError("probe-transition output matching must disable state training")
+    if protocol.condition == "probe-transition-output-matching":
+        expected_weights = {
+            "noisy_language_model": 0.0,
+            "answer": 0.0,
+            "output": 1.0,
+            "state": 0.0,
+            "clean": 0.0,
+        }
+        valid = (
+            dict(protocol.loss_weights) == expected_weights
+            and not resolved.state_layers
+            and resolved.state_target == "none"
+            and protocol.state_scope == "none"
+            and protocol.state_distance == "none"
+            and protocol.state_gradient_ratio is None
+            and protocol.calibration_micro_batches == 0
+        )
+    else:
+        expected_weights = {
+            "noisy_language_model": 0.0,
+            "answer": 0.0,
+            "output": 1.0,
+            "state": 1.0,
+            "clean": 0.0,
+        }
+        valid = (
+            isinstance(evidence, ProbeTransitionStateTrainingEvidence)
+            and dict(protocol.loss_weights) == expected_weights
+            and resolved.state_layers == (evidence.selected_transition_layer,)
+            and resolved.state_target
+            == "complete-decoder-block-residual-output-at-edited-word-final/v1"
+            and protocol.state_scope
+            == "probe-transition-single-layer-edited-word-final-token/v1"
+            and protocol.state_distance == "cosine-residual/v1"
+            and protocol.state_gradient_ratio == 0.05
+            and protocol.calibration_micro_batches == 8
+            and protocol.temperature == 1.0
+            and protocol.epsilon == 1e-8
+        )
+    if not valid:
+        if protocol.condition == "probe-transition-output-matching":
+            raise ValueError(
+                "probe-transition output matching must disable state training"
+            )
+        raise ValueError("probe-transition state training objective or evidence differs")
     return resolved
 
 
@@ -299,7 +560,11 @@ class HuggingFaceAdapterTrainingRuntime:
         seed: int,
         gpu_id: str,
         evidence: (
-            LocalizationEvidence | ResidualStateEvidence | ProbeTransitionTrainingEvidence | None
+            LocalizationEvidence
+            | ResidualStateEvidence
+            | ProbeTransitionTrainingEvidence
+            | ProbeTransitionStateTrainingEvidence
+            | None
         ),
     ) -> None:
         if not isinstance(protocol, AdapterTrainingProtocol):
@@ -307,7 +572,7 @@ class HuggingFaceAdapterTrainingRuntime:
         if seed not in protocol.seed_inventory:
             raise ValueError("training runtime seed is outside the frozen inventory")
         resolved_method = _resolve_probe_transition_runtime_method(protocol, evidence)
-        self.code_revision = _checkout_code_revision()
+        self.code_revision, self.source_tree_sha256 = _checkout_source_attestation()
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None and visible != gpu_id:
             raise ValueError(
@@ -416,6 +681,7 @@ class HuggingFaceAdapterTrainingRuntime:
             "causal-window-edited-word-final-tokens",
             "random-window-edited-word-final-tokens",
             "all-layers-edited-word-final-tokens",
+            "probe-transition-single-layer-edited-word-final-token/v1",
         }
         if residual_scope != bool(self.state_layers):
             raise ValueError("residual state layers differ from the training objective")
@@ -472,6 +738,8 @@ class HuggingFaceAdapterTrainingRuntime:
         self._gradient_ratio_violations = 0
         self._optimizer_steps = 0
         self._prepared_encodings: deque[tuple[TrainingPair, PairedEncoding]] = deque()
+        self._verified_resume_state_path: Path | None = None
+        self._verified_resume_state_sha256: str | None = None
         self._monitor_base_clean: tuple[float, int] | None = None
         self._monitor_base_natural: tuple[float, int] | None = None
         torch.cuda.reset_peak_memory_stats()
@@ -567,11 +835,11 @@ class HuggingFaceAdapterTrainingRuntime:
         self._prepared_encodings.extend(zip(rows, encodings, strict=True))
         return scales
 
-    def calibrate_state_weight(
+    def _measure_state_calibration(
         self,
         pairs: Sequence[TrainingPair],
-    ) -> Mapping[str, object]:
-        """Freeze lambda from initial output/state LoRA gradient norms."""
+    ) -> dict[str, object]:
+        """Measure the preregistered initial gradient dosage without mutating weights."""
 
         if self.protocol.state_gradient_ratio is None:
             if pairs:
@@ -580,8 +848,6 @@ class HuggingFaceAdapterTrainingRuntime:
         rows = tuple(pairs)
         if len(rows) != self.protocol.calibration_micro_batches:
             raise ValueError("state calibration pair count differs from the config")
-        if self.state_weight is not None or self.state_calibration is not None:
-            raise RuntimeError("state gradient weight is already calibrated")
         output_norms: list[float] = []
         state_norms: list[float] = []
         record_ids: list[str] = []
@@ -604,23 +870,88 @@ class HuggingFaceAdapterTrainingRuntime:
         mean_output = sum(output_norms) / len(output_norms)
         mean_state = sum(state_norms) / len(state_norms)
         rho = float(self.protocol.state_gradient_ratio)
-        self.state_weight = rho * mean_output / mean_state
-        if not math.isfinite(self.state_weight) or self.state_weight <= 0.0:
+        state_weight = rho * mean_output / mean_state
+        if not math.isfinite(state_weight) or state_weight <= 0.0:
             raise FloatingPointError("calibrated state weight is invalid")
-        self.state_calibration = {
-            "schema_version": "state-gradient-calibration/v1",
+        calibration: dict[str, object] = {
+            "schema_version": _STATE_CALIBRATION_SCHEMA,
             "micro_batches": len(rows),
+            "noisy_micro_batches": len(rows),
             "record_ids": record_ids,
             "output_gradient_norms": output_norms,
             "state_gradient_norms": state_norms,
             "mean_output_gradient_norm": mean_output,
             "mean_state_gradient_norm": mean_state,
             "target_gradient_ratio": rho,
-            "state_weight": self.state_weight,
-            "achieved_initial_ratio": self.state_weight * mean_state / mean_output,
+            "state_weight": state_weight,
+            "achieved_initial_ratio": state_weight * mean_state / mean_output,
+            "replay_relative_tolerance": _STATE_CALIBRATION_REPLAY_REL_TOL,
+            "replay_absolute_tolerance": _STATE_CALIBRATION_REPLAY_ABS_TOL,
         }
-        self.zero_grad()
-        return dict(self.state_calibration)
+        _validate_priority_b_calibration(
+            protocol=self.protocol,
+            state_weight=state_weight,
+            calibration=calibration,
+        )
+        return calibration
+
+    def calibrate_state_weight(
+        self,
+        pairs: Sequence[TrainingPair],
+    ) -> Mapping[str, object]:
+        """Freeze lambda from initial output/state LoRA gradient norms."""
+
+        if self.state_weight is not None or self.state_calibration is not None:
+            raise RuntimeError("state gradient weight is already calibrated")
+        try:
+            calibration = self._measure_state_calibration(pairs)
+        finally:
+            self._prepared_encodings.clear()
+            self.zero_grad()
+        self.state_weight = float(calibration["state_weight"])
+        self.state_calibration = calibration
+        return dict(calibration)
+
+    def verify_resume_state_calibration(
+        self,
+        path: Path,
+        pairs: Sequence[TrainingPair],
+    ) -> None:
+        """Replay calibration on the attested initial model before checkpoint mutation."""
+
+        if self.protocol.condition != "probe-transition-single-layer-state-distillation":
+            raise ValueError("calibration replay is exclusive to Priority B state training")
+        if self.state_weight is not None or self.state_calibration is not None:
+            raise RuntimeError("calibration replay requires an unmodified initial runtime")
+        state_path = Path(path).resolve()
+        before_sha = sha256_file(state_path)
+        payload = self._torch.load(state_path, map_location="cpu", weights_only=False)
+        if (
+            not isinstance(payload, Mapping)
+            or payload.get("schema_version") != _RUNTIME_STATE_SCHEMA
+            or payload.get("condition") != self.protocol.condition
+            or payload.get("config_sha256") != self.protocol.config_sha256
+            or payload.get("seed") != self.seed
+        ):
+            raise ValueError("adapter runtime checkpoint identity differs")
+        try:
+            replayed = self._measure_state_calibration(pairs)
+            _validate_replayed_priority_b_calibration(
+                protocol=self.protocol,
+                saved_state_weight=payload.get("state_weight"),
+                saved_calibration=payload.get("state_calibration"),
+                replayed_calibration=replayed,
+            )
+        finally:
+            self._prepared_encodings.clear()
+            self.zero_grad()
+        after_sha = sha256_file(state_path)
+        if before_sha != after_sha:
+            raise ValueError("adapter runtime checkpoint changed during calibration replay")
+        if any(parameter.grad is not None for parameter in self._trainable_parameters()):
+            raise RuntimeError("calibration replay left trainable parameter gradients")
+        self._verified_resume_state_path = state_path
+        self._verified_resume_state_sha256 = after_sha
 
     def train_micro_step(
         self,
@@ -944,11 +1275,26 @@ class HuggingFaceAdapterTrainingRuntime:
     def load_state(self, path: Path) -> None:
         from peft import get_peft_model_state_dict, set_peft_model_state_dict
 
+        state_path = Path(path).resolve()
+        if self.protocol.condition == "probe-transition-single-layer-state-distillation":
+            if (
+                self._verified_resume_state_path != state_path
+                or self._verified_resume_state_sha256 is None
+                or sha256_file(state_path) != self._verified_resume_state_sha256
+            ):
+                raise ValueError(
+                    "Priority B checkpoint must pass exact calibration replay before loading"
+                )
         payload = self._torch.load(
-            Path(path).resolve(),
+            state_path,
             map_location="cpu",
             weights_only=False,
         )
+        if (
+            self.protocol.condition == "probe-transition-single-layer-state-distillation"
+            and sha256_file(state_path) != self._verified_resume_state_sha256
+        ):
+            raise ValueError("Priority B checkpoint changed after calibration replay")
         expected_v1 = {
             "schema_version",
             "condition",
@@ -994,6 +1340,14 @@ class HuggingFaceAdapterTrainingRuntime:
             or payload["seed"] != self.seed
         ):
             raise ValueError("adapter runtime checkpoint identity differs")
+        if payload["schema_version"].endswith(("/v2", "/v3")):
+            _validate_priority_b_calibration(
+                protocol=self.protocol,
+                state_weight=payload["state_weight"],
+                calibration=payload["state_calibration"],
+            )
+        elif self.protocol.condition == "probe-transition-single-layer-state-distillation":
+            raise ValueError("probe-transition state training cannot resume a legacy runtime state")
         _validate_adapter_scope_before_resume(
             checkpoint_adapter=payload["adapter"],
             checkpoint_optimizer=payload["optimizer"],
@@ -1030,6 +1384,8 @@ class HuggingFaceAdapterTrainingRuntime:
         np.random.set_state(payload["numpy_rng"])
         self._torch.set_rng_state(payload["torch_rng"].cpu())
         self._torch.cuda.set_rng_state_all(_cpu_cuda_rng_states(payload["cuda_rng"]))
+        self._verified_resume_state_path = None
+        self._verified_resume_state_sha256 = None
 
     def save_adapter(self, path: Path) -> None:
         output = Path(path).resolve()
@@ -1056,6 +1412,7 @@ class HuggingFaceAdapterTrainingRuntime:
             "student_revision": self.student_revision,
             "tokenizer_revision": self.tokenizer_revision,
             "code_revision": self.code_revision,
+            "source_tree_sha256": self.source_tree_sha256,
             "condition": self.protocol.condition,
             "seed": self.seed,
             "device": str(self.device),
@@ -1068,7 +1425,10 @@ class HuggingFaceAdapterTrainingRuntime:
             "state_layers": list(self.state_layers),
             **(
                 {"method_evidence_sha256": self.evidence.evidence_sha256}
-                if isinstance(self.evidence, ProbeTransitionTrainingEvidence)
+                if isinstance(
+                    self.evidence,
+                    (ProbeTransitionTrainingEvidence, ProbeTransitionStateTrainingEvidence),
+                )
                 else {}
             ),
             "state_weight": self.state_weight,
@@ -1082,4 +1442,8 @@ class HuggingFaceAdapterTrainingRuntime:
         }
 
 
-__all__ = ["HuggingFaceAdapterTrainingRuntime", "next_gradient_ratio_violations"]
+__all__ = [
+    "HuggingFaceAdapterTrainingRuntime",
+    "next_gradient_ratio_violations",
+    "validate_resume_state_calibration",
+]

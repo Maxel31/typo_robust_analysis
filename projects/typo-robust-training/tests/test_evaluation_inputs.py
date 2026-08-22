@@ -55,34 +55,33 @@ def _adapter(
         ),
         encoding="utf-8",
     )
-    (adapter / "training_runtime.json").write_text(
-        json.dumps(
+    runtime = {
+        "runtime": f"HuggingFaceAdapterTrainingRuntime/{runtime_version}",
+        "model": PROTOCOL.model,
+        "requested_revision": PROTOCOL.model_revision,
+        **(
             {
-                "runtime": f"HuggingFaceAdapterTrainingRuntime/{runtime_version}",
-                "model": PROTOCOL.model,
-                "requested_revision": PROTOCOL.model_revision,
-                **(
-                    {
-                        "teacher_revision": PROTOCOL.model_revision,
-                        "student_revision": PROTOCOL.model_revision,
-                        "tokenizer_revision": PROTOCOL.model_revision,
-                        "code_revision": "f" * 40,
-                    }
-                    if runtime_version == "v2"
-                    else {}
-                ),
-                "condition": condition,
-                "seed": seed,
-                "teacher_frozen": True,
-                "student_base_frozen": True,
-                **(
-                    {"method_evidence_sha256": method_evidence_sha256}
-                    if method_evidence_sha256 is not None
-                    else {}
-                ),
+                "teacher_revision": PROTOCOL.model_revision,
+                "student_revision": PROTOCOL.model_revision,
+                "tokenizer_revision": PROTOCOL.model_revision,
+                "code_revision": "f" * 40,
             }
+            if runtime_version == "v2"
+            else {}
         ),
-        encoding="utf-8",
+        "condition": condition,
+        "seed": seed,
+        "teacher_frozen": True,
+        "student_base_frozen": True,
+        **(
+            {"method_evidence_sha256": method_evidence_sha256}
+            if method_evidence_sha256 is not None
+            else {}
+        ),
+    }
+    (adapter / "training_runtime.json").write_text(json.dumps(runtime), encoding="utf-8")
+    run_runtime = (
+        runtime if condition == "probe-transition-single-layer-state-distillation" else None
     )
     (output / "run.json").write_text(
         json.dumps(
@@ -102,6 +101,7 @@ def _adapter(
                     if method_evidence_sha256 is not None
                     else {}
                 ),
+                **({"runtime": run_runtime} if run_runtime is not None else {}),
                 "outputs": {"adapter": {"sha256": _tree_sha256(adapter)}},
             }
         ),
@@ -247,7 +247,7 @@ def test_adapter_loader_rejects_post_completion_mutation_or_mixed_seed_configs(
     "condition",
     (
         "probe-transition-output-matching",
-        "probe-transition-state-distillation",
+        "probe-transition-single-layer-state-distillation",
         "causal-probe-subspace-distillation",
     ),
 )
@@ -263,6 +263,7 @@ def test_v4_adapter_requires_generic_method_evidence(
         tmp_path / "valid",
         condition=condition,
         seed=42,
+        runtime_version="v2",
         method_evidence_sha256="9" * 64,
     )
     descriptor = load_adapter_descriptors((adapter,), protocol=PROTOCOL)[0]

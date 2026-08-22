@@ -20,7 +20,7 @@ _CONDITIONS = frozenset(
         "localized-state-distillation",
         "random-window-state-distillation",
         "probe-transition-output-matching",
-        "probe-transition-state-distillation",
+        "probe-transition-single-layer-state-distillation",
         "causal-probe-subspace-distillation",
     }
 )

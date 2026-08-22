@@ -711,6 +711,29 @@ def _validate_probe_weights(
 
 
 @dataclass(frozen=True, slots=True)
+class ProbeTransitionIdentityInventory:
+    """Verified transitive identities reserved by the parent probe study.
+
+    Derivative studies consume this immutable inventory instead of reparsing
+    private producer files or trusting a caller-provided list.
+    """
+
+    fit: frozenset[str]
+    selection: frozenset[str]
+    validation: frozenset[str]
+    protected: frozenset[str]
+
+    @property
+    def all(self) -> frozenset[str]:
+        return frozenset().union(
+            self.fit,
+            self.selection,
+            self.validation,
+            self.protected,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ProbeTransitionArtifact:
     """Validated evidence consumed by suffix-adapter training."""
 
@@ -727,6 +750,8 @@ class ProbeTransitionArtifact:
     config_sha256: str
     selection_ci_lower_by_seed: Mapping[int, float]
     validation_ci_lower_by_seed: Mapping[int, float]
+    identity_inventory: ProbeTransitionIdentityInventory
+    protected_split_registry_sha256: str
 
     @property
     def suffix_layers(self) -> tuple[int, ...]:
@@ -995,7 +1020,18 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
         config_sha256=protocol.config_sha256,
         selection_ci_lower_by_seed=MappingProxyType(selection_ci_lower),
         validation_ci_lower_by_seed=MappingProxyType(ci_lower),
+        identity_inventory=ProbeTransitionIdentityInventory(
+            fit=frozenset(identity_unions["fit"]),
+            selection=frozenset(identity_unions["selection"]),
+            validation=frozenset(identity_unions["validation"]),
+            protected=frozenset(protected_union),
+        ),
+        protected_split_registry_sha256=protected_sha256,
     )
 
 
-__all__ = ["ProbeTransitionArtifact", "load_probe_transition_artifact"]
+__all__ = [
+    "ProbeTransitionArtifact",
+    "ProbeTransitionIdentityInventory",
+    "load_probe_transition_artifact",
+]

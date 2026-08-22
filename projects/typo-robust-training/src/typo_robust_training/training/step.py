@@ -77,6 +77,7 @@ def compute_training_step(
         "causal-window-edited-word-final-tokens",
         "random-window-edited-word-final-tokens",
         "all-layers-edited-word-final-tokens",
+        "probe-transition-single-layer-edited-word-final-token/v1",
     }
     resolved_state_layers = tuple(state_layers or ())
     if component_state and not component_weights:

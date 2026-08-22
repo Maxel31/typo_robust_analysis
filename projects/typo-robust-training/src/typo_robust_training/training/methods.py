@@ -55,6 +55,33 @@ class ProbeTransitionTrainingEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class ProbeTransitionStateTrainingEvidence:
+    """Hash-bound view of a passed transition-layer causal gate."""
+
+    model: str
+    model_revision: str
+    decoder_layers: int
+    selected_transition_layer: int
+    parent_probe_artifact_sha256: str
+    evidence_sha256: str
+
+    def __post_init__(self) -> None:
+        ProbeTransitionTrainingEvidence(
+            model=self.model,
+            model_revision=self.model_revision,
+            decoder_layers=self.decoder_layers,
+            selected_transition_layer=self.selected_transition_layer,
+            evidence_sha256=self.evidence_sha256,
+        )
+        if _SHA256.fullmatch(self.parent_probe_artifact_sha256) is None:
+            raise ValueError("state gate parent probe hash must be a SHA-256 digest")
+
+    @property
+    def suffix_layers(self) -> tuple[int, ...]:
+        return tuple(range(self.selected_transition_layer, self.decoder_layers))
+
+
+@dataclass(frozen=True, slots=True)
 class ResolvedTrainingMethod:
     adapter_layers: tuple[int, ...]
     state_layers: tuple[int, ...]
@@ -88,6 +115,37 @@ def load_probe_transition_training_evidence(
         model_revision=artifact.model_revision,
         decoder_layers=artifact.decoder_layers,
         selected_transition_layer=artifact.selected_transition_layer,
+        evidence_sha256=artifact.artifact_sha256,
+    )
+
+
+def load_probe_transition_state_training_evidence(
+    path: Path,
+    *,
+    model: str,
+    model_revision: str,
+    decoder_layers: int,
+) -> ProbeTransitionStateTrainingEvidence:
+    """Load and recompute the causal gate before exposing it to training."""
+
+    supplied = Path(path)
+    if supplied.is_symlink():
+        raise ValueError("single-layer gate evidence must not be a symlink")
+    from typo_robust_training.state_gate import load_single_layer_gate_artifact
+
+    artifact = load_single_layer_gate_artifact(supplied)
+    if (
+        artifact.model != model
+        or artifact.model_revision != model_revision
+        or artifact.decoder_layers != decoder_layers
+    ):
+        raise ValueError("single-layer gate artifact identity differs from training")
+    return ProbeTransitionStateTrainingEvidence(
+        model=artifact.model,
+        model_revision=artifact.model_revision,
+        decoder_layers=artifact.decoder_layers,
+        selected_transition_layer=artifact.selected_transition_layer,
+        parent_probe_artifact_sha256=artifact.parent_probe_artifact_sha256,
         evidence_sha256=artifact.artifact_sha256,
     )
 
@@ -181,15 +239,26 @@ def materialize_probe_transition_training_config(
 def resolve_training_method(
     protocol: AdapterTrainingProtocol,
     *,
-    evidence: ProbeTransitionTrainingEvidence,
+    evidence: ProbeTransitionTrainingEvidence | ProbeTransitionStateTrainingEvidence,
 ) -> ResolvedTrainingMethod:
     """Resolve v4 method scope without inspecting evaluation outcomes."""
 
     if not isinstance(protocol, AdapterTrainingProtocol):
         raise TypeError("training protocol must be AdapterTrainingProtocol")
-    if not isinstance(evidence, ProbeTransitionTrainingEvidence):
+    if not isinstance(
+        evidence,
+        (ProbeTransitionTrainingEvidence, ProbeTransitionStateTrainingEvidence),
+    ):
         raise TypeError("probe transition evidence has the wrong type")
-    if protocol.condition != "probe-transition-output-matching":
+    valid_pair = (
+        protocol.condition == "probe-transition-output-matching"
+        and isinstance(evidence, ProbeTransitionTrainingEvidence)
+        and not isinstance(evidence, ProbeTransitionStateTrainingEvidence)
+    ) or (
+        protocol.condition == "probe-transition-single-layer-state-distillation"
+        and isinstance(evidence, ProbeTransitionStateTrainingEvidence)
+    )
+    if not valid_pair:
         raise ValueError("probe transition evidence cannot configure this condition")
     if protocol.decoder_layers is None or (
         evidence.model != protocol.model
@@ -199,23 +268,84 @@ def resolve_training_method(
         raise ValueError("probe evidence identity differs from training")
     if protocol.expected_method_evidence_sha256 != evidence.evidence_sha256:
         raise ValueError("probe evidence hash differs from the preregistered training config")
-    if (
-        protocol.layer_scope != "probe-transition-suffix"
-        or protocol.layer_policy != "validated-linear-probe-transition-suffix/v1"
-    ):
+    if protocol.layer_scope != "probe-transition-suffix" or protocol.layer_policy != "validated-linear-probe-transition-suffix/v1":
         raise ValueError("probe transition adapter policy differs")
+    state_active = isinstance(evidence, ProbeTransitionStateTrainingEvidence)
     return ResolvedTrainingMethod(
         adapter_layers=evidence.suffix_layers,
-        state_layers=(),
-        state_target="none",
+        state_layers=(evidence.selected_transition_layer,) if state_active else (),
+        state_target=(
+            "complete-decoder-block-residual-output-at-edited-word-final/v1"
+            if state_active
+            else "none"
+        ),
         method_evidence_sha256=evidence.evidence_sha256,
     )
 
 
+def materialize_probe_transition_state_training_config(
+    template_path: Path,
+    *,
+    evidence_path: Path,
+    output_path: Path,
+) -> AdapterTrainingProtocol:
+    """Bind one passed causal-gate artifact into the v5 template."""
+
+    template = Path(template_path)
+    evidence = Path(evidence_path)
+    output = Path(output_path)
+    if template.is_symlink() or not template.is_file():
+        raise ValueError("state training template must be one regular file")
+    if evidence.is_symlink():
+        raise ValueError("state gate evidence must not be a symlink")
+    if output.exists() or output.is_symlink():
+        raise FileExistsError(f"materialized state training config already exists: {output}")
+    payload = strict_loads(template.read_text(encoding="utf-8"), context=str(template.resolve()))
+    expected_top = {
+        "schema_version", "condition", "method_evidence", "model", "sequence",
+        "adapter", "optimization", "objective",
+    }
+    if not isinstance(payload, Mapping) or set(payload) != expected_top or payload["schema_version"] != "robustness-adapter-training-config/v5-template":
+        raise ValueError("state training template fields or schema differ")
+    if payload["method_evidence"] != {
+        "schema_version": "probe-transition-state-gate-binding/v1",
+        "artifact_sha256": None,
+    }:
+        raise ValueError("state training template must contain one null gate binding")
+    model_fields = payload["model"]
+    if not isinstance(model_fields, Mapping):
+        raise ValueError("state training template model must be an object")
+    artifact_evidence = load_probe_transition_state_training_evidence(
+        evidence,
+        model=str(model_fields.get("id")),
+        model_revision=str(model_fields.get("revision")),
+        decoder_layers=int(model_fields.get("decoder_layers", 0)),
+    )
+    materialized = copy.deepcopy(dict(payload))
+    materialized["schema_version"] = "robustness-adapter-training-config/v5"
+    materialized["method_evidence"]["artifact_sha256"] = artifact_evidence.evidence_sha256  # type: ignore[index]
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f".{output.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(materialized, sort_keys=True, indent=2, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        protocol = load_adapter_training_config(temporary)
+        resolve_training_method(protocol, evidence=artifact_evidence)
+        os.replace(temporary, output)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return load_adapter_training_config(output)
+
+
 __all__ = [
     "ProbeTransitionTrainingEvidence",
+    "ProbeTransitionStateTrainingEvidence",
     "ResolvedTrainingMethod",
     "load_probe_transition_training_evidence",
+    "load_probe_transition_state_training_evidence",
+    "materialize_probe_transition_state_training_config",
     "materialize_probe_transition_training_config",
     "resolve_training_method",
 ]
