@@ -28,6 +28,8 @@ from typo_robust_training.evaluation.runner import (
     RobustnessEvaluationRunConfig,
     _experiment_binding,
     _validate_injected_inputs,
+    _validate_production_runtime_inventory,
+    _validate_production_runtime_provenance,
     run_robustness_evaluation,
 )
 from typo_robust_training.integrity import sha256_tree
@@ -219,6 +221,8 @@ def _completed_adapter(
         "status": "completed",
         "condition": condition,
         "seed": seed,
+        "adapter_sha256": None,
+        "method_evidence_sha256": None,
         "config_sha256": "d" * 64,
         "training_data_sha256": "e" * 64,
         "data_identity_sha256": "c" * 64,
@@ -347,6 +351,109 @@ def _config(root: Path, output: Path, *, resume: bool) -> RobustnessEvaluationRu
         confirm_sealed_role=False,
         resume=resume,
     )
+
+
+def _production_runtime_provenance(
+    *,
+    condition: str = "base",
+    seed: int | None = None,
+) -> dict[str, object]:
+    protocol = load_robustness_evaluation_config(CONFIG)
+    return {
+        "runtime": "HuggingFaceRobustnessEvaluationRuntime/v2",
+        "model": protocol.model,
+        "requested_revision": protocol.model_revision,
+        "model_revision": protocol.model_revision,
+        "tokenizer_revision": protocol.model_revision,
+        "condition": condition,
+        "seed": seed,
+    }
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["requested_revision", "model_revision", "tokenizer_revision"],
+)
+def test_production_runtime_loader_rejects_missing_or_mismatched_revisions(
+    field: str,
+) -> None:
+    protocol = load_robustness_evaluation_config(CONFIG)
+    good = _production_runtime_provenance()
+    _validate_production_runtime_provenance(
+        good,
+        protocol=protocol,
+        descriptor=None,
+    )
+
+    missing = dict(good)
+    missing.pop(field)
+    with pytest.raises(ValueError, match="model/tokenizer provenance"):
+        _validate_production_runtime_provenance(
+            missing,
+            protocol=protocol,
+            descriptor=None,
+        )
+
+    mismatched = dict(good)
+    mismatched[field] = "f" * 40
+    with pytest.raises(ValueError, match="model/tokenizer provenance"):
+        _validate_production_runtime_provenance(
+            mismatched,
+            protocol=protocol,
+            descriptor=None,
+        )
+
+
+def test_production_runtime_loader_requires_exact_condition_inventory() -> None:
+    protocol = load_robustness_evaluation_config(CONFIG)
+    descriptors = _descriptors(Path("/tmp/identity-only"))
+    runtime = {"base": _production_runtime_provenance()}
+
+    with pytest.raises(ValueError, match="provenance inventory differs"):
+        _validate_production_runtime_inventory(
+            runtime,
+            protocol=protocol,
+            descriptors=descriptors,
+            require_complete=True,
+        )
+
+    runtime["unexpected"] = _production_runtime_provenance()
+    with pytest.raises(ValueError, match="provenance inventory differs"):
+        _validate_production_runtime_inventory(
+            runtime,
+            protocol=protocol,
+            descriptors=descriptors,
+            require_complete=False,
+        )
+
+
+def test_production_runtime_loader_binds_adapter_and_method_evidence() -> None:
+    protocol = load_robustness_evaluation_config(CONFIG)
+    descriptor = _v4_descriptors(
+        Path("/tmp/identity-only"),
+        evidence_sha256="8" * 64,
+    )[0]
+    provenance = _production_runtime_provenance(
+        condition=descriptor.condition,
+        seed=descriptor.seed,
+    )
+    provenance["adapter_sha256"] = descriptor.adapter_sha256
+    provenance["method_evidence_sha256"] = descriptor.method_evidence_sha256
+    _validate_production_runtime_provenance(
+        provenance,
+        protocol=protocol,
+        descriptor=descriptor,
+    )
+
+    for field in ("adapter_sha256", "method_evidence_sha256"):
+        tampered = dict(provenance)
+        tampered[field] = "f" * 64
+        with pytest.raises(ValueError, match="model/tokenizer provenance"):
+            _validate_production_runtime_provenance(
+                tampered,
+                protocol=protocol,
+                descriptor=descriptor,
+            )
 
 
 def test_runner_rejects_legacy_evaluation_data_without_frozen_registry(tmp_path: Path) -> None:

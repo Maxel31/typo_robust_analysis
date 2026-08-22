@@ -24,6 +24,9 @@ from typo_robust_training.evaluation.records import (
     CorpusEvaluationObservation,
     EvaluationObservation,
 )
+from typo_robust_training.training.runtime import (
+    _require_exact_training_wrapper_revision,
+)
 
 
 def _version(name: str) -> str:
@@ -405,9 +408,13 @@ class HuggingFaceRobustnessEvaluationRuntimeFactory:
             revision=protocol.model_revision,
         )
         base_model = self.wrapper.model
-        revision = getattr(base_model.config, "_commit_hash", None)
-        if revision is not None and revision != protocol.model_revision:
-            raise ValueError("evaluation loaded model revision differs")
+        self.model_revision, self.tokenizer_revision = (
+            _require_exact_training_wrapper_revision(
+                self.wrapper,
+                expected=protocol.model_revision,
+                role="evaluation",
+            )
+        )
         self.layers = find_decoder_layers(base_model)
         if not patch_window.layers or patch_window.stop > len(self.layers):
             raise ValueError("evaluation patch window is outside the model")
@@ -982,13 +989,15 @@ class HuggingFaceRobustnessEvaluationRuntime:
 
     def provenance(self) -> dict[str, object]:
         return {
-            "runtime": "HuggingFaceRobustnessEvaluationRuntime/v1",
+            "runtime": "HuggingFaceRobustnessEvaluationRuntime/v2",
             "python": platform.python_version(),
             "torch": _version("torch"),
             "transformers": _version("transformers"),
             "peft": _version("peft"),
             "model": self.protocol.model,
             "requested_revision": self.protocol.model_revision,
+            "model_revision": self._factory.model_revision,
+            "tokenizer_revision": self._factory.tokenizer_revision,
             "condition": self.condition,
             "seed": self.seed,
             "adapter_sha256": (None if self.descriptor is None else self.descriptor.adapter_sha256),

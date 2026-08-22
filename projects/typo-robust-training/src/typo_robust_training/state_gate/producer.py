@@ -24,7 +24,11 @@ from typo_robust_training.state_gate.config import load_single_layer_gate_config
 class SingleLayerGateProvider(Protocol):
     model_id: str
     model_revision: str
+    teacher_revision: str
+    student_revision: str
+    tokenizer_revision: str
     code_revision: str
+    source_tree_sha256: str
     decoder_layers: int
     base_model_frozen: bool
 
@@ -124,7 +128,11 @@ def produce_single_layer_gate_artifact(
     if (
         provider.model_id != protocol.model
         or provider.model_revision != protocol.model_revision
+        or provider.teacher_revision != protocol.model_revision
+        or provider.student_revision != protocol.model_revision
+        or provider.tokenizer_revision != protocol.model_revision
         or provider.code_revision != protocol.code_revision
+        or provider.source_tree_sha256 != runtime_value.get("source_tree_sha256")
         or provider.decoder_layers != protocol.decoder_layers
         or provider.base_model_frozen is not True
     ):

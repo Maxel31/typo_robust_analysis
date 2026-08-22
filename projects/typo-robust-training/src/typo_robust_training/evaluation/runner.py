@@ -145,6 +145,56 @@ def _condition_id(descriptor: AdapterDescriptor | None) -> str:
     return "base" if descriptor is None else descriptor.condition_id
 
 
+def _validate_production_runtime_provenance(
+    provenance: Mapping[str, object],
+    *,
+    protocol: RobustnessEvaluationProtocol,
+    descriptor: AdapterDescriptor | None,
+) -> None:
+    """Fail closed when a production evaluator cannot attest its loaded snapshot."""
+
+    expected = {
+        "runtime": "HuggingFaceRobustnessEvaluationRuntime/v2",
+        "model": protocol.model,
+        "requested_revision": protocol.model_revision,
+        "model_revision": protocol.model_revision,
+        "tokenizer_revision": protocol.model_revision,
+        "condition": "base" if descriptor is None else descriptor.condition,
+        "seed": None if descriptor is None else descriptor.seed,
+        "adapter_sha256": None if descriptor is None else descriptor.adapter_sha256,
+        "method_evidence_sha256": (
+            None if descriptor is None else descriptor.method_evidence_sha256
+        ),
+    }
+    if any(provenance.get(field) != value for field, value in expected.items()):
+        raise ValueError("evaluation runtime model/tokenizer provenance differs")
+
+
+def _validate_production_runtime_inventory(
+    runtime: Mapping[str, object],
+    *,
+    protocol: RobustnessEvaluationProtocol,
+    descriptors: Sequence[AdapterDescriptor],
+    require_complete: bool,
+) -> None:
+    inventory = {
+        _condition_id(descriptor): descriptor
+        for descriptor in _condition_inventory(descriptors)
+    }
+    if not set(runtime).issubset(inventory) or (
+        require_complete and set(runtime) != set(inventory)
+    ):
+        raise ValueError("evaluation runtime provenance inventory differs")
+    for condition_id, provenance in runtime.items():
+        if not isinstance(provenance, Mapping):
+            raise ValueError("evaluation runtime provenance differs")
+        _validate_production_runtime_provenance(
+            provenance,
+            protocol=protocol,
+            descriptor=inventory[condition_id],
+        )
+
+
 def _experiment_binding(
     *,
     protocol: RobustnessEvaluationProtocol,
@@ -643,6 +693,13 @@ def run_robustness_evaluation(
         ):
             raise ValueError("evaluation resume runtime provenance differs")
         prior_runtime = {name: dict(value) for name, value in previous_runtime.items()}
+        if runtime_factory is None:
+            _validate_production_runtime_inventory(
+                prior_runtime,
+                protocol=protocol,
+                descriptors=resolved_descriptors,
+                require_complete=False,
+            )
         previous_started_at = prior_run.get("started_at")
         if isinstance(previous_started_at, str) and previous_started_at:
             started_at = previous_started_at
@@ -689,7 +746,14 @@ def run_robustness_evaluation(
             )
             try:
                 if runtime is not None:
-                    runtime_provenance[condition_id] = dict(runtime.provenance())
+                    current_provenance = dict(runtime.provenance())
+                    if owned_runtime_factory is not None:
+                        _validate_production_runtime_provenance(
+                            current_provenance,
+                            protocol=protocol,
+                            descriptor=descriptor,
+                        )
+                    runtime_provenance[condition_id] = current_provenance
                 for pair in bundle.records:
                     checkpoint = _checkpoint_path(
                         work_dir,
@@ -768,6 +832,13 @@ def run_robustness_evaluation(
             finally:
                 if runtime is not None:
                     runtime.close()
+        if owned_runtime_factory is not None:
+            _validate_production_runtime_inventory(
+                runtime_provenance,
+                protocol=protocol,
+                descriptors=resolved_descriptors,
+                require_complete=True,
+            )
         _write_records(records_path, observations)
         _write_corpus_records(corpus_records_path, corpus_observations)
         report = {

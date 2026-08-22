@@ -372,17 +372,21 @@ def _load_runtime_manifest(
 ) -> Mapping[str, object]:
     value = _json(path)
     expected = {
-        "schema_version", "provider", "model", "model_revision", "code_revision",
+        "schema_version", "provider", "model", "model_revision", "teacher_revision",
+        "student_revision", "tokenizer_revision", "code_revision", "source_tree_sha256",
         "decoder_layers", "dtype", "hook_site", "coordinate", "readout",
         "base_model_frozen", "packages", "hardware",
     }
     if not isinstance(value, Mapping) or set(value) != expected:
         raise ValueError("single-layer gate runtime manifest fields differ")
     if (
-        value["schema_version"] != "single-layer-gate-runtime/v1"
+        value["schema_version"] != "single-layer-gate-runtime/v2"
         or value["provider"] != "hugging-face-single-layer-gate/v1"
         or value["model"] != protocol.model
         or value["model_revision"] != protocol.model_revision
+        or value["teacher_revision"] != protocol.model_revision
+        or value["student_revision"] != protocol.model_revision
+        or value["tokenizer_revision"] != protocol.model_revision
         or value["code_revision"] != protocol.code_revision
         or value["decoder_layers"] != protocol.decoder_layers
         or value["dtype"] != "bfloat16"
@@ -394,6 +398,7 @@ def _load_runtime_manifest(
         or not isinstance(value["hardware"], Mapping)
     ):
         raise ValueError("single-layer gate runtime manifest identity differs")
+    _sha(value["source_tree_sha256"], field="single-layer gate runtime source tree")
     json.dumps(value, sort_keys=True, allow_nan=False)
     return value
 

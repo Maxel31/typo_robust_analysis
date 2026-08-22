@@ -31,6 +31,8 @@ from typo_robust_training.localization.prompting import PromptSide
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = PROJECT_ROOT / "configs/gemma4b-evaluation.yaml"
+PROTOCOL = load_robustness_evaluation_config(CONFIG)
+REVISION = PROTOCOL.model_revision
 
 
 class _PieceTokenizer:
@@ -232,11 +234,11 @@ def test_window_patch_overwrites_every_selected_layer_only_at_edited_position() 
 
 
 class _BaseModel(torch.nn.Module):
-    def __init__(self) -> None:
+    def __init__(self, *, revision: str | None = REVISION) -> None:
         super().__init__()
         self.projection = torch.nn.Linear(1, 1)
         self.layers = torch.nn.ModuleList([_Add(1.0) for _ in range(34)])
-        self.config = SimpleNamespace(_commit_hash=None)
+        self.config = SimpleNamespace(_commit_hash=revision)
         self.generation_config = SimpleNamespace()
 
 
@@ -300,7 +302,11 @@ def test_runtime_factory_loads_base_once_and_switches_only_adapters(
         wrapper_calls.append(kwargs)
         return SimpleNamespace(
             model=base,
-            tokenizer=SimpleNamespace(is_fast=True, padding_side=None),
+            tokenizer=SimpleNamespace(
+                is_fast=True,
+                padding_side=None,
+                init_kwargs={"_commit_hash": REVISION},
+            ),
         )
 
     monkeypatch.setattr(wrapper_module, "create_model_wrapper", fake_wrapper)
@@ -322,12 +328,14 @@ def test_runtime_factory_loads_base_once_and_switches_only_adapters(
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
 
     factory = HuggingFaceRobustnessEvaluationRuntimeFactory(
-        protocol=load_robustness_evaluation_config(CONFIG),
+        protocol=PROTOCOL,
         gpu_id="5",
         patch_window=PatchWindow(0, 6, "e" * 64, "d" * 64),
     )
     base_runtime = factory(None)
     assert base_runtime.model is base
+    assert base_runtime.provenance()["model_revision"] == REVISION
+    assert base_runtime.provenance()["tokenizer_revision"] == REVISION
     base_runtime.close()
 
     output = _descriptor(tmp_path, condition="output-matching", seed=42)
@@ -356,3 +364,42 @@ def test_runtime_factory_loads_base_once_and_switches_only_adapters(
         ("evaluation_localized_state_distillation_seed_42", True),
     ]
     assert len(empty_cache_calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("model_revision", "tokenizer_kwargs", "message"),
+    [
+        (None, {"_commit_hash": REVISION}, "model revision is not observable"),
+        ("f" * 40, {"_commit_hash": REVISION}, "model revision differs"),
+        (REVISION, None, "tokenizer revision is not observable"),
+        (REVISION, {}, "tokenizer revision is not observable"),
+        (REVISION, {"_commit_hash": "f" * 40}, "tokenizer revision differs"),
+    ],
+)
+def test_runtime_factory_rejects_unattested_model_or_tokenizer_revision(
+    monkeypatch: pytest.MonkeyPatch,
+    model_revision: str | None,
+    tokenizer_kwargs: object,
+    message: str,
+) -> None:
+    base = _BaseModel(revision=model_revision)
+    tokenizer = SimpleNamespace(
+        is_fast=True,
+        padding_side=None,
+        init_kwargs=tokenizer_kwargs,
+    )
+    monkeypatch.setattr(
+        wrapper_module,
+        "create_model_wrapper",
+        lambda **_kwargs: SimpleNamespace(model=base, tokenizer=tokenizer),
+    )
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 1)
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+
+    with pytest.raises(ValueError, match=message):
+        HuggingFaceRobustnessEvaluationRuntimeFactory(
+            protocol=PROTOCOL,
+            gpu_id="5",
+            patch_window=PatchWindow(0, 6, "e" * 64, "d" * 64),
+        )

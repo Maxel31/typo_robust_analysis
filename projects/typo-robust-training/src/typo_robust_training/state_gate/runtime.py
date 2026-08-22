@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.metadata
+import importlib.util
 import os
 import platform
 import re
@@ -18,12 +20,25 @@ from typo_robust_training.state_gate.config import SingleLayerGateProtocol
 
 
 _REVISION = re.compile(r"[0-9a-f]{40}")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
-def _checkout_code_revision() -> str:
-    """Attest the exact tracked, clean source tree executing this provider."""
+def _checkout_source_attestation() -> tuple[str, str]:
+    """Attest both executing source trees and return HEAD plus their tree digest."""
 
     module_path = Path(__file__).resolve()
+    try:
+        dependency_spec = importlib.util.find_spec("typo_cot")
+    except (ImportError, ValueError) as exc:
+        raise RuntimeError(
+            "single-layer gate runtime cannot locate the typo_cot dependency source"
+        ) from exc
+    dependency_file = getattr(dependency_spec, "origin", None)
+    if not isinstance(dependency_file, str) or not dependency_file:
+        raise RuntimeError(
+            "single-layer gate runtime cannot locate the typo_cot dependency source"
+        )
+    dependency_path = Path(dependency_file).resolve()
     root_result = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
         cwd=module_path.parent,
@@ -36,22 +51,36 @@ def _checkout_code_revision() -> str:
     checkout_root = Path(root_result.stdout.strip()).resolve()
     try:
         module_relative = module_path.relative_to(checkout_root)
-        package_relative = module_path.parents[1].relative_to(checkout_root)
+        dependency_relative = dependency_path.relative_to(checkout_root)
+        package_relatives = (
+            module_path.parents[1].relative_to(checkout_root),
+            dependency_path.parent.relative_to(checkout_root),
+        )
     except ValueError as exc:
         raise RuntimeError(
-            "single-layer gate runtime module is outside the attested checkout"
+            "single-layer gate runtime or local dependency is outside the attested checkout"
         ) from exc
-    tracked_result = subprocess.run(
-        ["git", "ls-files", "--error-unmatch", "--", module_relative.as_posix()],
-        cwd=checkout_root,
-        check=False,
-        capture_output=True,
-        text=True,
+    expected_package_relatives = (
+        Path("projects/typo-robust-training/src/typo_robust_training"),
+        Path("projects/typo-cot/src/typo_cot"),
     )
-    if tracked_result.returncode != 0:
+    if package_relatives != expected_package_relatives:
         raise RuntimeError(
-            "single-layer gate runtime module is not tracked by the attested checkout"
+            "single-layer gate runtime source roots differ from the required checkout layout"
         )
+
+    for source_relative in (module_relative, dependency_relative):
+        tracked_result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", source_relative.as_posix()],
+            cwd=checkout_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if tracked_result.returncode != 0:
+            raise RuntimeError(
+                "single-layer gate runtime source is not tracked by the attested checkout"
+            )
     dirty_result = subprocess.run(
         [
             "git",
@@ -59,7 +88,7 @@ def _checkout_code_revision() -> str:
             "--porcelain=v1",
             "--untracked-files=all",
             "--",
-            package_relative.as_posix(),
+            *(relative.as_posix() for relative in package_relatives),
         ],
         cwd=checkout_root,
         check=False,
@@ -80,7 +109,38 @@ def _checkout_code_revision() -> str:
         raise RuntimeError(
             "single-layer gate runtime cannot attest the executing code revision"
         )
-    return revision
+
+    tree_entries: list[tuple[str, str]] = []
+    for relative in package_relatives:
+        tree_result = subprocess.run(
+            ["git", "rev-parse", f"HEAD:{relative.as_posix()}"],
+            cwd=checkout_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        tree_revision = tree_result.stdout.strip()
+        if tree_result.returncode != 0 or _REVISION.fullmatch(tree_revision) is None:
+            raise RuntimeError(
+                "single-layer gate runtime cannot attest a required source tree"
+            )
+        tree_entries.append((relative.as_posix(), tree_revision))
+    digest = hashlib.sha256()
+    for relative, tree_revision in sorted(tree_entries):
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(tree_revision.encode("ascii"))
+        digest.update(b"\0")
+    source_tree_sha256 = digest.hexdigest()
+    if _SHA256.fullmatch(source_tree_sha256) is None:  # pragma: no cover - hashlib invariant
+        raise RuntimeError("single-layer gate source tree digest is invalid")
+    return revision, source_tree_sha256
+
+
+def _checkout_code_revision() -> str:
+    """Return the revision only after both source trees pass full attestation."""
+
+    return _checkout_source_attestation()[0]
 
 
 def _require_exact_model_revision(
@@ -88,13 +148,13 @@ def _require_exact_model_revision(
     model_config: object,
     tokenizer: object,
     expected: str,
-) -> str:
-    """Require model evidence independently; tokenizer metadata cannot substitute."""
+) -> tuple[str, str]:
+    """Require independently observable, exact model and tokenizer revisions."""
 
     model_candidates: list[str] = []
     for config in (model_config, getattr(model_config, "text_config", None)):
         revision = getattr(config, "_commit_hash", None)
-        if isinstance(revision, str) and revision:
+        if isinstance(revision, str) and _REVISION.fullmatch(revision) is not None:
             model_candidates.append(revision)
     if not model_candidates:
         raise ValueError("single-layer gate loaded model revision is not observable")
@@ -103,17 +163,19 @@ def _require_exact_model_revision(
             "single-layer gate loaded model revision differs from preregistration"
         )
     init_kwargs = getattr(tokenizer, "init_kwargs", None)
-    if isinstance(init_kwargs, Mapping):
-        tokenizer_revision = init_kwargs.get("_commit_hash")
-        if (
-            isinstance(tokenizer_revision, str)
-            and tokenizer_revision
-            and tokenizer_revision != expected
-        ):
-            raise ValueError(
-                "single-layer gate loaded tokenizer revision differs from preregistration"
-            )
-    return expected
+    tokenizer_revision = (
+        init_kwargs.get("_commit_hash") if isinstance(init_kwargs, Mapping) else None
+    )
+    if (
+        not isinstance(tokenizer_revision, str)
+        or _REVISION.fullmatch(tokenizer_revision) is None
+    ):
+        raise ValueError("single-layer gate loaded tokenizer revision is not observable")
+    if tokenizer_revision != expected:
+        raise ValueError(
+            "single-layer gate loaded tokenizer revision differs from preregistration"
+        )
+    return model_candidates[0], tokenizer_revision
 
 
 def _inflation_bucket(delta: int) -> str:
@@ -141,7 +203,7 @@ class HuggingFaceSingleLayerGateProvider:
     def __init__(self, *, protocol: SingleLayerGateProtocol, gpu_id: str) -> None:
         if not isinstance(protocol, SingleLayerGateProtocol):
             raise TypeError("single-layer gate runtime requires its validated protocol")
-        code_revision = _checkout_code_revision()
+        code_revision, source_tree_sha256 = _checkout_source_attestation()
         if code_revision != protocol.code_revision:
             raise ValueError(
                 "single-layer gate executing code revision differs from preregistration"
@@ -169,6 +231,7 @@ class HuggingFaceSingleLayerGateProvider:
         self.gpu_id = gpu_id
         self.model_id = protocol.model
         self.model_revision = protocol.model_revision
+        self.source_tree_sha256 = source_tree_sha256
         self.code_revision = code_revision
         self.decoder_layers = protocol.decoder_layers
         self.base_model_frozen = True
@@ -185,11 +248,16 @@ class HuggingFaceSingleLayerGateProvider:
             parameter.requires_grad for parameter in self.model.parameters()
         ):
             raise ValueError("single-layer gate model identity or freeze boundary differs")
-        _require_exact_model_revision(
+        model_revision, tokenizer_revision = _require_exact_model_revision(
             model_config=self.model.config,
             tokenizer=self.tokenizer,
             expected=protocol.model_revision,
         )
+        # The clean donor (teacher) and typo recipient (student) are two roles of
+        # this same independently attested, frozen model instance.
+        self.teacher_revision = model_revision
+        self.student_revision = model_revision
+        self.tokenizer_revision = tokenizer_revision
 
     def _token_count(self, text: str) -> int:
         encoded = self.tokenizer(text, add_special_tokens=True)
@@ -527,11 +595,15 @@ class HuggingFaceSingleLayerGateProvider:
     def provenance(self) -> Mapping[str, object]:
         torch = self._torch
         return {
-            "schema_version": "single-layer-gate-runtime/v1",
+            "schema_version": "single-layer-gate-runtime/v2",
             "provider": "hugging-face-single-layer-gate/v1",
             "model": self.model_id,
             "model_revision": self.model_revision,
+            "teacher_revision": self.teacher_revision,
+            "student_revision": self.student_revision,
+            "tokenizer_revision": self.tokenizer_revision,
             "code_revision": self.code_revision,
+            "source_tree_sha256": self.source_tree_sha256,
             "decoder_layers": len(self.layers),
             "dtype": "bfloat16",
             "hook_site": "complete-decoder-block-residual-output",

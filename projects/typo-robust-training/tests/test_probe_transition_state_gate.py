@@ -21,6 +21,7 @@ from typo_robust_training.state_gate.producer import produce_single_layer_gate_a
 from typo_robust_training.state_gate.runtime import (
     HuggingFaceSingleLayerGateProvider,
     _checkout_code_revision,
+    _checkout_source_attestation,
     _require_exact_model_revision,
 )
 
@@ -97,11 +98,15 @@ def _gate_inputs(tmp_path: Path) -> tuple[dict[str, Path], object]:
         },
     )
     runtime_value = {
-        "schema_version": "single-layer-gate-runtime/v1",
+        "schema_version": "single-layer-gate-runtime/v2",
         "provider": "hugging-face-single-layer-gate/v1",
         "model": parent.model,
         "model_revision": parent.model_revision,
+        "teacher_revision": parent.model_revision,
+        "student_revision": parent.model_revision,
+        "tokenizer_revision": parent.model_revision,
         "code_revision": "b" * 40,
+        "source_tree_sha256": "d" * 64,
         "decoder_layers": parent.decoder_layers,
         "dtype": "bfloat16",
         "hook_site": "complete-decoder-block-residual-output",
@@ -178,7 +183,11 @@ class _FakeProvider:
         assert isinstance(provenance, Mapping)
         self.model_id = str(provenance["model"])
         self.model_revision = str(provenance["model_revision"])
+        self.teacher_revision = str(provenance["teacher_revision"])
+        self.student_revision = str(provenance["student_revision"])
+        self.tokenizer_revision = str(provenance["tokenizer_revision"])
         self.code_revision = str(provenance["code_revision"])
+        self.source_tree_sha256 = str(provenance["source_tree_sha256"])
         self.decoder_layers = int(provenance["decoder_layers"])
         self.base_model_frozen = bool(provenance["base_model_frozen"])
         self.scan_calls = 0
@@ -560,14 +569,24 @@ def test_hugging_face_gate_provider_derives_bucket_from_its_bound_tokenizer() ->
     assert provider.token_inflation_bucket(record) == "plus-one"
 
 
-@pytest.mark.parametrize("field", ["model_revision", "code_revision"])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "model_revision",
+        "teacher_revision",
+        "student_revision",
+        "tokenizer_revision",
+        "code_revision",
+        "source_tree_sha256",
+    ],
+)
 def test_gate_rejects_unattested_provider_identity_before_scan(
     tmp_path: Path,
     field: str,
 ) -> None:
     inputs, provenance = _gate_inputs(tmp_path)
     provider = _FakeProvider(provenance)
-    setattr(provider, field, "c" * 40)
+    setattr(provider, field, "c" * (64 if field == "source_tree_sha256" else 40))
 
     with pytest.raises(ValueError, match="identity or freeze contract"):
         produce_single_layer_gate_artifact(
@@ -608,6 +627,116 @@ def test_gate_runtime_rejects_dirty_executing_source(
         _checkout_code_revision()
 
 
+def test_gate_runtime_rejects_dirty_typo_cot_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkout = Path(__file__).resolve()
+    while not (checkout / ".git").exists():
+        checkout = checkout.parent
+
+    def fake_run(args: list[str], **_kwargs: object) -> object:
+        operation = tuple(args[1:])
+        if operation == ("rev-parse", "--show-toplevel"):
+            return SimpleNamespace(returncode=0, stdout=f"{checkout}\n")
+        if operation[0] == "ls-files":
+            return SimpleNamespace(returncode=0, stdout="tracked\n")
+        if operation[0] == "status":
+            assert any("projects/typo-cot/src/typo_cot" in value for value in args)
+            return SimpleNamespace(
+                returncode=0,
+                stdout=" M projects/typo-cot/src/typo_cot/models/wrapper.py\n",
+            )
+        return SimpleNamespace(returncode=0, stdout=f"{'a' * 40}\n")
+
+    monkeypatch.setattr(
+        "typo_robust_training.state_gate.runtime.subprocess.run",
+        fake_run,
+    )
+    with pytest.raises(RuntimeError, match="source tree is not clean"):
+        _checkout_code_revision()
+
+
+def test_gate_runtime_rejects_untracked_typo_cot_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkout = Path(__file__).resolve()
+    while not (checkout / ".git").exists():
+        checkout = checkout.parent
+
+    def fake_run(args: list[str], **_kwargs: object) -> object:
+        operation = tuple(args[1:])
+        if operation == ("rev-parse", "--show-toplevel"):
+            return SimpleNamespace(returncode=0, stdout=f"{checkout}\n")
+        if operation[0] == "ls-files":
+            dependency = any("projects/typo-cot/src/typo_cot" in value for value in args)
+            return SimpleNamespace(returncode=1 if dependency else 0, stdout="")
+        raise AssertionError("attestation continued after an untracked dependency")
+
+    monkeypatch.setattr(
+        "typo_robust_training.state_gate.runtime.subprocess.run",
+        fake_run,
+    )
+    with pytest.raises(RuntimeError, match="not tracked"):
+        _checkout_code_revision()
+
+
+@pytest.mark.parametrize("origin", [None, "/tmp/unattested/typo_cot/__init__.py"])
+def test_gate_runtime_rejects_unknown_or_outside_dependency_source(
+    monkeypatch: pytest.MonkeyPatch,
+    origin: str | None,
+) -> None:
+    checkout = Path(__file__).resolve()
+    while not (checkout / ".git").exists():
+        checkout = checkout.parent
+    monkeypatch.setattr(
+        "typo_robust_training.state_gate.runtime.importlib.util.find_spec",
+        lambda _name: SimpleNamespace(origin=origin) if origin is not None else None,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.state_gate.runtime.subprocess.run",
+        lambda _args, **_kwargs: SimpleNamespace(returncode=0, stdout=f"{checkout}\n"),
+    )
+    with pytest.raises(RuntimeError, match="dependency source|outside"):
+        _checkout_code_revision()
+
+
+def test_gate_source_tree_digest_binds_both_required_trees(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkout = Path(__file__).resolve()
+    while not (checkout / ".git").exists():
+        checkout = checkout.parent
+    robust_tree = ["b" * 40]
+    dependency_tree = ["c" * 40]
+
+    def fake_run(args: list[str], **_kwargs: object) -> object:
+        operation = tuple(args[1:])
+        if operation == ("rev-parse", "--show-toplevel"):
+            return SimpleNamespace(returncode=0, stdout=f"{checkout}\n")
+        if operation[0] == "ls-files" or operation[0] == "status":
+            return SimpleNamespace(returncode=0, stdout="")
+        if operation == ("rev-parse", "HEAD"):
+            return SimpleNamespace(returncode=0, stdout=f"{'a' * 40}\n")
+        if operation[0] == "rev-parse" and "projects/typo-cot" in operation[1]:
+            return SimpleNamespace(returncode=0, stdout=f"{dependency_tree[0]}\n")
+        if operation[0] == "rev-parse" and "projects/typo-robust-training" in operation[1]:
+            return SimpleNamespace(returncode=0, stdout=f"{robust_tree[0]}\n")
+        raise AssertionError(f"unexpected git operation: {operation}")
+
+    monkeypatch.setattr(
+        "typo_robust_training.state_gate.runtime.subprocess.run",
+        fake_run,
+    )
+    first_revision, first_digest = _checkout_source_attestation()
+    dependency_tree[0] = "d" * 40
+    second_revision, second_digest = _checkout_source_attestation()
+    robust_tree[0] = "e" * 40
+    third_revision, third_digest = _checkout_source_attestation()
+    assert first_revision == second_revision == third_revision == "a" * 40
+    assert first_digest != second_digest
+    assert second_digest != third_digest
+
+
 def test_gate_runtime_requires_executing_module_to_be_tracked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -641,6 +770,52 @@ def test_gate_model_revision_must_be_observable_from_model_independently() -> No
             expected="a" * 40,
         )
     config._commit_hash = "b" * 40
+    with pytest.raises(ValueError, match="model revision differs"):
+        _require_exact_model_revision(
+            model_config=config,
+            tokenizer=tokenizer,
+            expected="a" * 40,
+        )
+
+
+@pytest.mark.parametrize(
+    "tokenizer",
+    [
+        SimpleNamespace(),
+        SimpleNamespace(init_kwargs=None),
+        SimpleNamespace(init_kwargs=[]),
+        SimpleNamespace(init_kwargs={}),
+        SimpleNamespace(init_kwargs={"_commit_hash": None}),
+        SimpleNamespace(init_kwargs={"_commit_hash": ""}),
+        SimpleNamespace(init_kwargs={"_commit_hash": "not-a-revision"}),
+    ],
+)
+def test_gate_tokenizer_revision_must_be_observable(tokenizer: object) -> None:
+    config = SimpleNamespace(_commit_hash="a" * 40, text_config=None)
+    with pytest.raises(ValueError, match="tokenizer revision is not observable"):
+        _require_exact_model_revision(
+            model_config=config,
+            tokenizer=tokenizer,
+            expected="a" * 40,
+        )
+
+
+def test_gate_tokenizer_revision_must_match_exactly() -> None:
+    config = SimpleNamespace(_commit_hash="a" * 40, text_config=None)
+    with pytest.raises(ValueError, match="tokenizer revision differs"):
+        _require_exact_model_revision(
+            model_config=config,
+            tokenizer=SimpleNamespace(init_kwargs={"_commit_hash": "b" * 40}),
+            expected="a" * 40,
+        )
+
+
+def test_gate_rejects_conflicting_top_level_and_text_model_revisions() -> None:
+    config = SimpleNamespace(
+        _commit_hash="a" * 40,
+        text_config=SimpleNamespace(_commit_hash="b" * 40),
+    )
+    tokenizer = SimpleNamespace(init_kwargs={"_commit_hash": "a" * 40})
     with pytest.raises(ValueError, match="model revision differs"):
         _require_exact_model_revision(
             model_config=config,
