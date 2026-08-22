@@ -31,6 +31,7 @@ from typo_robust_training.training.runtime import (
 from typo_robust_training.training.runner import (
     AdapterTrainingRunConfig,
     _load_evidence,
+    _resolved_method_presentation_layers,
     run_adapter_training,
 )
 from typo_robust_training.training.step import compute_training_step
@@ -88,6 +89,10 @@ def test_v5_is_exactly_output_plus_single_layer_cosine_with_one_shot_rho(
     assert protocol.state_distance == "cosine-residual/v1"
     assert resolved.adapter_layers == tuple(range(7, 34))
     assert resolved.state_layers == (7,)
+    assert _resolved_method_presentation_layers(
+        condition=protocol.condition,
+        method=resolved,
+    ) == (7,)
 
 
 @pytest.mark.parametrize(
@@ -101,6 +106,8 @@ def test_v5_is_exactly_output_plus_single_layer_cosine_with_one_shot_rho(
         (("objective", "state_window_policy", "all-decoder-layers/v1"), "objective"),
         (("adapter", "layer_scope", "all-decoder-layers"), "objective"),
         (("objective.weights", "answer", 1), "objective"),
+        (("optimization", "learning_rate", 0.25), "frozen 10M recipe"),
+        (("optimization", "max_student_tokens", 1), "frozen 10M recipe"),
     ],
 )
 def test_v5_rejects_dosage_loss_or_scope_drift(
@@ -755,8 +762,6 @@ def test_runner_replays_initial_eight_noisy_pairs_before_loading_resume_state(
     payload = json.loads(TEMPLATE.read_text())
     payload["schema_version"] = "robustness-adapter-training-config/v5"
     payload["method_evidence"]["artifact_sha256"] = "a" * 64
-    payload["optimization"]["max_optimizer_steps"] = 1
-    payload["optimization"]["checkpoint_every_optimizer_steps"] = 50
     config_path = tmp_path / "resume-config.json"
     config_path.write_text(json.dumps(payload), encoding="utf-8")
     protocol = load_adapter_training_config(config_path)
@@ -767,7 +772,13 @@ def test_runner_replays_initial_eight_noisy_pairs_before_loading_resume_state(
     monitor_data_sha = "f" * 64
     write_training_checkpoint(
         output_dir / "checkpoint.json",
-        cursor=TrainingCursor(0, 0, 0, 1, protocol.max_student_tokens),
+        cursor=TrainingCursor(
+            0,
+            0,
+            0,
+            protocol.max_optimizer_steps,
+            protocol.max_student_tokens,
+        ),
         state_path=state_path,
         bindings={
             "config_sha256": protocol.config_sha256,
@@ -779,7 +790,12 @@ def test_runner_replays_initial_eight_noisy_pairs_before_loading_resume_state(
             "seed": 42,
         },
     )
-    (output_dir / "adapter-step-000001").mkdir()
+    for step in range(
+        protocol.checkpoint_every_optimizer_steps,
+        protocol.max_optimizer_steps + 1,
+        protocol.checkpoint_every_optimizer_steps,
+    ):
+        (output_dir / f"adapter-step-{step:06d}").mkdir()
     monkeypatch.setattr(
         "typo_robust_training.evaluation.study.load_evaluation_study_protocol",
         lambda _path: SimpleNamespace(

@@ -261,6 +261,24 @@ def test_probe_transition_v4_rejects_lora_capacity_or_dropout_drift(
         load_adapter_training_config(path)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("learning_rate", 0.25), ("max_student_tokens", 123)),
+)
+def test_probe_transition_v4_rejects_frozen_budget_or_optimizer_drift(
+    tmp_path: Path,
+    field: str,
+    value: int | float,
+) -> None:
+    payload = json.loads(CONFIG.read_text(encoding="utf-8"))
+    payload["optimization"][field] = value
+    path = tmp_path / f"drifted-optimization-{field}.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="frozen 10M recipe"):
+        load_adapter_training_config(path)
+
+
 def test_probe_transition_cli_requires_probe_selection() -> None:
     parser = argparse.ArgumentParser()
     register_commands(parser.add_subparsers(dest="command"))

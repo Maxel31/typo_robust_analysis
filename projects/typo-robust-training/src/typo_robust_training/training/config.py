@@ -160,6 +160,64 @@ _V6_FROZEN_SECTIONS: Mapping[str, object] = {
         "state_window_policy": "single-probe-transition-layer/v1",
     },
 }
+_V5_FROZEN_SECTIONS: Mapping[str, object] = {
+    "model": _V6_FROZEN_SECTIONS["model"],
+    "sequence": _V6_FROZEN_SECTIONS["sequence"],
+    "adapter": {
+        "method": "lora",
+        "rank": 16,
+        "alpha": 8,
+        "dropout": 0,
+        "target_modules": list(_TARGET_MODULES),
+        "layer_scope": "probe-transition-suffix",
+        "layer_policy": "validated-linear-probe-transition-suffix/v1",
+        "bias": "none",
+        "task_type": "CAUSAL_LM",
+    },
+    "optimization": _V6_FROZEN_SECTIONS["optimization"],
+    "objective": {
+        "weights": {
+            "noisy_language_model": 0,
+            "answer": 0,
+            "output": 1,
+            "state": 1,
+            "clean": 0,
+        },
+        "state_scope": "probe-transition-single-layer-edited-word-final-token/v1",
+        "state_distance": "cosine-residual/v1",
+        "output_scope": "aligned-non-edited-next-token/v1",
+        "noisy_language_model_scope": "all-nonpadding-next-tokens/v1",
+        "temperature": 1.0,
+        "epsilon": 1e-8,
+        "state_gradient_ratio": 0.05,
+        "calibration_micro_batches": 8,
+        "state_window_policy": "validated-probe-transition-single-layer/v1",
+    },
+}
+_V4_FROZEN_SECTIONS: Mapping[str, object] = {
+    "model": _V5_FROZEN_SECTIONS["model"],
+    "sequence": _V5_FROZEN_SECTIONS["sequence"],
+    "adapter": _V5_FROZEN_SECTIONS["adapter"],
+    "optimization": _V5_FROZEN_SECTIONS["optimization"],
+    "objective": {
+        "weights": {
+            "noisy_language_model": 0,
+            "answer": 0,
+            "output": 1,
+            "state": 0,
+            "clean": 0,
+        },
+        "state_scope": "none",
+        "state_distance": "none",
+        "output_scope": "aligned-non-edited-next-token/v1",
+        "noisy_language_model_scope": "all-nonpadding-next-tokens/v1",
+        "temperature": 1.0,
+        "epsilon": 1e-8,
+        "state_gradient_ratio": None,
+        "calibration_micro_batches": 0,
+        "state_window_policy": "none",
+    },
+}
 
 
 def _canonical_json(value: object) -> str:
@@ -692,6 +750,20 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
             "state training with exact alternating pairs requires an even "
             "gradient_accumulation_steps >= 2"
         )
+
+    frozen_recipe = (
+        _V4_FROZEN_SECTIONS
+        if schema_version.endswith("/v4")
+        else _V5_FROZEN_SECTIONS
+        if schema_version.endswith("/v5")
+        else None
+    )
+    if frozen_recipe is not None:
+        for section, expected in frozen_recipe.items():
+            if _canonical_json(root[section]) != _canonical_json(expected):
+                raise ValueError(
+                    f"probe-transition {section} differs from the frozen 10M recipe"
+                )
 
     return AdapterTrainingProtocol(
         schema_version=str(schema_version),

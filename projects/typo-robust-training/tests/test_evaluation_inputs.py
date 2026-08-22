@@ -99,7 +99,6 @@ def _adapter(
                     if method_evidence_sha256 is not None
                     else {}
                 ),
-                **({"runtime": run_runtime} if run_runtime is not None else {}),
                 "outputs": {"adapter": {"sha256": _tree_sha256(adapter)}},
             }
         ),

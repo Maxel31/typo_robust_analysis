@@ -205,7 +205,11 @@ def _resolved_method_presentation_layers(
 
     return (
         method.state_layers
-        if condition == "probe-semantic-subspace-distillation"
+        if condition
+        in {
+            "probe-transition-single-layer-state-distillation",
+            "probe-semantic-subspace-distillation",
+        }
         else method.adapter_layers
     )
 
@@ -655,6 +659,7 @@ def run_adapter_training(
         | ResidualStateEvidence
         | training_methods.ProbeTransitionTrainingEvidence
         | training_methods.ProbeTransitionStateTrainingEvidence
+        | training_methods.ProbeSemanticSubspaceTrainingEvidence
         | None
     ) = None,
     tracker: TrainingTracker | None = None,

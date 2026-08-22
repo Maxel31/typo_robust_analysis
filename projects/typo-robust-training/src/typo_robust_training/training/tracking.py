@@ -79,6 +79,24 @@ _ARM_PRESENTATION = {
         "control",
         "Scope control: output matching plus residual-state alignment at every decoder layer.",
     ),
+    "probe-transition-output-matching": (
+        "Probe-transition baseline",
+        "Probe-transition suffix output matching",
+        "probe-transition-output-matching",
+        "baseline-probe-transition-output",
+        "baseline",
+        "Matched-budget output-distribution baseline with LoRA restricted to the "
+        "validated linear-probe transition suffix; no state-alignment loss.",
+    ),
+    "probe-transition-single-layer-state-distillation": (
+        "Probe-transition state proposal",
+        "Single-layer transition-state distillation",
+        "probe-transition-single-layer-state-distillation",
+        "proposed-probe-transition-state",
+        "proposed",
+        "Proposed arm: suffix LoRA output matching plus cosine residual-state alignment "
+        "at the validated linear-probe transition layer and edited-word-final token.",
+    ),
     "probe-semantic-subspace-distillation": (
         "Probe-subspace proposal",
         "Rank-16 semantic-subspace distillation",

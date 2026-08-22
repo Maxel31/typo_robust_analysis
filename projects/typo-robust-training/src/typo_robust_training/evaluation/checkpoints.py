@@ -184,7 +184,10 @@ def load_adapter_descriptors(
             raise ValueError("evaluation legacy adapter runtime contains method evidence")
         run_runtime = run.get("runtime")
         if not isinstance(run_runtime, Mapping) or dict(run_runtime) != dict(runtime):
-            raise ValueError("evaluation adapter run/runtime provenance differs")
+            raise ValueError(
+                "evaluation run and adapter runtime provenance differ "
+                "(adapter run/runtime provenance differs)"
+            )
         outputs = run.get("outputs")
         adapter_output = outputs.get("adapter") if isinstance(outputs, Mapping) else None
         adapter_sha256 = sha256_tree(path)
