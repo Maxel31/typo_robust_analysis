@@ -471,10 +471,32 @@ def classify_character_edit(*, clean: str, typo: str) -> str | None:
     return None
 
 
+def is_keyboard_neighbor_substitution(*, clean: str, typo: str) -> bool:
+    """Return whether one case-preserving QWERTY-neighbor substitution occurred."""
+
+    if not isinstance(clean, str) or not isinstance(typo, str) or len(clean) != len(typo):
+        return False
+    differences = [
+        (clean_character, typo_character)
+        for clean_character, typo_character in zip(clean, typo, strict=True)
+        if clean_character != typo_character
+    ]
+    if len(differences) != 1:
+        return False
+    original, replacement = differences[0]
+    return (
+        original.lower() in _KEYBOARD_NEIGHBORS
+        and replacement.lower() in _KEYBOARD_NEIGHBORS[original.lower()]
+        and original.isupper() == replacement.isupper()
+        and original.islower() == replacement.islower()
+    )
+
+
 __all__ = [
     "HELD_OUT_OPERATIONS",
     "TRAINING_OPERATIONS",
     "TypoGenerator",
     "classify_character_edit",
     "eligible_word_spans",
+    "is_keyboard_neighbor_substitution",
 ]

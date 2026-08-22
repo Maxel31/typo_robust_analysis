@@ -10,6 +10,7 @@ dependencies = [
     "numpy>=2",
     "peft==0.20.0",
     "protobuf>=4",
+    "safetensors>=0.4",
     "sentencepiece>=0.2.1",
     "torch==2.10.0",
     "transformers==4.57.6",
