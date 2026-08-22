@@ -64,6 +64,7 @@ TRAINING_PLUGIN_COMMANDS = frozenset(
         "freeze-generic-localization-pairs",
         "freeze-robustness-evaluation",
         "localize-robustness-components",
+        "materialize-probe-transition-training-config",
         "select-distillation-layers",
         "select-generic-joint-patch-window",
         "select-probe-transition",
@@ -71,6 +72,7 @@ TRAINING_PLUGIN_COMMANDS = frozenset(
         "train-localized-state-distillation",
         "train-noisy-language-model",
         "train-output-matching",
+        "train-probe-transition-output-matching",
         "train-random-window-state-distillation",
         "train-sparse-autoencoders",
         "validate-generic-joint-patch-window",
@@ -213,7 +215,7 @@ def test_real_cli_registers_the_exact_core_and_training_plugin_commands() -> Non
     assert CORE_COMMANDS.isdisjoint(TRAINING_PLUGIN_COMMANDS)
     assert combined_commands - plugin_commands == CORE_COMMANDS
     assert combined_commands == CORE_COMMANDS | TRAINING_PLUGIN_COMMANDS
-    assert len(combined_commands) == 48
+    assert len(combined_commands) == 50
 
 
 @pytest.mark.parametrize("readme_name", ["README.md", "README.ja.md"])

@@ -13,6 +13,10 @@ import pytest
 from typo_robust_training.data.perturb import TypoGenerator
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.training.config import load_adapter_training_config
+from typo_robust_training.training.checkpoint import (
+    TrainingCursor,
+    write_training_checkpoint,
+)
 from typo_robust_training.training.data import TrainingDataBundle
 from typo_robust_training.training.methods import ProbeTransitionTrainingEvidence
 from typo_robust_training.training.pairs import TrainingPair, TrainingSource
@@ -30,7 +34,7 @@ from typo_robust_training.training.runtime import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-PROBE_CONFIG = PROJECT_ROOT / "configs/proposals/gemma4b-probe-transition-output-10m.yaml"
+PROBE_CONFIG = PROJECT_ROOT / "tests/fixtures/gemma4b-probe-transition-output-10m.bound.json"
 OUTPUT_CONFIG = PROJECT_ROOT / "configs/cycle2/gemma4b-output-matching-100step.yaml"
 REVISION = "093f9f388b31de276ce2de164bdc2081324b9767"
 EVIDENCE_SHA256 = "a" * 64
@@ -298,6 +302,85 @@ def test_runner_binds_probe_hash_to_run_and_checkpoint(
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["method_evidence_sha256"] == EVIDENCE_SHA256
     assert run["localization_sha256"] is None
+
+
+def test_resume_rejects_changed_probe_evidence_before_runtime_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    protocol = load_adapter_training_config(PROBE_CONFIG)
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    state_path = output_dir / "runtime-state.pt"
+    state_path.write_bytes(b"opaque runtime state")
+    monitor_protocol_sha = "e" * 64
+    monitor_data_sha = "f" * 64
+    write_training_checkpoint(
+        output_dir / "checkpoint.json",
+        cursor=TrainingCursor(0, 0, 0, 0, 0),
+        state_path=state_path,
+        bindings={
+            "config_sha256": protocol.config_sha256,
+            "training_data_sha256": "d" * 64,
+            "localization_sha256": None,
+            "method_evidence_sha256": "9" * 64,
+            "monitor_protocol_sha256": monitor_protocol_sha,
+            "monitor_data_sha256": monitor_data_sha,
+            "seed": 42,
+        },
+    )
+
+    study = SimpleNamespace(
+        config_sha256=monitor_protocol_sha,
+        tune_fineweb_documents=1,
+        tune_natural_pairs=1,
+        gates={
+            "maximum_clean_kl_nats_per_token": 0.03,
+            "maximum_clean_ppl_ratio": 1.02,
+        },
+    )
+    monitor_bundle = SimpleNamespace(
+        records=(
+            SimpleNamespace(source="fineweb_edu", kind="clean"),
+            SimpleNamespace(source="github_typo_corpus", kind="natural"),
+        ),
+        manifest_sha256=monitor_data_sha,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.evaluation.study.load_evaluation_study_protocol",
+        lambda _path: study,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.evaluation.data.load_evaluation_corpus_bundle",
+        lambda *_args, **_kwargs: monitor_bundle,
+    )
+    runtime_constructed = False
+
+    def forbidden_runtime(*_args: object, **_kwargs: object) -> object:
+        nonlocal runtime_constructed
+        runtime_constructed = True
+        raise AssertionError("runtime must not be constructed for mismatched evidence")
+
+    monkeypatch.setattr(
+        "typo_robust_training.training.runtime.HuggingFaceAdapterTrainingRuntime",
+        forbidden_runtime,
+    )
+    run_config = replace(
+        _run_config(tmp_path),
+        output_dir=output_dir,
+        resume=True,
+        evaluation_protocol_path=tmp_path / "evaluation.json",
+        monitor_data_dir=tmp_path / "monitor",
+    )
+
+    with pytest.raises(ValueError, match="training checkpoint bindings differ"):
+        run_adapter_training(
+            run_config,
+            runtime=None,
+            data_bundle=_bundle(tmp_path),
+            evidence=_evidence(),
+        )
+    assert runtime_constructed is False
 
 
 def test_runtime_provenance_reports_probe_evidence_hash(

@@ -11,12 +11,16 @@ from typo_robust_training.cli import register_commands
 from typo_robust_training.training.config import load_adapter_training_config
 from typo_robust_training.training.methods import (
     ProbeTransitionTrainingEvidence,
+    materialize_probe_transition_training_config,
     resolve_training_method,
 )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CONFIG = PROJECT_ROOT / "configs/proposals/gemma4b-probe-transition-output-10m.yaml"
+CONFIG = PROJECT_ROOT / "tests/fixtures/gemma4b-probe-transition-output-10m.bound.json"
+TEMPLATE = (
+    PROJECT_ROOT / "configs/proposals/gemma4b-probe-transition-output-10m.template.yaml"
+)
 
 
 def _evidence(*, transition: int = 7) -> ProbeTransitionTrainingEvidence:
@@ -48,6 +52,109 @@ def test_probe_transition_v4_config_is_output_only_and_suffix_scoped() -> None:
     assert protocol.state_distance == "none"
     assert protocol.state_gradient_ratio is None
     assert protocol.calibration_micro_batches == 0
+
+
+def test_probe_transition_template_is_deliberately_not_runnable() -> None:
+    with pytest.raises(ValueError, match="config fields differ|schema"):
+        load_adapter_training_config(TEMPLATE)
+
+
+def test_materializer_atomically_binds_validated_artifact_hash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Path] = []
+
+    def load(path: Path, **identity: object) -> ProbeTransitionTrainingEvidence:
+        calls.append(path)
+        assert identity == {
+            "model": "google/gemma-3-4b-it",
+            "model_revision": "093f9f388b31de276ce2de164bdc2081324b9767",
+            "decoder_layers": 34,
+        }
+        return _evidence()
+
+    monkeypatch.setattr(
+        "typo_robust_training.training.methods.load_probe_transition_training_evidence",
+        load,
+    )
+    evidence_path = tmp_path / "probe-artifact.json"
+    evidence_path.write_text("fixture", encoding="utf-8")
+    output = tmp_path / "materialized.json"
+
+    protocol = materialize_probe_transition_training_config(
+        TEMPLATE,
+        evidence_path=evidence_path,
+        output_path=output,
+    )
+
+    assert calls == [evidence_path]
+    assert output.is_file()
+    assert protocol.expected_method_evidence_sha256 == "a" * 64
+    assert json.loads(output.read_text(encoding="utf-8"))["method_evidence"] == {
+        "schema_version": "probe-transition-evidence-binding/v1",
+        "artifact_sha256": "a" * 64,
+    }
+    assert not any(path.name.startswith(f".{output.name}.") for path in tmp_path.iterdir())
+
+
+def test_materialized_config_hash_changes_with_evidence_hash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = {"digest": "a" * 64}
+
+    def load(_path: Path, **_identity: object) -> ProbeTransitionTrainingEvidence:
+        return replace(_evidence(), evidence_sha256=current["digest"])
+
+    monkeypatch.setattr(
+        "typo_robust_training.training.methods.load_probe_transition_training_evidence",
+        load,
+    )
+    evidence_path = tmp_path / "probe-artifact.json"
+    evidence_path.write_text("fixture", encoding="utf-8")
+    first = materialize_probe_transition_training_config(
+        TEMPLATE,
+        evidence_path=evidence_path,
+        output_path=tmp_path / "first.json",
+    )
+    current["digest"] = "b" * 64
+    second = materialize_probe_transition_training_config(
+        TEMPLATE,
+        evidence_path=evidence_path,
+        output_path=tmp_path / "second.json",
+    )
+
+    assert first.config_sha256 != second.config_sha256
+
+
+def test_materializer_rejects_symlink_evidence_before_loading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "artifact.json"
+    target.write_text("fixture", encoding="utf-8")
+    link = tmp_path / "artifact-link.json"
+    link.symlink_to(target)
+    called = False
+
+    def load(*_args: object, **_kwargs: object) -> ProbeTransitionTrainingEvidence:
+        nonlocal called
+        called = True
+        return _evidence()
+
+    monkeypatch.setattr(
+        "typo_robust_training.training.methods.load_probe_transition_training_evidence",
+        load,
+    )
+
+    with pytest.raises(ValueError, match="must not be a symlink"):
+        materialize_probe_transition_training_config(
+            TEMPLATE,
+            evidence_path=link,
+            output_path=tmp_path / "output.json",
+        )
+    assert called is False
 
 
 def test_probe_transition_resolves_exact_suffix_and_no_state_layers() -> None:
@@ -159,3 +266,24 @@ def test_probe_transition_cli_requires_probe_selection() -> None:
 
     assert args.probe_selection == Path("probe.json")
     assert args._training_condition == "probe-transition-output-matching"
+
+
+def test_probe_transition_config_materializer_cli_is_explicit() -> None:
+    parser = argparse.ArgumentParser()
+    register_commands(parser.add_subparsers(dest="command"))
+
+    args = parser.parse_args(
+        [
+            "materialize-probe-transition-training-config",
+            "--template",
+            "template.json",
+            "--probe-selection",
+            "probe.json",
+            "--output-config",
+            "bound.json",
+        ]
+    )
+
+    assert args.template == Path("template.json")
+    assert args.probe_selection == Path("probe.json")
+    assert args.output_config == Path("bound.json")

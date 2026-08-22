@@ -25,7 +25,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROPOSED_CONFIG = PROJECT_ROOT / "configs/gemma4b-targeted-lora.yaml"
 NOISY_CONFIG = PROJECT_ROOT / "configs/baselines/noisy-language-model.yaml"
 PROBE_TRANSITION_CONFIG = (
-    PROJECT_ROOT / "configs/proposals/gemma4b-probe-transition-output-10m.yaml"
+    PROJECT_ROOT / "tests/fixtures/gemma4b-probe-transition-output-10m.bound.json"
 )
 
 
