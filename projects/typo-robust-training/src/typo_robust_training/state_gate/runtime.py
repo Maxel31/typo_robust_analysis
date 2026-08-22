@@ -5,13 +5,127 @@ from __future__ import annotations
 import importlib.metadata
 import os
 import platform
+import re
+import subprocess
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 from typo_robust_training.localization.corpus_targets import clean_corpus_targets
 from typo_robust_training.localization.prompting import word_final_token_positions
 from typo_robust_training.state_gate.artifacts import SingleLayerGateRecord
 from typo_robust_training.state_gate.config import SingleLayerGateProtocol
+
+
+_REVISION = re.compile(r"[0-9a-f]{40}")
+
+
+def _checkout_code_revision() -> str:
+    """Attest the exact tracked, clean source tree executing this provider."""
+
+    module_path = Path(__file__).resolve()
+    root_result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=module_path.parent,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if root_result.returncode != 0:
+        raise RuntimeError("single-layer gate runtime cannot locate its git checkout")
+    checkout_root = Path(root_result.stdout.strip()).resolve()
+    try:
+        module_relative = module_path.relative_to(checkout_root)
+        package_relative = module_path.parents[1].relative_to(checkout_root)
+    except ValueError as exc:
+        raise RuntimeError(
+            "single-layer gate runtime module is outside the attested checkout"
+        ) from exc
+    tracked_result = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "--", module_relative.as_posix()],
+        cwd=checkout_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if tracked_result.returncode != 0:
+        raise RuntimeError(
+            "single-layer gate runtime module is not tracked by the attested checkout"
+        )
+    dirty_result = subprocess.run(
+        [
+            "git",
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--",
+            package_relative.as_posix(),
+        ],
+        cwd=checkout_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if dirty_result.returncode != 0 or dirty_result.stdout.strip():
+        raise RuntimeError("single-layer gate runtime source tree is not clean")
+    head_result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=checkout_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    revision = head_result.stdout.strip()
+    if head_result.returncode != 0 or _REVISION.fullmatch(revision) is None:
+        raise RuntimeError(
+            "single-layer gate runtime cannot attest the executing code revision"
+        )
+    return revision
+
+
+def _require_exact_model_revision(
+    *,
+    model_config: object,
+    tokenizer: object,
+    expected: str,
+) -> str:
+    """Require model evidence independently; tokenizer metadata cannot substitute."""
+
+    model_candidates: list[str] = []
+    for config in (model_config, getattr(model_config, "text_config", None)):
+        revision = getattr(config, "_commit_hash", None)
+        if isinstance(revision, str) and revision:
+            model_candidates.append(revision)
+    if not model_candidates:
+        raise ValueError("single-layer gate loaded model revision is not observable")
+    if any(revision != expected for revision in model_candidates):
+        raise ValueError(
+            "single-layer gate loaded model revision differs from preregistration"
+        )
+    init_kwargs = getattr(tokenizer, "init_kwargs", None)
+    if isinstance(init_kwargs, Mapping):
+        tokenizer_revision = init_kwargs.get("_commit_hash")
+        if (
+            isinstance(tokenizer_revision, str)
+            and tokenizer_revision
+            and tokenizer_revision != expected
+        ):
+            raise ValueError(
+                "single-layer gate loaded tokenizer revision differs from preregistration"
+            )
+    return expected
+
+
+def _inflation_bucket(delta: int) -> str:
+    if delta <= -2:
+        return "minus-two-or-more"
+    if delta == -1:
+        return "minus-one"
+    if delta == 0:
+        return "same"
+    if delta == 1:
+        return "plus-one"
+    return "plus-two-or-more"
 
 
 def _version(package: str) -> str:
@@ -27,6 +141,11 @@ class HuggingFaceSingleLayerGateProvider:
     def __init__(self, *, protocol: SingleLayerGateProtocol, gpu_id: str) -> None:
         if not isinstance(protocol, SingleLayerGateProtocol):
             raise TypeError("single-layer gate runtime requires its validated protocol")
+        code_revision = _checkout_code_revision()
+        if code_revision != protocol.code_revision:
+            raise ValueError(
+                "single-layer gate executing code revision differs from preregistration"
+            )
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None and visible != gpu_id:
             raise ValueError("CUDA_VISIBLE_DEVICES conflicts with the requested gate GPU")
@@ -48,6 +167,11 @@ class HuggingFaceSingleLayerGateProvider:
         )
         self.protocol = protocol
         self.gpu_id = gpu_id
+        self.model_id = protocol.model
+        self.model_revision = protocol.model_revision
+        self.code_revision = code_revision
+        self.decoder_layers = protocol.decoder_layers
+        self.base_model_frozen = True
         self._torch = torch
         self.model = wrapper.model
         self.model.eval()
@@ -61,9 +185,43 @@ class HuggingFaceSingleLayerGateProvider:
             parameter.requires_grad for parameter in self.model.parameters()
         ):
             raise ValueError("single-layer gate model identity or freeze boundary differs")
-        actual_revision = getattr(self.model.config, "_commit_hash", None)
-        if actual_revision is not None and actual_revision != protocol.model_revision:
-            raise ValueError("single-layer gate loaded a different model revision")
+        _require_exact_model_revision(
+            model_config=self.model.config,
+            tokenizer=self.tokenizer,
+            expected=protocol.model_revision,
+        )
+
+    def _token_count(self, text: str) -> int:
+        encoded = self.tokenizer(text, add_special_tokens=True)
+        if not isinstance(encoded, Mapping):
+            raise ValueError("single-layer gate tokenizer returned no token mapping")
+        input_ids = encoded.get("input_ids")
+        if input_ids is None:
+            raise ValueError("single-layer gate tokenizer returned no input ids")
+        if hasattr(input_ids, "ndim"):
+            if input_ids.ndim == 2 and int(input_ids.shape[0]) == 1:
+                return int(input_ids.shape[1])
+            if input_ids.ndim == 1:
+                return int(input_ids.shape[0])
+            raise ValueError("single-layer gate tokenizer token shape differs")
+        if (
+            isinstance(input_ids, Sequence)
+            and input_ids
+            and isinstance(input_ids[0], Sequence)
+        ):
+            if len(input_ids) != 1:
+                raise ValueError("single-layer gate tokenizer returned a batch")
+            return len(input_ids[0])
+        if isinstance(input_ids, Sequence):
+            return len(input_ids)
+        raise ValueError("single-layer gate tokenizer input ids differ")
+
+    def token_inflation_bucket(self, record: SingleLayerGateRecord) -> str:
+        """Recompute the frozen stratum with the actual bound tokenizer."""
+
+        return _inflation_bucket(
+            self._token_count(record.typo_text) - self._token_count(record.clean_text)
+        )
 
     def _tokenize(self, text: str) -> tuple[Any, Any, tuple[int, ...], tuple[tuple[int, int], ...]]:
         encoded = self.tokenizer(
@@ -151,6 +309,38 @@ class HuggingFaceSingleLayerGateProvider:
             output = self.model(input_ids=ids, attention_mask=mask, use_cache=False)
         return self._kl(reference, self._target_logits(output, prompt_tokens=prompt_tokens))
 
+    def _offset_patched(
+        self,
+        *,
+        clean_ids: Any,
+        clean_mask: Any,
+        typo_ids: Any,
+        typo_mask: Any,
+        layer: int,
+        clean_position: int,
+        typo_position: int,
+        prompt_tokens: int,
+        reference: Any,
+    ) -> tuple[float, ...]:
+        """Apply the +2 control using matching +2 donor and recipient coordinates."""
+
+        offset = self.protocol.offset_control_tokens
+        donor = self._donor(
+            clean_ids,
+            clean_mask,
+            layer=layer,
+            position=clean_position + offset,
+        )
+        return self._patched(
+            ids=typo_ids,
+            mask=typo_mask,
+            layer=layer,
+            position=typo_position + offset,
+            donor=donor,
+            prompt_tokens=prompt_tokens,
+            reference=reference,
+        )
+
     def scan(
         self,
         records: Sequence[SingleLayerGateRecord],
@@ -228,6 +418,9 @@ class HuggingFaceSingleLayerGateProvider:
                     "transition_layer": transition_layer,
                     "clean_word_final_token": clean_position,
                     "typo_word_final_token": typo_position,
+                    "offset_donor_clean_token": (
+                        clean_position + self.protocol.offset_control_tokens
+                    ),
                     "offset_patch_token": typo_position + self.protocol.offset_control_tokens,
                     "cross_donor_pair_id": donor_plan[record.pair_id],
                     "cross_donor_clean_word_final_token": int(donor_item["clean_position"]),
@@ -300,10 +493,16 @@ class HuggingFaceSingleLayerGateProvider:
                             )
                         ),
                         "offset_kl_2_16": list(
-                            self._patched(
-                                **patch_common,
-                                position=typo_position + self.protocol.offset_control_tokens,
-                                donor=item["clean_donor"],
+                            self._offset_patched(
+                                clean_ids=clean_full[0],
+                                clean_mask=clean_full[1],
+                                typo_ids=typo_full[0],
+                                typo_mask=typo_full[1],
+                                layer=transition_layer,
+                                clean_position=clean_position,
+                                typo_position=typo_position,
+                                prompt_tokens=len(item["typo_tokens"]),
+                                reference=reference,
                             )
                         ),
                         "cross_kl_2_16": list(
@@ -330,9 +529,9 @@ class HuggingFaceSingleLayerGateProvider:
         return {
             "schema_version": "single-layer-gate-runtime/v1",
             "provider": "hugging-face-single-layer-gate/v1",
-            "model": self.protocol.model,
-            "model_revision": self.protocol.model_revision,
-            "code_revision": self.protocol.code_revision,
+            "model": self.model_id,
+            "model_revision": self.model_revision,
+            "code_revision": self.code_revision,
             "decoder_layers": len(self.layers),
             "dtype": "bfloat16",
             "hook_site": "complete-decoder-block-residual-output",

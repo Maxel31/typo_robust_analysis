@@ -88,6 +88,7 @@ _RAW_RECORD_FIELDS = {
     "transition_layer",
     "clean_word_final_token",
     "typo_word_final_token",
+    "offset_donor_clean_token",
     "offset_patch_token",
     "cross_donor_pair_id",
     "cross_donor_clean_word_final_token",
@@ -270,6 +271,25 @@ def load_gate_cohort_manifest(
             raise ValueError("single-layer gate requires exactly one typo")
     if len({row.record_id for row in parsed}) != len(parsed) or len({row.pair_id for row in parsed}) != len(parsed):
         raise ValueError("single-layer gate record and pair ids must be unique")
+    normalized_hashes = [
+        digest
+        for row in parsed
+        for digest in (row.normalized_clean_sha256, row.normalized_noisy_sha256)
+    ]
+    if len(set(normalized_hashes)) != len(normalized_hashes):
+        raise ValueError(
+            "single-layer gate normalized clean/noisy content must be unique"
+        )
+    parent_to_group: dict[str, str] = {}
+    for row in parsed:
+        previous = parent_to_group.setdefault(
+            row.parent_source_sha256,
+            row.source_group_sha256,
+        )
+        if previous != row.source_group_sha256:
+            raise ValueError(
+                "single-layer gate parent source maps to multiple bootstrap groups"
+            )
     if Counter(row.stratum for row in parsed) != Counter(protocol.stratum_counts):
         raise ValueError("single-layer gate manifest strata differ from preregistration")
     return tuple(parsed)
@@ -444,6 +464,12 @@ def _load_raw_observations(
         typo_position = _integer(raw["typo_word_final_token"], field="gate typo word-final")
         if clean_position != _word_final(clean_offsets, record.clean_word_char_span) or typo_position != _word_final(typo_offsets, record.typo_word_char_span):
             raise ValueError("single-layer gate raw row patched a non-word-final token")
+        offset_donor = _integer(
+            raw["offset_donor_clean_token"],
+            field="gate raw offset donor clean token",
+        )
+        if offset_donor != clean_position + protocol.offset_control_tokens:
+            raise ValueError("single-layer gate raw offset donor differs from clean +2")
         if raw["offset_patch_token"] != typo_position + protocol.offset_control_tokens:
             raise ValueError("single-layer gate raw offset control differs from +2")
         cross_position = _integer(

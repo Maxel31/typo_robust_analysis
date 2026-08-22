@@ -22,6 +22,14 @@ from typo_robust_training.state_gate.config import load_single_layer_gate_config
 
 
 class SingleLayerGateProvider(Protocol):
+    model_id: str
+    model_revision: str
+    code_revision: str
+    decoder_layers: int
+    base_model_frozen: bool
+
+    def token_inflation_bucket(self, record: SingleLayerGateRecord) -> str: ...
+
     def scan(
         self,
         records: Sequence[SingleLayerGateRecord],
@@ -113,8 +121,24 @@ def produce_single_layer_gate_artifact(
     if observed_plan != dict(expected_plan):
         raise ValueError("single-layer gate donor plan differs from deterministic derivation")
     runtime_value = json.loads(Path(runtime_manifest_path).read_text(encoding="utf-8"))
+    if (
+        provider.model_id != protocol.model
+        or provider.model_revision != protocol.model_revision
+        or provider.code_revision != protocol.code_revision
+        or provider.decoder_layers != protocol.decoder_layers
+        or provider.base_model_frozen is not True
+    ):
+        raise ValueError(
+            "single-layer gate provider identity or freeze contract differs"
+        )
     if dict(provider.provenance()) != runtime_value:
         raise ValueError("single-layer gate provider differs from the bound runtime manifest")
+    for record in records:
+        observed_bucket = provider.token_inflation_bucket(record)
+        if observed_bucket != record.token_inflation_bucket:
+            raise ValueError(
+                "single-layer gate token inflation bucket differs from runtime tokenizer"
+            )
     raw_rows = tuple(
         provider.scan(
             records,

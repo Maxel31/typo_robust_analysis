@@ -4,6 +4,7 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,6 +18,11 @@ from typo_robust_training.state_gate.artifacts import (
 )
 from typo_robust_training.state_gate.config import load_single_layer_gate_config
 from typo_robust_training.state_gate.producer import produce_single_layer_gate_artifact
+from typo_robust_training.state_gate.runtime import (
+    HuggingFaceSingleLayerGateProvider,
+    _checkout_code_revision,
+    _require_exact_model_revision,
+)
 
 
 def _sha(label: str) -> str:
@@ -169,10 +175,24 @@ def _gate_inputs(tmp_path: Path) -> tuple[dict[str, Path], object]:
 class _FakeProvider:
     def __init__(self, provenance: object) -> None:
         self._provenance = provenance
+        assert isinstance(provenance, Mapping)
+        self.model_id = str(provenance["model"])
+        self.model_revision = str(provenance["model_revision"])
+        self.code_revision = str(provenance["code_revision"])
+        self.decoder_layers = int(provenance["decoder_layers"])
+        self.base_model_frozen = bool(provenance["base_model_frozen"])
+        self.scan_calls = 0
 
     def provenance(self) -> Mapping[str, object]:
         assert isinstance(self._provenance, Mapping)
         return self._provenance
+
+    def token_inflation_bucket(self, record: SingleLayerGateRecord) -> str:
+        return {
+            "keyboard-neighbor-substitution": "same",
+            "deletion": "minus-one",
+            "duplication": "plus-one",
+        }[record.edit_type]
 
     def scan(
         self,
@@ -181,6 +201,7 @@ class _FakeProvider:
         donor_plan: Mapping[str, str],
         transition_layer: int,
     ) -> Sequence[Mapping[str, object]]:
+        self.scan_calls += 1
         by_pair = {record.pair_id: record for record in records}
         output = []
         for record in records:
@@ -195,6 +216,7 @@ class _FakeProvider:
                     "transition_layer": transition_layer,
                     "clean_word_final_token": 2,
                     "typo_word_final_token": 2,
+                    "offset_donor_clean_token": 4,
                     "offset_patch_token": 4,
                     "cross_donor_pair_id": donor.pair_id,
                     "cross_donor_clean_word_final_token": 2,
@@ -245,6 +267,41 @@ def test_fake_provider_e2e_recomputes_passed_gate(tmp_path: Path) -> None:
     assert artifact.scores["correct_minus_cross"].ci_lower > 0
 
 
+def test_offset_control_spies_matching_clean_and_typo_plus_two_coordinates() -> None:
+    provider = object.__new__(HuggingFaceSingleLayerGateProvider)
+    provider.protocol = SimpleNamespace(offset_control_tokens=2)
+    observed: list[tuple[str, object, int]] = []
+
+    def donor(ids: object, _mask: object, *, layer: int, position: int) -> str:
+        observed.append(("donor", ids, position))
+        assert layer == 7
+        return "clean-plus-two-state"
+
+    def patched(**kwargs: object) -> tuple[float, ...]:
+        observed.append(("recipient", kwargs["ids"], int(kwargs["position"])))
+        assert kwargs["donor"] == "clean-plus-two-state"
+        return (0.0,) * 15
+
+    provider._donor = donor  # type: ignore[method-assign]
+    provider._patched = patched  # type: ignore[method-assign]
+    provider._offset_patched(
+        clean_ids="clean-full",
+        clean_mask="clean-mask",
+        typo_ids="typo-full",
+        typo_mask="typo-mask",
+        layer=7,
+        clean_position=11,
+        typo_position=14,
+        prompt_tokens=15,
+        reference="reference",
+    )
+
+    assert observed == [
+        ("donor", "clean-full", 13),
+        ("recipient", "typo-full", 16),
+    ]
+
+
 def _mutate_raw(
     artifact_path: Path,
     mutator: object,
@@ -285,6 +342,29 @@ def test_gate_rejects_wrong_layer_or_word_final_coordinate(tmp_path: Path) -> No
         ),
     )
     with pytest.raises(ValueError, match="cross donor patched a non-word-final"):
+        load_single_layer_gate_artifact(artifact_path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("offset_donor_clean_token", 3, r"offset donor differs from clean \+2"),
+        ("offset_patch_token", 3, r"offset control differs from \+2"),
+    ],
+)
+def test_gate_rejects_wrong_offset_donor_or_recipient_coordinate(
+    tmp_path: Path,
+    field: str,
+    value: int,
+    message: str,
+) -> None:
+    artifact_path, _inputs = _produce(tmp_path)
+    _mutate_raw(
+        artifact_path,
+        lambda raw: raw["records"][0].update({field: value}),
+    )
+
+    with pytest.raises(ValueError, match=message):
         load_single_layer_gate_artifact(artifact_path)
 
 
@@ -356,6 +436,217 @@ def test_gate_config_rejects_relaxed_causal_threshold(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="thresholds must all equal zero"):
         load_single_layer_gate_config(inputs["config"])
+
+
+def _rewrite_cohort_and_rebind_config(
+    inputs: Mapping[str, Path],
+    cohort: object,
+) -> None:
+    _write(inputs["cohort"], cohort)
+    config = json.loads(inputs["config"].read_text())
+    config["inputs"]["cohort_manifest_sha256"] = hashlib.sha256(
+        inputs["cohort"].read_bytes()
+    ).hexdigest()
+    _write(inputs["config"], config)
+
+
+def test_gate_rejects_duplicate_normalized_pair_under_fresh_ids_and_groups(
+    tmp_path: Path,
+) -> None:
+    inputs, provenance = _gate_inputs(tmp_path)
+    cohort = json.loads(inputs["cohort"].read_text())
+    original = cohort["records"][0]
+    duplicate = cohort["records"][1]
+    for field in (
+        "normalized_clean_sha256",
+        "normalized_noisy_sha256",
+        "clean_text",
+        "typo_text",
+        "clean_word_char_span",
+        "typo_word_char_span",
+        "edit_type",
+        "edit_count",
+        "token_inflation_bucket",
+    ):
+        duplicate[field] = original[field]
+    _rewrite_cohort_and_rebind_config(inputs, cohort)
+
+    with pytest.raises(ValueError, match="normalized clean/noisy content must be unique"):
+        produce_single_layer_gate_artifact(
+            config_path=inputs["config"],
+            parent_probe_artifact_path=inputs["parent"],
+            cohort_manifest_path=inputs["cohort"],
+            protected_registry_path=inputs["protected"],
+            donor_plan_path=inputs["donor"],
+            runtime_manifest_path=inputs["runtime"],
+            output_dir=tmp_path / "rejected-output",
+            provider=_FakeProvider(provenance),
+        )
+
+
+def test_gate_rejects_parent_source_split_across_bootstrap_groups(
+    tmp_path: Path,
+) -> None:
+    inputs, provenance = _gate_inputs(tmp_path)
+    cohort = json.loads(inputs["cohort"].read_text())
+    cohort["records"][1]["parent_source_sha256"] = cohort["records"][0][
+        "parent_source_sha256"
+    ]
+    _rewrite_cohort_and_rebind_config(inputs, cohort)
+
+    with pytest.raises(ValueError, match="parent source maps to multiple bootstrap groups"):
+        produce_single_layer_gate_artifact(
+            config_path=inputs["config"],
+            parent_probe_artifact_path=inputs["parent"],
+            cohort_manifest_path=inputs["cohort"],
+            protected_registry_path=inputs["protected"],
+            donor_plan_path=inputs["donor"],
+            runtime_manifest_path=inputs["runtime"],
+            output_dir=tmp_path / "rejected-output",
+            provider=_FakeProvider(provenance),
+        )
+
+
+def test_gate_recomputes_token_inflation_with_bound_runtime_before_scan(
+    tmp_path: Path,
+) -> None:
+    inputs, provenance = _gate_inputs(tmp_path)
+
+    class WrongTokenizerBucketProvider(_FakeProvider):
+        def token_inflation_bucket(self, _record: SingleLayerGateRecord) -> str:
+            return "plus-two-or-more"
+
+    provider = WrongTokenizerBucketProvider(provenance)
+    with pytest.raises(ValueError, match="differs from runtime tokenizer"):
+        produce_single_layer_gate_artifact(
+            config_path=inputs["config"],
+            parent_probe_artifact_path=inputs["parent"],
+            cohort_manifest_path=inputs["cohort"],
+            protected_registry_path=inputs["protected"],
+            donor_plan_path=inputs["donor"],
+            runtime_manifest_path=inputs["runtime"],
+            output_dir=tmp_path / "rejected-output",
+            provider=provider,
+        )
+    assert provider.scan_calls == 0
+
+
+def test_hugging_face_gate_provider_derives_bucket_from_its_bound_tokenizer() -> None:
+    provider = object.__new__(HuggingFaceSingleLayerGateProvider)
+
+    class Tokenizer:
+        def __call__(self, text: str, *, add_special_tokens: bool) -> object:
+            assert add_special_tokens is True
+            lengths = {"alpha": 3, "allpha": 4}
+            return {"input_ids": list(range(lengths[text]))}
+
+    provider.tokenizer = Tokenizer()
+    record = SingleLayerGateRecord(
+        record_id="record",
+        pair_id="pair",
+        source_group_sha256="a" * 64,
+        parent_source_sha256="b" * 64,
+        normalized_clean_sha256="c" * 64,
+        normalized_noisy_sha256="d" * 64,
+        clean_text="alpha",
+        typo_text="allpha",
+        clean_word_char_span=(0, 5),
+        typo_word_char_span=(0, 6),
+        edit_type="duplication",
+        edit_count=1,
+        token_inflation_bucket="plus-one",
+    )
+
+    assert provider.token_inflation_bucket(record) == "plus-one"
+
+
+@pytest.mark.parametrize("field", ["model_revision", "code_revision"])
+def test_gate_rejects_unattested_provider_identity_before_scan(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    inputs, provenance = _gate_inputs(tmp_path)
+    provider = _FakeProvider(provenance)
+    setattr(provider, field, "c" * 40)
+
+    with pytest.raises(ValueError, match="identity or freeze contract"):
+        produce_single_layer_gate_artifact(
+            config_path=inputs["config"],
+            parent_probe_artifact_path=inputs["parent"],
+            cohort_manifest_path=inputs["cohort"],
+            protected_registry_path=inputs["protected"],
+            donor_plan_path=inputs["donor"],
+            runtime_manifest_path=inputs["runtime"],
+            output_dir=tmp_path / "rejected-output",
+            provider=provider,
+        )
+    assert provider.scan_calls == 0
+
+
+def test_gate_runtime_rejects_dirty_executing_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkout = Path(__file__).resolve()
+    while not (checkout / ".git").exists():
+        checkout = checkout.parent
+
+    def fake_run(args: list[str], **_kwargs: object) -> object:
+        operation = tuple(args[1:])
+        if operation == ("rev-parse", "--show-toplevel"):
+            return SimpleNamespace(returncode=0, stdout=f"{checkout}\n")
+        if operation[0] == "ls-files":
+            return SimpleNamespace(returncode=0, stdout="tracked\n")
+        if operation[0] == "status":
+            return SimpleNamespace(returncode=0, stdout=" M state_gate/runtime.py\n")
+        return SimpleNamespace(returncode=0, stdout=f"{'a' * 40}\n")
+
+    monkeypatch.setattr(
+        "typo_robust_training.state_gate.runtime.subprocess.run",
+        fake_run,
+    )
+    with pytest.raises(RuntimeError, match="source tree is not clean"):
+        _checkout_code_revision()
+
+
+def test_gate_runtime_requires_executing_module_to_be_tracked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkout = Path(__file__).resolve()
+    while not (checkout / ".git").exists():
+        checkout = checkout.parent
+
+    def fake_run(args: list[str], **_kwargs: object) -> object:
+        operation = tuple(args[1:])
+        if operation == ("rev-parse", "--show-toplevel"):
+            return SimpleNamespace(returncode=0, stdout=f"{checkout}\n")
+        if operation[0] == "ls-files":
+            return SimpleNamespace(returncode=1, stdout="")
+        raise AssertionError("attestation continued after an untracked runtime")
+
+    monkeypatch.setattr(
+        "typo_robust_training.state_gate.runtime.subprocess.run",
+        fake_run,
+    )
+    with pytest.raises(RuntimeError, match="not tracked"):
+        _checkout_code_revision()
+
+
+def test_gate_model_revision_must_be_observable_from_model_independently() -> None:
+    config = SimpleNamespace(_commit_hash=None, text_config=None)
+    tokenizer = SimpleNamespace(init_kwargs={"_commit_hash": "a" * 40})
+    with pytest.raises(ValueError, match="model revision is not observable"):
+        _require_exact_model_revision(
+            model_config=config,
+            tokenizer=tokenizer,
+            expected="a" * 40,
+        )
+    config._commit_hash = "b" * 40
+    with pytest.raises(ValueError, match="model revision differs"):
+        _require_exact_model_revision(
+            model_config=config,
+            tokenizer=tokenizer,
+            expected="a" * 40,
+        )
 
 
 @pytest.mark.parametrize("parent_role", ["fit", "selection", "validation", "protected"])
