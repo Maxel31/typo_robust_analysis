@@ -146,12 +146,12 @@ def load_semantic_subspace_kill_config(path: Path) -> SemanticSubspaceKillProtoc
     if not isinstance(seeds_raw, list):
         raise ValueError("semantic kill probe seeds must be a list")
     seeds = tuple(_integer(seed, field="semantic kill probe seed") for seed in seeds_raw)
-    if len(seeds) != 2 or seeds != tuple(sorted(set(seeds))):
-        raise ValueError("semantic kill requires two sorted distinct probe seeds")
+    if seeds != (42, 43):
+        raise ValueError("semantic kill requires the frozen probe seeds 42 and 43")
     rank = _integer(subspace["rank"], field="semantic kill rank", minimum=1)
     primary = _integer(subspace["primary_probe_seed"], field="primary probe seed")
-    if primary != seeds[0]:
-        raise ValueError("semantic kill primary probe seed must be the first seed")
+    if primary != 42:
+        raise ValueError("semantic kill primary probe seed must be 42")
     if (
         rank != 16
         or subspace["centering"] != "subtract-class-mean-weight/v1"

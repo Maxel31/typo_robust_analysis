@@ -20,6 +20,9 @@ from typo_robust_training.probe.subspace import (
 from typo_robust_training.probe.subspace_kill_artifacts import (
     load_semantic_subspace_kill_artifact,
 )
+from typo_robust_training.probe.subspace_kill_config import (
+    load_semantic_subspace_kill_config,
+)
 from typo_robust_training.probe.subspace_kill_runner import (
     SemanticSubspaceKillRunConfig,
     run_semantic_subspace_kill_test,
@@ -626,6 +629,17 @@ def test_loader_rejects_one_seed_only_pass(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="did not pass both"):
         load_semantic_subspace_kill_artifact(path)
+
+
+def test_kill_config_rejects_substituted_probe_seeds(tmp_path: Path) -> None:
+    _path, files, _payload = _child_bundle(tmp_path)
+    config = json.loads(files["kill-config"].read_text())
+    config["subspace"]["primary_probe_seed"] = 1
+    config["subspace"]["reproducibility_probe_seeds"] = [1, 2]
+    _write(files["kill-config"], config)
+
+    with pytest.raises(ValueError, match="frozen probe seeds 42 and 43"):
+        load_semantic_subspace_kill_config(files["kill-config"])
 
 
 def test_cohort_overlap_with_any_parent_identity_is_rejected(tmp_path: Path) -> None:
