@@ -5,7 +5,10 @@ import pytest
 
 from typo_robust_training.probe.subspace import (
     SemanticProbeSubspace,
+    derive_pca_basis,
     derive_semantic_probe_subspace,
+    deterministic_complement_basis,
+    deterministic_haar_basis,
     validate_orthonormal_rows,
 )
 
@@ -99,3 +102,19 @@ def test_nonorthogonal_or_wrong_shape_basis_fails_closed() -> None:
             classifier_bias=semantic.classifier_bias,
             singular_values=semantic.singular_values,
         )
+
+
+def test_deterministic_controls_are_rank_matched_and_complement_is_orthogonal() -> None:
+    weight, bias = _classifier(hidden=40)
+    semantic = derive_semantic_probe_subspace(weight, bias)
+    activations = np.random.default_rng(13).normal(size=(64, 40))
+
+    pca = derive_pca_basis(activations)
+    random = deterministic_haar_basis(40, seed=101)
+    complement = deterministic_complement_basis(semantic.basis, seed=202)
+
+    for basis in (pca, random, complement):
+        assert basis.shape == (16, 40)
+        assert np.allclose(basis @ basis.T, np.eye(16), atol=1e-10)
+    assert np.allclose(complement @ semantic.basis.T, 0.0, atol=1e-10)
+    assert np.array_equal(random, deterministic_haar_basis(40, seed=101))

@@ -65,6 +65,7 @@ class SemanticSubspaceKillProtocol:
     hidden_size: int
     parent_artifact_sha256: str
     cohort_sha256: str
+    pca_manifest_sha256: str
     pca_activations_sha256: str
     rank: int
     primary_probe_seed: int
@@ -123,6 +124,7 @@ def load_semantic_subspace_kill_config(path: Path) -> SemanticSubspaceKillProtoc
         keys={
             "parent_probe_artifact_sha256",
             "cohort_manifest_sha256",
+            "pca_fit_manifest_sha256",
             "pca_fit_activations_sha256",
         },
     )
@@ -244,6 +246,9 @@ def load_semantic_subspace_kill_config(path: Path) -> SemanticSubspaceKillProtoc
             inputs["parent_probe_artifact_sha256"], field="parent artifact hash"
         ),
         cohort_sha256=_sha(inputs["cohort_manifest_sha256"], field="cohort hash"),
+        pca_manifest_sha256=_sha(
+            inputs["pca_fit_manifest_sha256"], field="PCA manifest hash"
+        ),
         pca_activations_sha256=_sha(
             inputs["pca_fit_activations_sha256"], field="PCA activations hash"
         ),

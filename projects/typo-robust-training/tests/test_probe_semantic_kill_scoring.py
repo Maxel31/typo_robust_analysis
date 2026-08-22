@@ -21,6 +21,7 @@ def _protocol(**changes) -> SemanticSubspaceKillProtocol:
         hidden_size=32,
         parent_artifact_sha256="c" * 64,
         cohort_sha256="d" * 64,
+        pca_manifest_sha256="1" * 64,
         pca_activations_sha256="e" * 64,
         rank=16,
         primary_probe_seed=42,

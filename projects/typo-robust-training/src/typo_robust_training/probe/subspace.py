@@ -183,6 +183,74 @@ def derive_semantic_probe_subspace(
     )
 
 
+def derive_pca_basis(activations: object, *, rank: int = SEMANTIC_SUBSPACE_RANK) -> np.ndarray:
+    """Derive a canonical clean-activation PCA control basis in float64."""
+
+    values = _finite_matrix(activations, field="clean PCA activations")
+    if (
+        isinstance(rank, bool)
+        or not isinstance(rank, int)
+        or rank <= 0
+        or min(values.shape[0] - 1, values.shape[1]) < rank
+    ):
+        raise ValueError("clean PCA activations cannot support the requested rank")
+    centred = values - values.mean(axis=0, keepdims=True)
+    _left, singular, right = np.linalg.svd(centred, full_matrices=False)
+    threshold = np.finfo(np.float64).eps * max(centred.shape) * float(singular[0])
+    if int(np.count_nonzero(singular > threshold)) < rank:
+        raise ValueError("clean PCA activations have insufficient numerical rank")
+    basis = canonicalize_basis_signs(right[:rank])
+    return validate_orthonormal_rows(basis)
+
+
+def deterministic_haar_basis(
+    hidden_size: int,
+    *,
+    rank: int = SEMANTIC_SUBSPACE_RANK,
+    seed: int,
+) -> np.ndarray:
+    """Generate a deterministic rank-matched Haar control row basis."""
+
+    if (
+        isinstance(hidden_size, bool)
+        or not isinstance(hidden_size, int)
+        or isinstance(rank, bool)
+        or not isinstance(rank, int)
+        or not 0 < rank <= hidden_size
+        or isinstance(seed, bool)
+        or not isinstance(seed, int)
+        or seed < 0
+    ):
+        raise ValueError("Haar basis dimensions or seed differ")
+    matrix = np.random.default_rng(seed).standard_normal((hidden_size, rank))
+    columns, _upper = np.linalg.qr(matrix, mode="reduced")
+    return validate_orthonormal_rows(canonicalize_basis_signs(columns.T))
+
+
+def deterministic_complement_basis(
+    semantic_basis: object,
+    *,
+    seed: int,
+) -> np.ndarray:
+    """Generate a deterministic rank-matched basis orthogonal to semantics."""
+
+    semantic = validate_orthonormal_rows(semantic_basis)
+    rank, hidden_size = semantic.shape
+    if hidden_size - rank < rank:
+        raise ValueError("semantic complement cannot support a rank-matched control")
+    if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+        raise ValueError("semantic complement seed differs")
+    matrix = np.random.default_rng(seed).standard_normal((hidden_size, rank))
+    matrix = matrix - semantic.T @ (semantic @ matrix)
+    columns, upper = np.linalg.qr(matrix, mode="reduced")
+    if np.any(np.abs(np.diag(upper)) <= np.finfo(np.float64).eps * hidden_size):
+        raise ValueError("semantic complement random draw is rank deficient")
+    basis = validate_orthonormal_rows(canonicalize_basis_signs(columns.T))
+    if not np.allclose(basis @ semantic.T, 0.0, atol=1e-10, rtol=1e-10):
+        raise ValueError("semantic complement is not orthogonal to semantics")
+    return basis
+
+
 def load_probe_layer_classifier(
     artifact: ProbeTransitionArtifact,
     *,
@@ -234,8 +302,11 @@ __all__ = [
     "SEMANTIC_SUBSPACE_RANK",
     "SemanticProbeSubspace",
     "canonicalize_basis_signs",
+    "derive_pca_basis",
     "derive_artifact_semantic_subspace",
     "derive_semantic_probe_subspace",
+    "deterministic_complement_basis",
+    "deterministic_haar_basis",
     "load_probe_layer_classifier",
     "validate_orthonormal_rows",
 ]
