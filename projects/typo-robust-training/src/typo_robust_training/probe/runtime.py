@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import importlib.metadata
 import os
 import platform
@@ -23,6 +24,11 @@ _REVISION = re.compile(r"[0-9a-f]{40}")
 
 def _checkout_code_revision() -> str:
     module_path = Path(__file__).resolve()
+    dependency = importlib.import_module("typo_cot")
+    dependency_file = getattr(dependency, "__file__", None)
+    if not isinstance(dependency_file, str) or not dependency_file:
+        raise RuntimeError("probe runtime cannot locate the typo_cot dependency source")
+    dependency_path = Path(dependency_file).resolve()
     root_result = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
         cwd=module_path.parent,
@@ -35,19 +41,28 @@ def _checkout_code_revision() -> str:
     checkout_root = Path(root_result.stdout.strip()).resolve()
     try:
         module_relative = module_path.relative_to(checkout_root)
-        package_relative = module_path.parents[1].relative_to(checkout_root)
+        dependency_relative = dependency_path.relative_to(checkout_root)
+        package_relatives = (
+            module_path.parents[1].relative_to(checkout_root),
+            dependency_path.parent.relative_to(checkout_root),
+        )
     except ValueError as exc:
-        raise RuntimeError("probe runtime module is outside the attested checkout") from exc
+        raise RuntimeError(
+            "probe runtime or local dependency is outside the attested checkout"
+        ) from exc
 
-    tracked_result = subprocess.run(
-        ["git", "ls-files", "--error-unmatch", "--", module_relative.as_posix()],
-        cwd=checkout_root,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if tracked_result.returncode != 0:
-        raise RuntimeError("probe runtime module is not tracked by the attested checkout")
+    for source_relative in (module_relative, dependency_relative):
+        tracked_result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", source_relative.as_posix()],
+            cwd=checkout_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if tracked_result.returncode != 0:
+            raise RuntimeError(
+                "probe runtime source is not tracked by the attested checkout"
+            )
     dirty_result = subprocess.run(
         [
             "git",
@@ -55,7 +70,7 @@ def _checkout_code_revision() -> str:
             "--porcelain=v1",
             "--untracked-files=all",
             "--",
-            package_relative.as_posix(),
+            *(relative.as_posix() for relative in package_relatives),
         ],
         cwd=checkout_root,
         check=False,
@@ -140,6 +155,9 @@ class HuggingFaceProbeActivationProvider:
     def __init__(self, *, protocol: ProbeProducerProtocol, gpu_id: str) -> None:
         if not isinstance(protocol, ProbeProducerProtocol):
             raise TypeError("protocol must be ProbeProducerProtocol")
+        self.code_revision = _checkout_code_revision()
+        if self.code_revision != protocol.code_revision:
+            raise ValueError("executing code revision differs from the preregistration")
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None and visible != gpu_id:
             raise ValueError(
@@ -182,9 +200,6 @@ class HuggingFaceProbeActivationProvider:
         self.gpu_id = gpu_id
         self.model = protocol.model
         self.model_revision = protocol.model_revision
-        self.code_revision = _checkout_code_revision()
-        if self.code_revision != protocol.code_revision:
-            raise ValueError("executing code revision differs from the preregistration")
         self.decoder_layers = len(self.layers)
         raw_hidden = getattr(self._model.config, "hidden_size", None)
         if raw_hidden is None and hasattr(self._model.config, "text_config"):

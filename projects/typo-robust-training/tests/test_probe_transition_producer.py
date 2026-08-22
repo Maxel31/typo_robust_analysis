@@ -529,6 +529,32 @@ def test_checkout_code_revision_rejects_dirty_executing_source(
         _checkout_code_revision()
 
 
+def test_checkout_code_revision_rejects_dirty_typo_cot_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkout = Path(probe_runtime.__file__).resolve()
+    while not (checkout / ".git").exists():
+        checkout = checkout.parent
+
+    def fake_run(args: list[str], **_kwargs: object) -> object:
+        operation = tuple(args[1:])
+        if operation == ("rev-parse", "--show-toplevel"):
+            return SimpleNamespace(returncode=0, stdout=f"{checkout}\n")
+        if operation[0] == "ls-files":
+            return SimpleNamespace(returncode=0, stdout="tracked\n")
+        if operation[0] == "status":
+            assert any("projects/typo-cot/src/typo_cot" in value for value in args)
+            return SimpleNamespace(
+                returncode=0,
+                stdout=" M projects/typo-cot/src/typo_cot/models/wrapper.py\n",
+            )
+        return SimpleNamespace(returncode=0, stdout=f"{'a' * 40}\n")
+
+    monkeypatch.setattr("typo_robust_training.probe.runtime.subprocess.run", fake_run)
+    with pytest.raises(RuntimeError, match="source tree is not clean"):
+        _checkout_code_revision()
+
+
 def test_model_revision_must_be_observable_and_exact() -> None:
     class _Config:
         _commit_hash: str | None = None
