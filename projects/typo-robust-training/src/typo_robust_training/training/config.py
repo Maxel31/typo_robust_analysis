@@ -386,9 +386,15 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     target_modules = tuple(adapter["target_modules"])  # type: ignore[arg-type]
     if target_modules != _TARGET_MODULES:
         raise ValueError("adapter.target_modules differ from the frozen module order")
+    lora_rank = _integer(adapter["rank"], field="adapter.rank", minimum=1)
+    lora_alpha = _number(adapter["alpha"], field="adapter.alpha")
     dropout = _number(adapter["dropout"], field="adapter.dropout")
     if dropout > 1.0:
         raise ValueError("adapter.dropout must be at most one")
+    if schema_version.endswith("/v4") and (
+        lora_rank != 16 or lora_alpha != 8.0 or dropout != 0.0
+    ):
+        raise ValueError("probe-transition LoRA must use rank 16, alpha 8, and dropout 0")
 
     optimization = _mapping(
         root["optimization"],
@@ -535,8 +541,8 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         answer_format=str(sequence["answer_format"]),
         pairing_policy=pairing_policy,
         adapter_method="lora",
-        lora_rank=_integer(adapter["rank"], field="adapter.rank", minimum=1),
-        lora_alpha=_number(adapter["alpha"], field="adapter.alpha"),
+        lora_rank=lora_rank,
+        lora_alpha=lora_alpha,
         lora_dropout=dropout,
         lora_target_modules=_TARGET_MODULES,
         layer_scope=layer_scope,

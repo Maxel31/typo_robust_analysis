@@ -15,6 +15,10 @@ from pathlib import Path
 
 import numpy as np
 
+from typo_robust_training.probe.runtime import (
+    _checkout_code_revision,
+    _require_exact_model_revision,
+)
 from typo_robust_training.training.adapters import (
     TrainableParameterReport,
     attach_lora_adapters,
@@ -77,6 +81,35 @@ def _finite_ppl_ratio(log_nll_delta: float) -> float:
     maximum_log = math.log(sys.float_info.max)
     minimum_log = math.log(sys.float_info.min)
     return math.exp(min(max(float(log_nll_delta), minimum_log), maximum_log))
+
+
+def _require_exact_training_wrapper_revision(
+    wrapper: object,
+    *,
+    expected: str,
+    role: str,
+) -> tuple[str, str]:
+    """Bind one independently loaded model and tokenizer to the requested commit."""
+
+    model = getattr(wrapper, "model", None)
+    tokenizer = getattr(wrapper, "tokenizer", None)
+    config = getattr(model, "config", None)
+    if model is None or config is None or tokenizer is None:
+        raise ValueError(f"loaded {role} model/tokenizer identity is unavailable")
+    model_revision = _require_exact_model_revision(
+        model_config=config,
+        tokenizer=tokenizer,
+        expected=expected,
+    )
+    init_kwargs = getattr(tokenizer, "init_kwargs", None)
+    tokenizer_revision = (
+        init_kwargs.get("_commit_hash") if isinstance(init_kwargs, Mapping) else None
+    )
+    if not isinstance(tokenizer_revision, str) or not tokenizer_revision:
+        raise ValueError(f"loaded {role} tokenizer revision is not observable")
+    if tokenizer_revision != expected:
+        raise ValueError(f"loaded {role} tokenizer revision differs from the requested revision")
+    return model_revision, tokenizer_revision
 
 
 _RUNTIME_STATE_SCHEMA = "robustness-adapter-runtime-state/v3"
@@ -274,6 +307,7 @@ class HuggingFaceAdapterTrainingRuntime:
         if seed not in protocol.seed_inventory:
             raise ValueError("training runtime seed is outside the frozen inventory")
         resolved_method = _resolve_probe_transition_runtime_method(protocol, evidence)
+        self.code_revision = _checkout_code_revision()
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None and visible != gpu_id:
             raise ValueError(
@@ -311,6 +345,13 @@ class HuggingFaceAdapterTrainingRuntime:
             revision=protocol.model_revision,
         )
         self.teacher = self.teacher_wrapper.model
+        self.teacher_revision, teacher_tokenizer_revision = (
+            _require_exact_training_wrapper_revision(
+                self.teacher_wrapper,
+                expected=protocol.model_revision,
+                role="teacher",
+            )
+        )
         self.teacher.eval()
         self.teacher.requires_grad_(False)
         self.student_wrapper = create_model_wrapper(
@@ -321,6 +362,16 @@ class HuggingFaceAdapterTrainingRuntime:
             revision=protocol.model_revision,
         )
         student_base = self.student_wrapper.model
+        self.student_revision, student_tokenizer_revision = (
+            _require_exact_training_wrapper_revision(
+                self.student_wrapper,
+                expected=protocol.model_revision,
+                role="student",
+            )
+        )
+        if teacher_tokenizer_revision != student_tokenizer_revision:
+            raise ValueError("teacher and student tokenizer revisions differ")
+        self.tokenizer_revision = student_tokenizer_revision
         base_layers = find_decoder_layers(student_base)
         self.num_decoder_layers = len(base_layers)
         if (
@@ -1001,8 +1052,10 @@ class HuggingFaceAdapterTrainingRuntime:
             "peft": _version("peft"),
             "model": self.protocol.model,
             "requested_revision": self.protocol.model_revision,
-            "teacher_revision": getattr(self.teacher.config, "_commit_hash", None),
-            "student_revision": getattr(self.student.config, "_commit_hash", None),
+            "teacher_revision": self.teacher_revision,
+            "student_revision": self.student_revision,
+            "tokenizer_revision": self.tokenizer_revision,
+            "code_revision": self.code_revision,
             "condition": self.protocol.condition,
             "seed": self.seed,
             "device": str(self.device),

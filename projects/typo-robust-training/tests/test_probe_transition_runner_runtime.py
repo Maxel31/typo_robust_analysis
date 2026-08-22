@@ -29,6 +29,7 @@ from typo_robust_training.training.runner import (
 )
 from typo_robust_training.training.runtime import (
     HuggingFaceAdapterTrainingRuntime,
+    _require_exact_training_wrapper_revision,
     _resolve_probe_transition_runtime_method,
 )
 
@@ -162,6 +163,58 @@ def test_runtime_rejects_disabled_output_objective() -> None:
 
     with pytest.raises(ValueError, match="must disable state training"):
         _resolve_probe_transition_runtime_method(drifted, _evidence())
+
+
+def _revision_wrapper(
+    *,
+    model_revision: str | None = REVISION,
+    tokenizer_revision: str | None = REVISION,
+) -> SimpleNamespace:
+    tokenizer_kwargs = (
+        {} if tokenizer_revision is None else {"_commit_hash": tokenizer_revision}
+    )
+    return SimpleNamespace(
+        model=SimpleNamespace(config=SimpleNamespace(_commit_hash=model_revision)),
+        tokenizer=SimpleNamespace(init_kwargs=tokenizer_kwargs),
+    )
+
+
+def test_training_runtime_requires_independently_observable_exact_model_and_tokenizer() -> None:
+    assert _require_exact_training_wrapper_revision(
+        _revision_wrapper(),
+        expected=REVISION,
+        role="teacher",
+    ) == (REVISION, REVISION)
+    assert _require_exact_training_wrapper_revision(
+        _revision_wrapper(),
+        expected=REVISION,
+        role="student",
+    ) == (REVISION, REVISION)
+
+    with pytest.raises(ValueError, match="model revision is not observable"):
+        _require_exact_training_wrapper_revision(
+            _revision_wrapper(model_revision=None),
+            expected=REVISION,
+            role="teacher",
+        )
+    with pytest.raises(ValueError, match="model revision differs"):
+        _require_exact_training_wrapper_revision(
+            _revision_wrapper(model_revision="b" * 40),
+            expected=REVISION,
+            role="student",
+        )
+    with pytest.raises(ValueError, match="tokenizer revision is not observable"):
+        _require_exact_training_wrapper_revision(
+            _revision_wrapper(tokenizer_revision=None),
+            expected=REVISION,
+            role="teacher",
+        )
+    with pytest.raises(ValueError, match="tokenizer revision differs"):
+        _require_exact_training_wrapper_revision(
+            _revision_wrapper(tokenizer_revision="b" * 40),
+            expected=REVISION,
+            role="student",
+        )
 
 
 def _source(index: int) -> TrainingSource:
@@ -400,6 +453,10 @@ def test_runtime_provenance_reports_probe_evidence_hash(
     runtime.protocol = load_adapter_training_config(PROBE_CONFIG)
     runtime.teacher = SimpleNamespace(config=SimpleNamespace(_commit_hash=REVISION))
     runtime.student = SimpleNamespace(config=SimpleNamespace(_commit_hash=REVISION))
+    runtime.teacher_revision = REVISION
+    runtime.student_revision = REVISION
+    runtime.tokenizer_revision = REVISION
+    runtime.code_revision = "f" * 40
     runtime.seed = 42
     runtime.device = "cuda:0"
     runtime.num_decoder_layers = 34
@@ -419,5 +476,9 @@ def test_runtime_provenance_reports_probe_evidence_hash(
     provenance = runtime.provenance()
 
     assert provenance["method_evidence_sha256"] == EVIDENCE_SHA256
+    assert provenance["teacher_revision"] == REVISION
+    assert provenance["student_revision"] == REVISION
+    assert provenance["tokenizer_revision"] == REVISION
+    assert provenance["code_revision"] == "f" * 40
     assert provenance["adapter_layers"] == list(range(7, 34))
     assert provenance["state_layers"] == []
