@@ -20,6 +20,11 @@ from typo_robust_training.probe.subspace import (
 from typo_robust_training.probe.subspace_kill_artifacts import (
     load_semantic_subspace_kill_artifact,
 )
+from typo_robust_training.probe.subspace_kill_runner import (
+    SemanticSubspaceKillRunConfig,
+    run_semantic_subspace_kill_test,
+)
+from typo_robust_training.probe.subspace_kill_scoring import SubspaceKillScoreRow
 
 
 def _sha(label: str) -> str:
@@ -634,3 +639,75 @@ def test_cohort_overlap_with_any_parent_identity_is_rejected(tmp_path: Path) -> 
 
     with pytest.raises(ValueError, match="overlaps parent"):
         kill_artifacts._load_cohort(files["kill-cohort"], parent=parent)
+
+
+class _PassingKillRuntime:
+    def __init__(self, **kwargs: object) -> None:
+        self.protocol = kwargs["protocol"]
+        self.parent = kwargs["parent"]
+
+    def provenance(self) -> dict[str, object]:
+        protocol = self.protocol
+        parent = self.parent
+        return {
+            "schema_version": "probe-semantic-subspace-kill-runtime/v1",
+            "runtime": "HuggingFaceSemanticSubspaceKillRuntime/v1",
+            "model": protocol.model,
+            "model_revision": protocol.model_revision,
+            "code_revision": protocol.code_revision,
+            "transition_layer": parent.selected_transition_layer,
+            "hook_site": protocol.hook_site,
+            "coordinate": protocol.coordinate,
+            "operators": list(protocol.operators),
+            "random_basis_seed": protocol.random_basis_seed,
+            "complement_basis_seed": protocol.complement_basis_seed,
+            "teacher_forced_offsets": list(protocol.readout_offsets),
+        }
+
+    def scan_pair_all_seeds(
+        self, record: dict[str, object]
+    ) -> dict[int, SubspaceKillScoreRow]:
+        row = {
+            "pair_id": record["pair_id"],
+            "source_group_sha256": record["source_group_sha256"],
+            "transition_layer": self.parent.selected_transition_layer,
+            "clean_word_final_token": record["clean_word_final_token"],
+            "typo_word_final_token": record["typo_word_final_token"],
+            "untreated_kl_2_16": (1.0,) * 15,
+            "patched_kl_2_16": {
+                "full-state": (0.2,) * 15,
+                "semantic-rank16": (0.4,) * 15,
+                "clean-fit-pca-rank16": (0.8,) * 15,
+                "deterministic-haar-random-rank16": (0.9,) * 15,
+                "semantic-complement-rank16": (0.85,) * 15,
+            },
+        }
+        return {seed: SubspaceKillScoreRow(**row) for seed in self.parent.probe_seeds}
+
+
+def test_runner_produces_self_contained_revalidated_evidence(tmp_path: Path) -> None:
+    _child, files, _payload = _child_bundle(tmp_path)
+    output = tmp_path / "produced"
+
+    result = run_semantic_subspace_kill_test(
+        SemanticSubspaceKillRunConfig(
+            config_path=files["kill-config"],
+            parent_probe_artifact_path=files["artifact"],
+            cohort_manifest_path=files["kill-cohort"],
+            pca_fit_manifest_path=files["pca-manifest"],
+            pca_fit_activations_path=files["pca"],
+            gpu_id="7",
+            output_dir=output,
+        ),
+        runtime_factory=_PassingKillRuntime,
+    )
+
+    assert result.passed is True
+    reloaded = load_semantic_subspace_kill_artifact(result.artifact_path)
+    assert reloaded.transition_layer == 2
+    assert all(summary.passed for summary in reloaded.summary_by_seed.values())
+    shutil_source = files["weights-42"]
+    shutil_source.unlink()
+    assert load_semantic_subspace_kill_artifact(result.artifact_path).artifact_sha256 == (
+        reloaded.artifact_sha256
+    )

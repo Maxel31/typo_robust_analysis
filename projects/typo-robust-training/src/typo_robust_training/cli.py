@@ -220,6 +220,32 @@ def _run_validate_probe_transition_single_layer_gate(args: argparse.Namespace) -
     return 0
 
 
+def _run_probe_semantic_subspace_kill_test(args: argparse.Namespace) -> int:
+    from typo_robust_training.probe.subspace_kill_runner import (
+        SemanticSubspaceKillRunConfig,
+        run_semantic_subspace_kill_test,
+    )
+
+    try:
+        result = run_semantic_subspace_kill_test(
+            SemanticSubspaceKillRunConfig(
+                config_path=args.config,
+                parent_probe_artifact_path=args.parent_probe_artifact,
+                cohort_manifest_path=args.cohort_manifest,
+                pca_fit_manifest_path=args.pca_fit_manifest,
+                pca_fit_activations_path=args.pca_fit_activations,
+                gpu_id=args.gpu_id,
+                output_dir=args.output_dir,
+            )
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"run-probe-semantic-subspace-kill-test: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"semantic-subspace causal kill test passed={result.passed}: {result.artifact_path}")
+    print(f"run manifest: {result.run_path}")
+    return 0 if result.passed else 2
+
+
 def _run_localize_components(args: argparse.Namespace) -> int:
     from typo_robust_training.localization.component_runner import (
         ComponentLocalizationRunConfig,
@@ -619,6 +645,21 @@ def register_commands(
     gate.add_argument("--output-dir", required=True, type=Path)
     gate.set_defaults(
         _typo_cot_plugin_handler=_run_validate_probe_transition_single_layer_gate
+    )
+
+    semantic_kill = commands.add_parser(
+        "run-probe-semantic-subspace-kill-test",
+        help="Causally validate both frozen rank-16 probe subspaces before training.",
+    )
+    semantic_kill.add_argument("--config", required=True, type=Path)
+    semantic_kill.add_argument("--parent-probe-artifact", required=True, type=Path)
+    semantic_kill.add_argument("--cohort-manifest", required=True, type=Path)
+    semantic_kill.add_argument("--pca-fit-manifest", required=True, type=Path)
+    semantic_kill.add_argument("--pca-fit-activations", required=True, type=Path)
+    semantic_kill.add_argument("--gpu-id", required=True)
+    semantic_kill.add_argument("--output-dir", required=True, type=Path)
+    semantic_kill.set_defaults(
+        _typo_cot_plugin_handler=_run_probe_semantic_subspace_kill_test
     )
 
     sae_corpus = commands.add_parser(
