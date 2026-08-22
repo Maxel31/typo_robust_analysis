@@ -10,6 +10,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+
 from typo_robust_training.data.config import strict_loads
 from typo_robust_training.training.config import AdapterTrainingProtocol
 from typo_robust_training.training.config import load_adapter_training_config
@@ -82,6 +84,67 @@ class ProbeTransitionStateTrainingEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class ProbeSemanticSubspaceTrainingEvidence:
+    """Training-only view of a kill-tested rank-16 probe semantic subspace."""
+
+    model: str
+    model_revision: str
+    decoder_layers: int
+    transition_layer: int
+    primary_probe_seed: int
+    basis: np.ndarray
+    projected_class_weights: np.ndarray
+    classifier_bias: np.ndarray
+    evidence_sha256: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.model, str) or not self.model:
+            raise ValueError("semantic evidence model must be non-empty")
+        if _REVISION.fullmatch(self.model_revision) is None:
+            raise ValueError("semantic evidence model revision must be pinned")
+        if (
+            isinstance(self.decoder_layers, bool)
+            or not isinstance(self.decoder_layers, int)
+            or self.decoder_layers < 2
+            or isinstance(self.transition_layer, bool)
+            or not isinstance(self.transition_layer, int)
+            or not 1 <= self.transition_layer < self.decoder_layers
+            or self.primary_probe_seed != 42
+            or _SHA256.fullmatch(self.evidence_sha256) is None
+        ):
+            raise ValueError("semantic evidence identity differs")
+        basis = np.asarray(self.basis, dtype=np.float64)
+        weights = np.asarray(self.projected_class_weights, dtype=np.float64)
+        bias = np.asarray(self.classifier_bias, dtype=np.float64)
+        if (
+            basis.ndim != 2
+            or basis.shape[0] != 16
+            or weights.ndim != 2
+            or weights.shape[1] != 16
+            or bias.shape != (weights.shape[0],)
+            or basis.shape[1] <= 16
+            or weights.shape[0] <= 16
+            or not np.isfinite(basis).all()
+            or not np.isfinite(weights).all()
+            or not np.isfinite(bias).all()
+            or not np.allclose(basis @ basis.T, np.eye(16), atol=1e-10, rtol=1e-10)
+        ):
+            raise ValueError("semantic evidence tensors differ")
+        frozen: list[np.ndarray] = []
+        for value in (basis, weights, bias):
+            copied = np.ascontiguousarray(value.copy())
+            copied.flags.writeable = False
+            frozen.append(copied)
+        object.__setattr__(self, "basis", frozen[0])
+        object.__setattr__(self, "projected_class_weights", frozen[1])
+        object.__setattr__(self, "classifier_bias", frozen[2])
+
+    @property
+    def suffix_layers(self) -> tuple[int, ...]:
+        return tuple(range(self.transition_layer, self.decoder_layers))
+
+
+@dataclass(frozen=True, slots=True)
 class ResolvedTrainingMethod:
     adapter_layers: tuple[int, ...]
     state_layers: tuple[int, ...]
@@ -146,6 +209,45 @@ def load_probe_transition_state_training_evidence(
         decoder_layers=artifact.decoder_layers,
         selected_transition_layer=artifact.selected_transition_layer,
         parent_probe_artifact_sha256=artifact.parent_probe_artifact_sha256,
+        evidence_sha256=artifact.artifact_sha256,
+    )
+
+
+def load_probe_semantic_subspace_training_evidence(
+    path: Path,
+    *,
+    model: str,
+    model_revision: str,
+    decoder_layers: int,
+) -> ProbeSemanticSubspaceTrainingEvidence:
+    """Load and independently revalidate the two-seed kill-test evidence."""
+
+    supplied = Path(path)
+    if supplied.is_symlink():
+        raise ValueError("semantic subspace evidence must not be a symlink")
+    from typo_robust_training.probe.subspace_kill_artifacts import (
+        load_semantic_subspace_kill_artifact,
+    )
+
+    artifact = load_semantic_subspace_kill_artifact(supplied)
+    if (
+        artifact.model != model
+        or artifact.model_revision != model_revision
+        or artifact.decoder_layers != decoder_layers
+        or artifact.rank != 16
+        or artifact.primary_probe_seed != 42
+    ):
+        raise ValueError("semantic subspace artifact identity differs from training")
+    subspace = artifact.semantic_subspace
+    return ProbeSemanticSubspaceTrainingEvidence(
+        model=artifact.model,
+        model_revision=artifact.model_revision,
+        decoder_layers=artifact.decoder_layers,
+        transition_layer=artifact.transition_layer,
+        primary_probe_seed=artifact.primary_probe_seed,
+        basis=subspace.basis,
+        projected_class_weights=subspace.projected_class_weights,
+        classifier_bias=subspace.classifier_bias,
         evidence_sha256=artifact.artifact_sha256,
     )
 
@@ -236,15 +338,121 @@ def materialize_probe_transition_training_config(
     return load_adapter_training_config(output)
 
 
+def materialize_probe_semantic_subspace_training_config(
+    template_path: Path,
+    *,
+    evidence_path: Path,
+    output_path: Path,
+) -> AdapterTrainingProtocol:
+    """Bind one freshly revalidated kill-test artifact into a v6 template."""
+
+    template = Path(template_path)
+    evidence = Path(evidence_path)
+    output = Path(output_path)
+    if template.is_symlink() or not template.is_file():
+        raise ValueError("semantic training template must be one regular file")
+    if evidence.is_symlink():
+        raise ValueError("semantic subspace evidence must not be a symlink")
+    if output.exists() or output.is_symlink():
+        raise FileExistsError(f"materialized training config already exists: {output}")
+    payload = strict_loads(template.read_text(encoding="utf-8"), context=str(template.resolve()))
+    expected_top = {
+        "schema_version",
+        "condition",
+        "method_evidence",
+        "model",
+        "sequence",
+        "adapter",
+        "optimization",
+        "objective",
+    }
+    if not isinstance(payload, Mapping) or set(payload) != expected_top:
+        raise ValueError("semantic training template fields differ")
+    if payload["schema_version"] != "robustness-adapter-training-config/v6-template":
+        raise ValueError("semantic training template schema differs")
+    if payload["condition"] != "probe-semantic-subspace-distillation":
+        raise ValueError("semantic training template condition differs")
+    if payload["method_evidence"] != {
+        "schema_version": "probe-semantic-subspace-evidence-binding/v1",
+        "artifact_sha256": None,
+    }:
+        raise ValueError("semantic training template must contain one null binding")
+    model_fields = payload.get("model")
+    if not isinstance(model_fields, Mapping):
+        raise ValueError("semantic training template model differs")
+    model = model_fields.get("id")
+    revision = model_fields.get("revision")
+    decoder_layers = model_fields.get("decoder_layers")
+    if (
+        not isinstance(model, str)
+        or not isinstance(revision, str)
+        or isinstance(decoder_layers, bool)
+        or not isinstance(decoder_layers, int)
+    ):
+        raise ValueError("semantic training template model identity differs")
+    loaded = load_probe_semantic_subspace_training_evidence(
+        evidence,
+        model=model,
+        model_revision=revision,
+        decoder_layers=decoder_layers,
+    )
+    materialized = copy.deepcopy(dict(payload))
+    materialized["schema_version"] = "robustness-adapter-training-config/v6"
+    materialized["method_evidence"]["artifact_sha256"] = loaded.evidence_sha256  # type: ignore[index]
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f".{output.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(materialized, sort_keys=True, indent=2, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        protocol = load_adapter_training_config(temporary)
+        resolved = resolve_training_method(protocol, evidence=loaded)
+        if resolved.method_evidence_sha256 != loaded.evidence_sha256:
+            raise ValueError("materialized semantic config lost its evidence binding")
+        os.replace(temporary, output)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return load_adapter_training_config(output)
+
+
 def resolve_training_method(
     protocol: AdapterTrainingProtocol,
     *,
-    evidence: ProbeTransitionTrainingEvidence | ProbeTransitionStateTrainingEvidence,
+    evidence: (
+        ProbeTransitionTrainingEvidence
+        | ProbeTransitionStateTrainingEvidence
+        | ProbeSemanticSubspaceTrainingEvidence
+    ),
 ) -> ResolvedTrainingMethod:
-    """Resolve v4 method scope without inspecting evaluation outcomes."""
+    """Resolve an attested method scope without inspecting evaluation outcomes."""
 
     if not isinstance(protocol, AdapterTrainingProtocol):
         raise TypeError("training protocol must be AdapterTrainingProtocol")
+    if isinstance(evidence, ProbeSemanticSubspaceTrainingEvidence):
+        if protocol.condition != "probe-semantic-subspace-distillation":
+            raise ValueError("semantic subspace evidence cannot configure this condition")
+        if protocol.decoder_layers is None or (
+            evidence.model != protocol.model
+            or evidence.model_revision != protocol.model_revision
+            or evidence.decoder_layers != protocol.decoder_layers
+        ):
+            raise ValueError("semantic evidence identity differs from training")
+        if protocol.expected_method_evidence_sha256 != evidence.evidence_sha256:
+            raise ValueError("semantic evidence hash differs from the training config")
+        if (
+            protocol.layer_scope != "probe-transition-suffix"
+            or protocol.layer_policy != "validated-probe-semantic-subspace-suffix/v1"
+            or protocol.state_scope != "probe-semantic-subspace-edited-word-final-token"
+            or protocol.state_distance != "frozen-probe-classifier-forward-kl/v1"
+        ):
+            raise ValueError("semantic training scope differs")
+        return ResolvedTrainingMethod(
+            adapter_layers=evidence.suffix_layers,
+            state_layers=(evidence.transition_layer,),
+            state_target="probe-semantic-subspace-rank16",
+            method_evidence_sha256=evidence.evidence_sha256,
+        )
     if not isinstance(
         evidence,
         (ProbeTransitionTrainingEvidence, ProbeTransitionStateTrainingEvidence),
@@ -340,12 +548,15 @@ def materialize_probe_transition_state_training_config(
 
 
 __all__ = [
+    "ProbeSemanticSubspaceTrainingEvidence",
     "ProbeTransitionTrainingEvidence",
     "ProbeTransitionStateTrainingEvidence",
     "ResolvedTrainingMethod",
+    "load_probe_semantic_subspace_training_evidence",
     "load_probe_transition_training_evidence",
     "load_probe_transition_state_training_evidence",
     "materialize_probe_transition_state_training_config",
+    "materialize_probe_semantic_subspace_training_config",
     "materialize_probe_transition_training_config",
     "resolve_training_method",
 ]

@@ -23,6 +23,7 @@ _CONDITIONS = (
     "localized-state-distillation",
     "probe-transition-output-matching",
     "probe-transition-single-layer-state-distillation",
+    "probe-semantic-subspace-distillation",
 )
 _LOSS_NAMES = ("noisy_language_model", "answer", "output", "state", "clean")
 _TARGET_MODULES = (
@@ -214,6 +215,24 @@ def _validate_condition(
         ):
             raise ValueError("probe-transition state training objective differs")
         return
+    if schema_version == "robustness-adapter-training-config/v6":
+        if (
+            condition != "probe-semantic-subspace-distillation"
+            or layer_scope != "probe-transition-suffix"
+            or layer_policy != "validated-probe-semantic-subspace-suffix/v1"
+            or state_scope != "probe-semantic-subspace-edited-word-final-token"
+            or state_window_policy != "single-probe-transition-layer/v1"
+            or dict(weights)
+            != {
+                "noisy_language_model": 0.0,
+                "answer": 0.0,
+                "output": 1.0,
+                "state": 1.0,
+                "clean": 0.0,
+            }
+        ):
+            raise ValueError("probe semantic training condition and objective disagree")
+        return
     if schema_version == "robustness-adapter-training-config/v4":
         if (
             condition != "probe-transition-output-matching"
@@ -338,6 +357,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
             in {
                 "robustness-adapter-training-config/v4",
                 "robustness-adapter-training-config/v5",
+                "robustness-adapter-training-config/v6",
             }
             else _TOP
         ),
@@ -349,6 +369,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         "robustness-adapter-training-config/v3",
         "robustness-adapter-training-config/v4",
         "robustness-adapter-training-config/v5",
+        "robustness-adapter-training-config/v6",
     }:
         raise ValueError("adapter training schema_version differs")
     condition = _string(root["condition"], field="condition")
@@ -356,18 +377,22 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         raise ValueError("training condition is unsupported")
 
     expected_method_evidence_sha256: str | None = None
-    if schema_version.endswith(("/v4", "/v5")):
+    if schema_version.endswith(("/v4", "/v5", "/v6")):
         method_evidence = _mapping(
             root["method_evidence"],
             field="method_evidence",
             fields=_METHOD_EVIDENCE_V4,
         )
-        expected_binding_schema = (
-            "probe-transition-state-gate-binding/v1"
-            if schema_version.endswith("/v5")
-            else "probe-transition-evidence-binding/v1"
-        )
-        if method_evidence["schema_version"] != expected_binding_schema:
+        expected_evidence_schema = {
+            "robustness-adapter-training-config/v4": "probe-transition-evidence-binding/v1",
+            "robustness-adapter-training-config/v5": (
+                "probe-transition-state-gate-binding/v1"
+            ),
+            "robustness-adapter-training-config/v6": (
+                "probe-semantic-subspace-evidence-binding/v1"
+            ),
+        }[str(schema_version)]
+        if method_evidence["schema_version"] != expected_evidence_schema:
             raise ValueError("method_evidence.schema_version differs")
         digest = method_evidence["artifact_sha256"]
         if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
@@ -408,7 +433,11 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     adapter = _mapping(
         root["adapter"],
         field="adapter",
-        fields=_ADAPTER_V4 if schema_version.endswith(("/v4", "/v5")) else _ADAPTER,
+        fields=(
+            _ADAPTER_V4
+            if schema_version.endswith(("/v4", "/v5", "/v6"))
+            else _ADAPTER
+        ),
     )
     if adapter["method"] != "lora" or adapter["bias"] != "none":
         raise ValueError("adapter method or bias differs")
@@ -432,7 +461,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         field="optimization",
         fields=(
             _OPTIMIZATION_V3
-            if schema_version.endswith(("/v3", "/v4", "/v5"))
+            if schema_version.endswith(("/v3", "/v4", "/v5", "/v6"))
             else _OPTIMIZATION
         ),
     )
@@ -487,7 +516,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     layer_scope = _string(adapter["layer_scope"], field="adapter.layer_scope")
     layer_policy = (
         _string(adapter["layer_policy"], field="adapter.layer_policy")
-        if schema_version.endswith(("/v4", "/v5"))
+        if schema_version.endswith(("/v4", "/v5", "/v6"))
         else "legacy/v1"
     )
     state_window_policy = (
@@ -507,6 +536,8 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     expected_distance = (
         "normalized-squared-error/v1"
         if schema_version.endswith("/v1")
+        else "frozen-probe-classifier-forward-kl/v1"
+        if schema_version.endswith("/v6")
         else "none"
         if schema_version.endswith("/v4")
         else "cosine-residual/v1"
@@ -537,6 +568,10 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
             )
             if gradient_ratio > 0.5 or calibration < 1:
                 raise ValueError("state gradient calibration differs from the safe range")
+            if schema_version.endswith("/v6") and (
+                gradient_ratio != 0.05 or calibration != 8
+            ):
+                raise ValueError("semantic state calibration must be rho=0.05 over 8 batches")
     else:
         gradient_ratio = None
         calibration = 0
@@ -551,6 +586,16 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         or dropout != 0.0
     ):
         raise ValueError("probe-transition state dosage or LoRA recipe differs")
+    if schema_version.endswith("/v6") and (
+        gradient_ratio != 0.05
+        or calibration != 8
+        or _number(objective["temperature"], field="objective.temperature") != 1.0
+        or _number(objective["epsilon"], field="objective.epsilon") != 1e-8
+        or _integer(adapter["rank"], field="adapter.rank", minimum=1) != 16
+        or _number(adapter["alpha"], field="adapter.alpha") != 8.0
+        or dropout != 0.0
+    ):
+        raise ValueError("semantic state dosage or LoRA recipe differs")
 
     pairing_policy = str(sequence.get("pairing_policy", "generator-probability/v1"))
     state_active = weights["state"] > 0.0 and state_scope != "none"
@@ -610,7 +655,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
                 field="optimization.max_student_tokens",
                 minimum=1,
             )
-            if schema_version.endswith(("/v3", "/v4", "/v5"))
+            if schema_version.endswith(("/v3", "/v4", "/v5", "/v6"))
             else None
         ),
         max_grad_norm=_number(optimization["max_grad_norm"], field="optimization.max_grad_norm"),
