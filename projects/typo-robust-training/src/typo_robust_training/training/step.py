@@ -17,6 +17,7 @@ from typo_robust_training.training.losses import (
     next_token_cross_entropy,
     normalized_component_state_loss,
     normalized_global_state_loss,
+    probe_semantic_classifier_kl,
     residual_window_cosine_loss,
 )
 
@@ -60,6 +61,9 @@ def compute_training_step(
     attention_head_dim: int,
     state_layers: Sequence[int] | None = None,
     state_weight: float = 1.0,
+    semantic_basis: Any | None = None,
+    semantic_projected_class_weights: Any | None = None,
+    semantic_classifier_bias: Any | None = None,
 ) -> TrainingStepOutput:
     """Compute all configured losses while keeping the teacher fully detached."""
 
@@ -79,13 +83,26 @@ def compute_training_step(
         "all-layers-edited-word-final-tokens",
         "probe-transition-single-layer-edited-word-final-token/v1",
     }
+    semantic_state = (
+        protocol.state_scope == "probe-semantic-subspace-edited-word-final-token"
+    )
     resolved_state_layers = tuple(state_layers or ())
+    semantic_tensors = (
+        semantic_basis,
+        semantic_projected_class_weights,
+        semantic_classifier_bias,
+    )
     if component_state and not component_weights:
         raise ValueError("localized state training requires causal component weights")
     if not component_state and component_weights:
         raise ValueError("non-localized training cannot consume component weights")
-    if residual_state != bool(resolved_state_layers):
+    if (residual_state or semantic_state) != bool(resolved_state_layers):
         raise ValueError("residual state training layers differ from the objective")
+    if semantic_state:
+        if len(resolved_state_layers) != 1 or any(value is None for value in semantic_tensors):
+            raise ValueError("semantic state training requires one layer and frozen classifier")
+    elif any(value is not None for value in semantic_tensors):
+        raise ValueError("non-semantic training cannot consume a semantic classifier")
     if not math.isfinite(float(state_weight)) or float(state_weight) < 0.0:
         raise ValueError("state loss weight must be finite and non-negative")
     teacher.requires_grad_(False)
@@ -125,7 +142,7 @@ def compute_training_step(
                     input_ids=clean_ids,
                     attention_mask=clean_mask,
                     output_hidden_states=legacy_global_state
-                    or (residual_state and bool(encoding.clean_edit_positions)),
+                    or ((residual_state or semantic_state) and bool(encoding.clean_edit_positions)),
                 )
 
     if component_state and encoding.typo_edit_positions:
@@ -147,7 +164,7 @@ def compute_training_step(
             input_ids=typo_ids,
             attention_mask=typo_mask,
             output_hidden_states=legacy_global_state
-            or (residual_state and bool(encoding.typo_edit_positions)),
+            or ((residual_state or semantic_state) and bool(encoding.typo_edit_positions)),
         )
         student_components = None
     logits = student_output.logits
@@ -207,6 +224,25 @@ def compute_training_step(
                     typo_positions=encoding.typo_edit_positions,
                     decoder_layers=len(find_decoder_layers(student)),
                     epsilon=protocol.epsilon,
+                )
+        elif semantic_state:
+            if not encoding.clean_edit_positions:
+                losses["state"] = zero
+            else:
+                if teacher_output is None or teacher_output.hidden_states is None:
+                    raise RuntimeError("semantic state loss is missing teacher hidden states")
+                if student_output.hidden_states is None:
+                    raise RuntimeError("semantic state loss is missing student hidden states")
+                losses["state"] = probe_semantic_classifier_kl(
+                    teacher_output.hidden_states,
+                    student_output.hidden_states,
+                    layer_index=resolved_state_layers[0],
+                    clean_positions=encoding.clean_edit_positions,
+                    typo_positions=encoding.typo_edit_positions,
+                    decoder_layers=len(find_decoder_layers(student)),
+                    basis=semantic_basis,
+                    projected_class_weights=semantic_projected_class_weights,
+                    classifier_bias=semantic_classifier_bias,
                 )
     if protocol.loss_weights["clean"] > 0.0:
         if teacher_output is None:

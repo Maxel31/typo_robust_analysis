@@ -734,6 +734,23 @@ class ProbeTransitionIdentityInventory:
 
 
 @dataclass(frozen=True, slots=True)
+class ProbeFitRecord:
+    """One validated clean row used to fit the parent probe.
+
+    This deliberately exposes only the immutable information needed to
+    reproduce downstream clean activations.  Consumers never need to trust a
+    separately supplied activation matrix.
+    """
+
+    record_id: str
+    source_group_sha256: str
+    parent_source_sha256: str
+    normalized_clean_sha256: str
+    clean_text: str
+    clean_word_char_span: tuple[int, int]
+
+
+@dataclass(frozen=True, slots=True)
 class ProbeTransitionArtifact:
     """Validated evidence consumed by suffix-adapter training."""
 
@@ -752,10 +769,35 @@ class ProbeTransitionArtifact:
     validation_ci_lower_by_seed: Mapping[int, float]
     identity_inventory: ProbeTransitionIdentityInventory
     protected_split_registry_sha256: str
+    fit_records: tuple[ProbeFitRecord, ...]
 
     @property
     def suffix_layers(self) -> tuple[int, ...]:
         return tuple(range(self.selected_transition_layer, self.decoder_layers))
+
+    @property
+    def cohort_identities_by_role(self) -> Mapping[str, frozenset[str]]:
+        """Compatibility view over the stronger parent identity inventory."""
+
+        return MappingProxyType(
+            {
+                "fit": self.identity_inventory.fit,
+                "selection": self.identity_inventory.selection,
+                "validation": self.identity_inventory.validation,
+            }
+        )
+
+    @property
+    def protected_identities(self) -> frozenset[str]:
+        """Protected identities bound to the attested split registry."""
+
+        return self.identity_inventory.protected
+
+    @property
+    def all_reserved_identities(self) -> frozenset[str]:
+        """Every transitive identity unavailable to a downstream diagnostic."""
+
+        return self.identity_inventory.all
 
 
 def _validation_peak(trajectory: ProbeSeedTrajectory) -> int:
@@ -1027,10 +1069,22 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
             protected=frozenset(protected_union),
         ),
         protected_split_registry_sha256=protected_sha256,
+        fit_records=tuple(
+            ProbeFitRecord(
+                record_id=row.record_id,
+                source_group_sha256=row.source_group_sha256,
+                parent_source_sha256=row.parent_source_sha256,
+                normalized_clean_sha256=row.normalized_clean_sha256,
+                clean_text=row.clean_text,
+                clean_word_char_span=row.clean_word_char_span,
+            )
+            for row in manifests["fit"]
+        ),
     )
 
 
 __all__ = [
+    "ProbeFitRecord",
     "ProbeTransitionArtifact",
     "ProbeTransitionIdentityInventory",
     "load_probe_transition_artifact",

@@ -186,11 +186,32 @@ class AdapterTrainingRuntime(Protocol):
 
     def save_state(self, path: Path) -> None: ...
 
-    def load_state(self, path: Path) -> None: ...
+    def load_state(
+        self,
+        path: Path,
+        *,
+        expected_state_calibration: Mapping[str, object] | None = None,
+    ) -> None: ...
 
     def save_adapter(self, path: Path) -> None: ...
 
     def provenance(self) -> Mapping[str, object]: ...
+
+
+def _resolved_method_presentation_layers(
+    *, condition: str, method: training_methods.ResolvedTrainingMethod
+) -> tuple[int, ...]:
+    """Expose the scientific intervention coordinate, not the LoRA support."""
+
+    return (
+        method.state_layers
+        if condition
+        in {
+            "probe-transition-single-layer-state-distillation",
+            "probe-semantic-subspace-distillation",
+        }
+        else method.adapter_layers
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,9 +234,13 @@ def _load_evidence(
     | ResidualStateEvidence
     | training_methods.ProbeTransitionTrainingEvidence
     | training_methods.ProbeTransitionStateTrainingEvidence
+    | training_methods.ProbeSemanticSubspaceTrainingEvidence
     | None
 ):
-    if protocol.condition == "probe-transition-output-matching":
+    if protocol.condition in {
+        "probe-transition-output-matching",
+        "probe-semantic-subspace-distillation",
+    }:
         if (
             config.probe_selection_path is None
             or protocol.decoder_layers is None
@@ -224,8 +249,18 @@ def _load_evidence(
             or config.component_selection_path is not None
             or config.state_gate_path is not None
         ):
-            raise ValueError("probe-transition training requires only one probe selection artifact")
-        return training_methods.load_probe_transition_training_evidence(
+            message = (
+                "semantic training requires only one kill evidence artifact"
+                if protocol.condition == "probe-semantic-subspace-distillation"
+                else "probe-transition training requires only one probe selection artifact"
+            )
+            raise ValueError(message)
+        loader = (
+            training_methods.load_probe_semantic_subspace_training_evidence
+            if protocol.condition == "probe-semantic-subspace-distillation"
+            else training_methods.load_probe_transition_training_evidence
+        )
+        return loader(
             config.probe_selection_path,
             model=protocol.model,
             model_revision=protocol.model_revision,
@@ -624,6 +659,7 @@ def run_adapter_training(
         | ResidualStateEvidence
         | training_methods.ProbeTransitionTrainingEvidence
         | training_methods.ProbeTransitionStateTrainingEvidence
+        | training_methods.ProbeSemanticSubspaceTrainingEvidence
         | None
     ) = None,
     tracker: TrainingTracker | None = None,
@@ -695,14 +731,21 @@ def run_adapter_training(
     elif protocol.condition in {
         "probe-transition-output-matching",
         "probe-transition-single-layer-state-distillation",
+        "probe-semantic-subspace-distillation",
     }:
-        expected_type = (
-            training_methods.ProbeTransitionTrainingEvidence
-            if protocol.condition == "probe-transition-output-matching"
-            else training_methods.ProbeTransitionStateTrainingEvidence
-        )
+        expected_type = {
+            "probe-transition-output-matching": (
+                training_methods.ProbeTransitionTrainingEvidence
+            ),
+            "probe-transition-single-layer-state-distillation": (
+                training_methods.ProbeTransitionStateTrainingEvidence
+            ),
+            "probe-semantic-subspace-distillation": (
+                training_methods.ProbeSemanticSubspaceTrainingEvidence
+            ),
+        }[protocol.condition]
         if not isinstance(evidence, expected_type):
-            raise ValueError("injected probe-transition evidence differs from the condition")
+            raise ValueError("injected probe method evidence differs from the condition")
     else:
         expected_evidence = protocol.condition in {
             "localized-state-distillation",
@@ -717,6 +760,7 @@ def run_adapter_training(
             (
                 training_methods.ProbeTransitionTrainingEvidence,
                 training_methods.ProbeTransitionStateTrainingEvidence,
+                training_methods.ProbeSemanticSubspaceTrainingEvidence,
             ),
         )
         else None
@@ -819,7 +863,27 @@ def run_adapter_training(
                     runtime=runtime,
                 ),
             )
-        runtime.load_state(checkpoint.state_path)
+            runtime.load_state(checkpoint.state_path)
+        elif protocol.calibration_micro_batches:
+            calibration = getattr(runtime, "calibrate_state_weight", None)
+            if not callable(calibration):
+                raise TypeError("state training runtime cannot revalidate its loss weight")
+            expected_state_calibration = dict(
+                calibration(
+                    _state_calibration_pairs(
+                        bundle=bundle,
+                        protocol=protocol,
+                        seed=config.seed,
+                        runtime=runtime,
+                    )
+                )
+            )
+            runtime.load_state(
+                checkpoint.state_path,
+                expected_state_calibration=expected_state_calibration,
+            )
+        else:
+            runtime.load_state(checkpoint.state_path)
     order_cache = EpochSourceOrderCache(bundle.sources, seed=config.seed)
     provenance = dict(runtime.provenance())
     started_at = _now()
@@ -887,7 +951,10 @@ def run_adapter_training(
             elif isinstance(evidence, LocalizationEvidence):
                 presentation_layers = evidence.adapter_layers
             elif resolved_method is not None:
-                presentation_layers = resolved_method.adapter_layers
+                presentation_layers = _resolved_method_presentation_layers(
+                    condition=protocol.condition,
+                    method=resolved_method,
+                )
             elif protocol.condition == "global-state-alignment":
                 # Cycle 1 predates the explicit decoder-layer inventory and its
                 # Legacy presentation intentionally carries no layer label.

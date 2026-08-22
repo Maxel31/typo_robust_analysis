@@ -308,17 +308,19 @@ def test_runner_binds_probe_hash_to_run_and_checkpoint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    payload = json.loads(PROBE_CONFIG.read_text(encoding="utf-8"))
-    payload["optimization"].update(
-        {
-            "gradient_accumulation_steps": 2,
-            "max_optimizer_steps": 1,
-            "max_student_tokens": 14,
-            "checkpoint_every_optimizer_steps": 1,
-        }
+    protocol = replace(
+        load_adapter_training_config(PROBE_CONFIG),
+        gradient_accumulation_steps=2,
+        max_optimizer_steps=1,
+        max_student_tokens=14,
+        checkpoint_every_optimizer_steps=1,
     )
-    config_path = tmp_path / "probe-training.json"
-    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    # Keep the production artifact immutable; shrink only the in-memory protocol
+    # behind this unit-test seam so the runner reaches one optimizer boundary.
+    monkeypatch.setattr(
+        "typo_robust_training.training.runner.load_adapter_training_config",
+        lambda _path: protocol,
+    )
     captured_bindings: list[dict[str, object]] = []
 
     def write_checkpoint(
@@ -337,7 +339,7 @@ def test_runner_binds_probe_hash_to_run_and_checkpoint(
         write_checkpoint,
     )
     result = run_adapter_training(
-        _run_config(tmp_path, config_path=config_path),
+        _run_config(tmp_path, config_path=PROBE_CONFIG),
         runtime=_ProbeRuntime(),
         data_bundle=_bundle(tmp_path),
         evidence=_evidence(),
@@ -345,7 +347,7 @@ def test_runner_binds_probe_hash_to_run_and_checkpoint(
 
     assert captured_bindings == [
         {
-            "config_sha256": load_adapter_training_config(config_path).config_sha256,
+            "config_sha256": protocol.config_sha256,
             "training_data_sha256": "d" * 64,
             "localization_sha256": None,
             "method_evidence_sha256": EVIDENCE_SHA256,

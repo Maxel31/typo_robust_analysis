@@ -220,6 +220,31 @@ def _run_validate_probe_transition_single_layer_gate(args: argparse.Namespace) -
     return 0
 
 
+def _run_probe_semantic_subspace_kill_test(args: argparse.Namespace) -> int:
+    from typo_robust_training.probe.subspace_kill_runner import (
+        SemanticSubspaceKillRunConfig,
+        run_semantic_subspace_kill_test,
+    )
+
+    try:
+        result = run_semantic_subspace_kill_test(
+            SemanticSubspaceKillRunConfig(
+                config_path=args.config,
+                parent_probe_artifact_path=args.parent_probe_artifact,
+                cohort_manifest_path=args.cohort_manifest,
+                pca_fit_manifest_path=args.pca_fit_manifest,
+                gpu_id=args.gpu_id,
+                output_dir=args.output_dir,
+            )
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"run-probe-semantic-subspace-kill-test: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"semantic-subspace causal kill test passed={result.passed}: {result.artifact_path}")
+    print(f"run manifest: {result.run_path}")
+    return 0 if result.passed else 2
+
+
 def _run_localize_components(args: argparse.Namespace) -> int:
     from typo_robust_training.localization.component_runner import (
         ComponentLocalizationRunConfig,
@@ -446,6 +471,26 @@ def _run_materialize_probe_transition_state_training_config(
     return 0
 
 
+def _run_materialize_probe_semantic_training_config(args: argparse.Namespace) -> int:
+    from typo_robust_training.training.methods import (
+        materialize_probe_semantic_subspace_training_config,
+    )
+
+    try:
+        protocol = materialize_probe_semantic_subspace_training_config(
+            args.template,
+            evidence_path=args.kill_evidence,
+            output_path=args.output_config,
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"materialize-probe-semantic-training-config: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"materialized training config: {args.output_config}")
+    print(f"config SHA-256: {protocol.config_sha256}")
+    print(f"method evidence SHA-256: {protocol.expected_method_evidence_sha256}")
+    return 0
+
+
 def _run_robustness_evaluation(args: argparse.Namespace) -> int:
     from typo_robust_training.evaluation.runner import (
         RobustnessEvaluationRunConfig,
@@ -601,6 +646,20 @@ def register_commands(
         _typo_cot_plugin_handler=_run_validate_probe_transition_single_layer_gate
     )
 
+    semantic_kill = commands.add_parser(
+        "run-probe-semantic-subspace-kill-test",
+        help="Causally validate both frozen rank-16 probe subspaces before training.",
+    )
+    semantic_kill.add_argument("--config", required=True, type=Path)
+    semantic_kill.add_argument("--parent-probe-artifact", required=True, type=Path)
+    semantic_kill.add_argument("--cohort-manifest", required=True, type=Path)
+    semantic_kill.add_argument("--pca-fit-manifest", required=True, type=Path)
+    semantic_kill.add_argument("--gpu-id", required=True)
+    semantic_kill.add_argument("--output-dir", required=True, type=Path)
+    semantic_kill.set_defaults(
+        _typo_cot_plugin_handler=_run_probe_semantic_subspace_kill_test
+    )
+
     sae_corpus = commands.add_parser(
         "build-sae-clean-corpus",
         help="Build a role-disjoint clean FineWeb-Edu supplement for SAE training.",
@@ -704,6 +763,16 @@ def register_commands(
     materialize_probe_config.set_defaults(
         _typo_cot_plugin_handler=_run_materialize_probe_transition_training_config
     )
+    materialize_semantic_config = commands.add_parser(
+        "materialize-probe-semantic-training-config",
+        help="Bind passed semantic kill evidence into a non-runnable training template.",
+    )
+    materialize_semantic_config.add_argument("--template", required=True, type=Path)
+    materialize_semantic_config.add_argument("--kill-evidence", required=True, type=Path)
+    materialize_semantic_config.add_argument("--output-config", required=True, type=Path)
+    materialize_semantic_config.set_defaults(
+        _typo_cot_plugin_handler=_run_materialize_probe_semantic_training_config
+    )
 
     materialize_state_config = commands.add_parser(
         "materialize-probe-transition-state-training-config",
@@ -733,6 +802,10 @@ def register_commands(
             "train-probe-transition-single-layer-state-distillation",
             "probe-transition-single-layer-state-distillation",
         ),
+        (
+            "train-probe-semantic-subspace-distillation",
+            "probe-semantic-subspace-distillation",
+        ),
     ):
         training = commands.add_parser(
             command,
@@ -748,7 +821,11 @@ def register_commands(
                 "random-window-state-distillation",
             },
             accepts_component_selection=condition == "localized-state-distillation",
-            accepts_probe_selection=condition == "probe-transition-output-matching",
+            accepts_probe_selection=condition
+            in {
+                "probe-transition-output-matching",
+                "probe-semantic-subspace-distillation",
+            },
             accepts_state_gate=(
                 condition == "probe-transition-single-layer-state-distillation"
             ),

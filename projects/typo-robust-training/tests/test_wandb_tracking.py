@@ -124,6 +124,31 @@ def test_wandb_presentation_names_the_scientific_arm_and_operation() -> None:
     assert "arm:kojima-output-matching" in baseline.tags
     assert "state-gradient-ratio" not in " ".join(baseline.tags)
 
+    probe_baseline = build_wandb_run_presentation(
+        condition="probe-transition-output-matching",
+        schema_version="robustness-adapter-training-config/v4",
+        model="google/gemma-3-4b-it",
+        seed=42,
+        max_optimizer_steps=10_000,
+        max_student_tokens=10_000_000,
+        state_gradient_ratio=None,
+        state_layers=tuple(range(7, 34)),
+    )
+    assert probe_baseline.job_type == "baseline-probe-transition-output"
+
+    probe_state = build_wandb_run_presentation(
+        condition="probe-transition-single-layer-state-distillation",
+        schema_version="robustness-adapter-training-config/v5",
+        model="google/gemma-3-4b-it",
+        seed=42,
+        max_optimizer_steps=10_000,
+        max_student_tokens=10_000_000,
+        state_gradient_ratio=0.05,
+        state_layers=(7,),
+    )
+    assert probe_state.job_type == "proposed-probe-transition-state"
+    assert "L7" in probe_state.name
+
     legacy = build_wandb_run_presentation(
         condition="localized-state-distillation",
         schema_version="robustness-adapter-training-config/v1",

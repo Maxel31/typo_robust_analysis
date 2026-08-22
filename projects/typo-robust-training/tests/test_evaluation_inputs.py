@@ -80,9 +80,6 @@ def _adapter(
         ),
     }
     (adapter / "training_runtime.json").write_text(json.dumps(runtime), encoding="utf-8")
-    run_runtime = (
-        runtime if condition == "probe-transition-single-layer-state-distillation" else None
-    )
     (output / "run.json").write_text(
         json.dumps(
             {
@@ -96,12 +93,12 @@ def _adapter(
                 "localization_sha256": "c" * 64
                 if condition == "localized-state-distillation"
                 else None,
+                "runtime": runtime,
                 **(
                     {"method_evidence_sha256": method_evidence_sha256}
                     if method_evidence_sha256 is not None
                     else {}
                 ),
-                **({"runtime": run_runtime} if run_runtime is not None else {}),
                 "outputs": {"adapter": {"sha256": _tree_sha256(adapter)}},
             }
         ),
@@ -209,7 +206,27 @@ def test_adapter_loader_rejects_duplicate_identity_incomplete_run_or_runtime_dri
     runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
     runtime["requested_revision"] = "d" * 40
     runtime_path.write_text(json.dumps(runtime), encoding="utf-8")
-    with pytest.raises(ValueError, match="runtime identity"):
+    with pytest.raises(ValueError, match="run and adapter runtime|runtime identity"):
+        load_adapter_descriptors((adapter,), protocol=PROTOCOL)
+
+
+def test_adapter_loader_rejects_run_runtime_disagreeing_with_adapter_runtime(
+    tmp_path: Path,
+) -> None:
+    """A completed run cannot attest one runtime while its adapter reports another."""
+
+    adapter = _adapter(
+        tmp_path,
+        condition="probe-semantic-subspace-distillation",
+        seed=42,
+        method_evidence_sha256="9" * 64,
+    )
+    run_path = adapter.parent / "run.json"
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    run["runtime"]["state_weight"] = 999.0
+    run_path.write_text(json.dumps(run), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="run and adapter runtime provenance differ"):
         load_adapter_descriptors((adapter,), protocol=PROTOCOL)
 
 

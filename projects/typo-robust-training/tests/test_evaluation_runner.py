@@ -195,28 +195,26 @@ def _completed_adapter(
         ),
         encoding="utf-8",
     )
-    (adapter / "training_runtime.json").write_text(
-        json.dumps(
-            {
-                "runtime": "HuggingFaceAdapterTrainingRuntime/v2",
-                "model": protocol.model,
-                "requested_revision": protocol.model_revision,
-                "teacher_revision": protocol.model_revision,
-                "student_revision": protocol.model_revision,
-                "tokenizer_revision": protocol.model_revision,
-                "code_revision": "f" * 40,
-                "condition": condition,
-                "seed": seed,
-                "teacher_frozen": True,
-                "student_base_frozen": True,
-                **(
-                    {"method_evidence_sha256": method_evidence_sha256}
-                    if method_evidence_sha256 is not None
-                    else {}
-                ),
-            }
+    training_runtime = {
+        "runtime": "HuggingFaceAdapterTrainingRuntime/v2",
+        "model": protocol.model,
+        "requested_revision": protocol.model_revision,
+        "teacher_revision": protocol.model_revision,
+        "student_revision": protocol.model_revision,
+        "tokenizer_revision": protocol.model_revision,
+        "code_revision": "f" * 40,
+        "condition": condition,
+        "seed": seed,
+        "teacher_frozen": True,
+        "student_base_frozen": True,
+        **(
+            {"method_evidence_sha256": method_evidence_sha256}
+            if method_evidence_sha256 is not None
+            else {}
         ),
-        encoding="utf-8",
+    }
+    (adapter / "training_runtime.json").write_text(
+        json.dumps(training_runtime), encoding="utf-8"
     )
     run = {
         "schema_version": "robustness-adapter-training-run/v1",
@@ -229,6 +227,7 @@ def _completed_adapter(
         "training_data_sha256": "e" * 64,
         "data_identity_sha256": "c" * 64,
         "localization_sha256": localization_sha256,
+        "runtime": training_runtime,
         "outputs": {"adapter": {"sha256": sha256_tree(adapter)}},
     }
     if method_evidence_sha256 is not None:

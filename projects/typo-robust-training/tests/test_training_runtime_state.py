@@ -19,6 +19,7 @@ from typo_robust_training.training.runtime import (
     _adapter_scope_contract,
     _cpu_cuda_rng_states,
     _validate_adapter_scope_before_resume,
+    _validated_resume_state_calibration,
 )
 
 
@@ -119,6 +120,65 @@ def test_cuda_rng_states_are_normalized_to_cpu_byte_tensors() -> None:
 def test_cuda_rng_state_normalization_rejects_invalid_payloads(states: object) -> None:
     with pytest.raises(ValueError, match="CUDA RNG"):
         _cpu_cuda_rng_states(states)
+
+
+def _semantic_calibration() -> dict[str, object]:
+    return {
+        "schema_version": "state-gradient-calibration/v1",
+        "micro_batches": 8,
+        "record_ids": [f"calibration-{index}" for index in range(8)],
+        "output_gradient_norms": [2.0] * 8,
+        "state_gradient_norms": [0.5] * 8,
+        "mean_output_gradient_norm": 2.0,
+        "mean_state_gradient_norm": 0.5,
+        "target_gradient_ratio": 0.05,
+        "state_weight": 0.2,
+        "achieved_initial_ratio": 0.05,
+    }
+
+
+def test_semantic_resume_rederives_state_weight_and_rejects_empty_calibration() -> None:
+    """A checkpoint cannot self-report an arbitrary lambda or erase its derivation."""
+
+    protocol = SimpleNamespace(
+        state_gradient_ratio=0.05,
+        calibration_micro_batches=8,
+        loss_weights={"state": 1.0},
+    )
+    weight, calibration = _validated_resume_state_calibration(
+        protocol=protocol,
+        state_weight=0.2,
+        calibration=_semantic_calibration(),
+        expected_calibration=_semantic_calibration(),
+    )
+    assert weight == 0.2
+    assert calibration == _semantic_calibration()
+
+    for malicious_weight, malicious_calibration in ((999.0, _semantic_calibration()), (0.2, {})):
+        with pytest.raises(ValueError, match="checkpoint calibration"):
+            _validated_resume_state_calibration(
+                protocol=protocol,
+                state_weight=malicious_weight,
+                calibration=malicious_calibration,
+                expected_calibration=_semantic_calibration(),
+            )
+
+    forged = _semantic_calibration()
+    forged.update(
+        {
+            "record_ids": [f"forged-{index}" for index in range(8)],
+            "output_gradient_norms": [9990.0] * 8,
+            "mean_output_gradient_norm": 9990.0,
+            "state_weight": 999.0,
+        }
+    )
+    with pytest.raises(ValueError, match="checkpoint calibration"):
+        _validated_resume_state_calibration(
+            protocol=protocol,
+            state_weight=999.0,
+            calibration=forged,
+            expected_calibration=_semantic_calibration(),
+        )
 
 
 def test_pair_usability_treats_resampleable_encoding_failures_as_unusable() -> None:

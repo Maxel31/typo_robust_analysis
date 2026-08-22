@@ -265,11 +265,115 @@ def residual_window_cosine_loss(
     return torch.stack(losses).mean()
 
 
+def probe_semantic_classifier_kl(
+    teacher_hidden_states: Sequence[Any],
+    student_hidden_states: Sequence[Any],
+    *,
+    layer_index: int,
+    clean_positions: Sequence[int],
+    typo_positions: Sequence[int],
+    decoder_layers: int,
+    basis: Any,
+    projected_class_weights: Any,
+    classifier_bias: Any,
+) -> Any:
+    """Forward KL through one frozen rank-limited probe classifier.
+
+    ``basis`` contains the rows of Q and ``projected_class_weights`` is the
+    class-centred probe matrix multiplied by Q.T.  The implementation therefore
+    evaluates ``z = A_s (Q h) + b`` and never constructs the dense Q.T Q
+    projector.  Only the typo/student hidden state remains in the autograd graph.
+    """
+
+    import torch
+
+    teacher = tuple(teacher_hidden_states)
+    student = tuple(student_hidden_states)
+    clean = tuple(clean_positions)
+    typo = tuple(typo_positions)
+    if (
+        isinstance(decoder_layers, bool)
+        or not isinstance(decoder_layers, int)
+        or decoder_layers <= 0
+        or len(teacher) != decoder_layers + 1
+        or len(student) != decoder_layers + 1
+        or isinstance(layer_index, bool)
+        or not isinstance(layer_index, int)
+        or not 0 <= layer_index < decoder_layers
+    ):
+        raise ValueError("semantic state hidden-state inventory or layer differs")
+    if len(clean) != len(typo) or len(set(clean)) != len(clean) or len(set(typo)) != len(typo):
+        raise ValueError("semantic state edited positions must align one-to-one")
+    target_raw = teacher[layer_index + 1]
+    prediction_raw = student[layer_index + 1]
+    if (
+        not isinstance(target_raw, torch.Tensor)
+        or not isinstance(prediction_raw, torch.Tensor)
+        or target_raw.ndim != 3
+        or prediction_raw.ndim != 3
+        or int(target_raw.shape[0]) != 1
+        or int(prediction_raw.shape[0]) != 1
+        or int(target_raw.shape[2]) != int(prediction_raw.shape[2])
+    ):
+        raise ValueError("semantic state hidden tensors differ")
+    tensors = (basis, projected_class_weights, classifier_bias)
+    if any(not isinstance(value, torch.Tensor) for value in tensors):
+        raise ValueError("semantic classifier tensors must be torch tensors")
+    rank = int(basis.shape[0]) if basis.ndim == 2 else -1
+    hidden = int(prediction_raw.shape[2])
+    classes = int(projected_class_weights.shape[0]) if projected_class_weights.ndim == 2 else -1
+    if (
+        basis.ndim != 2
+        or tuple(basis.shape) != (rank, hidden)
+        or projected_class_weights.ndim != 2
+        or tuple(projected_class_weights.shape) != (classes, rank)
+        or classifier_bias.ndim != 1
+        or tuple(classifier_bias.shape) != (classes,)
+        or rank <= 0
+        or classes <= rank
+        or any(value.requires_grad for value in tensors)
+        or any(not bool(torch.isfinite(value).all()) for value in tensors)
+    ):
+        raise ValueError("semantic classifier shape, values, or frozen boundary differs")
+    gram = basis.detach().double() @ basis.detach().double().T
+    if not torch.allclose(
+        gram,
+        torch.eye(rank, dtype=torch.float64, device=gram.device),
+        # Evidence is derived and checked in float64, then transferred to the
+        # accelerator as float32.  This tolerance admits only that cast error.
+        atol=1e-5,
+        rtol=1e-5,
+    ):
+        raise ValueError("semantic classifier basis is not orthonormal")
+    if not clean:
+        return prediction_raw.float().sum() * 0.0
+    if min((*clean, *typo)) < 0 or max(clean) >= int(target_raw.shape[1]) or max(typo) >= int(
+        prediction_raw.shape[1]
+    ):
+        raise ValueError("semantic state edited position is out of range")
+
+    device = prediction_raw.device
+    q = basis.detach().to(device=device, dtype=torch.float32)
+    weights = projected_class_weights.detach().to(device=device, dtype=torch.float32)
+    bias = classifier_bias.detach().to(device=device, dtype=torch.float32)
+    target = target_raw[0, clean, :].detach().to(device=device, dtype=torch.float32)
+    prediction = prediction_raw[0, typo, :].float()
+    teacher_logits = (target @ q.T) @ weights.T + bias
+    student_logits = (prediction @ q.T) @ weights.T + bias
+    teacher_log = torch.log_softmax(teacher_logits, dim=-1)
+    student_log = torch.log_softmax(student_logits, dim=-1)
+    loss = (teacher_log.exp() * (teacher_log - student_log)).sum(dim=-1).clamp_min(0.0).mean()
+    if not bool(torch.isfinite(loss)):
+        raise FloatingPointError("semantic classifier KL is non-finite")
+    return loss
+
+
 __all__ = [
     "aligned_output_kl",
     "answer_cross_entropy",
     "next_token_cross_entropy",
     "normalized_component_state_loss",
     "normalized_global_state_loss",
+    "probe_semantic_classifier_kl",
     "residual_window_cosine_loss",
 ]

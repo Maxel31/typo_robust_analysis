@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ _CONDITIONS = (
     "localized-state-distillation",
     "probe-transition-output-matching",
     "probe-transition-single-layer-state-distillation",
+    "probe-semantic-subspace-distillation",
 )
 _LOSS_NAMES = ("noisy_language_model", "answer", "output", "state", "clean")
 _TARGET_MODULES = (
@@ -97,6 +99,129 @@ _OBJECTIVE_V2 = _OBJECTIVE | {
     "state_window_policy",
 }
 _GRADIENT_RATIO_GUARD_OPTIMIZER_STEPS = 50
+_V6_FROZEN_SECTIONS: Mapping[str, object] = {
+    "model": {
+        "id": "google/gemma-3-4b-it",
+        "revision": "093f9f388b31de276ce2de164bdc2081324b9767",
+        "dtype": "bfloat16",
+        "decoder_layers": 34,
+    },
+    "sequence": {
+        "max_length": 512,
+        "on_the_fly_typo": "record-epoch-counter-based/v1",
+        "natural_pairs": "fixed-clean-typo-source-pairs/v1",
+        "answer_format": "no-hard-answer-target/v1",
+        "pairing_policy": "exact-alternating-clean-noisy/v1",
+    },
+    "adapter": {
+        "method": "lora",
+        "rank": 16,
+        "alpha": 8,
+        "dropout": 0,
+        "target_modules": list(_TARGET_MODULES),
+        "layer_scope": "probe-transition-suffix",
+        "layer_policy": "validated-probe-semantic-subspace-suffix/v1",
+        "bias": "none",
+        "task_type": "CAUSAL_LM",
+    },
+    "optimization": {
+        "optimizer": "adamw",
+        "learning_rate": 0.0001,
+        "weight_decay": 0.01,
+        "warmup_ratio": 0.0,
+        "scheduler": "constant-with-warmup",
+        "gradient_checkpointing": True,
+        "micro_batch_size": 1,
+        "gradient_accumulation_steps": 32,
+        "max_optimizer_steps": 10000,
+        "max_student_tokens": 10000000,
+        "max_grad_norm": 1.0,
+        "checkpoint_every_optimizer_steps": 50,
+        "log_every_micro_steps": 1,
+        "seed_inventory": [42, 43, 44],
+        "resume_contract": "exact-next-sample-and-rng/v1",
+    },
+    "objective": {
+        "weights": {
+            "noisy_language_model": 0,
+            "answer": 0,
+            "output": 1,
+            "state": 1,
+            "clean": 0,
+        },
+        "state_scope": "probe-semantic-subspace-edited-word-final-token",
+        "state_distance": "frozen-probe-classifier-forward-kl/v1",
+        "output_scope": "aligned-non-edited-next-token/v1",
+        "noisy_language_model_scope": "all-nonpadding-next-tokens/v1",
+        "temperature": 1.0,
+        "epsilon": 1e-8,
+        "state_gradient_ratio": 0.05,
+        "calibration_micro_batches": 8,
+        "state_window_policy": "single-probe-transition-layer/v1",
+    },
+}
+_V5_FROZEN_SECTIONS: Mapping[str, object] = {
+    "model": _V6_FROZEN_SECTIONS["model"],
+    "sequence": _V6_FROZEN_SECTIONS["sequence"],
+    "adapter": {
+        "method": "lora",
+        "rank": 16,
+        "alpha": 8,
+        "dropout": 0,
+        "target_modules": list(_TARGET_MODULES),
+        "layer_scope": "probe-transition-suffix",
+        "layer_policy": "validated-linear-probe-transition-suffix/v1",
+        "bias": "none",
+        "task_type": "CAUSAL_LM",
+    },
+    "optimization": _V6_FROZEN_SECTIONS["optimization"],
+    "objective": {
+        "weights": {
+            "noisy_language_model": 0,
+            "answer": 0,
+            "output": 1,
+            "state": 1,
+            "clean": 0,
+        },
+        "state_scope": "probe-transition-single-layer-edited-word-final-token/v1",
+        "state_distance": "cosine-residual/v1",
+        "output_scope": "aligned-non-edited-next-token/v1",
+        "noisy_language_model_scope": "all-nonpadding-next-tokens/v1",
+        "temperature": 1.0,
+        "epsilon": 1e-8,
+        "state_gradient_ratio": 0.05,
+        "calibration_micro_batches": 8,
+        "state_window_policy": "validated-probe-transition-single-layer/v1",
+    },
+}
+_V4_FROZEN_SECTIONS: Mapping[str, object] = {
+    "model": _V5_FROZEN_SECTIONS["model"],
+    "sequence": _V5_FROZEN_SECTIONS["sequence"],
+    "adapter": _V5_FROZEN_SECTIONS["adapter"],
+    "optimization": _V5_FROZEN_SECTIONS["optimization"],
+    "objective": {
+        "weights": {
+            "noisy_language_model": 0,
+            "answer": 0,
+            "output": 1,
+            "state": 0,
+            "clean": 0,
+        },
+        "state_scope": "none",
+        "state_distance": "none",
+        "output_scope": "aligned-non-edited-next-token/v1",
+        "noisy_language_model_scope": "all-nonpadding-next-tokens/v1",
+        "temperature": 1.0,
+        "epsilon": 1e-8,
+        "state_gradient_ratio": None,
+        "calibration_micro_batches": 0,
+        "state_window_policy": "none",
+    },
+}
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def _mapping(value: object, *, field: str, fields: set[str]) -> Mapping[str, object]:
@@ -213,6 +338,24 @@ def _validate_condition(
             }
         ):
             raise ValueError("probe-transition state training objective differs")
+        return
+    if schema_version == "robustness-adapter-training-config/v6":
+        if (
+            condition != "probe-semantic-subspace-distillation"
+            or layer_scope != "probe-transition-suffix"
+            or layer_policy != "validated-probe-semantic-subspace-suffix/v1"
+            or state_scope != "probe-semantic-subspace-edited-word-final-token"
+            or state_window_policy != "single-probe-transition-layer/v1"
+            or dict(weights)
+            != {
+                "noisy_language_model": 0.0,
+                "answer": 0.0,
+                "output": 1.0,
+                "state": 1.0,
+                "clean": 0.0,
+            }
+        ):
+            raise ValueError("probe semantic training condition and objective disagree")
         return
     if schema_version == "robustness-adapter-training-config/v4":
         if (
@@ -338,6 +481,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
             in {
                 "robustness-adapter-training-config/v4",
                 "robustness-adapter-training-config/v5",
+                "robustness-adapter-training-config/v6",
             }
             else _TOP
         ),
@@ -349,25 +493,36 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         "robustness-adapter-training-config/v3",
         "robustness-adapter-training-config/v4",
         "robustness-adapter-training-config/v5",
+        "robustness-adapter-training-config/v6",
     }:
         raise ValueError("adapter training schema_version differs")
     condition = _string(root["condition"], field="condition")
     if condition not in _CONDITIONS:
         raise ValueError("training condition is unsupported")
+    if schema_version.endswith("/v6"):
+        if condition != "probe-semantic-subspace-distillation":
+            raise ValueError("semantic training condition differs from the frozen template")
+        for section, expected in _V6_FROZEN_SECTIONS.items():
+            if _canonical_json(root[section]) != _canonical_json(expected):
+                raise ValueError(f"semantic training {section} differs from the frozen template")
 
     expected_method_evidence_sha256: str | None = None
-    if schema_version.endswith(("/v4", "/v5")):
+    if schema_version.endswith(("/v4", "/v5", "/v6")):
         method_evidence = _mapping(
             root["method_evidence"],
             field="method_evidence",
             fields=_METHOD_EVIDENCE_V4,
         )
-        expected_binding_schema = (
-            "probe-transition-state-gate-binding/v1"
-            if schema_version.endswith("/v5")
-            else "probe-transition-evidence-binding/v1"
-        )
-        if method_evidence["schema_version"] != expected_binding_schema:
+        expected_evidence_schema = {
+            "robustness-adapter-training-config/v4": "probe-transition-evidence-binding/v1",
+            "robustness-adapter-training-config/v5": (
+                "probe-transition-state-gate-binding/v1"
+            ),
+            "robustness-adapter-training-config/v6": (
+                "probe-semantic-subspace-evidence-binding/v1"
+            ),
+        }[str(schema_version)]
+        if method_evidence["schema_version"] != expected_evidence_schema:
             raise ValueError("method_evidence.schema_version differs")
         digest = method_evidence["artifact_sha256"]
         if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
@@ -408,7 +563,11 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     adapter = _mapping(
         root["adapter"],
         field="adapter",
-        fields=_ADAPTER_V4 if schema_version.endswith(("/v4", "/v5")) else _ADAPTER,
+        fields=(
+            _ADAPTER_V4
+            if schema_version.endswith(("/v4", "/v5", "/v6"))
+            else _ADAPTER
+        ),
     )
     if adapter["method"] != "lora" or adapter["bias"] != "none":
         raise ValueError("adapter method or bias differs")
@@ -426,13 +585,19 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         lora_rank != 16 or lora_alpha != 8.0 or dropout != 0.0
     ):
         raise ValueError("probe-transition LoRA must use rank 16, alpha 8, and dropout 0")
+    if schema_version.endswith("/v6") and (
+        lora_rank != 16
+        or lora_alpha != 8.0
+        or dropout != 0.0
+    ):
+        raise ValueError("semantic training LoRA must be frozen at r16 alpha8 dropout0")
 
     optimization = _mapping(
         root["optimization"],
         field="optimization",
         fields=(
             _OPTIMIZATION_V3
-            if schema_version.endswith(("/v3", "/v4", "/v5"))
+            if schema_version.endswith(("/v3", "/v4", "/v5", "/v6"))
             else _OPTIMIZATION
         ),
     )
@@ -487,7 +652,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     layer_scope = _string(adapter["layer_scope"], field="adapter.layer_scope")
     layer_policy = (
         _string(adapter["layer_policy"], field="adapter.layer_policy")
-        if schema_version.endswith(("/v4", "/v5"))
+        if schema_version.endswith(("/v4", "/v5", "/v6"))
         else "legacy/v1"
     )
     state_window_policy = (
@@ -507,6 +672,8 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     expected_distance = (
         "normalized-squared-error/v1"
         if schema_version.endswith("/v1")
+        else "frozen-probe-classifier-forward-kl/v1"
+        if schema_version.endswith("/v6")
         else "none"
         if schema_version.endswith("/v4")
         else "cosine-residual/v1"
@@ -517,6 +684,12 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         raise ValueError("objective.output_scope differs")
     if objective["noisy_language_model_scope"] != "all-nonpadding-next-tokens/v1":
         raise ValueError("objective.noisy_language_model_scope differs")
+    temperature = _number(
+        objective["temperature"], field="objective.temperature", minimum=1e-12
+    )
+    epsilon = _number(objective["epsilon"], field="objective.epsilon", minimum=1e-12)
+    if schema_version.endswith("/v6") and (temperature != 1.0 or epsilon != 1e-8):
+        raise ValueError("semantic distillation temperature and epsilon differ")
 
     if not schema_version.endswith("/v1"):
         ratio_raw = objective["state_gradient_ratio"]
@@ -537,6 +710,10 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
             )
             if gradient_ratio > 0.5 or calibration < 1:
                 raise ValueError("state gradient calibration differs from the safe range")
+            if schema_version.endswith("/v6") and (
+                gradient_ratio != 0.05 or calibration != 8
+            ):
+                raise ValueError("semantic state calibration must be rho=0.05 over 8 batches")
     else:
         gradient_ratio = None
         calibration = 0
@@ -551,6 +728,16 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         or dropout != 0.0
     ):
         raise ValueError("probe-transition state dosage or LoRA recipe differs")
+    if schema_version.endswith("/v6") and (
+        gradient_ratio != 0.05
+        or calibration != 8
+        or _number(objective["temperature"], field="objective.temperature") != 1.0
+        or _number(objective["epsilon"], field="objective.epsilon") != 1e-8
+        or _integer(adapter["rank"], field="adapter.rank", minimum=1) != 16
+        or _number(adapter["alpha"], field="adapter.alpha") != 8.0
+        or dropout != 0.0
+    ):
+        raise ValueError("semantic state dosage or LoRA recipe differs")
 
     pairing_policy = str(sequence.get("pairing_policy", "generator-probability/v1"))
     state_active = weights["state"] > 0.0 and state_scope != "none"
@@ -563,6 +750,20 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
             "state training with exact alternating pairs requires an even "
             "gradient_accumulation_steps >= 2"
         )
+
+    frozen_recipe = (
+        _V4_FROZEN_SECTIONS
+        if schema_version.endswith("/v4")
+        else _V5_FROZEN_SECTIONS
+        if schema_version.endswith("/v5")
+        else None
+    )
+    if frozen_recipe is not None:
+        for section, expected in frozen_recipe.items():
+            if _canonical_json(root[section]) != _canonical_json(expected):
+                raise ValueError(
+                    f"probe-transition {section} differs from the frozen 10M recipe"
+                )
 
     return AdapterTrainingProtocol(
         schema_version=str(schema_version),
@@ -610,7 +811,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
                 field="optimization.max_student_tokens",
                 minimum=1,
             )
-            if schema_version.endswith(("/v3", "/v4", "/v5"))
+            if schema_version.endswith(("/v3", "/v4", "/v5", "/v6"))
             else None
         ),
         max_grad_norm=_number(optimization["max_grad_norm"], field="optimization.max_grad_norm"),
@@ -631,8 +832,8 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         state_distance=str(objective["state_distance"]),
         output_scope=str(objective["output_scope"]),
         noisy_language_model_scope=str(objective["noisy_language_model_scope"]),
-        temperature=_number(objective["temperature"], field="objective.temperature", minimum=1e-12),
-        epsilon=_number(objective["epsilon"], field="objective.epsilon", minimum=1e-12),
+        temperature=temperature,
+        epsilon=epsilon,
         state_gradient_ratio=gradient_ratio,
         gradient_ratio_guard_optimizer_steps=(
             0 if schema_version.endswith("/v1") else _GRADIENT_RATIO_GUARD_OPTIMIZER_STEPS
