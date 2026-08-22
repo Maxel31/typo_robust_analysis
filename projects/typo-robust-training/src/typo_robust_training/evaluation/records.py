@@ -22,6 +22,7 @@ _CONDITIONS = frozenset(
         "probe-transition-output-matching",
         "probe-transition-single-layer-state-distillation",
         "causal-probe-subspace-distillation",
+        "probe-semantic-subspace-distillation",
     }
 )
 _EVALUATION_CONDITIONS = frozenset(

@@ -213,9 +213,13 @@ def _load_evidence(
     | ResidualStateEvidence
     | training_methods.ProbeTransitionTrainingEvidence
     | training_methods.ProbeTransitionStateTrainingEvidence
+    | training_methods.ProbeSemanticSubspaceTrainingEvidence
     | None
 ):
-    if protocol.condition == "probe-transition-output-matching":
+    if protocol.condition in {
+        "probe-transition-output-matching",
+        "probe-semantic-subspace-distillation",
+    }:
         if (
             config.probe_selection_path is None
             or protocol.decoder_layers is None
@@ -224,8 +228,18 @@ def _load_evidence(
             or config.component_selection_path is not None
             or config.state_gate_path is not None
         ):
-            raise ValueError("probe-transition training requires only one probe selection artifact")
-        return training_methods.load_probe_transition_training_evidence(
+            message = (
+                "semantic training requires only one kill evidence artifact"
+                if protocol.condition == "probe-semantic-subspace-distillation"
+                else "probe-transition training requires only one probe selection artifact"
+            )
+            raise ValueError(message)
+        loader = (
+            training_methods.load_probe_semantic_subspace_training_evidence
+            if protocol.condition == "probe-semantic-subspace-distillation"
+            else training_methods.load_probe_transition_training_evidence
+        )
+        return loader(
             config.probe_selection_path,
             model=protocol.model,
             model_revision=protocol.model_revision,
@@ -695,14 +709,21 @@ def run_adapter_training(
     elif protocol.condition in {
         "probe-transition-output-matching",
         "probe-transition-single-layer-state-distillation",
+        "probe-semantic-subspace-distillation",
     }:
-        expected_type = (
-            training_methods.ProbeTransitionTrainingEvidence
-            if protocol.condition == "probe-transition-output-matching"
-            else training_methods.ProbeTransitionStateTrainingEvidence
-        )
+        expected_type = {
+            "probe-transition-output-matching": (
+                training_methods.ProbeTransitionTrainingEvidence
+            ),
+            "probe-transition-single-layer-state-distillation": (
+                training_methods.ProbeTransitionStateTrainingEvidence
+            ),
+            "probe-semantic-subspace-distillation": (
+                training_methods.ProbeSemanticSubspaceTrainingEvidence
+            ),
+        }[protocol.condition]
         if not isinstance(evidence, expected_type):
-            raise ValueError("injected probe-transition evidence differs from the condition")
+            raise ValueError("injected probe method evidence differs from the condition")
     else:
         expected_evidence = protocol.condition in {
             "localized-state-distillation",
@@ -717,6 +738,7 @@ def run_adapter_training(
             (
                 training_methods.ProbeTransitionTrainingEvidence,
                 training_methods.ProbeTransitionStateTrainingEvidence,
+                training_methods.ProbeSemanticSubspaceTrainingEvidence,
             ),
         )
         else None

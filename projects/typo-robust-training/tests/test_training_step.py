@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 from dataclasses import replace
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 import torch
@@ -60,6 +61,31 @@ def _cycle2_protocol():
         lora_rank=2,
         lora_alpha=1.0,
         gradient_checkpointing=False,
+    )
+
+
+def _semantic_protocol():
+    return replace(
+        _cycle2_protocol(),
+        schema_version="robustness-adapter-training-config/v5",
+        condition="probe-semantic-subspace-distillation",
+        layer_scope="probe-transition-suffix",
+        layer_policy="validated-probe-semantic-subspace-suffix/v1",
+        loss_weights=MappingProxyType(
+            {
+                "noisy_language_model": 0.0,
+                "answer": 0.0,
+                "output": 1.0,
+                "state": 1.0,
+                "clean": 0.0,
+            }
+        ),
+        state_scope="probe-semantic-subspace-edited-word-final-token",
+        state_distance="frozen-probe-classifier-forward-kl/v1",
+        state_gradient_ratio=0.05,
+        calibration_micro_batches=8,
+        state_window_policy="single-probe-transition-layer/v1",
+        expected_method_evidence_sha256="a" * 64,
     )
 
 
@@ -224,6 +250,45 @@ def test_cycle2_clean_identity_has_zero_residual_state_loss() -> None:
         state_weight=0.05,
     )
     assert output.losses["state"].item() < 1e-7
+
+
+def test_probe_semantic_tiny_model_step_updates_only_suffix_lora() -> None:
+    torch.manual_seed(21)
+    protocol = _semantic_protocol()
+    teacher = _model()
+    student = attach_lora_adapters(
+        copy.deepcopy(teacher),
+        protocol=protocol,
+        decoder_layers=(1,),
+    )
+    q = torch.eye(16)
+    output = compute_training_step(
+        teacher=teacher,
+        student=student,
+        encoding=_encoding(typo=(1, 4, 8, 6, 7)),
+        protocol=protocol,
+        component_weights=None,
+        attention_head_dim=4,
+        state_layers=(1,),
+        state_weight=0.05,
+        semantic_basis=q,
+        semantic_projected_class_weights=torch.randn(17, 16),
+        semantic_classifier_bias=torch.zeros(17),
+    )
+    assert torch.isfinite(output.loss)
+    assert output.losses["state"].item() >= 0.0
+    output.loss.backward()
+    assert all(parameter.grad is None for parameter in teacher.parameters())
+    assert all(
+        parameter.grad is None
+        for name, parameter in student.named_parameters()
+        if "lora_" not in name
+    )
+    assert any(
+        parameter.grad is not None and torch.count_nonzero(parameter.grad)
+        for name, parameter in student.named_parameters()
+        if "lora_" in name
+    )
 
 
 def test_cycle2_noop_pair_does_not_request_unused_hidden_states(

@@ -446,6 +446,26 @@ def _run_materialize_probe_transition_state_training_config(
     return 0
 
 
+def _run_materialize_probe_semantic_training_config(args: argparse.Namespace) -> int:
+    from typo_robust_training.training.methods import (
+        materialize_probe_semantic_subspace_training_config,
+    )
+
+    try:
+        protocol = materialize_probe_semantic_subspace_training_config(
+            args.template,
+            evidence_path=args.kill_evidence,
+            output_path=args.output_config,
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"materialize-probe-semantic-training-config: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"materialized training config: {args.output_config}")
+    print(f"config SHA-256: {protocol.config_sha256}")
+    print(f"method evidence SHA-256: {protocol.expected_method_evidence_sha256}")
+    return 0
+
+
 def _run_robustness_evaluation(args: argparse.Namespace) -> int:
     from typo_robust_training.evaluation.runner import (
         RobustnessEvaluationRunConfig,
@@ -704,6 +724,16 @@ def register_commands(
     materialize_probe_config.set_defaults(
         _typo_cot_plugin_handler=_run_materialize_probe_transition_training_config
     )
+    materialize_semantic_config = commands.add_parser(
+        "materialize-probe-semantic-training-config",
+        help="Bind passed semantic kill evidence into a non-runnable training template.",
+    )
+    materialize_semantic_config.add_argument("--template", required=True, type=Path)
+    materialize_semantic_config.add_argument("--kill-evidence", required=True, type=Path)
+    materialize_semantic_config.add_argument("--output-config", required=True, type=Path)
+    materialize_semantic_config.set_defaults(
+        _typo_cot_plugin_handler=_run_materialize_probe_semantic_training_config
+    )
 
     materialize_state_config = commands.add_parser(
         "materialize-probe-transition-state-training-config",
@@ -733,6 +763,10 @@ def register_commands(
             "train-probe-transition-single-layer-state-distillation",
             "probe-transition-single-layer-state-distillation",
         ),
+        (
+            "train-probe-semantic-subspace-distillation",
+            "probe-semantic-subspace-distillation",
+        ),
     ):
         training = commands.add_parser(
             command,
@@ -748,7 +782,11 @@ def register_commands(
                 "random-window-state-distillation",
             },
             accepts_component_selection=condition == "localized-state-distillation",
-            accepts_probe_selection=condition == "probe-transition-output-matching",
+            accepts_probe_selection=condition
+            in {
+                "probe-transition-output-matching",
+                "probe-semantic-subspace-distillation",
+            },
             accepts_state_gate=(
                 condition == "probe-transition-single-layer-state-distillation"
             ),

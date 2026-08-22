@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from typo_robust_training.cli import register_commands
 from typo_robust_training.training.config import load_adapter_training_config
 from typo_robust_training.training.methods import (
     ProbeSemanticSubspaceTrainingEvidence,
     materialize_probe_semantic_subspace_training_config,
     resolve_training_method,
 )
+from typo_robust_training.training.runtime import _resolve_probe_transition_runtime_method
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -92,6 +95,40 @@ def test_semantic_evidence_arrays_are_immutable() -> None:
     evidence = _evidence()
     with pytest.raises(ValueError):
         evidence.basis[0, 0] = 3.0
+
+
+def test_semantic_runtime_resolves_evidence_before_cuda(tmp_path: Path) -> None:
+    protocol = load_adapter_training_config(_bound(tmp_path))
+    resolved = _resolve_probe_transition_runtime_method(protocol, _evidence())
+    assert resolved is not None and resolved.adapter_layers[0] == 11
+    with pytest.raises(ValueError):
+        _resolve_probe_transition_runtime_method(protocol, None)
+
+
+def test_semantic_cli_requires_explicit_kill_evidence() -> None:
+    parser = argparse.ArgumentParser()
+    register_commands(parser.add_subparsers(dest="command"))
+    args = parser.parse_args(
+        [
+            "train-probe-semantic-subspace-distillation",
+            "--config",
+            "bound.json",
+            "--training-data",
+            "data",
+            "--probe-selection",
+            "kill.json",
+            "--seed",
+            "42",
+            "--gpu-id",
+            "0",
+            "--wandb-project",
+            "test",
+            "--output-dir",
+            "output",
+        ]
+    )
+    assert args._training_condition == "probe-semantic-subspace-distillation"
+    assert args.probe_selection == Path("kill.json")
 
 
 def test_semantic_materializer_revalidates_and_binds(

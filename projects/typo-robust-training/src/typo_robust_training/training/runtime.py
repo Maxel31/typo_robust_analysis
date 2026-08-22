@@ -37,6 +37,7 @@ from typo_robust_training.training.evidence import (
 )
 from typo_robust_training.training.methods import (
     ProbeTransitionStateTrainingEvidence,
+    ProbeSemanticSubspaceTrainingEvidence,
     ProbeTransitionTrainingEvidence,
     ResolvedTrainingMethod,
     resolve_training_method,
@@ -480,27 +481,33 @@ def _resolve_probe_transition_runtime_method(
         | ResidualStateEvidence
         | ProbeTransitionTrainingEvidence
         | ProbeTransitionStateTrainingEvidence
+        | ProbeSemanticSubspaceTrainingEvidence
         | None
     ),
 ) -> ResolvedTrainingMethod | None:
-    """Fail closed on the v4 evidence and output-only boundary before CUDA setup."""
+    """Fail closed on probe evidence and objectives before CUDA setup."""
 
-    is_probe_condition = protocol.condition in {
-        "probe-transition-output-matching",
-        "probe-transition-single-layer-state-distillation",
+    expected_types = {
+        "probe-transition-output-matching": ProbeTransitionTrainingEvidence,
+        "probe-transition-single-layer-state-distillation": (
+            ProbeTransitionStateTrainingEvidence
+        ),
+        "probe-semantic-subspace-distillation": ProbeSemanticSubspaceTrainingEvidence,
     }
-    if not is_probe_condition:
+    expected_type = expected_types.get(protocol.condition)
+    if expected_type is None:
         if isinstance(
             evidence,
-            (ProbeTransitionTrainingEvidence, ProbeTransitionStateTrainingEvidence),
+            (
+                ProbeTransitionTrainingEvidence,
+                ProbeTransitionStateTrainingEvidence,
+                ProbeSemanticSubspaceTrainingEvidence,
+            ),
         ):
-            raise ValueError("probe-transition evidence cannot configure this condition")
+            raise ValueError("probe method evidence cannot configure this condition")
         return None
-    if not isinstance(
-        evidence,
-        (ProbeTransitionTrainingEvidence, ProbeTransitionStateTrainingEvidence),
-    ):
-        raise ValueError("probe-transition output matching requires probe evidence")
+    if not isinstance(evidence, expected_type):
+        raise ValueError("probe training requires probe evidence matching its exact condition")
     resolved = resolve_training_method(protocol, evidence=evidence)
     if protocol.condition == "probe-transition-output-matching":
         expected_weights = {
@@ -510,16 +517,18 @@ def _resolve_probe_transition_runtime_method(
             "state": 0.0,
             "clean": 0.0,
         }
-        valid = (
-            dict(protocol.loss_weights) == expected_weights
-            and not resolved.state_layers
-            and resolved.state_target == "none"
-            and protocol.state_scope == "none"
-            and protocol.state_distance == "none"
-            and protocol.state_gradient_ratio is None
-            and protocol.calibration_micro_batches == 0
-        )
-    else:
+        if (
+            dict(protocol.loss_weights) != expected_weights
+            or resolved.state_layers
+            or resolved.state_target != "none"
+            or protocol.state_scope != "none"
+            or protocol.state_distance != "none"
+            or protocol.state_gradient_ratio is not None
+            or protocol.calibration_micro_batches != 0
+        ):
+            raise ValueError("probe-transition output matching must disable state training")
+        return resolved
+    if protocol.condition == "probe-transition-single-layer-state-distillation":
         expected_weights = {
             "noisy_language_model": 0.0,
             "answer": 0.0,
@@ -527,26 +536,42 @@ def _resolve_probe_transition_runtime_method(
             "state": 1.0,
             "clean": 0.0,
         }
-        valid = (
-            isinstance(evidence, ProbeTransitionStateTrainingEvidence)
-            and dict(protocol.loss_weights) == expected_weights
-            and resolved.state_layers == (evidence.selected_transition_layer,)
-            and resolved.state_target
-            == "complete-decoder-block-residual-output-at-edited-word-final/v1"
-            and protocol.state_scope
-            == "probe-transition-single-layer-edited-word-final-token/v1"
-            and protocol.state_distance == "cosine-residual/v1"
-            and protocol.state_gradient_ratio == 0.05
-            and protocol.calibration_micro_batches == 8
-            and protocol.temperature == 1.0
-            and protocol.epsilon == 1e-8
-        )
-    if not valid:
-        if protocol.condition == "probe-transition-output-matching":
-            raise ValueError(
-                "probe-transition output matching must disable state training"
-            )
-        raise ValueError("probe-transition state training objective or evidence differs")
+        if (
+            not isinstance(evidence, ProbeTransitionStateTrainingEvidence)
+            or dict(protocol.loss_weights) != expected_weights
+            or resolved.state_layers != (evidence.selected_transition_layer,)
+            or resolved.state_target
+            != "complete-decoder-block-residual-output-at-edited-word-final/v1"
+            or protocol.state_scope
+            != "probe-transition-single-layer-edited-word-final-token/v1"
+            or protocol.state_distance != "cosine-residual/v1"
+            or protocol.state_gradient_ratio != 0.05
+            or protocol.calibration_micro_batches != 8
+            or protocol.temperature != 1.0
+            or protocol.epsilon != 1e-8
+        ):
+            raise ValueError("probe-transition state training objective or evidence differs")
+        return resolved
+    expected_weights = {
+        "noisy_language_model": 0.0,
+        "answer": 0.0,
+        "output": 1.0,
+        "state": 1.0,
+        "clean": 0.0,
+    }
+    if (
+        not isinstance(evidence, ProbeSemanticSubspaceTrainingEvidence)
+        or dict(protocol.loss_weights) != expected_weights
+        or resolved.state_layers != (evidence.transition_layer,)
+        or resolved.state_target != "probe-semantic-subspace-rank16"
+        or protocol.state_scope != "probe-semantic-subspace-edited-word-final-token"
+        or protocol.state_distance != "frozen-probe-classifier-forward-kl/v1"
+        or protocol.state_gradient_ratio != 0.05
+        or protocol.calibration_micro_batches != 8
+        or protocol.temperature != 1.0
+        or protocol.epsilon != 1e-8
+    ):
+        raise ValueError("probe semantic training objective differs")
     return resolved
 
 
@@ -564,6 +589,7 @@ class HuggingFaceAdapterTrainingRuntime:
             | ResidualStateEvidence
             | ProbeTransitionTrainingEvidence
             | ProbeTransitionStateTrainingEvidence
+            | ProbeSemanticSubspaceTrainingEvidence
             | None
         ),
     ) -> None:
@@ -683,7 +709,10 @@ class HuggingFaceAdapterTrainingRuntime:
             "all-layers-edited-word-final-tokens",
             "probe-transition-single-layer-edited-word-final-token/v1",
         }
-        if residual_scope != bool(self.state_layers):
+        semantic_scope = (
+            protocol.state_scope == "probe-semantic-subspace-edited-word-final-token"
+        )
+        if (residual_scope or semantic_scope) != bool(self.state_layers):
             raise ValueError("residual state layers differ from the training objective")
         self.student = attach_lora_adapters(
             student_base,
@@ -693,6 +722,29 @@ class HuggingFaceAdapterTrainingRuntime:
         self.device = next(self.student.parameters()).device
         if next(self.teacher.parameters()).device != self.device:
             raise ValueError("teacher and student must share one training device")
+        self.semantic_basis = self.semantic_projected_class_weights = None
+        self.semantic_classifier_bias = None
+        if isinstance(evidence, ProbeSemanticSubspaceTrainingEvidence):
+            self.semantic_basis = torch.as_tensor(
+                evidence.basis.copy(), dtype=torch.float32, device=self.device
+            ).detach()
+            self.semantic_projected_class_weights = torch.as_tensor(
+                evidence.projected_class_weights.copy(),
+                dtype=torch.float32,
+                device=self.device,
+            ).detach()
+            self.semantic_classifier_bias = torch.as_tensor(
+                evidence.classifier_bias.copy(), dtype=torch.float32, device=self.device
+            ).detach()
+            if any(
+                value.requires_grad
+                for value in (
+                    self.semantic_basis,
+                    self.semantic_projected_class_weights,
+                    self.semantic_classifier_bias,
+                )
+            ):
+                raise RuntimeError("semantic classifier must remain frozen")
         self.tokenizer = self.student_wrapper.tokenizer
         if getattr(self.tokenizer, "is_fast", False) is not True:
             raise ValueError("adapter training requires a fast tokenizer with offsets")
@@ -810,6 +862,9 @@ class HuggingFaceAdapterTrainingRuntime:
             attention_head_dim=self.attention_head_dim,
             state_layers=self.state_layers,
             state_weight=state_weight,
+            semantic_basis=self.semantic_basis,
+            semantic_projected_class_weights=self.semantic_projected_class_weights,
+            semantic_classifier_bias=self.semantic_classifier_bias,
         )
 
     def prepare_accumulation(
@@ -1427,7 +1482,11 @@ class HuggingFaceAdapterTrainingRuntime:
                 {"method_evidence_sha256": self.evidence.evidence_sha256}
                 if isinstance(
                     self.evidence,
-                    (ProbeTransitionTrainingEvidence, ProbeTransitionStateTrainingEvidence),
+                    (
+                        ProbeTransitionTrainingEvidence,
+                        ProbeTransitionStateTrainingEvidence,
+                        ProbeSemanticSubspaceTrainingEvidence,
+                    ),
                 )
                 else {}
             ),

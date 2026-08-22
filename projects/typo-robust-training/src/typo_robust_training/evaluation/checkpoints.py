@@ -31,6 +31,7 @@ _CONDITIONS = (
     "probe-transition-output-matching",
     "probe-transition-single-layer-state-distillation",
     "causal-probe-subspace-distillation",
+    "probe-semantic-subspace-distillation",
 )
 if frozenset(_CONDITIONS) != SUPPORTED_ADAPTER_CONDITIONS:  # pragma: no cover - import invariant
     raise RuntimeError("evaluation adapter condition order is incomplete")

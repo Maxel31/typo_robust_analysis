@@ -27,6 +27,7 @@ METHOD_EVIDENCE_CONDITIONS = frozenset(
         "probe-transition-output-matching",
         "probe-transition-single-layer-state-distillation",
         "causal-probe-subspace-distillation",
+        "probe-semantic-subspace-distillation",
     }
 )
 SUPPORTED_ADAPTER_CONDITIONS = LEGACY_ADAPTER_CONDITIONS | METHOD_EVIDENCE_CONDITIONS
