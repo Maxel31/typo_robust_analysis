@@ -233,6 +233,10 @@ def test_state_runtime_provenance_binds_gate_evidence(
     runtime.protocol = load_adapter_training_config(_bound(tmp_path))
     runtime.teacher = SimpleNamespace(config=SimpleNamespace(_commit_hash="revision"))
     runtime.student = SimpleNamespace(config=SimpleNamespace(_commit_hash="revision"))
+    runtime.teacher_revision = runtime.protocol.model_revision
+    runtime.student_revision = runtime.protocol.model_revision
+    runtime.tokenizer_revision = runtime.protocol.model_revision
+    runtime.code_revision = "f" * 40
     runtime.seed = 42
     runtime.device = "cuda:0"
     runtime.num_decoder_layers = 34

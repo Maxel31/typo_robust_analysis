@@ -263,9 +263,7 @@ def test_v4_adapter_requires_generic_method_evidence(
         tmp_path / "valid",
         condition=condition,
         seed=42,
-        runtime_version=(
-            "v2" if condition == "probe-transition-single-layer-state-distillation" else "v1"
-        ),
+        runtime_version="v2",
         method_evidence_sha256="9" * 64,
     )
     descriptor = load_adapter_descriptors((adapter,), protocol=PROTOCOL)[0]
