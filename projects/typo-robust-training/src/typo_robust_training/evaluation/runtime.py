@@ -992,6 +992,9 @@ class HuggingFaceRobustnessEvaluationRuntime:
             "condition": self.condition,
             "seed": self.seed,
             "adapter_sha256": (None if self.descriptor is None else self.descriptor.adapter_sha256),
+            "method_evidence_sha256": (
+                None if self.descriptor is None else self.descriptor.method_evidence_sha256
+            ),
             "patch_layers": list(self.patch_window.layers),
             "device": str(self.device),
             "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),

@@ -776,6 +776,14 @@ def run_adapter_training(
             checkpoint_path,
             expected_bindings=bindings,
         )
+        if protocol.condition == "probe-transition-single-layer-state-distillation":
+            from typo_robust_training.training.runtime import validate_resume_state_calibration
+
+            validate_resume_state_calibration(
+                checkpoint.state_path,
+                protocol=protocol,
+                seed=config.seed,
+            )
         cursor = checkpoint.cursor
         _validate_adapter_checkpoints(
             output_dir,

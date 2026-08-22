@@ -11,6 +11,7 @@ import torch
 from transformers import Gemma3ForCausalLM, Gemma3TextConfig
 
 from typo_robust_training.cli import register_commands
+from typo_robust_training.evaluation.checkpoints import load_adapter_descriptors
 from typo_robust_training.training.adapters import attach_lora_adapters
 from typo_robust_training.training.config import load_adapter_training_config
 from typo_robust_training.training.checkpoint import TrainingCursor, write_training_checkpoint
@@ -20,7 +21,11 @@ from typo_robust_training.training.methods import (
     materialize_probe_transition_state_training_config,
     resolve_training_method,
 )
-from typo_robust_training.training.runtime import _resolve_probe_transition_runtime_method
+from typo_robust_training.training.runtime import (
+    HuggingFaceAdapterTrainingRuntime,
+    _resolve_probe_transition_runtime_method,
+    validate_resume_state_calibration,
+)
 from typo_robust_training.training.runner import (
     AdapterTrainingRunConfig,
     _load_evidence,
@@ -29,6 +34,11 @@ from typo_robust_training.training.runner import (
 from typo_robust_training.training.step import compute_training_step
 
 from test_probe_transition_runner_runtime import _bundle as _training_bundle
+from test_evaluation_inputs import (
+    PROTOCOL as EVALUATION_PROTOCOL,
+    _adapter as _evaluation_adapter,
+    _tree_sha256,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,6 +81,8 @@ def test_v5_is_exactly_output_plus_single_layer_cosine_with_one_shot_rho(
     }
     assert protocol.state_gradient_ratio == 0.05
     assert protocol.calibration_micro_batches == 8
+    assert protocol.temperature == 1.0
+    assert protocol.epsilon == 1e-8
     assert protocol.state_distance == "cosine-residual/v1"
     assert resolved.adapter_layers == tuple(range(7, 34))
     assert resolved.state_layers == (7,)
@@ -81,6 +93,8 @@ def test_v5_is_exactly_output_plus_single_layer_cosine_with_one_shot_rho(
     [
         (("objective", "state_gradient_ratio", 0.1), "dosage"),
         (("objective", "calibration_micro_batches", 7), "dosage"),
+        (("objective", "temperature", 2.0), "dosage"),
+        (("objective", "epsilon", 1e-6), "dosage"),
         (("objective", "state_scope", "all-layers-edited-word-final-tokens"), "objective"),
         (("objective", "state_window_policy", "all-decoder-layers/v1"), "objective"),
         (("adapter", "layer_scope", "all-decoder-layers"), "objective"),
@@ -116,6 +130,155 @@ def test_runtime_requires_state_gate_evidence_and_exact_single_layer(
     assert resolved.state_layers == (7,)
     with pytest.raises(ValueError, match="requires probe evidence"):
         _resolve_probe_transition_runtime_method(protocol, None)
+
+
+def _calibration(*, state_weight: float = 0.025) -> dict[str, object]:
+    return {
+        "schema_version": "state-gradient-calibration/v2",
+        "micro_batches": 8,
+        "noisy_micro_batches": 8,
+        "record_ids": [f"record-{index}" for index in range(8)],
+        "output_gradient_norms": [2.0] * 8,
+        "state_gradient_norms": [4.0] * 8,
+        "mean_output_gradient_norm": 2.0,
+        "mean_state_gradient_norm": 4.0,
+        "target_gradient_ratio": 0.05,
+        "state_weight": state_weight,
+        "achieved_initial_ratio": state_weight * 2.0,
+    }
+
+
+def _resume_state(
+    path: Path,
+    *,
+    protocol: object,
+    state_weight: float = 0.025,
+    calibration: object | None = None,
+) -> Path:
+    torch.save(
+        {
+            "schema_version": "robustness-adapter-runtime-state/v3",
+            "condition": "probe-transition-single-layer-state-distillation",
+            "config_sha256": protocol.config_sha256,
+            "seed": 42,
+            "state_weight": state_weight,
+            "state_calibration": (
+                _calibration(state_weight=state_weight)
+                if calibration is None
+                else calibration
+            ),
+        },
+        path,
+    )
+    return path
+
+
+@pytest.mark.parametrize(
+    ("state_weight", "calibration", "message"),
+    [
+        (0.0, _calibration(state_weight=0.0), "state weight differs"),
+        (999.0, _calibration(state_weight=999.0), "calibrated state weight differs"),
+        (0.025, {}, "calibration fields differ"),
+        (
+            0.025,
+            {**_calibration(), "output_gradient_norms": [float("nan"), *([2.0] * 7)]},
+            "output gradients differs",
+        ),
+        (0.025, {**_calibration(), "record_ids": []}, "calibration records differ"),
+        (
+            0.025,
+            {**_calibration(), "record_ids": ["duplicate-record"] * 8},
+            "calibration records differ",
+        ),
+        (
+            0.025,
+            {**_calibration(), "achieved_initial_ratio": float("inf")},
+            "achieved ratio differs",
+        ),
+    ],
+)
+def test_resume_calibration_rejects_zero_999_empty_or_nonfinite_evidence(
+    tmp_path: Path,
+    state_weight: float,
+    calibration: object,
+    message: str,
+) -> None:
+    protocol = load_adapter_training_config(_bound(tmp_path))
+    path = _resume_state(
+        tmp_path / "runtime-state.pt",
+        protocol=protocol,
+        state_weight=state_weight,
+        calibration=calibration,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        validate_resume_state_calibration(path, protocol=protocol, seed=42)
+
+
+def test_state_runtime_provenance_binds_gate_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Cuda:
+        @staticmethod
+        def get_device_name(_index: int) -> str:
+            return "fixture-gpu"
+
+        @staticmethod
+        def get_device_properties(_index: int) -> SimpleNamespace:
+            return SimpleNamespace(total_memory=1)
+
+    runtime = HuggingFaceAdapterTrainingRuntime.__new__(HuggingFaceAdapterTrainingRuntime)
+    runtime._torch = SimpleNamespace(version=SimpleNamespace(cuda="fixture"), cuda=_Cuda())
+    runtime.protocol = load_adapter_training_config(_bound(tmp_path))
+    runtime.teacher = SimpleNamespace(config=SimpleNamespace(_commit_hash="revision"))
+    runtime.student = SimpleNamespace(config=SimpleNamespace(_commit_hash="revision"))
+    runtime.seed = 42
+    runtime.device = "cuda:0"
+    runtime.num_decoder_layers = 34
+    runtime.adapter_layers = tuple(range(7, 34))
+    runtime.state_layers = (7,)
+    runtime.evidence = _evidence()
+    runtime.state_weight = 0.025
+    runtime.state_calibration = _calibration()
+    runtime.parameter_report = SimpleNamespace(
+        modules=("q_proj",),
+        trainable_parameters=1,
+        total_parameters=2,
+    )
+    runtime.attention_head_dim = 256
+    monkeypatch.setattr("typo_robust_training.training.runtime._version", lambda _name: "fixture")
+
+    provenance = runtime.provenance()
+
+    assert provenance["method_evidence_sha256"] == "a" * 64
+
+
+def test_evaluation_requires_exact_priority_b_run_runtime_provenance(tmp_path: Path) -> None:
+    adapter = _evaluation_adapter(
+        tmp_path,
+        condition="probe-transition-single-layer-state-distillation",
+        seed=42,
+        runtime_version="v2",
+        method_evidence_sha256="9" * 64,
+    )
+    runtime_path = adapter / "training_runtime.json"
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    runtime["method_evidence_sha256"] = "9" * 64
+    runtime_path.write_text(json.dumps(runtime), encoding="utf-8")
+    run_path = adapter.parent / "run.json"
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    run["runtime"] = runtime
+    run["outputs"]["adapter"]["sha256"] = _tree_sha256(adapter)
+    run_path.write_text(json.dumps(run), encoding="utf-8")
+
+    descriptor = load_adapter_descriptors((adapter,), protocol=EVALUATION_PROTOCOL)[0]
+    assert descriptor.method_evidence_sha256 == "9" * 64
+
+    run["runtime"] = {**runtime, "method_evidence_sha256": "8" * 64}
+    run_path.write_text(json.dumps(run), encoding="utf-8")
+    with pytest.raises(ValueError, match="run/runtime provenance differs"):
+        load_adapter_descriptors((adapter,), protocol=EVALUATION_PROTOCOL)
 
 
 def _run_config(
@@ -368,6 +531,90 @@ def test_resume_rejects_changed_state_gate_before_runtime_construction(
     )
 
     with pytest.raises(ValueError, match="training checkpoint bindings differ"):
+        run_adapter_training(
+            run_config,
+            runtime=None,
+            data_bundle=_training_bundle(tmp_path),
+            evidence=_evidence(),
+        )
+    assert runtime_constructed is False
+
+
+def test_resume_rejects_invalid_calibration_before_runtime_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = _bound(tmp_path)
+    protocol = load_adapter_training_config(config_path)
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    state_path = _resume_state(
+        output_dir / "runtime-state.pt",
+        protocol=protocol,
+        state_weight=999.0,
+        calibration=_calibration(state_weight=999.0),
+    )
+    monitor_protocol_sha = "e" * 64
+    monitor_data_sha = "f" * 64
+    write_training_checkpoint(
+        output_dir / "checkpoint.json",
+        cursor=TrainingCursor(0, 0, 0, 0, 0),
+        state_path=state_path,
+        bindings={
+            "config_sha256": protocol.config_sha256,
+            "training_data_sha256": "d" * 64,
+            "localization_sha256": None,
+            "method_evidence_sha256": "a" * 64,
+            "monitor_protocol_sha256": monitor_protocol_sha,
+            "monitor_data_sha256": monitor_data_sha,
+            "seed": 42,
+        },
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.evaluation.study.load_evaluation_study_protocol",
+        lambda _path: SimpleNamespace(
+            config_sha256=monitor_protocol_sha,
+            tune_fineweb_documents=1,
+            tune_natural_pairs=1,
+            gates={
+                "maximum_clean_kl_nats_per_token": 0.03,
+                "maximum_clean_ppl_ratio": 1.02,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.evaluation.data.load_evaluation_corpus_bundle",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            records=(
+                SimpleNamespace(source="fineweb_edu", kind="clean"),
+                SimpleNamespace(source="github_typo_corpus", kind="natural"),
+            ),
+            manifest_sha256=monitor_data_sha,
+        ),
+    )
+    runtime_constructed = False
+
+    def forbidden_runtime(*_args: object, **_kwargs: object) -> object:
+        nonlocal runtime_constructed
+        runtime_constructed = True
+        raise AssertionError("runtime must not be constructed before calibration validation")
+
+    monkeypatch.setattr(
+        "typo_robust_training.training.runtime.HuggingFaceAdapterTrainingRuntime",
+        forbidden_runtime,
+    )
+    run_config = replace(
+        _run_config(
+            tmp_path,
+            config_path=config_path,
+            state_gate_path=tmp_path / "gate.json",
+            resume=True,
+        ),
+        evaluation_protocol_path=tmp_path / "evaluation.json",
+        monitor_data_dir=tmp_path / "monitor",
+    )
+
+    with pytest.raises(ValueError, match="calibrated state weight differs"):
         run_adapter_training(
             run_config,
             runtime=None,

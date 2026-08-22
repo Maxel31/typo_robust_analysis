@@ -544,6 +544,8 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     if schema_version.endswith("/v5") and (
         gradient_ratio != 0.05
         or calibration != 8
+        or _number(objective["temperature"], field="objective.temperature") != 1.0
+        or _number(objective["epsilon"], field="objective.epsilon") != 1e-8
         or _integer(adapter["rank"], field="adapter.rank", minimum=1) != 16
         or _number(adapter["alpha"], field="adapter.alpha") != 8.0
         or dropout != 0.0

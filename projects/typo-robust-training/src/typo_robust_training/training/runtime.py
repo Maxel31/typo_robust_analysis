@@ -115,6 +115,154 @@ def _require_exact_training_wrapper_revision(
 
 _RUNTIME_STATE_SCHEMA = "robustness-adapter-runtime-state/v3"
 _ADAPTER_SCOPE_SCHEMA = "decoder-lora-optimizer-scope/v1"
+_STATE_CALIBRATION_SCHEMA = "state-gradient-calibration/v2"
+_STATE_CALIBRATION_FIELDS = {
+    "schema_version",
+    "micro_batches",
+    "noisy_micro_batches",
+    "record_ids",
+    "output_gradient_norms",
+    "state_gradient_norms",
+    "mean_output_gradient_norm",
+    "mean_state_gradient_norm",
+    "target_gradient_ratio",
+    "state_weight",
+    "achieved_initial_ratio",
+}
+
+
+def _positive_finite_number(value: object, *, field: str) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) <= 0.0
+    ):
+        raise ValueError(f"adapter runtime checkpoint {field} differs")
+    return float(value)
+
+
+def _positive_finite_vector(value: object, *, field: str, length: int) -> tuple[float, ...]:
+    if (
+        not isinstance(value, Sequence)
+        or isinstance(value, (str, bytes))
+        or len(value) != length
+    ):
+        raise ValueError(f"adapter runtime checkpoint {field} differs")
+    return tuple(_positive_finite_number(item, field=field) for item in value)
+
+
+def _validate_priority_b_calibration(
+    *,
+    protocol: AdapterTrainingProtocol,
+    state_weight: object,
+    calibration: object,
+) -> None:
+    """Validate the immutable, one-shot Priority B calibration evidence."""
+
+    if protocol.condition != "probe-transition-single-layer-state-distillation":
+        return
+    if protocol.state_gradient_ratio != 0.05 or protocol.calibration_micro_batches != 8:
+        raise ValueError("adapter runtime checkpoint calibration protocol differs")
+    if not isinstance(calibration, Mapping) or set(calibration) != _STATE_CALIBRATION_FIELDS:
+        raise ValueError("adapter runtime checkpoint calibration fields differ")
+    if calibration["schema_version"] != _STATE_CALIBRATION_SCHEMA:
+        raise ValueError("adapter runtime checkpoint calibration schema differs")
+    if calibration["micro_batches"] != 8 or calibration["noisy_micro_batches"] != 8:
+        raise ValueError("adapter runtime checkpoint calibration dosage differs")
+    record_ids = calibration["record_ids"]
+    if (
+        not isinstance(record_ids, Sequence)
+        or isinstance(record_ids, (str, bytes))
+        or len(record_ids) != 8
+        or any(not isinstance(record_id, str) or not record_id for record_id in record_ids)
+        or len(set(record_ids)) != 8
+    ):
+        raise ValueError("adapter runtime checkpoint calibration records differ")
+    output_norms = _positive_finite_vector(
+        calibration["output_gradient_norms"],
+        field="calibration output gradients",
+        length=8,
+    )
+    state_norms = _positive_finite_vector(
+        calibration["state_gradient_norms"],
+        field="calibration state gradients",
+        length=8,
+    )
+    mean_output = _positive_finite_number(
+        calibration["mean_output_gradient_norm"],
+        field="calibration mean output gradient",
+    )
+    mean_state = _positive_finite_number(
+        calibration["mean_state_gradient_norm"],
+        field="calibration mean state gradient",
+    )
+    if not math.isclose(mean_output, sum(output_norms) / 8, rel_tol=1e-12, abs_tol=1e-12):
+        raise ValueError("adapter runtime checkpoint calibration output mean differs")
+    if not math.isclose(mean_state, sum(state_norms) / 8, rel_tol=1e-12, abs_tol=1e-12):
+        raise ValueError("adapter runtime checkpoint calibration state mean differs")
+    target = _positive_finite_number(
+        calibration["target_gradient_ratio"],
+        field="calibration target ratio",
+    )
+    if target != 0.05:
+        raise ValueError("adapter runtime checkpoint calibration target ratio differs")
+    derived_weight = target * mean_output / mean_state
+    stored_weight = _positive_finite_number(
+        state_weight,
+        field="state weight",
+    )
+    calibration_weight = _positive_finite_number(
+        calibration["state_weight"],
+        field="calibration state weight",
+    )
+    if not math.isclose(stored_weight, derived_weight, rel_tol=1e-12, abs_tol=1e-12) or not math.isclose(
+        calibration_weight,
+        derived_weight,
+        rel_tol=1e-12,
+        abs_tol=1e-12,
+    ):
+        raise ValueError("adapter runtime checkpoint calibrated state weight differs")
+    achieved = _positive_finite_number(
+        calibration["achieved_initial_ratio"],
+        field="calibration achieved ratio",
+    )
+    derived_ratio = stored_weight * mean_state / mean_output
+    if not math.isclose(achieved, derived_ratio, rel_tol=1e-12, abs_tol=1e-12) or not math.isclose(
+        derived_ratio,
+        target,
+        rel_tol=1e-12,
+        abs_tol=1e-12,
+    ):
+        raise ValueError("adapter runtime checkpoint calibration achieved ratio differs")
+
+
+def validate_resume_state_calibration(
+    path: Path,
+    *,
+    protocol: AdapterTrainingProtocol,
+    seed: int,
+) -> None:
+    """Reject invalid Priority B calibration before constructing a GPU runtime."""
+
+    if protocol.condition != "probe-transition-single-layer-state-distillation":
+        return
+    import torch
+
+    payload = torch.load(Path(path).resolve(), map_location="cpu", weights_only=False)
+    if (
+        not isinstance(payload, Mapping)
+        or payload.get("schema_version") != _RUNTIME_STATE_SCHEMA
+        or payload.get("condition") != protocol.condition
+        or payload.get("config_sha256") != protocol.config_sha256
+        or payload.get("seed") != seed
+    ):
+        raise ValueError("adapter runtime checkpoint identity differs")
+    _validate_priority_b_calibration(
+        protocol=protocol,
+        state_weight=payload.get("state_weight"),
+        calibration=payload.get("state_calibration"),
+    )
 
 
 def _optimizer_group_sizes(state: object) -> tuple[int, ...]:
@@ -320,6 +468,8 @@ def _resolve_probe_transition_runtime_method(
             and protocol.state_distance == "cosine-residual/v1"
             and protocol.state_gradient_ratio == 0.05
             and protocol.calibration_micro_batches == 8
+            and protocol.temperature == 1.0
+            and protocol.epsilon == 1e-8
         )
     if not valid:
         if protocol.condition == "probe-transition-output-matching":
@@ -654,8 +804,9 @@ class HuggingFaceAdapterTrainingRuntime:
         if not math.isfinite(self.state_weight) or self.state_weight <= 0.0:
             raise FloatingPointError("calibrated state weight is invalid")
         self.state_calibration = {
-            "schema_version": "state-gradient-calibration/v1",
+            "schema_version": _STATE_CALIBRATION_SCHEMA,
             "micro_batches": len(rows),
+            "noisy_micro_batches": len(rows),
             "record_ids": record_ids,
             "output_gradient_norms": output_norms,
             "state_gradient_norms": state_norms,
@@ -665,6 +816,11 @@ class HuggingFaceAdapterTrainingRuntime:
             "state_weight": self.state_weight,
             "achieved_initial_ratio": self.state_weight * mean_state / mean_output,
         }
+        _validate_priority_b_calibration(
+            protocol=self.protocol,
+            state_weight=self.state_weight,
+            calibration=self.state_calibration,
+        )
         self.zero_grad()
         return dict(self.state_calibration)
 
@@ -1040,6 +1196,14 @@ class HuggingFaceAdapterTrainingRuntime:
             or payload["seed"] != self.seed
         ):
             raise ValueError("adapter runtime checkpoint identity differs")
+        if payload["schema_version"].endswith(("/v2", "/v3")):
+            _validate_priority_b_calibration(
+                protocol=self.protocol,
+                state_weight=payload["state_weight"],
+                calibration=payload["state_calibration"],
+            )
+        elif self.protocol.condition == "probe-transition-single-layer-state-distillation":
+            raise ValueError("probe-transition state training cannot resume a legacy runtime state")
         _validate_adapter_scope_before_resume(
             checkpoint_adapter=payload["adapter"],
             checkpoint_optimizer=payload["optimizer"],
@@ -1114,7 +1278,10 @@ class HuggingFaceAdapterTrainingRuntime:
             "state_layers": list(self.state_layers),
             **(
                 {"method_evidence_sha256": self.evidence.evidence_sha256}
-                if isinstance(self.evidence, ProbeTransitionTrainingEvidence)
+                if isinstance(
+                    self.evidence,
+                    (ProbeTransitionTrainingEvidence, ProbeTransitionStateTrainingEvidence),
+                )
                 else {}
             ),
             "state_weight": self.state_weight,
@@ -1128,4 +1295,8 @@ class HuggingFaceAdapterTrainingRuntime:
         }
 
 
-__all__ = ["HuggingFaceAdapterTrainingRuntime", "next_gradient_ratio_violations"]
+__all__ = [
+    "HuggingFaceAdapterTrainingRuntime",
+    "next_gradient_ratio_violations",
+    "validate_resume_state_calibration",
+]
