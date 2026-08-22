@@ -163,6 +163,36 @@ def _run_validate_generic_joint_window(args: argparse.Namespace) -> int:
     return 0 if result.passed else 1
 
 
+def _run_select_probe_transition(args: argparse.Namespace) -> int:
+    from typo_robust_training.probe.producer import (
+        ProbeTransitionProducerRunConfig,
+        run_select_probe_transition,
+    )
+
+    try:
+        result = run_select_probe_transition(
+            ProbeTransitionProducerRunConfig(
+                config_path=args.config,
+                class_inventory_path=args.class_inventory,
+                fit_manifest_path=args.fit_manifest,
+                selection_manifest_path=args.selection_manifest,
+                validation_manifest_path=args.validation_manifest,
+                protected_registry_path=args.protected_registry,
+                gpu_id=args.gpu_id,
+                output_dir=args.output_dir,
+            )
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"select-probe-transition: error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"selected probe transition layer {result.selected_transition_layer}, "
+        f"validation passed={result.validation_passed}: {result.artifact_path}"
+    )
+    print(f"run manifest: {result.run_path}")
+    return 0 if result.validation_passed else 1
+
+
 def _run_localize_components(args: argparse.Namespace) -> int:
     from typo_robust_training.localization.component_runner import (
         ComponentLocalizationRunConfig,
@@ -461,6 +491,20 @@ def register_commands(
     joint_validation.add_argument("--output-dir", required=True, type=Path)
     joint_validation.add_argument("--resume", action="store_true")
     joint_validation.set_defaults(_typo_cot_plugin_handler=_run_validate_generic_joint_window)
+
+    probe_transition = commands.add_parser(
+        "select-probe-transition",
+        help="Fit frozen word-identity probes and select a validated denoising transition.",
+    )
+    probe_transition.add_argument("--config", required=True, type=Path)
+    probe_transition.add_argument("--class-inventory", required=True, type=Path)
+    probe_transition.add_argument("--fit-manifest", required=True, type=Path)
+    probe_transition.add_argument("--selection-manifest", required=True, type=Path)
+    probe_transition.add_argument("--validation-manifest", required=True, type=Path)
+    probe_transition.add_argument("--protected-registry", required=True, type=Path)
+    probe_transition.add_argument("--gpu-id", required=True)
+    probe_transition.add_argument("--output-dir", required=True, type=Path)
+    probe_transition.set_defaults(_typo_cot_plugin_handler=_run_select_probe_transition)
 
     sae_corpus = commands.add_parser(
         "build-sae-clean-corpus",
