@@ -46,6 +46,8 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
     root_japanese = (REPOSITORY_ROOT / "README.ja.md").read_text(encoding="utf-8")
     project_english = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
     project_japanese = (PROJECT_ROOT / "README.ja.md").read_text(encoding="utf-8")
+    normalized_project_english = " ".join(project_english.split())
+    normalized_project_japanese = " ".join(project_japanese.split())
 
     for contents in (root_english, root_japanese):
         assert "docs/rebuttal_analysis_plan_v1.md" in contents
@@ -60,9 +62,12 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
     assert "interface catalog, not a sequential or self-contained" in project_english
     assert "projects/typo-robust-training/README.md" in project_english
     assert "required provenance and interface" in project_english
-    assert "materializes the frozen 64M training-data artifact" in project_english
-    assert "does not necessarily materialize" in project_english
-    assert "every prerequisite" in project_english
+    assert (
+        "provides the command to materialize a locally hash-bound 64M-token clean-source inventory"
+    ) in normalized_project_english
+    assert "documented external source prerequisites are supplied" in project_english
+    assert "does not necessarily materialize every other prerequisite" in project_english
+    assert "materializes the frozen 64M training-data artifact" not in project_english
     assert "prebuilt 64M training-data artifact" not in project_english
     assert "to materialize each prerequisite" not in project_english
     assert "fails explicitly rather than being" in project_english
@@ -78,9 +83,13 @@ def test_readmes_freeze_one_descriptive_command_per_planned_operation() -> None:
     assert "自己完結pipelineではなく、複数のstudy cycleを含むinterface catalog" in project_japanese
     assert "projects/typo-robust-training/README.ja.md" in project_japanese
     assert "必要なprovenanceとinterface" in project_japanese
-    assert "凍結済み64M training-data artifactを生成します" in project_japanese
-    assert "必ずしもすべての" in project_japanese
-    assert "前提資産を生成するわけではありません" in project_japanese
+    assert "文書化された外部source前提を供給した後" in project_japanese
+    assert (
+        "ローカルで hash固定される64M-token clean-source inventory" in normalized_project_japanese
+    )
+    assert "生成するcommandを提供します" in project_japanese
+    assert "前提資産をすべて生成するわけではありません" in project_japanese
+    assert "凍結済み64M training-data artifactを生成します" not in project_japanese
     assert "事前構築済みの64M training-data artifact" not in project_japanese
     assert "各前提資産の作成手順" not in project_japanese
     assert "`build-rebuttal-manifest` は実装済みのCPU専用コマンド" in project_japanese

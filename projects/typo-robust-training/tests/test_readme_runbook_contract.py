@@ -11,10 +11,13 @@ from pathlib import Path
 import pytest
 
 from typo_robust_training.cli import register_commands
+from typo_robust_training.data.config import load_training_data_config
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 README_NAMES = ("README.md", "README.ja.md")
+_CYCLE3_RUNBOOK_CONFIG = Path("${TRAIN_PROJECT}/configs/cycle3/gemma4b-data-64m.yaml")
+_TRAIN_PROJECT_PLACEHOLDER = Path("${TRAIN_PROJECT}")
 SEED_INVENTORY_PROMISES = {
     "README.md": (
         "The later bounded residual-window training feature supplies proposed-method "
@@ -50,6 +53,28 @@ def _plugin_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     register_commands(commands)
     return parser
+
+
+def _assert_cycle3_materialization_contract(
+    commands: list[argparse.Namespace],
+) -> int:
+    producers = [
+        (index, command)
+        for index, command in enumerate(commands)
+        if command.command == "build-robustness-training-data"
+        and command.output_dir == Path("${CYCLE3_DATA}")
+    ]
+    assert len(producers) == 1, "runbook must document exactly one ${CYCLE3_DATA} producer"
+    index, producer = producers[0]
+    assert producer.config == _CYCLE3_RUNBOOK_CONFIG, (
+        "${CYCLE3_DATA} producer must use the frozen Cycle 3 64M config"
+    )
+    resolved_config = PROJECT_ROOT / producer.config.relative_to(_TRAIN_PROJECT_PLACEHOLDER)
+    protocol = load_training_data_config(resolved_config)
+    assert protocol.training_token_budget == 64_000_000, (
+        "documented Cycle 3 producer config must freeze a 64M-token budget"
+    )
+    return index
 
 
 def _normalized_prose(text: str) -> str:
@@ -178,12 +203,7 @@ def test_cycle3_producers_precede_consumers_and_all_comparison_arms(
     parser = _plugin_parser()
     commands = [parser.parse_args(tokens) for tokens in _documented_invocations(text)]
 
-    cycle3_build = next(
-        index
-        for index, command in enumerate(commands)
-        if command.command == "build-robustness-training-data"
-        and command.output_dir == Path("${CYCLE3_DATA}")
-    )
+    cycle3_build = _assert_cycle3_materialization_contract(commands)
     evaluation_freeze = next(
         index
         for index, command in enumerate(commands)
@@ -244,6 +264,32 @@ def test_cycle3_producers_precede_consumers_and_all_comparison_arms(
     for _index, command in cycle3_training:
         assert command.training_data == Path("${CYCLE3_DATA}")
         assert command.monitor_data == Path("${EVALUATION_DATA}")
+
+
+@pytest.mark.parametrize("readme_name", README_NAMES)
+def test_cycle3_materialization_contract_rejects_the_sanity_config(
+    readme_name: str,
+) -> None:
+    text = (PROJECT_ROOT / readme_name).read_text(encoding="utf-8")
+    cycle3_block = next(
+        block
+        for block in _bash_blocks(text)
+        if "typo-cot build-robustness-training-data" in block
+        and '--output-dir "${CYCLE3_DATA}"' in block
+    )
+    correct = '--config "${TRAIN_PROJECT}/configs/cycle3/gemma4b-data-64m.yaml"'
+    incorrect = '--config "${TRAIN_PROJECT}/configs/gemma4b-sanity.yaml"'
+    mutated_block = cycle3_block.replace(correct, incorrect, 1)
+    mutated = text.replace(cycle3_block, mutated_block, 1)
+
+    assert mutated_block != cycle3_block
+    parser = _plugin_parser()
+    commands = [parser.parse_args(tokens) for tokens in _documented_invocations(mutated)]
+    with pytest.raises(
+        AssertionError,
+        match="must use the frozen Cycle 3 64M config",
+    ):
+        _assert_cycle3_materialization_contract(commands)
 
 
 @pytest.mark.parametrize("readme_name", README_NAMES)

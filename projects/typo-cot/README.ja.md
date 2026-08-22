@@ -340,9 +340,9 @@ baseline、PR前の実測gateは
 **逐次実行できる自己完結pipelineではなく、複数のstudy cycleを含むinterface catalog**
 です。各前提資産に必要なprovenanceとinterfaceは
 [`projects/typo-robust-training/README.ja.md`](../typo-robust-training/README.ja.md)
-で定義します。このrunbookは、凍結済み64M training-data artifactを生成します。
-その他の外部で凍結されたdataは別途供給される場合があるため、必ずしもすべての
-前提資産を生成するわけではありません。
+で定義します。このrunbookは、文書化された外部source前提を供給した後に、ローカルで
+hash固定される64M-token clean-source inventoryを生成するcommandを提供します。その他の
+前提資産をすべて生成するわけではありません。
 manifest、corpus、localization record、checkpointが不足している場合は、暗黙に生成せず
 明示的に失敗します。実測runでは、評価tierとsealed dataの開封規則を引き続き遵守してください。
 

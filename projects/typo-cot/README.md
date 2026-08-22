@@ -375,9 +375,9 @@ pipeline**: its examples intentionally cover artifacts from multiple study
 cycles. Use the end-to-end runbook in
 [`projects/typo-robust-training/README.md`](../typo-robust-training/README.md)
 for each prerequisite's required provenance and interface. That runbook now
-materializes the frozen 64M training-data artifact. Other externally frozen
-data may still be supplied separately, so it does not necessarily materialize
-every prerequisite. A missing
+provides the command to materialize a locally hash-bound 64M-token clean-source
+inventory once its documented external source prerequisites are supplied. It
+does not necessarily materialize every other prerequisite. A missing
 manifest, corpus, localization record, or checkpoint
 fails explicitly rather than being generated implicitly. Evaluation-tier and
 sealed data opening rules still apply to every empirical run.
