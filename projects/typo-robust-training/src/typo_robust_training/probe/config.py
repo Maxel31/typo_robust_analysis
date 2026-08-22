@@ -181,9 +181,11 @@ class ProbeProducerProtocol:
 def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
     """Load a closed-world producer preregistration before model initialization."""
 
-    resolved = Path(path).resolve()
-    if not resolved.is_file() or resolved.is_symlink():
+    supplied = Path(path)
+    if supplied.is_symlink() or not supplied.is_file():
+        resolved = supplied.resolve()
         raise ValueError(f"probe producer config is not one regular file: {resolved}")
+    resolved = supplied.resolve()
     raw = resolved.read_bytes()
     try:
         payload = strict_loads(raw.decode("utf-8"), context=str(resolved))

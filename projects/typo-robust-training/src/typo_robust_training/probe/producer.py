@@ -55,9 +55,10 @@ _PAIRED_RECORD_FIELDS = _COMMON_RECORD_FIELDS | {
 
 
 def _json_object(path: Path, *, label: str) -> Mapping[str, object]:
-    resolved = Path(path).resolve()
-    if not resolved.is_file() or resolved.is_symlink():
+    supplied = Path(path)
+    if supplied.is_symlink() or not supplied.is_file():
         raise ValueError(f"{label} must be one regular file")
+    resolved = supplied.resolve()
     try:
         value = strict_loads(resolved.read_text(encoding="utf-8"), context=str(resolved))
     except UnicodeDecodeError as exc:
@@ -245,10 +246,40 @@ def _load_cohort(
     pair_ids = [record.pair_id for record in records if record.pair_id is not None]
     if len(set(record_ids)) != len(record_ids) or len(set(pair_ids)) != len(pair_ids):
         raise ValueError(f"probe {role} record and pair ids must be unique")
+    _validate_within_role_identities(records, role=role)
     counts = Counter(record.class_id for record in records)
     if set(counts) != set(range(len(labels))) or len(set(counts.values())) != 1:
         raise ValueError(f"probe {role} cohort must be exactly class balanced")
     return tuple(records)
+
+
+def _validate_within_role_identities(
+    records: Sequence[ProbeCohortRecord],
+    *,
+    role: str,
+) -> None:
+    """Reject pseudo-replication disguised with fresh bootstrap group ids."""
+
+    clean_hashes = [record.normalized_clean_sha256 for record in records]
+    noisy_hashes = [
+        record.normalized_noisy_sha256
+        for record in records
+        if record.normalized_noisy_sha256 is not None
+    ]
+    if len(set(clean_hashes)) != len(clean_hashes) or len(set(noisy_hashes)) != len(
+        noisy_hashes
+    ):
+        raise ValueError(f"probe {role} normalized content must be unique within role")
+    parent_to_group: dict[str, str] = {}
+    for record in records:
+        previous = parent_to_group.setdefault(
+            record.parent_source_sha256,
+            record.source_group_sha256,
+        )
+        if previous != record.source_group_sha256:
+            raise ValueError(
+                f"probe {role} parent source maps to multiple bootstrap groups"
+            )
 
 
 def _stratum_key(record: ProbeCohortRecord) -> str:
@@ -382,6 +413,7 @@ class ProbeActivationProvider(Protocol):
 
     model: str
     model_revision: str
+    code_revision: str
     decoder_layers: int
     hidden_size: int
     base_model_frozen: bool
@@ -395,11 +427,26 @@ class ProbeActivationProvider(Protocol):
 
     def provenance(self) -> Mapping[str, object]: ...
 
+    def token_inflation_bucket(self, record: ProbeCohortRecord) -> str: ...
+
 
 @dataclass(frozen=True, slots=True)
 class _ProbeWeights:
     weight: np.ndarray
     bias: np.ndarray
+
+
+def _probe_tensor_digest(weights: _ProbeWeights) -> str:
+    """Hash numerical probe tensors only, deliberately excluding seed metadata."""
+
+    digest = hashlib.sha256(b"typo-linear-probe-tensors/v1\0")
+    for name, value in (("weight", weights.weight), ("bias", weights.bias)):
+        array = np.ascontiguousarray(value, dtype=np.float32)
+        digest.update(name.encode())
+        digest.update(str(array.shape).encode())
+        digest.update(array.dtype.str.encode())
+        digest.update(array.tobytes(order="C"))
+    return digest.hexdigest()
 
 
 def _activation_matrix(
@@ -758,17 +805,37 @@ def run_select_probe_transition(
     output_dir = Path(config.output_dir).resolve()
     if output_dir.exists() and any(output_dir.iterdir()):
         raise FileExistsError(f"probe producer output directory is not empty: {output_dir}")
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     provider = activation_provider or provider_factory(protocol, config.gpu_id)
     if (
         provider.model != protocol.model
         or provider.model_revision != protocol.model_revision
+        or provider.code_revision != protocol.code_revision
         or provider.decoder_layers != protocol.decoder_layers
         or provider.hidden_size != protocol.hidden_size
         or provider.base_model_frozen is not True
     ):
         raise ValueError("probe activation provider identity or freeze contract differs")
+    provider_provenance = dict(provider.provenance())
+    expected_provider_identity = {
+        "model": protocol.model,
+        "model_revision": protocol.model_revision,
+        "code_revision": protocol.code_revision,
+        "base_model_frozen": True,
+    }
+    if any(
+        provider_provenance.get(field) != value
+        for field, value in expected_provider_identity.items()
+    ):
+        raise ValueError("probe activation provider provenance identity differs")
+    for role in ("selection", "validation"):
+        for record in cohorts[role]:
+            observed_bucket = provider.token_inflation_bucket(record)
+            if observed_bucket != record.token_inflation_bucket:
+                raise ValueError(
+                    "probe token inflation bucket differs from the runtime tokenizer"
+                )
+    output_dir.mkdir(parents=True, exist_ok=True)
     fit_activations, hidden_size = _activation_matrix(
         provider,
         cohorts["fit"],
@@ -820,6 +887,7 @@ def run_select_probe_transition(
     validation_paths: dict[int, Path] = {}
     selection_payloads: dict[int, dict[str, object]] = {}
     validation_payloads: dict[int, dict[str, object]] = {}
+    tensor_digests: set[str] = set()
     for seed in protocol.probe_seeds:
         weights = _fit_probe(
             fit_activations,
@@ -828,6 +896,12 @@ def run_select_probe_transition(
             seed=seed,
             protocol=protocol,
         )
+        tensor_digest = _probe_tensor_digest(weights)
+        if tensor_digest in tensor_digests:
+            raise ValueError(
+                "independent probe seeds produced identical numerical tensors"
+            )
+        tensor_digests.add(tensor_digest)
         weights_by_seed[seed] = _addressed_weights(
             output_dir,
             seed=seed,
@@ -986,7 +1060,7 @@ def run_select_probe_transition(
             },
             "validation_passed": passed,
             "artifact": _reference(artifact_path, root=output_dir),
-            "runtime": dict(provider.provenance()),
+            "runtime": provider_provenance,
             "python": platform.python_version(),
         },
     )

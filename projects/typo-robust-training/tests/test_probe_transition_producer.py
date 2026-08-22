@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -19,6 +20,11 @@ from typo_robust_training.probe.producer import (
     ProbeCohortRecord,
     ProbeTransitionProducerRunConfig,
     run_select_probe_transition,
+)
+from typo_robust_training.probe.runtime import (
+    _checkout_code_revision,
+    _inflation_bucket,
+    _require_exact_model_revision,
 )
 
 
@@ -181,6 +187,7 @@ def _files(tmp_path: Path) -> dict[str, Path]:
 class _FakeProvider:
     model = "google/gemma-3-4b-it"
     model_revision = "a" * 40
+    code_revision = "b" * 40
     decoder_layers = 4
     hidden_size = 2
     base_model_frozen = True
@@ -202,7 +209,20 @@ class _FakeProvider:
         return values
 
     def provenance(self) -> dict[str, object]:
-        return {"provider": "fake-test-provider/v1", "base_model_frozen": True}
+        return {
+            "provider": "fake-test-provider/v1",
+            "model": self.model,
+            "model_revision": self.model_revision,
+            "base_model_frozen": True,
+            "code_revision": self.code_revision,
+        }
+
+    def token_inflation_bucket(self, record: ProbeCohortRecord) -> str:
+        return {
+            "keyboard-neighbor-substitution": "same",
+            "deletion": "minus-one",
+            "duplication": "plus-one",
+        }[record.edit_type]
 
 
 def _run_config(files: dict[str, Path], output_dir: Path) -> ProbeTransitionProducerRunConfig:
@@ -316,6 +336,57 @@ def test_preregistered_strata_mismatch_fails_before_provider(tmp_path: Path) -> 
     assert calls == 0
 
 
+def test_rejects_token_inflation_bucket_mismatching_runtime_tokenizer(
+    tmp_path: Path,
+) -> None:
+    files = _files(tmp_path)
+    selection = json.loads(files["selection"].read_text())
+    selection["records"][0]["token_inflation_bucket"] = "plus-two-or-more"
+    _write_json(files["selection"], selection)
+    config = json.loads(files["config"].read_text())
+    config["inputs"]["selection_manifest_sha256"] = sha256_file(files["selection"])
+    strata = config["cohorts"]["stratum_counts"]["selection"]
+    strata["keyboard-neighbor-substitution|1|same"] = 1
+    strata["keyboard-neighbor-substitution|1|plus-two-or-more"] = 1
+    _write_json(files["config"], config)
+
+    with pytest.raises(ValueError, match="runtime tokenizer"):
+        run_select_probe_transition(
+            _run_config(files, tmp_path / "output"),
+            activation_provider=_FakeProvider(),
+        )
+
+
+def test_rejects_duplicate_normalized_pair_under_distinct_source_groups(
+    tmp_path: Path,
+) -> None:
+    files = _files(tmp_path)
+    selection = json.loads(files["selection"].read_text())
+    original = selection["records"][0]
+    duplicate = selection["records"][1]
+    for field in (
+        "normalized_clean_sha256",
+        "clean_text",
+        "clean_word_char_span",
+        "normalized_noisy_sha256",
+        "typo_text",
+        "typo_word_char_span",
+        "edit_type",
+        "token_inflation_bucket",
+    ):
+        duplicate[field] = original[field]
+    _write_json(files["selection"], selection)
+    config = json.loads(files["config"].read_text())
+    config["inputs"]["selection_manifest_sha256"] = sha256_file(files["selection"])
+    _write_json(files["config"], config)
+
+    with pytest.raises(ValueError, match="unique within role"):
+        run_select_probe_transition(
+            _run_config(files, tmp_path / "output"),
+            activation_provider=_FakeProvider(),
+        )
+
+
 def test_cross_kind_role_identity_overlap_fails_before_provider(tmp_path: Path) -> None:
     files = _files(tmp_path)
     fit = json.loads(files["fit"].read_text())
@@ -398,6 +469,91 @@ def test_provider_architecture_or_freeze_mismatch_is_rejected(tmp_path: Path) ->
         run_select_probe_transition(
             _run_config(files, tmp_path / "output"),
             activation_provider=provider,
+        )
+
+
+def test_rejects_unverified_runtime_code_revision(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    provider = _FakeProvider()
+    provider.code_revision = "c" * 40
+
+    with pytest.raises(ValueError, match="identity or freeze contract"):
+        run_select_probe_transition(
+            _run_config(files, tmp_path / "output"),
+            activation_provider=provider,
+        )
+
+
+def test_checkout_code_revision_must_be_observable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "typo_robust_training.probe.runtime.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="not-a-revision\n"),
+    )
+    with pytest.raises(RuntimeError, match="cannot attest"):
+        _checkout_code_revision()
+
+
+def test_model_revision_must_be_observable_and_exact() -> None:
+    class _Config:
+        _commit_hash: str | None = None
+        text_config: object | None = None
+
+    class _Tokenizer:
+        init_kwargs: dict[str, str] = {}
+
+    with pytest.raises(ValueError, match="not observable"):
+        _require_exact_model_revision(
+            model_config=_Config(),
+            tokenizer=_Tokenizer(),
+            expected="a" * 40,
+        )
+    _Tokenizer.init_kwargs = {"_commit_hash": "b" * 40}
+    with pytest.raises(ValueError, match="differs"):
+        _require_exact_model_revision(
+            model_config=_Config(),
+            tokenizer=_Tokenizer(),
+            expected="a" * 40,
+        )
+
+
+@pytest.mark.parametrize(
+    ("delta", "expected"),
+    [
+        (-3, "minus-two-or-more"),
+        (-1, "minus-one"),
+        (0, "same"),
+        (1, "plus-one"),
+        (3, "plus-two-or-more"),
+    ],
+)
+def test_token_inflation_bucket_has_closed_boundaries(delta: int, expected: str) -> None:
+    assert _inflation_bucket(delta) == expected
+
+
+def test_rejects_identical_probe_tensors_despite_seed_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = _files(tmp_path)
+
+    def identical_fit(*_args: object, **_kwargs: object) -> object:
+        from typo_robust_training.probe import producer
+
+        return producer._ProbeWeights(  # noqa: SLF001 - falsifies seed independence
+            weight=np.zeros((4, 2, 2), dtype=np.float32),
+            bias=np.zeros((4, 2), dtype=np.float32),
+        )
+
+    monkeypatch.setattr(
+        "typo_robust_training.probe.producer._fit_probe",
+        identical_fit,
+    )
+    with pytest.raises(ValueError, match="identical numerical tensors"):
+        run_select_probe_transition(
+            _run_config(files, tmp_path / "output"),
+            activation_provider=_FakeProvider(),
         )
 
 

@@ -162,7 +162,10 @@ def _reference(value: object, *, root: Path, field: str) -> tuple[Path, str]:
     relative = PurePosixPath(relative_value)
     if relative.is_absolute() or ".." in relative.parts or str(relative) != relative_value:
         raise ValueError(f"{field} reference must be a canonical relative POSIX path")
-    path = (root / Path(*relative.parts)).resolve()
+    supplied = root / Path(*relative.parts)
+    if supplied.is_symlink():
+        raise ValueError(f"{field} reference must not be a symlink")
+    path = supplied.resolve()
     try:
         path.relative_to(root)
     except ValueError as exc:
@@ -341,6 +344,7 @@ def _load_manifest(
     pair_ids = [row.pair_id for row in records if row.pair_id is not None]
     if len(set(pair_ids)) != len(pair_ids):
         raise ValueError(f"probe {expected_role} pair ids must be unique")
+    _validate_within_role_identities(records, role=expected_role)
     counts = Counter(row.class_id for row in records)
     if set(counts) != set(range(len(class_labels))) or len(set(counts.values())) != 1:
         raise ValueError(f"probe {expected_role} cohort must be exactly class balanced")
@@ -361,6 +365,33 @@ def _load_manifest(
                 f"probe {expected_role} edit operation strata must be exactly balanced"
             )
     return tuple(records)
+
+
+def _validate_within_role_identities(
+    records: Sequence[_CohortRecord],
+    *,
+    role: str,
+) -> None:
+    clean_hashes = [record.normalized_clean_sha256 for record in records]
+    noisy_hashes = [
+        record.normalized_noisy_sha256
+        for record in records
+        if record.normalized_noisy_sha256 is not None
+    ]
+    if len(set(clean_hashes)) != len(clean_hashes) or len(set(noisy_hashes)) != len(
+        noisy_hashes
+    ):
+        raise ValueError(f"probe {role} normalized content must be unique within role")
+    parent_to_group: dict[str, str] = {}
+    for record in records:
+        previous = parent_to_group.setdefault(
+            record.parent_source_sha256,
+            record.source_group_sha256,
+        )
+        if previous != record.source_group_sha256:
+            raise ValueError(
+                f"probe {role} parent source maps to multiple bootstrap groups"
+            )
 
 
 def _identity_sets(records: Sequence[_CohortRecord]) -> tuple[set[str], set[str], set[str]]:
@@ -620,7 +651,7 @@ def _validate_probe_weights(
     seed: int,
     protocol: ProbeProducerProtocol,
     class_count: int,
-) -> None:
+) -> str:
     from safetensors import SafetensorError, safe_open
 
     expected_metadata = {
@@ -652,6 +683,7 @@ def _validate_probe_weights(
                 raise ValueError("probe weight provenance metadata differs")
             if set(handle.keys()) != expected_keys:
                 raise ValueError("probe weight tensor inventory differs")
+            tensor_digest = hashlib.sha256(b"typo-linear-probe-tensors/v1\0")
             for layer in range(protocol.decoder_layers):
                 weight = handle.get_tensor(f"decoder_layer.{layer}.weight")
                 bias = handle.get_tensor(f"decoder_layer.{layer}.bias")
@@ -664,8 +696,15 @@ def _validate_probe_weights(
                     or not np.isfinite(bias).all()
                 ):
                     raise ValueError("probe weight tensor shape, dtype, or values differ")
+                for name, tensor in (("weight", weight), ("bias", bias)):
+                    array = np.ascontiguousarray(tensor, dtype=np.float32)
+                    tensor_digest.update(name.encode())
+                    tensor_digest.update(str(array.shape).encode())
+                    tensor_digest.update(array.dtype.str.encode())
+                    tensor_digest.update(array.tobytes(order="C"))
     except SafetensorError as exc:
         raise ValueError("probe weight file is not a valid safetensors artifact") from exc
+    return tensor_digest.hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -700,9 +739,11 @@ def _validation_peak(trajectory: ProbeSeedTrajectory) -> int:
 def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
     """Resolve and independently verify a probe transition evidence bundle."""
 
-    resolved = Path(path).resolve()
-    if not resolved.is_file():
+    supplied = Path(path)
+    if supplied.is_symlink() or not supplied.is_file():
+        resolved = supplied.resolve()
         raise ValueError(f"probe transition artifact is not a file: {resolved}")
+    resolved = supplied.resolve()
     raw = resolved.read_bytes()
     payload = _json_file(resolved)
     if set(payload) != _TOP_LEVEL_FIELDS:
@@ -851,13 +892,16 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
         )
     if len(set(weights.values())) != 2 or len(set(weight_hashes.values())) != 2:
         raise ValueError("probe seeds must use distinct independently fitted weight artifacts")
+    tensor_digests: dict[int, str] = {}
     for seed in seeds:
-        _validate_probe_weights(
+        tensor_digests[seed] = _validate_probe_weights(
             weights[seed],
             seed=seed,
             protocol=protocol,
             class_count=len(labels),
         )
+    if len(set(tensor_digests.values())) != len(seeds):
+        raise ValueError("independent probe seeds contain identical numerical tensors")
     for seed in seeds:
         selection_path, _ = _reference(
             selection_refs[str(seed)], root=root, field=f"probe seed {seed} selection scores"

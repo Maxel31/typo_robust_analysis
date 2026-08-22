@@ -9,6 +9,7 @@ import pytest
 from safetensors import safe_open
 from safetensors.numpy import save_file
 
+from typo_robust_training.probe import artifacts as probe_artifacts
 from typo_robust_training.probe.artifacts import load_probe_transition_artifact
 from typo_robust_training.data.splits import normalized_content_sha256
 
@@ -346,6 +347,50 @@ def test_artifact_rejects_transitive_source_group_overlap(tmp_path: Path) -> Non
     _write_json(path, payload)
 
     with pytest.raises(ValueError, match="overlap transitively"):
+        load_probe_transition_artifact(path)
+
+
+def test_artifact_rejects_duplicate_content_under_distinct_groups(tmp_path: Path) -> None:
+    _path, _payload, files = _bundle(tmp_path)
+    selection = json.loads(files["selection"].read_text())
+    first = selection["records"][0]
+    duplicate = selection["records"][1]
+    for field in (
+        "normalized_clean_sha256",
+        "clean_text",
+        "clean_word_char_span",
+        "normalized_noisy_sha256",
+        "typo_text",
+        "typo_word_char_span",
+        "edit_type",
+        "token_inflation_bucket",
+    ):
+        duplicate[field] = first[field]
+    _write_json(files["selection"], selection)
+
+    with pytest.raises(ValueError, match="unique within role"):
+        probe_artifacts._load_manifest(  # noqa: SLF001 - loader boundary falsification
+            files["selection"],
+            expected_role="selection",
+            class_labels=("alpha", "beta"),
+        )
+
+
+def test_artifact_rejects_identical_probe_tensors_with_distinct_seed_metadata(
+    tmp_path: Path,
+) -> None:
+    path, payload, files = _bundle(tmp_path)
+    with safe_open(files["weights-42"], framework="np") as source:
+        tensors = {name: source.get_tensor(name) for name in source.keys()}
+    with safe_open(files["weights-43"], framework="np") as target:
+        metadata = dict(target.metadata())
+    save_file(tensors, files["weights-43"], metadata=metadata)
+    payload["references"]["probe_weights_by_seed"]["43"] = _ref(  # type: ignore[index]
+        files["weights-43"]
+    )
+    _write_json(path, payload)
+
+    with pytest.raises(ValueError, match="identical numerical tensors"):
         load_probe_transition_artifact(path)
 
 

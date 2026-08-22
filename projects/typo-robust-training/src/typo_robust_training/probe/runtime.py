@@ -5,7 +5,10 @@ from __future__ import annotations
 import importlib.metadata
 import os
 import platform
+import re
+import subprocess
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -13,6 +16,61 @@ import numpy as np
 from typo_robust_training.localization.prompting import word_final_token_positions
 from typo_robust_training.probe.config import ProbeProducerProtocol
 from typo_robust_training.probe.producer import ProbeCohortRecord
+
+
+_REVISION = re.compile(r"[0-9a-f]{40}")
+
+
+def _checkout_code_revision() -> str:
+    completed = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=Path(__file__).resolve().parent,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    revision = completed.stdout.strip()
+    if completed.returncode != 0 or _REVISION.fullmatch(revision) is None:
+        raise RuntimeError("probe runtime cannot attest the executing code revision")
+    return revision
+
+
+def _require_exact_model_revision(
+    *,
+    model_config: object,
+    tokenizer: object,
+    expected: str,
+) -> str:
+    candidates: list[str] = []
+    for config in (
+        model_config,
+        getattr(model_config, "text_config", None),
+    ):
+        revision = getattr(config, "_commit_hash", None)
+        if isinstance(revision, str) and revision:
+            candidates.append(revision)
+    init_kwargs = getattr(tokenizer, "init_kwargs", None)
+    if isinstance(init_kwargs, Mapping):
+        revision = init_kwargs.get("_commit_hash")
+        if isinstance(revision, str) and revision:
+            candidates.append(revision)
+    if not candidates:
+        raise ValueError("loaded model revision is not observable")
+    if any(revision != expected for revision in candidates):
+        raise ValueError("loaded model revision differs from the preregistration")
+    return expected
+
+
+def _inflation_bucket(delta: int) -> str:
+    if delta <= -2:
+        return "minus-two-or-more"
+    if delta == -1:
+        return "minus-one"
+    if delta == 0:
+        return "same"
+    if delta == 1:
+        return "plus-one"
+    return "plus-two-or-more"
 
 
 def _package_version(name: str) -> str:
@@ -77,6 +135,9 @@ class HuggingFaceProbeActivationProvider:
         self.gpu_id = gpu_id
         self.model = protocol.model
         self.model_revision = protocol.model_revision
+        self.code_revision = _checkout_code_revision()
+        if self.code_revision != protocol.code_revision:
+            raise ValueError("executing code revision differs from the preregistration")
         self.decoder_layers = len(self.layers)
         raw_hidden = getattr(self._model.config, "hidden_size", None)
         if raw_hidden is None and hasattr(self._model.config, "text_config"):
@@ -85,9 +146,11 @@ class HuggingFaceProbeActivationProvider:
             raise ValueError("loaded model does not expose an integer hidden size")
         self.hidden_size = raw_hidden
         self.base_model_frozen = True
-        actual_revision = getattr(self._model.config, "_commit_hash", None)
-        if actual_revision is not None and actual_revision != protocol.model_revision:
-            raise ValueError("loaded model revision differs from the preregistration")
+        _require_exact_model_revision(
+            model_config=self._model.config,
+            tokenizer=self.tokenizer,
+            expected=protocol.model_revision,
+        )
         if (
             self.decoder_layers != protocol.decoder_layers
             or self.hidden_size != protocol.hidden_size
@@ -174,11 +237,43 @@ class HuggingFaceProbeActivationProvider:
             axis=0,
         )
 
+    def _token_count(self, text: str) -> int:
+        encoded = self.tokenizer(
+            text,
+            add_special_tokens=True,
+            return_attention_mask=False,
+            return_offsets_mapping=False,
+        )
+        if not isinstance(encoded, Mapping):
+            raise ValueError("probe tokenizer must return a token mapping")
+        input_ids = encoded.get("input_ids")
+        if hasattr(input_ids, "ndim"):
+            if input_ids.ndim == 1:
+                return int(input_ids.shape[0])
+            if input_ids.ndim == 2 and int(input_ids.shape[0]) == 1:
+                return int(input_ids.shape[1])
+        if isinstance(input_ids, list):
+            if input_ids and isinstance(input_ids[0], list):
+                if len(input_ids) != 1:
+                    raise ValueError("probe tokenizer returned multiple sequences")
+                input_ids = input_ids[0]
+            if all(isinstance(token, int) and not isinstance(token, bool) for token in input_ids):
+                return len(input_ids)
+        raise ValueError("probe tokenizer returned an invalid token inventory")
+
+    def token_inflation_bucket(self, record: ProbeCohortRecord) -> str:
+        if record.typo_text is None:
+            raise ValueError("token inflation requires a paired probe record")
+        return _inflation_bucket(
+            self._token_count(record.typo_text) - self._token_count(record.clean_text)
+        )
+
     def provenance(self) -> Mapping[str, object]:
         return {
             "provider": "hugging-face-complete-block-residual/v1",
             "model": self.model,
             "model_revision": self.model_revision,
+            "code_revision": self.code_revision,
             "decoder_layers": self.decoder_layers,
             "hidden_size": self.hidden_size,
             "base_model_frozen": self.base_model_frozen,
@@ -190,4 +285,8 @@ class HuggingFaceProbeActivationProvider:
         }
 
 
-__all__ = ["HuggingFaceProbeActivationProvider"]
+__all__ = [
+    "HuggingFaceProbeActivationProvider",
+    "_inflation_bucket",
+    "_require_exact_model_revision",
+]
