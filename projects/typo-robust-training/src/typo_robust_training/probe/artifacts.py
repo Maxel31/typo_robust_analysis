@@ -697,7 +697,10 @@ def _validate_probe_weights(
                 ):
                     raise ValueError("probe weight tensor shape, dtype, or values differ")
                 for name, tensor in (("weight", weight), ("bias", bias)):
-                    array = np.ascontiguousarray(tensor, dtype=np.float32)
+                    array = np.array(tensor, dtype=np.float32, order="C", copy=True)
+                    # Canonicalize the two IEEE zero encodings before checking
+                    # numerical seed independence.
+                    array[array == 0.0] = 0.0
                     tensor_digest.update(name.encode())
                     tensor_digest.update(str(array.shape).encode())
                     tensor_digest.update(array.dtype.str.encode())

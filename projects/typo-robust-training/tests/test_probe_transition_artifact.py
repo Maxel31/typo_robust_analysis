@@ -394,6 +394,30 @@ def test_artifact_rejects_identical_probe_tensors_with_distinct_seed_metadata(
         load_probe_transition_artifact(path)
 
 
+def test_artifact_rejects_numerically_identical_signed_zero_tensors(
+    tmp_path: Path,
+) -> None:
+    path, payload, files = _bundle(tmp_path)
+    with safe_open(files["weights-42"], framework="np") as source:
+        tensors_42 = {name: source.get_tensor(name) for name in source.keys()}
+        metadata_42 = dict(source.metadata())
+    with safe_open(files["weights-43"], framework="np") as target:
+        metadata_43 = dict(target.metadata())
+    tensors_42["decoder_layer.0.weight"].flat[0] = 0.0
+    tensors_43 = {name: value.copy() for name, value in tensors_42.items()}
+    tensors_43["decoder_layer.0.weight"].flat[0] = -0.0
+    save_file(tensors_42, files["weights-42"], metadata=metadata_42)
+    save_file(tensors_43, files["weights-43"], metadata=metadata_43)
+    for seed in (42, 43):
+        payload["references"]["probe_weights_by_seed"][str(seed)] = _ref(  # type: ignore[index]
+            files[f"weights-{seed}"]
+        )
+    _write_json(path, payload)
+
+    with pytest.raises(ValueError, match="identical numerical tensors"):
+        load_probe_transition_artifact(path)
+
+
 def test_artifact_rejects_protected_split_overlap(tmp_path: Path) -> None:
     path, payload, files = _bundle(tmp_path)
     fit = json.loads(files["fit"].read_text())

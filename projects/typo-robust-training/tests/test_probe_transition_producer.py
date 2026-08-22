@@ -26,6 +26,7 @@ from typo_robust_training.probe.runtime import (
     _inflation_bucket,
     _require_exact_model_revision,
 )
+from typo_robust_training.probe import runtime as probe_runtime
 
 
 def _sha(label: str) -> str:
@@ -487,11 +488,44 @@ def test_rejects_unverified_runtime_code_revision(tmp_path: Path) -> None:
 def test_checkout_code_revision_must_be_observable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "typo_robust_training.probe.runtime.subprocess.run",
-        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="not-a-revision\n"),
-    )
+    checkout = Path(probe_runtime.__file__).resolve()
+    while not (checkout / ".git").exists():
+        checkout = checkout.parent
+
+    def fake_run(args: list[str], **_kwargs: object) -> object:
+        operation = tuple(args[1:])
+        if operation == ("rev-parse", "--show-toplevel"):
+            return SimpleNamespace(returncode=0, stdout=f"{checkout}\n")
+        if operation[0] == "ls-files":
+            return SimpleNamespace(returncode=0, stdout="tracked\n")
+        if operation[0] == "status":
+            return SimpleNamespace(returncode=0, stdout="")
+        return SimpleNamespace(returncode=0, stdout="not-a-revision\n")
+
+    monkeypatch.setattr("typo_robust_training.probe.runtime.subprocess.run", fake_run)
     with pytest.raises(RuntimeError, match="cannot attest"):
+        _checkout_code_revision()
+
+
+def test_checkout_code_revision_rejects_dirty_executing_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checkout = Path(probe_runtime.__file__).resolve()
+    while not (checkout / ".git").exists():
+        checkout = checkout.parent
+
+    def fake_run(args: list[str], **_kwargs: object) -> object:
+        operation = tuple(args[1:])
+        if operation == ("rev-parse", "--show-toplevel"):
+            return SimpleNamespace(returncode=0, stdout=f"{checkout}\n")
+        if operation[0] == "ls-files":
+            return SimpleNamespace(returncode=0, stdout="tracked\n")
+        if operation[0] == "status":
+            return SimpleNamespace(returncode=0, stdout=" M probe/runtime.py\n")
+        return SimpleNamespace(returncode=0, stdout=f"{'a' * 40}\n")
+
+    monkeypatch.setattr("typo_robust_training.probe.runtime.subprocess.run", fake_run)
+    with pytest.raises(RuntimeError, match="source tree is not clean"):
         _checkout_code_revision()
 
 
@@ -509,8 +543,23 @@ def test_model_revision_must_be_observable_and_exact() -> None:
             tokenizer=_Tokenizer(),
             expected="a" * 40,
         )
-    _Tokenizer.init_kwargs = {"_commit_hash": "b" * 40}
+    _Tokenizer.init_kwargs = {"_commit_hash": "a" * 40}
+    with pytest.raises(ValueError, match="not observable"):
+        _require_exact_model_revision(
+            model_config=_Config(),
+            tokenizer=_Tokenizer(),
+            expected="a" * 40,
+        )
+    _Config._commit_hash = "b" * 40
     with pytest.raises(ValueError, match="differs"):
+        _require_exact_model_revision(
+            model_config=_Config(),
+            tokenizer=_Tokenizer(),
+            expected="a" * 40,
+        )
+    _Config._commit_hash = "a" * 40
+    _Tokenizer.init_kwargs = {"_commit_hash": "b" * 40}
+    with pytest.raises(ValueError, match="tokenizer revision differs"):
         _require_exact_model_revision(
             model_config=_Config(),
             tokenizer=_Tokenizer(),
@@ -549,6 +598,33 @@ def test_rejects_identical_probe_tensors_despite_seed_metadata(
     monkeypatch.setattr(
         "typo_robust_training.probe.producer._fit_probe",
         identical_fit,
+    )
+    with pytest.raises(ValueError, match="identical numerical tensors"):
+        run_select_probe_transition(
+            _run_config(files, tmp_path / "output"),
+            activation_provider=_FakeProvider(),
+        )
+
+
+def test_rejects_numerically_identical_probe_tensors_with_signed_zero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = _files(tmp_path)
+
+    def signed_zero_fit(*_args: object, **kwargs: object) -> object:
+        from typo_robust_training.probe import producer
+
+        weight = np.ones((4, 2, 2), dtype=np.float32)
+        weight.flat[0] = -0.0 if kwargs["seed"] == 43 else 0.0
+        return producer._ProbeWeights(  # noqa: SLF001 - falsifies seed independence
+            weight=weight,
+            bias=np.ones((4, 2), dtype=np.float32),
+        )
+
+    monkeypatch.setattr(
+        "typo_robust_training.probe.producer._fit_probe",
+        signed_zero_fit,
     )
     with pytest.raises(ValueError, match="identical numerical tensors"):
         run_select_probe_transition(

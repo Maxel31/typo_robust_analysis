@@ -441,7 +441,11 @@ def _probe_tensor_digest(weights: _ProbeWeights) -> str:
 
     digest = hashlib.sha256(b"typo-linear-probe-tensors/v1\0")
     for name, value in (("weight", weights.weight), ("bias", weights.bias)):
-        array = np.ascontiguousarray(value, dtype=np.float32)
+        array = np.array(value, dtype=np.float32, order="C", copy=True)
+        # IEEE-754 has two zero encodings.  Probe independence is numerical,
+        # so metadata or the sign bit of an exact zero must not make two fits
+        # appear distinct.
+        array[array == 0.0] = 0.0
         digest.update(name.encode())
         digest.update(str(array.shape).encode())
         digest.update(array.dtype.str.encode())

@@ -22,15 +22,58 @@ _REVISION = re.compile(r"[0-9a-f]{40}")
 
 
 def _checkout_code_revision() -> str:
-    completed = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=Path(__file__).resolve().parent,
+    module_path = Path(__file__).resolve()
+    root_result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=module_path.parent,
         check=False,
         capture_output=True,
         text=True,
     )
-    revision = completed.stdout.strip()
-    if completed.returncode != 0 or _REVISION.fullmatch(revision) is None:
+    if root_result.returncode != 0:
+        raise RuntimeError("probe runtime cannot locate its git checkout")
+    checkout_root = Path(root_result.stdout.strip()).resolve()
+    try:
+        module_relative = module_path.relative_to(checkout_root)
+        package_relative = module_path.parents[1].relative_to(checkout_root)
+    except ValueError as exc:
+        raise RuntimeError("probe runtime module is outside the attested checkout") from exc
+
+    tracked_result = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "--", module_relative.as_posix()],
+        cwd=checkout_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if tracked_result.returncode != 0:
+        raise RuntimeError("probe runtime module is not tracked by the attested checkout")
+    dirty_result = subprocess.run(
+        [
+            "git",
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--",
+            package_relative.as_posix(),
+        ],
+        cwd=checkout_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if dirty_result.returncode != 0 or dirty_result.stdout.strip():
+        raise RuntimeError("probe runtime source tree is not clean")
+
+    head_result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=checkout_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    revision = head_result.stdout.strip()
+    if head_result.returncode != 0 or _REVISION.fullmatch(revision) is None:
         raise RuntimeError("probe runtime cannot attest the executing code revision")
     return revision
 
@@ -41,23 +84,27 @@ def _require_exact_model_revision(
     tokenizer: object,
     expected: str,
 ) -> str:
-    candidates: list[str] = []
+    model_candidates: list[str] = []
     for config in (
         model_config,
         getattr(model_config, "text_config", None),
     ):
         revision = getattr(config, "_commit_hash", None)
         if isinstance(revision, str) and revision:
-            candidates.append(revision)
+            model_candidates.append(revision)
+    if not model_candidates:
+        raise ValueError("loaded model revision is not observable")
+    if any(revision != expected for revision in model_candidates):
+        raise ValueError("loaded model revision differs from the preregistration")
+
+    tokenizer_candidates: list[str] = []
     init_kwargs = getattr(tokenizer, "init_kwargs", None)
     if isinstance(init_kwargs, Mapping):
         revision = init_kwargs.get("_commit_hash")
         if isinstance(revision, str) and revision:
-            candidates.append(revision)
-    if not candidates:
-        raise ValueError("loaded model revision is not observable")
-    if any(revision != expected for revision in candidates):
-        raise ValueError("loaded model revision differs from the preregistration")
+            tokenizer_candidates.append(revision)
+    if any(revision != expected for revision in tokenizer_candidates):
+        raise ValueError("loaded tokenizer revision differs from the preregistration")
     return expected
 
 
