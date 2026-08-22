@@ -39,6 +39,7 @@ from typo_robust_training.evaluation.records import (
     EvaluationObservation,
 )
 from typo_robust_training.integrity import sha256_file as _sha256_file
+from typo_robust_training.state_gate.runtime import _checkout_source_attestation
 from typo_robust_training.training.provenance import (
     METHOD_EVIDENCE_CONDITIONS,
     validate_condition_evidence,
@@ -150,6 +151,8 @@ def _validate_production_runtime_provenance(
     *,
     protocol: RobustnessEvaluationProtocol,
     descriptor: AdapterDescriptor | None,
+    expected_code_revision: str,
+    expected_source_tree_sha256: str,
 ) -> None:
     """Fail closed when a production evaluator cannot attest its loaded snapshot."""
 
@@ -168,15 +171,9 @@ def _validate_production_runtime_provenance(
     }
     if any(provenance.get(field) != value for field, value in expected.items()):
         raise ValueError("evaluation runtime model/tokenizer provenance differs")
-    code_revision = provenance.get("code_revision")
-    source_tree_sha256 = provenance.get("source_tree_sha256")
     if (
-        not isinstance(code_revision, str)
-        or len(code_revision) != 40
-        or any(character not in "0123456789abcdef" for character in code_revision)
-        or not isinstance(source_tree_sha256, str)
-        or len(source_tree_sha256) != 64
-        or any(character not in "0123456789abcdef" for character in source_tree_sha256)
+        provenance.get("code_revision") != expected_code_revision
+        or provenance.get("source_tree_sha256") != expected_source_tree_sha256
     ):
         raise ValueError("evaluation runtime source provenance differs")
 
@@ -187,6 +184,8 @@ def _validate_production_runtime_inventory(
     protocol: RobustnessEvaluationProtocol,
     descriptors: Sequence[AdapterDescriptor],
     require_complete: bool,
+    expected_code_revision: str,
+    expected_source_tree_sha256: str,
 ) -> None:
     inventory = {
         _condition_id(descriptor): descriptor
@@ -203,6 +202,8 @@ def _validate_production_runtime_inventory(
             provenance,
             protocol=protocol,
             descriptor=inventory[condition_id],
+            expected_code_revision=expected_code_revision,
+            expected_source_tree_sha256=expected_source_tree_sha256,
         )
 
 
@@ -213,7 +214,11 @@ def _experiment_binding(
     descriptors: Sequence[AdapterDescriptor],
     patch_window: PatchWindow,
     training_sources_sha256: str | None,
+    code_revision: str | None = None,
+    source_tree_sha256: str | None = None,
 ) -> str:
+    if (code_revision is None) != (source_tree_sha256 is None):
+        raise ValueError("evaluation source attestation binding is incomplete")
     has_method_evidence = any(
         descriptor.method_evidence_sha256 is not None for descriptor in descriptors
     )
@@ -230,21 +235,27 @@ def _experiment_binding(
         if has_method_evidence:
             adapter["method_evidence_sha256"] = descriptor.method_evidence_sha256
         adapters.append(adapter)
-    return _canonical_sha256(
-        {
-            "schema_version": (
+    payload = {
+        "schema_version": (
+            "robustness-evaluation-experiment-binding/v4"
+            if code_revision is not None
+            else (
                 "robustness-evaluation-experiment-binding/v3"
                 if has_method_evidence
                 else "robustness-evaluation-experiment-binding/v2"
-            ),
-            "config_sha256": protocol.config_sha256,
-            "study_protocol_sha256": study_protocol_sha256,
-            "patch_window_sha256": patch_window.artifact_sha256,
-            "patch_layers": list(patch_window.layers),
-            "training_sources_sha256": training_sources_sha256,
-            "adapters": adapters,
-        }
-    )
+            )
+        ),
+        "config_sha256": protocol.config_sha256,
+        "study_protocol_sha256": study_protocol_sha256,
+        "patch_window_sha256": patch_window.artifact_sha256,
+        "patch_layers": list(patch_window.layers),
+        "training_sources_sha256": training_sources_sha256,
+        "adapters": adapters,
+    }
+    if code_revision is not None:
+        payload["code_revision"] = code_revision
+        payload["source_tree_sha256"] = source_tree_sha256
+    return _canonical_sha256(payload)
 
 
 def _access_binding(
@@ -554,6 +565,12 @@ def run_robustness_evaluation(
         or study.gates["patch_audit_is_blocking"] is not False
     ):
         raise ValueError("evaluation runtime and study protocols differ")
+    production_source_attestation: tuple[str, str] | None = None
+    if runtime_factory is None:
+        # This executes before reading a resume manifest or constructing any CUDA runtime.
+        # Production evaluation is valid only for the exact clean source checkout that
+        # will also be reported independently by every base/adapter runtime.
+        production_source_attestation = _checkout_source_attestation()
     if (data_bundle is not None or corpus_bundle is not None) and config.evaluation_role != "tune":
         raise ValueError("sealed evaluation roles cannot use injected data bundles")
     if (data_bundle is None) != (corpus_bundle is None):
@@ -605,6 +622,12 @@ def run_robustness_evaluation(
         descriptors=resolved_descriptors,
         patch_window=resolved_window,
         training_sources_sha256=training_sources_sha256,
+        code_revision=(
+            None if production_source_attestation is None else production_source_attestation[0]
+        ),
+        source_tree_sha256=(
+            None if production_source_attestation is None else production_source_attestation[1]
+        ),
     )
     binding = _access_binding(experiment_binding=experiment_binding, config=config)
     output_dir = config.output_dir.resolve()
@@ -687,6 +710,14 @@ def run_robustness_evaluation(
         "gpu_id": config.gpu_id,
         "resume": config.resume,
         "python": platform.python_version(),
+        **(
+            {
+                "code_revision": production_source_attestation[0],
+                "source_tree_sha256": production_source_attestation[1],
+            }
+            if production_source_attestation is not None
+            else {}
+        ),
     }
     prior_runtime: dict[str, object] = {}
     started_at = _now()
@@ -697,6 +728,11 @@ def run_robustness_evaluation(
             or prior_run.get("access_binding_sha256") != binding
         ):
             raise ValueError("evaluation resume run binding differs")
+        if production_source_attestation is not None and (
+            prior_run.get("code_revision") != production_source_attestation[0]
+            or prior_run.get("source_tree_sha256") != production_source_attestation[1]
+        ):
+            raise ValueError("evaluation resume source attestation differs")
         previous_runtime = prior_run.get("runtime", {})
         if not isinstance(previous_runtime, Mapping) or any(
             not isinstance(name, str) or not isinstance(value, Mapping)
@@ -705,11 +741,14 @@ def run_robustness_evaluation(
             raise ValueError("evaluation resume runtime provenance differs")
         prior_runtime = {name: dict(value) for name, value in previous_runtime.items()}
         if runtime_factory is None:
+            assert production_source_attestation is not None
             _validate_production_runtime_inventory(
                 prior_runtime,
                 protocol=protocol,
                 descriptors=resolved_descriptors,
                 require_complete=False,
+                expected_code_revision=production_source_attestation[0],
+                expected_source_tree_sha256=production_source_attestation[1],
             )
         previous_started_at = prior_run.get("started_at")
         if isinstance(previous_started_at, str) and previous_started_at:
@@ -759,10 +798,13 @@ def run_robustness_evaluation(
                 if runtime is not None:
                     current_provenance = dict(runtime.provenance())
                     if owned_runtime_factory is not None:
+                        assert production_source_attestation is not None
                         _validate_production_runtime_provenance(
                             current_provenance,
                             protocol=protocol,
                             descriptor=descriptor,
+                            expected_code_revision=production_source_attestation[0],
+                            expected_source_tree_sha256=production_source_attestation[1],
                         )
                     runtime_provenance[condition_id] = current_provenance
                 for pair in bundle.records:
@@ -844,11 +886,14 @@ def run_robustness_evaluation(
                 if runtime is not None:
                     runtime.close()
         if owned_runtime_factory is not None:
+            assert production_source_attestation is not None
             _validate_production_runtime_inventory(
                 runtime_provenance,
                 protocol=protocol,
                 descriptors=resolved_descriptors,
                 require_complete=True,
+                expected_code_revision=production_source_attestation[0],
+                expected_source_tree_sha256=production_source_attestation[1],
             )
         _write_records(records_path, observations)
         _write_corpus_records(corpus_records_path, corpus_observations)

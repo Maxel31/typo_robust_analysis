@@ -38,6 +38,8 @@ from typo_robust_training.integrity import sha256_tree
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = PROJECT_ROOT / "configs/gemma4b-evaluation.yaml"
 STUDY = PROJECT_ROOT / "configs/robustness-evaluation-v1.yaml"
+EXPECTED_CODE_REVISION = "a" * 40
+EXPECTED_SOURCE_TREE_SHA256 = "b" * 64
 
 
 def _pair(index: int) -> EvaluationPair:
@@ -335,6 +337,52 @@ class _RuntimeFactory:
         return _Runtime(self, descriptor)
 
 
+def _install_production_runtime_factory(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fail_after_by_run: tuple[int | None, ...],
+) -> list[object]:
+    """Install a CPU-only production seam while preserving production validation."""
+
+    plans = iter(fail_after_by_run)
+    factories: list[object] = []
+
+    class _ProductionRuntime(_Runtime):
+        def __init__(
+            self,
+            factory: _RuntimeFactory,
+            descriptor: AdapterDescriptor | None,
+        ) -> None:
+            super().__init__(factory, descriptor)
+            self.descriptor = descriptor
+
+        def provenance(self) -> dict[str, object]:
+            if self.descriptor is None:
+                return _production_runtime_provenance()
+            return _descriptor_runtime_provenance(self.descriptor)
+
+    class _ProductionFactory:
+        def __init__(self, **_: object) -> None:
+            self.inner = _RuntimeFactory(fail_after=next(plans))
+            factories.append(self)
+
+        def __call__(self, descriptor: AdapterDescriptor | None) -> _ProductionRuntime:
+            return _ProductionRuntime(self.inner, descriptor)
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "typo_robust_training.evaluation.runner._checkout_source_attestation",
+        lambda: (EXPECTED_CODE_REVISION, EXPECTED_SOURCE_TREE_SHA256),
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.evaluation.runtime.HuggingFaceRobustnessEvaluationRuntimeFactory",
+        _ProductionFactory,
+    )
+    return factories
+
+
 def _config(root: Path, output: Path, *, resume: bool) -> RobustnessEvaluationRunConfig:
     return RobustnessEvaluationRunConfig(
         config_path=CONFIG,
@@ -365,11 +413,28 @@ def _production_runtime_provenance(
         "requested_revision": protocol.model_revision,
         "model_revision": protocol.model_revision,
         "tokenizer_revision": protocol.model_revision,
-        "code_revision": "a" * 40,
-        "source_tree_sha256": "b" * 64,
+        "code_revision": EXPECTED_CODE_REVISION,
+        "source_tree_sha256": EXPECTED_SOURCE_TREE_SHA256,
         "condition": condition,
         "seed": seed,
     }
+
+
+def _descriptor_runtime_provenance(
+    descriptor: AdapterDescriptor,
+    *,
+    code_revision: str = EXPECTED_CODE_REVISION,
+    source_tree_sha256: str = EXPECTED_SOURCE_TREE_SHA256,
+) -> dict[str, object]:
+    provenance = _production_runtime_provenance(
+        condition=descriptor.condition,
+        seed=descriptor.seed,
+    )
+    provenance["code_revision"] = code_revision
+    provenance["source_tree_sha256"] = source_tree_sha256
+    provenance["adapter_sha256"] = descriptor.adapter_sha256
+    provenance["method_evidence_sha256"] = descriptor.method_evidence_sha256
+    return provenance
 
 
 @pytest.mark.parametrize(
@@ -385,6 +450,8 @@ def test_production_runtime_loader_rejects_missing_or_mismatched_revisions(
         good,
         protocol=protocol,
         descriptor=None,
+        expected_code_revision=EXPECTED_CODE_REVISION,
+        expected_source_tree_sha256=EXPECTED_SOURCE_TREE_SHA256,
     )
 
     missing = dict(good)
@@ -394,6 +461,8 @@ def test_production_runtime_loader_rejects_missing_or_mismatched_revisions(
             missing,
             protocol=protocol,
             descriptor=None,
+            expected_code_revision=EXPECTED_CODE_REVISION,
+            expected_source_tree_sha256=EXPECTED_SOURCE_TREE_SHA256,
         )
 
     mismatched = dict(good)
@@ -403,8 +472,27 @@ def test_production_runtime_loader_rejects_missing_or_mismatched_revisions(
             mismatched,
             protocol=protocol,
             descriptor=None,
+            expected_code_revision=EXPECTED_CODE_REVISION,
+            expected_source_tree_sha256=EXPECTED_SOURCE_TREE_SHA256,
         )
 
+
+def test_production_runtime_rejects_arbitrary_well_formed_source_digest() -> None:
+    """ARBITRARY_SOURCE_DIGEST: shape-valid provenance is not source attestation."""
+
+    protocol = load_robustness_evaluation_config(CONFIG)
+    forged = _production_runtime_provenance()
+    forged["code_revision"] = "c" * 40
+    forged["source_tree_sha256"] = "d" * 64
+
+    with pytest.raises(ValueError, match="source provenance differs"):
+        _validate_production_runtime_provenance(
+            forged,
+            protocol=protocol,
+            descriptor=None,
+            expected_code_revision=EXPECTED_CODE_REVISION,
+            expected_source_tree_sha256=EXPECTED_SOURCE_TREE_SHA256,
+        )
 
 def test_production_runtime_loader_requires_exact_condition_inventory() -> None:
     protocol = load_robustness_evaluation_config(CONFIG)
@@ -417,6 +505,8 @@ def test_production_runtime_loader_requires_exact_condition_inventory() -> None:
             protocol=protocol,
             descriptors=descriptors,
             require_complete=True,
+            expected_code_revision=EXPECTED_CODE_REVISION,
+            expected_source_tree_sha256=EXPECTED_SOURCE_TREE_SHA256,
         )
 
     runtime["unexpected"] = _production_runtime_provenance()
@@ -426,6 +516,32 @@ def test_production_runtime_loader_requires_exact_condition_inventory() -> None:
             protocol=protocol,
             descriptors=descriptors,
             require_complete=False,
+            expected_code_revision=EXPECTED_CODE_REVISION,
+            expected_source_tree_sha256=EXPECTED_SOURCE_TREE_SHA256,
+        )
+
+
+def test_production_runtime_rejects_mixed_source_inventory() -> None:
+    """MIXED_SOURCE_INVENTORY: all conditions must attest the same current tree."""
+
+    protocol = load_robustness_evaluation_config(CONFIG)
+    descriptors = _descriptors(Path("/tmp/identity-only"))
+    runtime: dict[str, object] = {"base": _production_runtime_provenance()}
+    for descriptor in descriptors:
+        runtime[descriptor.condition_id] = _descriptor_runtime_provenance(descriptor)
+    runtime[descriptors[0].condition_id] = _descriptor_runtime_provenance(
+        descriptors[0],
+        source_tree_sha256="e" * 64,
+    )
+
+    with pytest.raises(ValueError, match="source provenance differs"):
+        _validate_production_runtime_inventory(
+            runtime,
+            protocol=protocol,
+            descriptors=descriptors,
+            require_complete=True,
+            expected_code_revision=EXPECTED_CODE_REVISION,
+            expected_source_tree_sha256=EXPECTED_SOURCE_TREE_SHA256,
         )
 
 
@@ -445,6 +561,8 @@ def test_production_runtime_loader_binds_adapter_and_method_evidence() -> None:
         provenance,
         protocol=protocol,
         descriptor=descriptor,
+        expected_code_revision=EXPECTED_CODE_REVISION,
+        expected_source_tree_sha256=EXPECTED_SOURCE_TREE_SHA256,
     )
 
     for field in ("adapter_sha256", "method_evidence_sha256"):
@@ -455,6 +573,8 @@ def test_production_runtime_loader_binds_adapter_and_method_evidence() -> None:
                 tampered,
                 protocol=protocol,
                 descriptor=descriptor,
+                expected_code_revision=EXPECTED_CODE_REVISION,
+                expected_source_tree_sha256=EXPECTED_SOURCE_TREE_SHA256,
             )
 
 
@@ -535,6 +655,30 @@ def test_method_evidence_is_bound_into_evaluation_identity_without_changing_lega
         training_sources_sha256=None,
     )
     assert first != second
+
+
+def test_production_source_attestation_is_bound_into_experiment_identity(
+    tmp_path: Path,
+) -> None:
+    protocol = load_robustness_evaluation_config(CONFIG)
+    arguments = {
+        "protocol": protocol,
+        "study_protocol_sha256": "7" * 64,
+        "descriptors": _descriptors(tmp_path),
+        "patch_window": PatchWindow(start=0, stop=6, artifact_sha256="9" * 64),
+        "training_sources_sha256": None,
+        "code_revision": EXPECTED_CODE_REVISION,
+    }
+    current = _experiment_binding(
+        **arguments,
+        source_tree_sha256=EXPECTED_SOURCE_TREE_SHA256,
+    )
+    substituted = _experiment_binding(
+        **arguments,
+        source_tree_sha256="e" * 64,
+    )
+
+    assert current != substituted
 
 
 def test_evaluation_resume_rejects_method_evidence_drift(tmp_path: Path) -> None:
@@ -647,6 +791,96 @@ def test_runner_resume_is_byte_identical_to_uninterrupted_evaluation(tmp_path: P
         "localized-state-distillation:seed-43",
         "localized-state-distillation:seed-44",
     }
+
+
+def test_production_resume_accepts_only_current_uniform_source_attestation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    factories = _install_production_runtime_factory(
+        monkeypatch,
+        fail_after_by_run=(4, None),
+    )
+    bundle = _bundle(tmp_path)
+    corpus = _corpus_bundle(tmp_path)
+    descriptors = _descriptors(tmp_path)
+    window = PatchWindow(
+        start=0,
+        stop=6,
+        artifact_sha256="9" * 64,
+        localization_sha256="f" * 64,
+    )
+    output = tmp_path / "production-resume"
+
+    with pytest.raises(RuntimeError, match="injected evaluation interruption"):
+        run_robustness_evaluation(
+            _config(tmp_path, output, resume=False),
+            data_bundle=bundle,
+            corpus_bundle=corpus,
+            descriptors=descriptors,
+            patch_window=window,
+        )
+    resumed = run_robustness_evaluation(
+        _config(tmp_path, output, resume=True),
+        data_bundle=bundle,
+        corpus_bundle=corpus,
+        descriptors=descriptors,
+        patch_window=window,
+    )
+
+    completed = json.loads(resumed.run_path.read_text(encoding="utf-8"))
+    assert len(factories) == 2
+    assert completed["code_revision"] == EXPECTED_CODE_REVISION
+    assert completed["source_tree_sha256"] == EXPECTED_SOURCE_TREE_SHA256
+    assert all(
+        provenance["code_revision"] == EXPECTED_CODE_REVISION
+        and provenance["source_tree_sha256"] == EXPECTED_SOURCE_TREE_SHA256
+        for provenance in completed["runtime"].values()
+    )
+
+
+def test_production_resume_rejects_mixed_source_inventory_before_factory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    factories = _install_production_runtime_factory(
+        monkeypatch,
+        fail_after_by_run=(4, None),
+    )
+    bundle = _bundle(tmp_path)
+    corpus = _corpus_bundle(tmp_path)
+    descriptors = _descriptors(tmp_path)
+    window = PatchWindow(
+        start=0,
+        stop=6,
+        artifact_sha256="9" * 64,
+        localization_sha256="f" * 64,
+    )
+    output = tmp_path / "mixed-production-resume"
+
+    with pytest.raises(RuntimeError, match="injected evaluation interruption"):
+        run_robustness_evaluation(
+            _config(tmp_path, output, resume=False),
+            data_bundle=bundle,
+            corpus_bundle=corpus,
+            descriptors=descriptors,
+            patch_window=window,
+        )
+    run_path = output / "run.json"
+    failed = json.loads(run_path.read_text(encoding="utf-8"))
+    adapter_condition = next(name for name in failed["runtime"] if name != "base")
+    failed["runtime"][adapter_condition]["source_tree_sha256"] = "e" * 64
+    run_path.write_text(json.dumps(failed), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="source provenance differs"):
+        run_robustness_evaluation(
+            _config(tmp_path, output, resume=True),
+            data_bundle=bundle,
+            corpus_bundle=corpus,
+            descriptors=descriptors,
+            patch_window=window,
+        )
+    assert len(factories) == 1
 
 
 def test_runner_resumes_a_corpus_interruption_without_recomputing_records(
