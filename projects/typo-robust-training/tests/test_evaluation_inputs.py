@@ -38,7 +38,7 @@ def _adapter(
     *,
     condition: str,
     seed: int,
-    runtime_version: str = "v1",
+    runtime_version: str = "v2",
     method_evidence_sha256: str | None = None,
 ) -> Path:
     output = root / condition / f"seed-{seed}"
@@ -61,10 +61,25 @@ def _adapter(
                 "runtime": f"HuggingFaceAdapterTrainingRuntime/{runtime_version}",
                 "model": PROTOCOL.model,
                 "requested_revision": PROTOCOL.model_revision,
+                **(
+                    {
+                        "teacher_revision": PROTOCOL.model_revision,
+                        "student_revision": PROTOCOL.model_revision,
+                        "tokenizer_revision": PROTOCOL.model_revision,
+                        "code_revision": "f" * 40,
+                    }
+                    if runtime_version == "v2"
+                    else {}
+                ),
                 "condition": condition,
                 "seed": seed,
                 "teacher_frozen": True,
                 "student_base_frozen": True,
+                **(
+                    {"method_evidence_sha256": method_evidence_sha256}
+                    if method_evidence_sha256 is not None
+                    else {}
+                ),
             }
         ),
         encoding="utf-8",
@@ -255,6 +270,76 @@ def test_v4_adapter_requires_generic_method_evidence(
     assert descriptor.localization_sha256 is None
 
 
+@pytest.mark.parametrize(
+    "field",
+    ("teacher_revision", "student_revision", "tokenizer_revision"),
+)
+def test_v2_adapter_rejects_missing_or_mismatched_actual_revision(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    for label, replacement in (("missing", None), ("mismatch", "0" * 40)):
+        adapter = _adapter(
+            tmp_path / label,
+            condition="output-matching",
+            seed=42,
+        )
+        runtime_path = adapter / "training_runtime.json"
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+        if replacement is None:
+            del runtime[field]
+        else:
+            runtime[field] = replacement
+        runtime_path.write_text(json.dumps(runtime), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="actual runtime revision"):
+            load_adapter_descriptors((adapter,), protocol=PROTOCOL)
+
+
+def test_v2_adapter_requires_attested_code_revision(tmp_path: Path) -> None:
+    adapter = _adapter(tmp_path, condition="output-matching", seed=42)
+    runtime_path = adapter / "training_runtime.json"
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    runtime["code_revision"] = "not-a-commit"
+    runtime_path.write_text(json.dumps(runtime), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="code revision is not attested"):
+        load_adapter_descriptors((adapter,), protocol=PROTOCOL)
+
+
+def test_v4_adapter_rejects_legacy_runtime_or_runtime_evidence_drift(tmp_path: Path) -> None:
+    legacy = _adapter(
+        tmp_path / "legacy-runtime",
+        condition="probe-transition-output-matching",
+        seed=42,
+        runtime_version="v1",
+        method_evidence_sha256="9" * 64,
+    )
+    with pytest.raises(ValueError, match="requires runtime provenance v2"):
+        load_adapter_descriptors((legacy,), protocol=PROTOCOL)
+
+    for label, replacement in (("missing", None), ("mismatch", "8" * 64)):
+        adapter = _adapter(
+            tmp_path / label,
+            condition="probe-transition-output-matching",
+            seed=42,
+            method_evidence_sha256="9" * 64,
+        )
+        runtime_path = adapter / "training_runtime.json"
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+        if replacement is None:
+            del runtime["method_evidence_sha256"]
+        else:
+            runtime["method_evidence_sha256"] = replacement
+        runtime_path.write_text(json.dumps(runtime), encoding="utf-8")
+
+        with pytest.raises(
+            ValueError,
+            match="training_runtime.method_evidence_sha256|runtime method evidence differs",
+        ):
+            load_adapter_descriptors((adapter,), protocol=PROTOCOL)
+
+
 def test_v4_adapter_rejects_mixed_seed_evidence_and_unsupported_condition(
     tmp_path: Path,
 ) -> None:
@@ -279,7 +364,12 @@ def test_v4_adapter_rejects_mixed_seed_evidence_and_unsupported_condition(
 
 
 def test_legacy_adapter_manifest_does_not_require_method_evidence(tmp_path: Path) -> None:
-    adapter = _adapter(tmp_path, condition="output-matching", seed=42)
+    adapter = _adapter(
+        tmp_path,
+        condition="output-matching",
+        seed=42,
+        runtime_version="v1",
+    )
     run = json.loads((adapter.parent / "run.json").read_text(encoding="utf-8"))
     run.pop("method_evidence_sha256", None)
     (adapter.parent / "run.json").write_text(json.dumps(run), encoding="utf-8")

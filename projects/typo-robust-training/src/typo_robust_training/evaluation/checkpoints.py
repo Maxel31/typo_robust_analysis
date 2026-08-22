@@ -21,6 +21,7 @@ from typo_robust_training.training.provenance import (
 
 
 _SHA64 = re.compile(r"[0-9a-f]{64}")
+_REVISION40 = re.compile(r"[0-9a-f]{40}")
 _CONDITIONS = (
     "noisy-language-model",
     "output-matching",
@@ -122,11 +123,30 @@ def load_adapter_descriptors(
             "teacher_frozen": True,
             "student_base_frozen": True,
         }
-        if runtime.get("runtime") not in {
+        runtime_version = runtime.get("runtime")
+        if runtime_version not in {
             "HuggingFaceAdapterTrainingRuntime/v1",
             "HuggingFaceAdapterTrainingRuntime/v2",
         } or any(runtime.get(field) != value for field, value in expected_runtime.items()):
             raise ValueError("evaluation adapter runtime identity differs")
+        if condition in METHOD_EVIDENCE_CONDITIONS and (
+            runtime_version != "HuggingFaceAdapterTrainingRuntime/v2"
+        ):
+            raise ValueError("evaluation v4 adapter requires runtime provenance v2")
+        if runtime_version == "HuggingFaceAdapterTrainingRuntime/v2":
+            actual_revision_fields = (
+                "teacher_revision",
+                "student_revision",
+                "tokenizer_revision",
+            )
+            if any(
+                runtime.get(field) != protocol.model_revision
+                for field in actual_revision_fields
+            ):
+                raise ValueError("evaluation adapter actual runtime revision differs")
+            code_revision = runtime.get("code_revision")
+            if not isinstance(code_revision, str) or _REVISION40.fullmatch(code_revision) is None:
+                raise ValueError("evaluation adapter code revision is not attested")
         adapter_config = _object(path / "adapter_config.json", artifact="PEFT adapter config")
         if (
             adapter_config.get("base_model_name_or_path") != protocol.model
@@ -149,6 +169,18 @@ def load_adapter_descriptors(
             )
         except ValueError as exc:
             raise ValueError(f"evaluation {exc}") from exc
+        runtime_method_evidence = runtime.get("method_evidence_sha256")
+        if condition in METHOD_EVIDENCE_CONDITIONS:
+            if (
+                _digest(
+                    runtime_method_evidence,
+                    field="training_runtime.method_evidence_sha256",
+                )
+                != method_evidence
+            ):
+                raise ValueError("evaluation adapter runtime method evidence differs from run")
+        elif runtime_method_evidence is not None:
+            raise ValueError("evaluation legacy adapter runtime contains method evidence")
         outputs = run.get("outputs")
         adapter_output = outputs.get("adapter") if isinstance(outputs, Mapping) else None
         adapter_sha256 = sha256_tree(path)

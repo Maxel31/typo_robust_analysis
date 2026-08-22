@@ -15,6 +15,10 @@ from pathlib import Path
 
 import numpy as np
 
+from typo_robust_training.probe.runtime import (
+    _checkout_code_revision,
+    _require_exact_model_revision,
+)
 from typo_robust_training.training.adapters import (
     TrainableParameterReport,
     attach_lora_adapters,
@@ -29,6 +33,11 @@ from typo_robust_training.training.encoding import (
 from typo_robust_training.training.evidence import (
     LocalizationEvidence,
     ResidualStateEvidence,
+)
+from typo_robust_training.training.methods import (
+    ProbeTransitionTrainingEvidence,
+    ResolvedTrainingMethod,
+    resolve_training_method,
 )
 from typo_robust_training.training.pairs import TrainingPair, UnusableTrainingPairError
 from typo_robust_training.training.runner import (
@@ -74,6 +83,35 @@ def _finite_ppl_ratio(log_nll_delta: float) -> float:
     return math.exp(min(max(float(log_nll_delta), minimum_log), maximum_log))
 
 
+def _require_exact_training_wrapper_revision(
+    wrapper: object,
+    *,
+    expected: str,
+    role: str,
+) -> tuple[str, str]:
+    """Bind one independently loaded model and tokenizer to the requested commit."""
+
+    model = getattr(wrapper, "model", None)
+    tokenizer = getattr(wrapper, "tokenizer", None)
+    config = getattr(model, "config", None)
+    if model is None or config is None or tokenizer is None:
+        raise ValueError(f"loaded {role} model/tokenizer identity is unavailable")
+    model_revision = _require_exact_model_revision(
+        model_config=config,
+        tokenizer=tokenizer,
+        expected=expected,
+    )
+    init_kwargs = getattr(tokenizer, "init_kwargs", None)
+    tokenizer_revision = (
+        init_kwargs.get("_commit_hash") if isinstance(init_kwargs, Mapping) else None
+    )
+    if not isinstance(tokenizer_revision, str) or not tokenizer_revision:
+        raise ValueError(f"loaded {role} tokenizer revision is not observable")
+    if tokenizer_revision != expected:
+        raise ValueError(f"loaded {role} tokenizer revision differs from the requested revision")
+    return model_revision, tokenizer_revision
+
+
 _RUNTIME_STATE_SCHEMA = "robustness-adapter-runtime-state/v3"
 _ADAPTER_SCOPE_SCHEMA = "decoder-lora-optimizer-scope/v1"
 
@@ -84,11 +122,7 @@ def _optimizer_group_sizes(state: object) -> tuple[int, ...]:
     if not isinstance(state, Mapping):
         raise ValueError("adapter runtime checkpoint optimizer state differs")
     groups = state.get("param_groups")
-    if (
-        not isinstance(groups, Sequence)
-        or isinstance(groups, (str, bytes))
-        or not groups
-    ):
+    if not isinstance(groups, Sequence) or isinstance(groups, (str, bytes)) or not groups:
         raise ValueError("adapter runtime checkpoint optimizer groups differ")
     sizes: list[int] = []
     for group in groups:
@@ -159,8 +193,7 @@ def _validate_adapter_scope_before_resume(
     current_group_sizes = _optimizer_group_sizes(current_optimizer)
     current_names = tuple(current_optimizer_parameter_names)
     compatible = (
-        checkpoint_tensors == current_tensors
-        and checkpoint_group_sizes == current_group_sizes
+        checkpoint_tensors == current_tensors and checkpoint_group_sizes == current_group_sizes
     )
     if checkpoint_scope is not None:
         if not isinstance(checkpoint_scope, Mapping) or set(checkpoint_scope) != {
@@ -174,9 +207,7 @@ def _validate_adapter_scope_before_resume(
             "schema_version": checkpoint_scope["schema_version"],
             "adapter_tensors": tuple(checkpoint_scope["adapter_tensors"]),
             "optimizer_group_sizes": tuple(checkpoint_scope["optimizer_group_sizes"]),
-            "optimizer_parameter_names": tuple(
-                checkpoint_scope["optimizer_parameter_names"]
-            ),
+            "optimizer_parameter_names": tuple(checkpoint_scope["optimizer_parameter_names"]),
         }
         derived_checkpoint = {
             "schema_version": _ADAPTER_SCOPE_SCHEMA,
@@ -223,6 +254,41 @@ def next_gradient_ratio_violations(
     return violations + 1 if ratio > 0.5 else 0
 
 
+def _resolve_probe_transition_runtime_method(
+    protocol: AdapterTrainingProtocol,
+    evidence: LocalizationEvidence | ResidualStateEvidence | ProbeTransitionTrainingEvidence | None,
+) -> ResolvedTrainingMethod | None:
+    """Fail closed on the v4 evidence and output-only boundary before CUDA setup."""
+
+    is_probe_condition = protocol.condition == "probe-transition-output-matching"
+    if not is_probe_condition:
+        if isinstance(evidence, ProbeTransitionTrainingEvidence):
+            raise ValueError("probe-transition evidence cannot configure this condition")
+        return None
+    if not isinstance(evidence, ProbeTransitionTrainingEvidence):
+        raise ValueError("probe-transition output matching requires probe evidence")
+    resolved = resolve_training_method(protocol, evidence=evidence)
+    expected_weights = {
+        "noisy_language_model": 0.0,
+        "answer": 0.0,
+        "output": 1.0,
+        "state": 0.0,
+        "clean": 0.0,
+    }
+    if (
+        dict(protocol.loss_weights) != expected_weights
+        or resolved.state_layers
+        or resolved.state_target != "none"
+        or protocol.state_scope != "none"
+        or protocol.state_distance != "none"
+        or protocol.loss_weights["state"] != 0.0
+        or protocol.state_gradient_ratio is not None
+        or protocol.calibration_micro_batches != 0
+    ):
+        raise ValueError("probe-transition output matching must disable state training")
+    return resolved
+
+
 class HuggingFaceAdapterTrainingRuntime:
     """Frozen clean teacher plus a typo student whose LoRA is the only update."""
 
@@ -232,12 +298,16 @@ class HuggingFaceAdapterTrainingRuntime:
         protocol: AdapterTrainingProtocol,
         seed: int,
         gpu_id: str,
-        evidence: LocalizationEvidence | ResidualStateEvidence | None,
+        evidence: (
+            LocalizationEvidence | ResidualStateEvidence | ProbeTransitionTrainingEvidence | None
+        ),
     ) -> None:
         if not isinstance(protocol, AdapterTrainingProtocol):
             raise TypeError("training runtime protocol must be AdapterTrainingProtocol")
         if seed not in protocol.seed_inventory:
             raise ValueError("training runtime seed is outside the frozen inventory")
+        resolved_method = _resolve_probe_transition_runtime_method(protocol, evidence)
+        self.code_revision = _checkout_code_revision()
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None and visible != gpu_id:
             raise ValueError(
@@ -275,6 +345,13 @@ class HuggingFaceAdapterTrainingRuntime:
             revision=protocol.model_revision,
         )
         self.teacher = self.teacher_wrapper.model
+        self.teacher_revision, teacher_tokenizer_revision = (
+            _require_exact_training_wrapper_revision(
+                self.teacher_wrapper,
+                expected=protocol.model_revision,
+                role="teacher",
+            )
+        )
         self.teacher.eval()
         self.teacher.requires_grad_(False)
         self.student_wrapper = create_model_wrapper(
@@ -285,6 +362,16 @@ class HuggingFaceAdapterTrainingRuntime:
             revision=protocol.model_revision,
         )
         student_base = self.student_wrapper.model
+        self.student_revision, student_tokenizer_revision = (
+            _require_exact_training_wrapper_revision(
+                self.student_wrapper,
+                expected=protocol.model_revision,
+                role="student",
+            )
+        )
+        if teacher_tokenizer_revision != student_tokenizer_revision:
+            raise ValueError("teacher and student tokenizer revisions differ")
+        self.tokenizer_revision = student_tokenizer_revision
         base_layers = find_decoder_layers(student_base)
         self.num_decoder_layers = len(base_layers)
         if (
@@ -305,7 +392,9 @@ class HuggingFaceAdapterTrainingRuntime:
             )
         ):
             raise ValueError("training model architecture fields are unavailable")
-        if protocol.layer_scope == "all-decoder-layers":
+        if resolved_method is not None:
+            adapter_layers = resolved_method.adapter_layers
+        elif protocol.layer_scope == "all-decoder-layers":
             adapter_layers = tuple(range(self.num_decoder_layers))
         else:
             if not isinstance(evidence, LocalizationEvidence):
@@ -315,7 +404,9 @@ class HuggingFaceAdapterTrainingRuntime:
         self.component_weights = (
             evidence.component_weights if isinstance(evidence, LocalizationEvidence) else None
         )
-        if isinstance(evidence, ResidualStateEvidence):
+        if resolved_method is not None:
+            self.state_layers = resolved_method.state_layers
+        elif isinstance(evidence, ResidualStateEvidence):
             self.state_layers = evidence.state_layers
         elif protocol.state_scope == "all-layers-edited-word-final-tokens":
             self.state_layers = tuple(range(self.num_decoder_layers))
@@ -961,8 +1052,10 @@ class HuggingFaceAdapterTrainingRuntime:
             "peft": _version("peft"),
             "model": self.protocol.model,
             "requested_revision": self.protocol.model_revision,
-            "teacher_revision": getattr(self.teacher.config, "_commit_hash", None),
-            "student_revision": getattr(self.student.config, "_commit_hash", None),
+            "teacher_revision": self.teacher_revision,
+            "student_revision": self.student_revision,
+            "tokenizer_revision": self.tokenizer_revision,
+            "code_revision": self.code_revision,
             "condition": self.protocol.condition,
             "seed": self.seed,
             "device": str(self.device),
@@ -973,6 +1066,11 @@ class HuggingFaceAdapterTrainingRuntime:
             "decoder_layers": self.num_decoder_layers,
             "adapter_layers": list(self.adapter_layers),
             "state_layers": list(self.state_layers),
+            **(
+                {"method_evidence_sha256": self.evidence.evidence_sha256}
+                if isinstance(self.evidence, ProbeTransitionTrainingEvidence)
+                else {}
+            ),
             "state_weight": self.state_weight,
             "state_calibration": self.state_calibration,
             "adapter_modules": list(self.parameter_report.modules),

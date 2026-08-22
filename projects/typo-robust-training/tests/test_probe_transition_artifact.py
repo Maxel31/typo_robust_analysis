@@ -12,6 +12,7 @@ from safetensors.numpy import save_file
 from typo_robust_training.probe import artifacts as probe_artifacts
 from typo_robust_training.probe.artifacts import load_probe_transition_artifact
 from typo_robust_training.data.splits import normalized_content_sha256
+from typo_robust_training.training.methods import load_probe_transition_training_evidence
 
 
 def _sha(label: str) -> str:
@@ -327,6 +328,21 @@ def test_artifact_recomputes_selection_and_resolves_suffix(tmp_path: Path) -> No
     assert result.probe_seeds == (42, 43)
     assert all(value > 0.0 for value in result.validation_ci_lower_by_seed.values())
     assert result.artifact_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_training_consumer_loads_the_real_validated_artifact_bundle(tmp_path: Path) -> None:
+    artifact_path, _payload, _files = _bundle(tmp_path)
+    validated = load_probe_transition_artifact(artifact_path)
+
+    evidence = load_probe_transition_training_evidence(
+        artifact_path,
+        model="google/gemma-3-4b-it",
+        model_revision="a" * 40,
+        decoder_layers=5,
+    )
+
+    assert evidence.selected_transition_layer == validated.selected_transition_layer
+    assert evidence.evidence_sha256 == validated.artifact_sha256
 
 
 def test_artifact_rejects_unresolved_or_mutated_reference(tmp_path: Path) -> None:

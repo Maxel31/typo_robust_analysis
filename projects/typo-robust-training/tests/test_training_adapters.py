@@ -24,6 +24,9 @@ from typo_robust_training.training.config import load_adapter_training_config
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROPOSED_CONFIG = PROJECT_ROOT / "configs/gemma4b-targeted-lora.yaml"
 NOISY_CONFIG = PROJECT_ROOT / "configs/baselines/noisy-language-model.yaml"
+PROBE_TRANSITION_CONFIG = (
+    PROJECT_ROOT / "tests/fixtures/gemma4b-probe-transition-output-10m.bound.json"
+)
 
 
 def _tiny_model() -> Gemma3ForCausalLM:
@@ -156,6 +159,30 @@ def test_all_layer_baseline_inserts_rank_matched_adapters_in_every_decoder_layer
         ),
     )
     assert report.decoder_layers == (0, 1, 2)
+
+
+def test_probe_transition_suffix_never_inserts_lora_below_the_boundary() -> None:
+    adapted = attach_lora_adapters(
+        _tiny_model(),
+        protocol=_small_protocol(PROBE_TRANSITION_CONFIG),
+        decoder_layers=(1, 2),
+    )
+    report = trainable_parameter_report(
+        adapted,
+        expected_layers=(1, 2),
+        expected_modules=(
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "gate_proj",
+            "up_proj",
+            "down_proj",
+        ),
+    )
+
+    assert report.decoder_layers == (1, 2)
+    assert all(".layers.0." not in name for name in report.parameter_names)
 
 
 def test_multimodal_lora_does_not_adapt_the_vision_tower() -> None:
