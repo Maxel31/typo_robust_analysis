@@ -11,6 +11,7 @@ from pathlib import Path
 
 from typo_robust_training.data.config import strict_loads
 from typo_robust_training.training.pairs import TrainingSource, stable_epoch_sources
+from typo_robust_training.training.provenance import optional_sha256
 
 
 class EpochSourceOrderCache:
@@ -55,6 +56,8 @@ _BINDINGS_V2 = _BINDINGS_V1 | {
     "monitor_protocol_sha256",
     "monitor_data_sha256",
 }
+_BINDINGS_V3 = _BINDINGS_V1 | {"method_evidence_sha256"}
+_BINDINGS_V4 = _BINDINGS_V2 | {"method_evidence_sha256"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,8 +123,9 @@ def _sha256_file(path: Path) -> str:
 
 
 def _bindings(value: Mapping[str, object]) -> dict[str, object]:
-    if not isinstance(value, Mapping) or (
-        set(value) != _BINDINGS_V1 and set(value) != _BINDINGS_V2
+    fields = set(value) if isinstance(value, Mapping) else set()
+    if not isinstance(value, Mapping) or not any(
+        fields == expected for expected in (_BINDINGS_V1, _BINDINGS_V2, _BINDINGS_V3, _BINDINGS_V4)
     ):
         raise ValueError("training checkpoint bindings fields differ")
     result = dict(value)
@@ -132,6 +136,18 @@ def _bindings(value: Mapping[str, object]) -> dict[str, object]:
     localization = result["localization_sha256"]
     if localization is not None and (not isinstance(localization, str) or len(localization) != 64):
         raise ValueError("training checkpoint localization_sha256 differs")
+    if "method_evidence_sha256" in result:
+        try:
+            method_evidence = optional_sha256(
+                result["method_evidence_sha256"],
+                field="training checkpoint method_evidence_sha256",
+            )
+        except ValueError as exc:
+            raise ValueError("training checkpoint method_evidence_sha256 differs") from exc
+        if method_evidence is None:
+            raise ValueError("training checkpoint method_evidence_sha256 differs")
+        if localization is not None:
+            raise ValueError("training checkpoint evidence namespaces must be mutually exclusive")
     seed = result["seed"]
     if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
         raise ValueError("training checkpoint seed differs")
@@ -205,7 +221,11 @@ def write_training_checkpoint(
     normalized_bindings = _bindings(bindings)
     payload = {
         "schema_version": (
-            "robustness-training-checkpoint/v2"
+            "robustness-training-checkpoint/v4"
+            if set(normalized_bindings) == _BINDINGS_V4
+            else "robustness-training-checkpoint/v3"
+            if set(normalized_bindings) == _BINDINGS_V3
+            else "robustness-training-checkpoint/v2"
             if set(normalized_bindings) == _BINDINGS_V2
             else "robustness-training-checkpoint/v1"
         ),
@@ -244,14 +264,32 @@ def load_training_checkpoint(
         "runtime_state_file",
         "runtime_state_sha256",
     }
+    schema_version = payload.get("schema_version") if isinstance(payload, Mapping) else None
     if (
         not isinstance(payload, Mapping)
         or set(payload) != fields
-        or payload.get("schema_version")
-        not in {"robustness-training-checkpoint/v1", "robustness-training-checkpoint/v2"}
+        or schema_version
+        not in {
+            "robustness-training-checkpoint/v1",
+            "robustness-training-checkpoint/v2",
+            "robustness-training-checkpoint/v3",
+            "robustness-training-checkpoint/v4",
+        }
     ):
         raise ValueError("training checkpoint fields or schema differ")
-    actual_bindings = _bindings(payload["bindings"])  # type: ignore[arg-type]
+    schema_bindings = {
+        "robustness-training-checkpoint/v1": _BINDINGS_V1,
+        "robustness-training-checkpoint/v2": _BINDINGS_V2,
+        "robustness-training-checkpoint/v3": _BINDINGS_V3,
+        "robustness-training-checkpoint/v4": _BINDINGS_V4,
+    }
+    raw_bindings = payload["bindings"]
+    if (
+        not isinstance(raw_bindings, Mapping)
+        or set(raw_bindings) != schema_bindings[schema_version]
+    ):
+        raise ValueError("training checkpoint fields or schema differ")
+    actual_bindings = _bindings(raw_bindings)
     if actual_bindings != _bindings(expected_bindings):
         raise ValueError("training checkpoint bindings differ")
     state_file = payload["runtime_state_file"]

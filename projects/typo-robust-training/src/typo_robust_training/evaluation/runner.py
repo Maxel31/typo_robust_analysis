@@ -39,6 +39,10 @@ from typo_robust_training.evaluation.records import (
     EvaluationObservation,
 )
 from typo_robust_training.integrity import sha256_file as _sha256_file
+from typo_robust_training.training.provenance import (
+    METHOD_EVIDENCE_CONDITIONS,
+    validate_condition_evidence,
+)
 
 
 class RobustnessEvaluationRuntime(Protocol):
@@ -149,25 +153,35 @@ def _experiment_binding(
     patch_window: PatchWindow,
     training_sources_sha256: str | None,
 ) -> str:
+    has_method_evidence = any(
+        descriptor.method_evidence_sha256 is not None for descriptor in descriptors
+    )
+    adapters = []
+    for descriptor in sorted(descriptors, key=lambda item: item.condition_id):
+        adapter = {
+            "condition_id": descriptor.condition_id,
+            "adapter_sha256": descriptor.adapter_sha256,
+            "config_sha256": descriptor.config_sha256,
+            "training_data_sha256": descriptor.training_data_sha256,
+            "data_identity_sha256": descriptor.data_identity_sha256,
+            "localization_sha256": descriptor.localization_sha256,
+        }
+        if has_method_evidence:
+            adapter["method_evidence_sha256"] = descriptor.method_evidence_sha256
+        adapters.append(adapter)
     return _canonical_sha256(
         {
-            "schema_version": "robustness-evaluation-experiment-binding/v2",
+            "schema_version": (
+                "robustness-evaluation-experiment-binding/v3"
+                if has_method_evidence
+                else "robustness-evaluation-experiment-binding/v2"
+            ),
             "config_sha256": protocol.config_sha256,
             "study_protocol_sha256": study_protocol_sha256,
             "patch_window_sha256": patch_window.artifact_sha256,
             "patch_layers": list(patch_window.layers),
             "training_sources_sha256": training_sources_sha256,
-            "adapters": [
-                {
-                    "condition_id": descriptor.condition_id,
-                    "adapter_sha256": descriptor.adapter_sha256,
-                    "config_sha256": descriptor.config_sha256,
-                    "training_data_sha256": descriptor.training_data_sha256,
-                    "data_identity_sha256": descriptor.data_identity_sha256,
-                    "localization_sha256": descriptor.localization_sha256,
-                }
-                for descriptor in sorted(descriptors, key=lambda item: item.condition_id)
-            ],
+            "adapters": adapters,
         }
     )
 
@@ -370,6 +384,15 @@ def _validate_injected_inputs(
     identities = [item.condition_id for item in resolved_descriptors]
     if not identities or len(set(identities)) != len(identities):
         raise ValueError("evaluation adapter identities must be non-empty and unique")
+    for item in resolved_descriptors:
+        try:
+            validate_condition_evidence(
+                condition=item.condition,
+                localization_sha256=item.localization_sha256,
+                method_evidence_sha256=item.method_evidence_sha256,
+            )
+        except ValueError as exc:
+            raise ValueError(f"injected evaluation {exc}") from exc
     training_hashes = {item.training_data_sha256 for item in resolved_descriptors}
     if len(training_hashes) != 1:
         raise ValueError("evaluation adapters were trained from different data identities")
@@ -382,6 +405,14 @@ def _validate_injected_inputs(
         }
         if len(config_hashes) != 1:
             raise ValueError(f"evaluation {condition} training configuration differs across seeds")
+        if condition in METHOD_EVIDENCE_CONDITIONS:
+            evidence_hashes = {
+                item.method_evidence_sha256
+                for item in resolved_descriptors
+                if item.condition == condition
+            }
+            if len(evidence_hashes) != 1:
+                raise ValueError(f"evaluation {condition} method evidence differs across seeds")
     if patch_window is None:
         resolved_window = load_patch_window(
             config.layer_selection_path,
@@ -395,13 +426,25 @@ def _validate_injected_inputs(
     localized = tuple(
         item for item in resolved_descriptors if item.condition == "localized-state-distillation"
     )
-    if config.evaluation_role != "tune" and {item.seed for item in localized} != set(
-        protocol.seed_inventory
-    ):
-        raise ValueError(
-            "sealed evaluation requires localized-state-distillation checkpoints "
-            "for the complete seed inventory"
-        )
+    if config.evaluation_role != "tune":
+        expected_seeds = set(protocol.seed_inventory)
+        required_complete_conditions = {
+            "localized-state-distillation",
+            *(
+                item.condition
+                for item in resolved_descriptors
+                if item.condition in METHOD_EVIDENCE_CONDITIONS
+            ),
+        }
+        for condition in sorted(required_complete_conditions):
+            condition_seeds = {
+                item.seed for item in resolved_descriptors if item.condition == condition
+            }
+            if condition_seeds != expected_seeds:
+                raise ValueError(
+                    f"sealed evaluation requires {condition} checkpoints "
+                    "for the complete seed inventory"
+                )
     if localized and (
         resolved_window.localization_sha256 is None
         or any(
@@ -572,6 +615,11 @@ def run_robustness_evaluation(
                 "condition_id": item.condition_id,
                 "adapter_sha256": item.adapter_sha256,
                 "path": str(item.path),
+                **(
+                    {"method_evidence_sha256": item.method_evidence_sha256}
+                    if item.method_evidence_sha256 is not None
+                    else {}
+                ),
             }
             for item in resolved_descriptors
         ],

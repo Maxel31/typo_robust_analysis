@@ -19,6 +19,9 @@ _CONDITIONS = frozenset(
         "global-state-alignment",
         "localized-state-distillation",
         "random-window-state-distillation",
+        "probe-transition-output-matching",
+        "probe-transition-state-distillation",
+        "causal-probe-subspace-distillation",
     }
 )
 _EVALUATION_CONDITIONS = frozenset(

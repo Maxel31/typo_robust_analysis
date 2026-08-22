@@ -43,6 +43,7 @@ from typo_robust_training.training.pairs import (
     TrainingSource,
     materialize_training_pair,
 )
+from typo_robust_training.training.provenance import validate_condition_evidence
 from typo_robust_training.training.tracking import (
     TrainingTracker,
     build_wandb_run_presentation,
@@ -82,6 +83,7 @@ class AdapterTrainingRunConfig:
     evaluation_protocol_path: Path | None = None
     monitor_data_dir: Path | None = None
     window_validation_path: Path | None = None
+    method_evidence_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -649,6 +651,11 @@ def run_adapter_training(
         if isinstance(evidence, ResidualStateEvidence)
         else None
     )
+    localization_sha, method_evidence_sha = validate_condition_evidence(
+        condition=protocol.condition,
+        localization_sha256=localization_sha,
+        method_evidence_sha256=config.method_evidence_sha256,
+    )
     bindings = {
         "config_sha256": protocol.config_sha256,
         "training_data_sha256": bundle.training_data_sha256,
@@ -662,6 +669,8 @@ def run_adapter_training(
                 "monitor_data_sha256": monitor_data_sha,
             }
         )
+    if method_evidence_sha is not None:
+        bindings["method_evidence_sha256"] = method_evidence_sha
 
     output_dir = Path(config.output_dir).resolve()
     if output_dir.exists() and any(output_dir.iterdir()) and not config.resume:
@@ -709,6 +718,11 @@ def run_adapter_training(
         "training_data_sha256": bundle.training_data_sha256,
         "data_identity_sha256": bundle.data_identity_sha256,
         "localization_sha256": localization_sha,
+        **(
+            {"method_evidence_sha256": method_evidence_sha}
+            if method_evidence_sha is not None
+            else {}
+        ),
         "seed": config.seed,
         "gpu_id": config.gpu_id,
         "resume": config.resume,
