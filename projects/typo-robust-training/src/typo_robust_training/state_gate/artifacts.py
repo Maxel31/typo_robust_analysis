@@ -26,13 +26,14 @@ from typo_robust_training.state_gate.config import (
 from typo_robust_training.state_gate.scoring import (
     GateObservation,
     GateScore,
+    GateScoreResult,
     score_single_layer_gate,
 )
 
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _REFERENCE_FIELDS = {"relative_path", "sha256"}
-_TOP = {
+_TOP_V1 = {
     "schema_version",
     "operation",
     "model",
@@ -47,6 +48,15 @@ _TOP = {
     "references",
     "passed",
 }
+_TOP_V2 = _TOP_V1 | {"outcome"}
+_OUTCOME_FIELDS = {
+    "valid_records",
+    "valid_strata",
+    "scores",
+    "maximum_absolute_self_copy_restoration",
+    "failure_reasons",
+}
+_SCORE_FIELDS = {"estimate", "ci_lower", "ci_upper"}
 _REFERENCES = {
     "config",
     "parent_probe_artifact",
@@ -121,6 +131,24 @@ def _integer(value: object, *, field: str, minimum: int = 0) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         raise ValueError(f"{field} must be an integer >= {minimum}")
     return value
+
+
+def _number(
+    value: object,
+    *,
+    field: str,
+    minimum: float | None = None,
+) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} must be a finite real JSON number")
+    try:
+        finite = math.isfinite(value)
+    except OverflowError as exc:
+        raise ValueError(f"{field} must be a finite real JSON number") from exc
+    if not finite or (minimum is not None and value < minimum):
+        suffix = f" >= {minimum}" if minimum is not None else ""
+        raise ValueError(f"{field} must be a finite real JSON number{suffix}")
+    return float(value)
 
 
 def _json(path: Path) -> Mapping[str, object]:
@@ -424,11 +452,13 @@ def _word_final(offsets: Sequence[tuple[int, int]], span: tuple[int, int]) -> in
 def _trajectory(value: object, *, field: str, valid: bool) -> tuple[float, ...]:
     expected = 15 if valid else 0
     if not isinstance(value, list) or len(value) != expected:
-        raise ValueError(f"{field} trajectory length differs")
-    result = tuple(float(item) for item in value)
-    if any(not math.isfinite(item) or item < 0.0 for item in result):
-        raise ValueError(f"{field} trajectory values differ")
-    return result
+        raise ValueError(
+            f"{field} trajectory must contain exactly {expected} real JSON numbers"
+        )
+    return tuple(
+        _number(item, field=f"{field} trajectory value", minimum=0.0)
+        for item in value
+    )
 
 
 def _load_raw_observations(
@@ -527,11 +557,84 @@ class SingleLayerGateArtifact:
     artifact_sha256: str
     config_sha256: str
     valid_records: int
+    valid_strata: Mapping[str, int]
     scores: Mapping[str, GateScore]
+    maximum_absolute_self_copy_restoration: float
+    failure_reasons: tuple[str, ...]
+    passed: bool
 
 
-def load_single_layer_gate_artifact(path: Path) -> SingleLayerGateArtifact:
-    """Load all bound inputs and recompute every causal gate decision."""
+def _outcome_payload(
+    result: GateScoreResult | SingleLayerGateArtifact,
+) -> dict[str, object]:
+    return {
+        "valid_records": result.valid_records,
+        "valid_strata": dict(result.valid_strata),
+        "scores": {
+            key: {
+                "estimate": score.estimate,
+                "ci_lower": score.ci_lower,
+                "ci_upper": score.ci_upper,
+            }
+            for key, score in result.scores.items()
+        },
+        "maximum_absolute_self_copy_restoration": (
+            result.maximum_absolute_self_copy_restoration
+        ),
+        "failure_reasons": list(result.failure_reasons),
+    }
+
+
+def _validate_serialized_outcome(outcome: object) -> Mapping[str, object]:
+    if not isinstance(outcome, Mapping) or set(outcome) != _OUTCOME_FIELDS:
+        raise ValueError("single-layer causal gate serialized outcome fields differ")
+    _integer(
+        outcome["valid_records"],
+        field="single-layer causal gate serialized valid records",
+    )
+    valid_strata = outcome["valid_strata"]
+    if not isinstance(valid_strata, Mapping) or any(
+        not isinstance(key, str) or not key
+        for key in valid_strata
+    ):
+        raise ValueError("single-layer causal gate serialized valid strata differ")
+    for key, value in valid_strata.items():
+        _integer(
+            value,
+            field=f"single-layer causal gate serialized valid stratum {key}",
+        )
+    scores = outcome["scores"]
+    if not isinstance(scores, Mapping) or any(
+        not isinstance(key, str)
+        or not key
+        or not isinstance(score, Mapping)
+        or set(score) != _SCORE_FIELDS
+        for key, score in scores.items()
+    ):
+        raise ValueError("single-layer causal gate serialized score fields differ")
+    for key, score in scores.items():
+        for field in _SCORE_FIELDS:
+            _number(
+                score[field],
+                field=f"single-layer causal gate serialized {key} {field}",
+            )
+    _number(
+        outcome["maximum_absolute_self_copy_restoration"],
+        field="single-layer causal gate serialized maximum absolute self-copy",
+        minimum=0.0,
+    )
+    failure_reasons = outcome["failure_reasons"]
+    if not isinstance(failure_reasons, list) or any(
+        not isinstance(reason, str) or not reason for reason in failure_reasons
+    ):
+        raise ValueError("single-layer causal gate serialized failure reasons differ")
+    return outcome
+
+
+def _recompute_single_layer_gate_outcome(
+    path: Path,
+) -> tuple[SingleLayerGateArtifact, bool]:
+    """Validate one bundle and return its recomputed and declared outcomes."""
 
     supplied = Path(path)
     if supplied.is_symlink():
@@ -541,10 +644,13 @@ def load_single_layer_gate_artifact(path: Path) -> SingleLayerGateArtifact:
         raise ValueError(f"single-layer gate artifact is not a file: {resolved}")
     raw_artifact = resolved.read_bytes()
     payload = _json(resolved)
-    if set(payload) != _TOP:
+    schema = payload.get("schema_version")
+    if not (
+        (schema == "probe-transition-single-layer-gate/v1" and set(payload) == _TOP_V1)
+        or (schema == "probe-transition-single-layer-gate/v2" and set(payload) == _TOP_V2)
+    ):
         raise ValueError("single-layer gate artifact fields differ")
     expected_identity = {
-        "schema_version": "probe-transition-single-layer-gate/v1",
         "operation": "validate-probe-transition-single-layer-causal-gate",
         "hook_site": "complete-decoder-block-residual-output",
         "coordinate": "edited-word-final-token/v1",
@@ -617,8 +723,8 @@ def load_single_layer_gate_artifact(path: Path) -> SingleLayerGateArtifact:
     result = score_single_layer_gate(
         observations, protocol=protocol, transition_layer=transition
     )
-    if payload["passed"] is not True or not result.passed:
-        raise ValueError("single-layer causal gate did not pass recomputation")
+    if not isinstance(payload["passed"], bool):
+        raise ValueError("single-layer causal gate pass claim must be boolean")
     return SingleLayerGateArtifact(
         model=model,
         model_revision=revision,
@@ -628,8 +734,53 @@ def load_single_layer_gate_artifact(path: Path) -> SingleLayerGateArtifact:
         artifact_sha256=hashlib.sha256(raw_artifact).hexdigest(),
         config_sha256=protocol.config_sha256,
         valid_records=result.valid_records,
+        valid_strata=result.valid_strata,
         scores=result.scores,
-    )
+        maximum_absolute_self_copy_restoration=(
+            result.maximum_absolute_self_copy_restoration
+        ),
+        failure_reasons=result.failure_reasons,
+        passed=result.passed,
+    ), payload["passed"]
+
+
+def load_single_layer_gate_outcome(path: Path) -> SingleLayerGateArtifact:
+    """Load an immutable pass or scientific non-pass and recompute its result."""
+
+    artifact, declared_passed = _recompute_single_layer_gate_outcome(path)
+    if declared_passed is not artifact.passed:
+        raise ValueError(
+            "single-layer causal gate did not pass recomputation: "
+            "pass claim differs from recomputation"
+        )
+    payload = _json(Path(path).resolve())
+    if payload["schema_version"] == "probe-transition-single-layer-gate/v2":
+        outcome = _validate_serialized_outcome(payload["outcome"])
+        if dict(outcome) != _outcome_payload(
+            GateScoreResult(
+                valid_records=artifact.valid_records,
+                valid_strata=artifact.valid_strata,
+                scores=artifact.scores,
+                maximum_absolute_self_copy_restoration=(
+                    artifact.maximum_absolute_self_copy_restoration
+                ),
+                failure_reasons=artifact.failure_reasons,
+                passed=artifact.passed,
+            )
+        ):
+            raise ValueError("single-layer causal gate outcome differs from recomputation")
+    elif not artifact.passed:
+        raise ValueError("legacy single-layer gate artifacts cannot encode a non-pass")
+    return artifact
+
+
+def load_single_layer_gate_artifact(path: Path) -> SingleLayerGateArtifact:
+    """Load only passed evidence suitable for authorizing state distillation."""
+
+    artifact = load_single_layer_gate_outcome(path)
+    if not artifact.passed:
+        raise ValueError("single-layer causal gate did not pass recomputation")
+    return artifact
 
 
 __all__ = [
@@ -638,4 +789,5 @@ __all__ = [
     "deterministic_cross_item_donor_plan",
     "load_gate_cohort_manifest",
     "load_single_layer_gate_artifact",
+    "load_single_layer_gate_outcome",
 ]

@@ -14,9 +14,11 @@ from typo_robust_training.probe import load_probe_transition_artifact
 from typo_robust_training.state_gate.artifacts import (
     SingleLayerGateArtifact,
     SingleLayerGateRecord,
+    _outcome_payload,
+    _recompute_single_layer_gate_outcome,
     deterministic_cross_item_donor_plan,
     load_gate_cohort_manifest,
-    load_single_layer_gate_artifact,
+    load_single_layer_gate_outcome,
 )
 from typo_robust_training.state_gate.config import load_single_layer_gate_config
 
@@ -83,6 +85,18 @@ def produce_single_layer_gate_artifact(
 ) -> SingleLayerGateArtifact:
     """Execute the preregistered gate and atomically publish a verified bundle."""
 
+    requested_output = Path(output_dir)
+    if requested_output.is_symlink():
+        raise FileExistsError(
+            f"single-layer gate output already exists: {requested_output}"
+        )
+    output = requested_output.resolve()
+    parent_bundle_root = Path(parent_probe_artifact_path).resolve().parent
+    if output == parent_bundle_root or output.is_relative_to(parent_bundle_root):
+        raise ValueError("single-layer gate output must be outside the parent probe bundle")
+    if output.exists():
+        raise FileExistsError(f"single-layer gate output already exists: {output}")
+
     paths = tuple(
         Path(path)
         for path in (
@@ -147,28 +161,29 @@ def produce_single_layer_gate_artifact(
             raise ValueError(
                 "single-layer gate token inflation bucket differs from runtime tokenizer"
             )
-    raw_rows = tuple(
-        provider.scan(
-            records,
-            donor_plan=expected_plan,
-            transition_layer=parent.selected_transition_layer,
-        )
-    )
-    if len(raw_rows) != protocol.records:
-        raise ValueError("single-layer gate provider did not scan the frozen cohort")
-
-    output = Path(output_dir).resolve()
-    parent_bundle_root = Path(parent_probe_artifact_path).resolve().parent
-    if output == parent_bundle_root or output.is_relative_to(parent_bundle_root):
-        raise ValueError("single-layer gate output must be outside the parent probe bundle")
-    if output.exists():
-        raise FileExistsError(f"single-layer gate output already exists: {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_name(f".{output.name}.{os.getpid()}.tmp")
-    if temporary.exists():
-        raise FileExistsError(f"single-layer gate temporary output exists: {temporary}")
-    temporary.mkdir()
     try:
+        output.mkdir()
+    except FileExistsError as exc:
+        raise FileExistsError(
+            f"single-layer gate output already exists: {output}"
+        ) from exc
+    temporary = output.with_name(f".{output.name}.{os.getpid()}.tmp")
+    try:
+        if temporary.exists() or temporary.is_symlink():
+            raise FileExistsError(
+                f"single-layer gate temporary output exists: {temporary}"
+            )
+        temporary.mkdir()
+        raw_rows = tuple(
+            provider.scan(
+                records,
+                donor_plan=expected_plan,
+                transition_layer=parent.selected_transition_layer,
+            )
+        )
+        if len(raw_rows) != protocol.records:
+            raise ValueError("single-layer gate provider did not scan the frozen cohort")
         parent_copy = _copy_parent_bundle(
             Path(parent_probe_artifact_path).resolve(), temporary / "parent-probe-bundle"
         )
@@ -210,41 +225,49 @@ def produce_single_layer_gate_artifact(
             "raw_kl": raw_path,
         }
         artifact_path = temporary / "single-layer-gate.json"
-        _write(
-            artifact_path,
-            {
-                "schema_version": "probe-transition-single-layer-gate/v1",
-                "operation": "validate-probe-transition-single-layer-causal-gate",
-                "model": protocol.model,
-                "model_revision": protocol.model_revision,
-                "code_revision": protocol.code_revision,
-                "decoder_layers": protocol.decoder_layers,
-                "selected_transition_layer": parent.selected_transition_layer,
-                "hook_site": "complete-decoder-block-residual-output",
-                "coordinate": "edited-word-final-token/v1",
-                "readout": "teacher-forced-tokens-2-through-16-inclusive/v1",
-                "controls": [
-                    "offset-plus-two",
-                    "cross-item-derangement",
-                    "self-copy-identity",
-                ],
-                "references": {
-                    name: {
-                        "relative_path": str(path.relative_to(temporary).as_posix()),
-                        "sha256": _digest(path),
-                    }
-                    for name, path in references.items()
-                },
-                # The loader recomputes this bit from raw KL before accepting it.
-                "passed": True,
+        artifact_payload = {
+            "schema_version": "probe-transition-single-layer-gate/v1",
+            "operation": "validate-probe-transition-single-layer-causal-gate",
+            "model": protocol.model,
+            "model_revision": protocol.model_revision,
+            "code_revision": protocol.code_revision,
+            "decoder_layers": protocol.decoder_layers,
+            "selected_transition_layer": parent.selected_transition_layer,
+            "hook_site": "complete-decoder-block-residual-output",
+            "coordinate": "edited-word-final-token/v1",
+            "readout": "teacher-forced-tokens-2-through-16-inclusive/v1",
+            "controls": [
+                "offset-plus-two",
+                "cross-item-derangement",
+                "self-copy-identity",
+            ],
+            "references": {
+                name: {
+                    "relative_path": str(path.relative_to(temporary).as_posix()),
+                    "sha256": _digest(path),
+                }
+                for name, path in references.items()
             },
-        )
-        load_single_layer_gate_artifact(artifact_path)
+            # This provisional value is replaced by the result recomputed from
+            # the bound raw trajectories before the bundle is published.
+            "passed": False,
+        }
+        _write(artifact_path, artifact_payload)
+        recomputed, _provisional = _recompute_single_layer_gate_outcome(artifact_path)
+        artifact_payload["schema_version"] = "probe-transition-single-layer-gate/v2"
+        artifact_payload["passed"] = recomputed.passed
+        artifact_payload["outcome"] = _outcome_payload(recomputed)
+        _write(artifact_path, artifact_payload)
+        load_single_layer_gate_outcome(artifact_path)
         os.replace(temporary, output)
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
+        try:
+            output.rmdir()
+        except OSError:
+            pass
         raise
-    return load_single_layer_gate_artifact(output / "single-layer-gate.json")
+    return load_single_layer_gate_outcome(output / "single-layer-gate.json")
 
 
 __all__ = ["SingleLayerGateProvider", "produce_single_layer_gate_artifact"]

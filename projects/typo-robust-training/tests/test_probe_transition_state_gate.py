@@ -9,12 +9,17 @@ from types import SimpleNamespace
 import pytest
 
 from test_probe_transition_artifact import _bundle as _parent_bundle
+from typo_robust_training.cli import (
+    _run_validate_probe_transition_single_layer_gate,
+)
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.probe import load_probe_transition_artifact
 from typo_robust_training.state_gate.artifacts import (
     SingleLayerGateRecord,
+    _trajectory,
     deterministic_cross_item_donor_plan,
     load_single_layer_gate_artifact,
+    load_single_layer_gate_outcome,
 )
 from typo_robust_training.state_gate.config import load_single_layer_gate_config
 from typo_robust_training.state_gate.producer import produce_single_layer_gate_artifact
@@ -274,6 +279,471 @@ def test_fake_provider_e2e_recomputes_passed_gate(tmp_path: Path) -> None:
     assert artifact.scores["correct"].ci_lower > 0
     assert artifact.scores["correct_minus_offset"].ci_lower > 0
     assert artifact.scores["correct_minus_cross"].ci_lower > 0
+
+
+def test_scientific_nonpass_preserves_immutable_failure_evidence(
+    tmp_path: Path,
+) -> None:
+    """Regression: the old producer deleted every raw trajectory on non-pass."""
+
+    inputs, provenance = _gate_inputs(tmp_path)
+
+    class NonPassingProvider(_FakeProvider):
+        def scan(
+            self,
+            records: Sequence[SingleLayerGateRecord],
+            *,
+            donor_plan: Mapping[str, str],
+            transition_layer: int,
+        ) -> Sequence[Mapping[str, object]]:
+            rows = super().scan(
+                records,
+                donor_plan=donor_plan,
+                transition_layer=transition_layer,
+            )
+            return tuple(
+                {
+                    **row,
+                    # The correct intervention no longer beats the offset
+                    # control, so this is a valid run with a scientific no-go.
+                    "offset_kl_2_16": list(row["correct_kl_2_16"]),
+                }
+                for row in rows
+            )
+
+    output = tmp_path / "scientific-nonpass"
+    outcome = produce_single_layer_gate_artifact(
+        config_path=inputs["config"],
+        parent_probe_artifact_path=inputs["parent"],
+        cohort_manifest_path=inputs["cohort"],
+        protected_registry_path=inputs["protected"],
+        donor_plan_path=inputs["donor"],
+        runtime_manifest_path=inputs["runtime"],
+        output_dir=output,
+        provider=NonPassingProvider(provenance),
+    )
+
+    artifact_path = output / "single-layer-gate.json"
+    assert outcome.passed is False
+    assert artifact_path.is_file()
+    assert (output / "raw-kl.json").is_file()
+    serialized = json.loads(artifact_path.read_text())
+    assert serialized["schema_version"] == "probe-transition-single-layer-gate/v2"
+    assert serialized["passed"] is False
+    assert serialized["outcome"]["valid_records"] == 200
+    assert serialized["outcome"]["valid_strata"] == dict(outcome.valid_strata)
+    assert serialized["outcome"]["maximum_absolute_self_copy_restoration"] == 0.0
+    assert serialized["outcome"]["failure_reasons"] == [
+        "correct-minus-offset-ci-lower-not-above-threshold"
+    ]
+    assert outcome.failure_reasons == tuple(
+        serialized["outcome"]["failure_reasons"]
+    )
+    assert load_single_layer_gate_outcome(artifact_path).artifact_sha256 == outcome.artifact_sha256
+    with pytest.raises(ValueError, match="did not pass recomputation"):
+        load_single_layer_gate_artifact(artifact_path)
+    rerun_provider = NonPassingProvider(provenance)
+    with pytest.raises(FileExistsError, match="already exists"):
+        produce_single_layer_gate_artifact(
+            config_path=inputs["config"],
+            parent_probe_artifact_path=inputs["parent"],
+            cohort_manifest_path=inputs["cohort"],
+            protected_registry_path=inputs["protected"],
+            donor_plan_path=inputs["donor"],
+            runtime_manifest_path=inputs["runtime"],
+            output_dir=output,
+            provider=rerun_provider,
+        )
+    assert rerun_provider.scan_calls == 0
+    assert not tuple(tmp_path.glob(".scientific-nonpass.*.tmp"))
+
+
+def test_minimum_valid_inventory_is_a_published_scientific_nonpass(
+    tmp_path: Path,
+) -> None:
+    """Regression: inventory threshold failures used to delete valid raw evidence."""
+
+    inputs, provenance = _gate_inputs(tmp_path)
+
+    class InventoryNonPassingProvider(_FakeProvider):
+        def scan(
+            self,
+            records: Sequence[SingleLayerGateRecord],
+            *,
+            donor_plan: Mapping[str, str],
+            transition_layer: int,
+        ) -> Sequence[Mapping[str, object]]:
+            rows = list(
+                super().scan(
+                    records,
+                    donor_plan=donor_plan,
+                    transition_layer=transition_layer,
+                )
+            )
+            for index in range(24):
+                rows[index] = {
+                    **rows[index],
+                    "target_token_ids": [],
+                    "untreated_kl_2_16": [],
+                    "correct_kl_2_16": [],
+                    "offset_kl_2_16": [],
+                    "cross_kl_2_16": [],
+                    "self_copy_kl_2_16": [],
+                    "invalid_reason": "untreated-kl-at-or-below-1e-9",
+                }
+            return rows
+
+    output = tmp_path / "inventory-nonpass"
+    outcome = produce_single_layer_gate_artifact(
+        config_path=inputs["config"],
+        parent_probe_artifact_path=inputs["parent"],
+        cohort_manifest_path=inputs["cohort"],
+        protected_registry_path=inputs["protected"],
+        donor_plan_path=inputs["donor"],
+        runtime_manifest_path=inputs["runtime"],
+        output_dir=output,
+        provider=InventoryNonPassingProvider(provenance),
+    )
+
+    expected_strata = {
+        "deletion|1|minus-one": 59,
+        "duplication|1|plus-one": 58,
+        "keyboard-neighbor-substitution|1|same": 59,
+    }
+    expected_reasons = (
+        "minimum-valid-records",
+        "minimum-valid-stratum:deletion|1|minus-one",
+        "minimum-valid-stratum:duplication|1|plus-one",
+        "minimum-valid-stratum:keyboard-neighbor-substitution|1|same",
+    )
+    artifact_path = output / "single-layer-gate.json"
+    payload = json.loads(artifact_path.read_text())
+    assert outcome.passed is False
+    assert outcome.valid_records == 176
+    assert dict(outcome.valid_strata) == expected_strata
+    assert outcome.failure_reasons == expected_reasons
+    assert set(outcome.scores) == {
+        "correct",
+        "offset",
+        "cross",
+        "self_copy",
+        "correct_minus_offset",
+        "correct_minus_cross",
+    }
+    assert payload["passed"] is False
+    assert payload["outcome"] == {
+        "valid_records": 176,
+        "valid_strata": expected_strata,
+        "scores": {
+            key: {
+                "estimate": score.estimate,
+                "ci_lower": score.ci_lower,
+                "ci_upper": score.ci_upper,
+            }
+            for key, score in outcome.scores.items()
+        },
+        "maximum_absolute_self_copy_restoration": 0.0,
+        "failure_reasons": list(expected_reasons),
+    }
+    assert (output / "raw-kl.json").is_file()
+    assert load_single_layer_gate_outcome(artifact_path) == outcome
+    with pytest.raises(ValueError, match="did not pass recomputation"):
+        load_single_layer_gate_artifact(artifact_path)
+
+
+def test_scientific_nonpass_serializes_every_scored_failure_reason(
+    tmp_path: Path,
+) -> None:
+    inputs, provenance = _gate_inputs(tmp_path)
+
+    class MultipleFailureProvider(_FakeProvider):
+        def scan(
+            self,
+            records: Sequence[SingleLayerGateRecord],
+            *,
+            donor_plan: Mapping[str, str],
+            transition_layer: int,
+        ) -> Sequence[Mapping[str, object]]:
+            rows = super().scan(
+                records,
+                donor_plan=donor_plan,
+                transition_layer=transition_layer,
+            )
+            return tuple(
+                {
+                    **row,
+                    "offset_kl_2_16": list(row["correct_kl_2_16"]),
+                    "self_copy_kl_2_16": [0.5] * 15,
+                }
+                for row in rows
+            )
+
+    output = tmp_path / "multiple-scientific-failures"
+    outcome = produce_single_layer_gate_artifact(
+        config_path=inputs["config"],
+        parent_probe_artifact_path=inputs["parent"],
+        cohort_manifest_path=inputs["cohort"],
+        protected_registry_path=inputs["protected"],
+        donor_plan_path=inputs["donor"],
+        runtime_manifest_path=inputs["runtime"],
+        output_dir=output,
+        provider=MultipleFailureProvider(provenance),
+    )
+
+    expected = (
+        "correct-minus-offset-ci-lower-not-above-threshold",
+        "self-copy-restoration-exceeds-maximum",
+    )
+    payload = json.loads((output / "single-layer-gate.json").read_text())
+    assert outcome.passed is False
+    assert outcome.maximum_absolute_self_copy_restoration == 0.5
+    assert outcome.failure_reasons == expected
+    assert payload["outcome"]["maximum_absolute_self_copy_restoration"] == 0.5
+    assert payload["outcome"]["failure_reasons"] == list(expected)
+
+
+def test_existing_output_fails_before_provider_scan(tmp_path: Path) -> None:
+    inputs, provenance = _gate_inputs(tmp_path)
+    output = tmp_path / "already-published"
+    output.mkdir()
+    provider = _FakeProvider(provenance)
+
+    with pytest.raises(FileExistsError, match="already exists"):
+        produce_single_layer_gate_artifact(
+            config_path=inputs["config"],
+            parent_probe_artifact_path=inputs["parent"],
+            cohort_manifest_path=inputs["cohort"],
+            protected_registry_path=inputs["protected"],
+            donor_plan_path=inputs["donor"],
+            runtime_manifest_path=inputs["runtime"],
+            output_dir=output,
+            provider=provider,
+        )
+
+    assert provider.scan_calls == 0
+
+
+def test_infrastructure_invalid_reason_is_not_published(tmp_path: Path) -> None:
+    inputs, provenance = _gate_inputs(tmp_path)
+
+    class InfrastructureFailureProvider(_FakeProvider):
+        def scan(
+            self,
+            records: Sequence[SingleLayerGateRecord],
+            *,
+            donor_plan: Mapping[str, str],
+            transition_layer: int,
+        ) -> Sequence[Mapping[str, object]]:
+            rows = list(
+                super().scan(
+                    records,
+                    donor_plan=donor_plan,
+                    transition_layer=transition_layer,
+                )
+            )
+            rows[0] = {
+                **rows[0],
+                "target_token_ids": [],
+                "untreated_kl_2_16": [],
+                "correct_kl_2_16": [],
+                "offset_kl_2_16": [],
+                "cross_kl_2_16": [],
+                "self_copy_kl_2_16": [],
+                "invalid_reason": "cuda-oom",
+            }
+            return rows
+
+    output = tmp_path / "infrastructure-failure"
+    with pytest.raises(ValueError, match="preregistered scientific reason"):
+        produce_single_layer_gate_artifact(
+            config_path=inputs["config"],
+            parent_probe_artifact_path=inputs["parent"],
+            cohort_manifest_path=inputs["cohort"],
+            protected_registry_path=inputs["protected"],
+            donor_plan_path=inputs["donor"],
+            runtime_manifest_path=inputs["runtime"],
+            output_dir=output,
+            provider=InfrastructureFailureProvider(provenance),
+        )
+
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".infrastructure-failure.*.tmp"))
+
+
+def test_cli_existing_output_fails_before_gpu_provider_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    output = tmp_path / "already-published"
+    output.mkdir()
+    constructions = 0
+
+    class ForbiddenProvider:
+        def __init__(self, **_kwargs: object) -> None:
+            nonlocal constructions
+            constructions += 1
+            raise AssertionError("GPU provider must not be constructed on a rerun")
+
+    monkeypatch.setattr(
+        "typo_robust_training.state_gate.runtime.HuggingFaceSingleLayerGateProvider",
+        ForbiddenProvider,
+    )
+    args = SimpleNamespace(
+        config=tmp_path / "missing-config.json",
+        parent_probe_artifact=tmp_path / "missing-parent.json",
+        cohort_manifest=tmp_path / "missing-cohort.json",
+        protected_registry=tmp_path / "missing-protected.json",
+        donor_plan=tmp_path / "missing-donor.json",
+        runtime_manifest=tmp_path / "missing-runtime.json",
+        output_dir=output,
+        gpu_id="0",
+    )
+
+    assert _run_validate_probe_transition_single_layer_gate(args) == 1
+    assert constructions == 0
+    assert "output already exists" in capsys.readouterr().err
+
+
+def test_producer_reserves_output_before_provider_scan(tmp_path: Path) -> None:
+    inputs, provenance = _gate_inputs(tmp_path)
+    output = tmp_path / "reserved-before-scan"
+
+    class ReservationCheckingProvider(_FakeProvider):
+        def scan(
+            self,
+            records: Sequence[SingleLayerGateRecord],
+            *,
+            donor_plan: Mapping[str, str],
+            transition_layer: int,
+        ) -> Sequence[Mapping[str, object]]:
+            assert output.is_dir()
+            return super().scan(
+                records,
+                donor_plan=donor_plan,
+                transition_layer=transition_layer,
+            )
+
+    produce_single_layer_gate_artifact(
+        config_path=inputs["config"],
+        parent_probe_artifact_path=inputs["parent"],
+        cohort_manifest_path=inputs["cohort"],
+        protected_registry_path=inputs["protected"],
+        donor_plan_path=inputs["donor"],
+        runtime_manifest_path=inputs["runtime"],
+        output_dir=output,
+        provider=ReservationCheckingProvider(provenance),
+    )
+
+
+@pytest.mark.parametrize("invalid", [True, "1.0"])
+def test_raw_trajectory_rejects_coercible_non_numeric_values(invalid: object) -> None:
+    trajectory: list[object] = [1.0] * 15
+    trajectory[0] = invalid
+
+    with pytest.raises(ValueError, match="finite real JSON number"):
+        _trajectory(trajectory, field="untreated", valid=True)
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [float("inf"), float("-inf"), float("nan"), 10**1000],
+)
+def test_raw_trajectory_rejects_nonfinite_or_unrepresentable_numbers(
+    invalid: int | float,
+) -> None:
+    trajectory = [1.0] * 15
+    trajectory[0] = invalid
+
+    with pytest.raises(ValueError, match="finite real JSON number"):
+        _trajectory(trajectory, field="untreated", valid=True)
+
+
+@pytest.mark.parametrize("invalid", [True, "1.0"])
+def test_artifact_loader_rejects_coercible_raw_trajectory_values(
+    tmp_path: Path,
+    invalid: object,
+) -> None:
+    artifact_path, _inputs = _produce(tmp_path)
+
+    def mutate(raw: dict[str, object]) -> None:
+        raw["records"][0]["untreated_kl_2_16"][0] = invalid  # type: ignore[index]
+
+    _mutate_raw(artifact_path, mutate)
+    with pytest.raises(ValueError, match="finite real JSON number"):
+        load_single_layer_gate_outcome(artifact_path)
+
+
+@pytest.mark.parametrize(
+    "field_path",
+    [
+        ("maximum_absolute_self_copy_restoration",),
+        ("scores", "self_copy", "estimate"),
+        ("scores", "self_copy", "ci_lower"),
+        ("scores", "self_copy", "ci_upper"),
+    ],
+)
+def test_outcome_loader_rejects_boolean_numeric_tamper(
+    tmp_path: Path,
+    field_path: tuple[str, ...],
+) -> None:
+    artifact_path, _inputs = _produce(tmp_path)
+    payload = json.loads(artifact_path.read_text())
+    target = payload["outcome"]
+    for field in field_path[:-1]:
+        target = target[field]
+    target[field_path[-1]] = False
+    _write(artifact_path, payload)
+
+    with pytest.raises(ValueError, match="finite real JSON number"):
+        load_single_layer_gate_outcome(artifact_path)
+
+
+def test_outcome_loader_rejects_fabricated_nonpass_claim(tmp_path: Path) -> None:
+    artifact_path, _inputs = _produce(tmp_path)
+    payload = json.loads(artifact_path.read_text())
+    payload["passed"] = False
+    _write(artifact_path, payload)
+
+    with pytest.raises(ValueError, match="pass claim differs from recomputation"):
+        load_single_layer_gate_outcome(artifact_path)
+
+
+def test_invalid_gate_run_remains_fail_closed_and_is_not_published(
+    tmp_path: Path,
+) -> None:
+    inputs, provenance = _gate_inputs(tmp_path)
+
+    class WrongLayerProvider(_FakeProvider):
+        def scan(
+            self,
+            records: Sequence[SingleLayerGateRecord],
+            *,
+            donor_plan: Mapping[str, str],
+            transition_layer: int,
+        ) -> Sequence[Mapping[str, object]]:
+            rows = super().scan(
+                records,
+                donor_plan=donor_plan,
+                transition_layer=transition_layer,
+            )
+            return ({**rows[0], "transition_layer": transition_layer + 1}, *rows[1:])
+
+    output = tmp_path / "invalid-run"
+    with pytest.raises(ValueError, match="wrong layer"):
+        produce_single_layer_gate_artifact(
+            config_path=inputs["config"],
+            parent_probe_artifact_path=inputs["parent"],
+            cohort_manifest_path=inputs["cohort"],
+            protected_registry_path=inputs["protected"],
+            donor_plan_path=inputs["donor"],
+            runtime_manifest_path=inputs["runtime"],
+            output_dir=output,
+            provider=WrongLayerProvider(provenance),
+        )
+
+    assert not output.exists()
+    assert not tuple(tmp_path.glob(".invalid-run.*.tmp"))
 
 
 def test_offset_control_spies_matching_clean_and_typo_plus_two_coordinates() -> None:

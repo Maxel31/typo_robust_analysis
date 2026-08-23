@@ -14,6 +14,26 @@ from typo_robust_training.state_gate.config import SingleLayerGateProtocol
 
 
 _CONDITIONS = ("correct", "offset", "cross", "self_copy")
+_SCIENTIFIC_INVALID_REASONS = frozenset(
+    {
+        "fewer-than-16-clean-corpus-tokens-after-final-edit",
+        "untreated-kl-at-or-below-1e-9",
+    }
+)
+
+
+def _kl_number(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("gate observation KL values must be real JSON numbers")
+    try:
+        finite = math.isfinite(value)
+    except OverflowError as exc:
+        raise ValueError(
+            "gate observation KL values must be finite and non-negative"
+        ) from exc
+    if not finite or value < 0:
+        raise ValueError("gate observation KL values must be finite and non-negative")
+    return float(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,11 +59,15 @@ class GateObservation:
             or self.transition_layer < 1
         ):
             raise ValueError("gate observation transition layer must be positive")
-        untreated = tuple(float(value) for value in self.untreated_kl_2_16)
-        patched = {key: tuple(float(value) for value in values) for key, values in self.patched_kl_2_16.items()}
-        all_values = untreated + tuple(value for values in patched.values() for value in values)
-        if any(not math.isfinite(value) or value < 0.0 for value in all_values):
-            raise ValueError("gate observation KL values must be finite and non-negative")
+        untreated_values = tuple(self.untreated_kl_2_16)
+        patched_values = {
+            key: tuple(values) for key, values in self.patched_kl_2_16.items()
+        }
+        untreated = tuple(_kl_number(value) for value in untreated_values)
+        patched = {
+            key: tuple(_kl_number(value) for value in values)
+            for key, values in patched_values.items()
+        }
         if untreated:
             if len(untreated) != 15 or set(patched) != set(_CONDITIONS):
                 raise ValueError("valid gate observation must contain every R_2:16 condition")
@@ -51,8 +75,10 @@ class GateObservation:
                 raise ValueError("gate condition trajectories must contain offsets 2 through 16")
             if self.invalid_reason is not None:
                 raise ValueError("valid gate observation cannot have an invalid reason")
-        elif patched or not isinstance(self.invalid_reason, str) or not self.invalid_reason:
-            raise ValueError("invalid gate observation must contain only an explicit reason")
+        elif patched or self.invalid_reason not in _SCIENTIFIC_INVALID_REASONS:
+            raise ValueError(
+                "invalid gate observation must contain one preregistered scientific reason"
+            )
         object.__setattr__(self, "untreated_kl_2_16", untreated)
         object.__setattr__(self, "patched_kl_2_16", MappingProxyType(patched))
 
@@ -81,6 +107,7 @@ class GateScoreResult:
     valid_strata: Mapping[str, int]
     scores: Mapping[str, GateScore]
     maximum_absolute_self_copy_restoration: float
+    failure_reasons: tuple[str, ...]
     passed: bool
 
 
@@ -106,12 +133,18 @@ def score_single_layer_gate(
     if all_strata != Counter(protocol.stratum_counts):
         raise ValueError("single-layer gate observation strata differ from preregistration")
     valid = tuple(row for row in rows if row.untreated_kl_2_16)
-    valid_strata = Counter(row.stratum for row in valid)
-    if len(valid) < protocol.minimum_valid_records or any(
-        valid_strata[key] < minimum
-        for key, minimum in protocol.minimum_valid_per_stratum.items()
-    ):
-        raise ValueError("single-layer gate KL-valid inventory is below preregistration")
+    observed_valid_strata = Counter(row.stratum for row in valid)
+    valid_strata = {
+        key: observed_valid_strata[key] for key in sorted(protocol.stratum_counts)
+    }
+    failures: list[str] = []
+    if len(valid) < protocol.minimum_valid_records:
+        failures.append("minimum-valid-records")
+    failures.extend(
+        f"minimum-valid-stratum:{key}"
+        for key, minimum in sorted(protocol.minimum_valid_per_stratum.items())
+        if valid_strata[key] < minimum
+    )
     per_group: dict[str, list[Mapping[str, float]]] = defaultdict(list)
     maximum_self = 0.0
     for row in valid:
@@ -122,7 +155,7 @@ def score_single_layer_gate(
         maximum_self = max(maximum_self, abs(values["self_copy"]))
         per_group[row.source_group_sha256].append(values)
     if len(per_group) < 2:
-        raise ValueError("single-layer gate requires at least two independent source groups")
+        failures.append("minimum-independent-source-groups")
     group_rows: list[dict[str, float]] = []
     for _group, values in sorted(per_group.items()):
         means = {
@@ -140,35 +173,51 @@ def score_single_layer_gate(
         "correct_minus_offset",
         "correct_minus_cross",
     )
-    matrix = np.asarray([[row[key] for key in metrics] for row in group_rows], dtype=np.float64)
-    rng = np.random.default_rng(protocol.bootstrap_seed)
-    indices = rng.integers(
-        0,
-        len(group_rows),
-        size=(protocol.bootstrap_resamples, len(group_rows)),
-    )
-    draws = matrix[indices].mean(axis=1)
     scores: dict[str, GateScore] = {}
-    for index, key in enumerate(metrics):
-        lower, upper = _interval(draws[:, index], confidence=protocol.confidence)
-        scores[key] = GateScore(
-            estimate=float(matrix[:, index].mean()),
-            ci_lower=lower,
-            ci_upper=upper,
+    if group_rows:
+        matrix = np.asarray(
+            [[row[key] for key in metrics] for row in group_rows], dtype=np.float64
         )
-    passed = (
-        scores["correct"].ci_lower > protocol.minimum_correct_ci_lower
-        and scores["correct_minus_offset"].ci_lower
-        > protocol.minimum_correct_minus_offset_ci_lower
-        and scores["correct_minus_cross"].ci_lower
-        > protocol.minimum_correct_minus_cross_ci_lower
-        and maximum_self <= protocol.maximum_absolute_self_copy_restoration
-    )
+        rng = np.random.default_rng(protocol.bootstrap_seed)
+        indices = rng.integers(
+            0,
+            len(group_rows),
+            size=(protocol.bootstrap_resamples, len(group_rows)),
+        )
+        draws = matrix[indices].mean(axis=1)
+        for index, key in enumerate(metrics):
+            lower, upper = _interval(draws[:, index], confidence=protocol.confidence)
+            scores[key] = GateScore(
+                estimate=float(matrix[:, index].mean()),
+                ci_lower=lower,
+                ci_upper=upper,
+            )
+        score_thresholds = (
+            ("correct", protocol.minimum_correct_ci_lower),
+            (
+                "correct_minus_offset",
+                protocol.minimum_correct_minus_offset_ci_lower,
+            ),
+            (
+                "correct_minus_cross",
+                protocol.minimum_correct_minus_cross_ci_lower,
+            ),
+        )
+        failures.extend(
+            f"{key.replace('_', '-')}-ci-lower-not-above-threshold"
+            for key, threshold in score_thresholds
+            if scores[key].ci_lower <= threshold
+        )
+    if maximum_self > protocol.maximum_absolute_self_copy_restoration:
+        failures.append("self-copy-restoration-exceeds-maximum")
+    failure_reasons = tuple(failures)
+    passed = not failure_reasons
     return GateScoreResult(
         valid_records=len(valid),
-        valid_strata=MappingProxyType(dict(sorted(valid_strata.items()))),
+        valid_strata=MappingProxyType(valid_strata),
         scores=MappingProxyType(scores),
         maximum_absolute_self_copy_restoration=maximum_self,
+        failure_reasons=failure_reasons,
         passed=passed,
     )
 

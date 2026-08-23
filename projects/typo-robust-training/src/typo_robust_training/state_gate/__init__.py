@@ -3,6 +3,7 @@
 from typo_robust_training.state_gate.artifacts import (
     SingleLayerGateArtifact,
     load_single_layer_gate_artifact,
+    load_single_layer_gate_outcome,
 )
 from typo_robust_training.state_gate.config import (
     SingleLayerGateProtocol,
@@ -20,6 +21,7 @@ __all__ = [
     "SingleLayerGateArtifact",
     "SingleLayerGateProtocol",
     "load_single_layer_gate_artifact",
+    "load_single_layer_gate_outcome",
     "load_single_layer_gate_config",
     "score_single_layer_gate",
 ]

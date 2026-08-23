@@ -199,6 +199,10 @@ def _run_validate_probe_transition_single_layer_gate(args: argparse.Namespace) -
     from typo_robust_training.state_gate.runtime import HuggingFaceSingleLayerGateProvider
 
     try:
+        if args.output_dir.exists() or args.output_dir.is_symlink():
+            raise FileExistsError(
+                f"single-layer gate output already exists: {args.output_dir}"
+            )
         protocol = load_single_layer_gate_config(args.config)
         artifact = produce_single_layer_gate_artifact(
             config_path=args.config,
@@ -216,8 +220,14 @@ def _run_validate_probe_transition_single_layer_gate(args: argparse.Namespace) -
     except (FileExistsError, RuntimeError, ValueError) as exc:
         print(f"validate-probe-transition-single-layer-gate: error: {exc}", file=sys.stderr)
         return 1
-    print(f"single-layer causal gate passed: {artifact.artifact_sha256}")
-    return 0
+    if artifact.passed:
+        print(f"single-layer causal gate passed: {artifact.artifact_sha256}")
+        return 0
+    print(
+        "single-layer causal gate did not pass; immutable failure evidence "
+        f"preserved at {args.output_dir}: {artifact.artifact_sha256}"
+    )
+    return 1
 
 
 def _run_probe_semantic_subspace_kill_test(args: argparse.Namespace) -> int:
