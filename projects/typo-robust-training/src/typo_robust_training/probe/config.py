@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,6 +61,8 @@ _PROBE_V3 = {
     "l2_penalty",
     "max_iterations",
     "max_evaluations",
+    "max_history_reset_polishes",
+    "polish_acceptance_rule",
     "history_size",
     "gradient_tolerance",
     "change_tolerance",
@@ -91,6 +94,10 @@ VALIDATION_RULE_V3 = "group-bootstrap-95pct-lower-positive-for-both-disjoint-fit
 PROBE_VALIDITY_RULE = (
     "validation-source-group-bootstrap-95pct-upper-clean-ce-below-uniform-"
     "at-boundary-for-both-fit-partitions/v1"
+)
+POLISH_ACCEPTANCE_RULE = (
+    "post-objective-at-most-pre-plus-parameter-count-times-gradient-tolerance-"
+    "squared-over-two-plus-float64-roundoff/v1"
 )
 HOOK_SITE = "complete-decoder-block-residual-output"
 COORDINATE = "edited-word-final-token/v1"
@@ -189,6 +196,8 @@ class ProbeProducerProtocol:
     fit_partition_rule: str | None = None
     max_iterations: int | None = None
     max_evaluations: int | None = None
+    max_history_reset_polishes: int | None = None
+    polish_acceptance_rule: str | None = None
     history_size: int | None = None
     gradient_tolerance: float | None = None
     change_tolerance: float | None = None
@@ -264,13 +273,15 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
         raise ValueError("probe producer seeds must be exactly [42, 43]")
     expected = {
         "optimizer": (
-            "full-batch-lbfgs-strong-wolfe-float64/v1"
+            "full-batch-lbfgs-float64-strong-wolfe-then-history-reset-fixed-step-polish/v2"
             if schema_version.endswith("/v3")
             else "adamw"
         ),
         "hook_site": HOOK_SITE,
         "coordinate": COORDINATE,
     }
+    if schema_version.endswith("/v3"):
+        expected["polish_acceptance_rule"] = POLISH_ACCEPTANCE_RULE
     for field, literal in expected.items():
         if probe[field] != literal:
             raise ValueError(f"probe producer {field} differs")
@@ -331,7 +342,8 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
             raise ValueError("probe producer L2 penalty differs")
         fixed_numbers = {
             "max_iterations": 1000,
-            "max_evaluations": 1250,
+            "max_evaluations": 10000,
+            "max_history_reset_polishes": 1,
             "history_size": 100,
             "gradient_tolerance": 1e-7,
             "change_tolerance": 0.0,
@@ -398,6 +410,12 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
         ),
         max_iterations=(int(probe["max_iterations"]) if schema_version.endswith("/v3") else None),
         max_evaluations=(int(probe["max_evaluations"]) if schema_version.endswith("/v3") else None),
+        max_history_reset_polishes=(
+            int(probe["max_history_reset_polishes"]) if schema_version.endswith("/v3") else None
+        ),
+        polish_acceptance_rule=(
+            str(probe["polish_acceptance_rule"]) if schema_version.endswith("/v3") else None
+        ),
         history_size=(int(probe["history_size"]) if schema_version.endswith("/v3") else None),
         gradient_tolerance=(
             float(probe["gradient_tolerance"]) if schema_version.endswith("/v3") else None
@@ -417,6 +435,38 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
     )
 
 
+def polish_objective_allowance(
+    *,
+    parameter_count: int,
+    gradient_tolerance: float,
+    pre_objective: float,
+    post_objective: float,
+) -> float:
+    """Return the fixed numerical allowance for one convex-solver polish.
+
+    Unit L2 regularization makes the objective one-strongly convex.  A point
+    passing the external infinity-norm gradient gate can therefore be at most
+    ``P * tau**2 / 2`` above the unique optimum.  The second term only covers
+    float64 objective-reduction roundoff and is deliberately negligible.
+    """
+
+    if parameter_count < 1:
+        raise ValueError("polish parameter count must be positive")
+    values = (gradient_tolerance, pre_objective, post_objective)
+    if any(not math.isfinite(value) for value in values) or gradient_tolerance <= 0.0:
+        raise ValueError("polish objective inputs must be finite and tolerance positive")
+    roundoff = (
+        64.0
+        * sys.float_info.epsilon
+        * max(
+            1.0,
+            abs(pre_objective),
+            abs(post_objective),
+        )
+    )
+    return 0.5 * parameter_count * gradient_tolerance**2 + roundoff
+
+
 __all__ = [
     "COORDINATE",
     "HOOK_SITE",
@@ -429,5 +479,7 @@ __all__ = [
     "VALIDATION_RULE",
     "VALIDATION_RULE_V3",
     "PROBE_VALIDITY_RULE",
+    "POLISH_ACCEPTANCE_RULE",
+    "polish_objective_allowance",
     "load_probe_producer_config",
 ]

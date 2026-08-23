@@ -26,8 +26,10 @@ from typo_robust_training.data.perturb import (
 )
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.probe.config import (
+    POLISH_ACCEPTANCE_RULE,
     ProbeProducerProtocol,
     load_probe_producer_config,
+    polish_objective_allowance,
 )
 from typo_robust_training.probe.partition import (
     ProbeFitPartition,
@@ -774,18 +776,21 @@ def _validate_fit_diagnostics(
         "optimizer",
         "standardization",
         "l2_penalty",
+        "polish_acceptance_rule",
         "fit_partition_rule",
         "normalization_by_seed",
         "solver_by_seed",
     }
     if set(value) != expected_fields or value["schema_version"] != (
-        "typo-linear-probe-fit-diagnostics/v2"
+        "typo-linear-probe-fit-diagnostics/v3"
     ):
         raise ValueError("probe fit diagnostics fields or schema differ")
     if (
         value["optimizer"] != protocol.optimizer
         or value["standardization"] != protocol.standardization
         or value["l2_penalty"] != protocol.l2_penalty
+        or value["polish_acceptance_rule"] != POLISH_ACCEPTANCE_RULE
+        or value["polish_acceptance_rule"] != protocol.polish_acceptance_rule
         or value["fit_partition_rule"] != protocol.fit_partition_rule
     ):
         raise ValueError("probe fit diagnostics method identity differs")
@@ -836,6 +841,7 @@ def _validate_fit_diagnostics(
         "gradient_inf_norm",
         "iterations",
         "function_evaluations",
+        "optimization_rounds",
         "float64_folded_logit_max_error",
         "float32_serialized_logit_max_error",
     }
@@ -883,6 +889,96 @@ def _validate_fit_diagnostics(
                 )
             ):
                 raise ValueError(f"probe fit solver {field} values differ")
+        rounds_by_layer = metrics["optimization_rounds"]
+        if not isinstance(rounds_by_layer, list) or len(rounds_by_layer) != (
+            protocol.decoder_layers
+        ):
+            raise ValueError("probe fit solver optimization round inventory differs")
+        assert protocol.max_history_reset_polishes is not None
+        round_fields = {
+            "round_index",
+            "phase",
+            "objective",
+            "gradient_inf_norm",
+            "iterations",
+            "function_evaluations",
+            "termination_reason",
+        }
+        allowed_reasons = {
+            "gradient-tolerance",
+            "max-iterations",
+            "max-evaluations",
+            "zero-parameter-step",
+            "non-descent-direction",
+            "internal-or-line-search-stall",
+        }
+        for layer, rounds in enumerate(rounds_by_layer):
+            if (
+                not isinstance(rounds, list)
+                or not 1 <= len(rounds) <= protocol.max_history_reset_polishes + 1
+            ):
+                raise ValueError("probe fit solver optimization round count differs")
+            for round_index, row in enumerate(rounds):
+                if not isinstance(row, Mapping) or set(row) != round_fields:
+                    raise ValueError("probe fit solver optimization round fields differ")
+                if row["round_index"] != round_index:
+                    raise ValueError("probe fit solver optimization round index differs")
+                expected_phase = (
+                    "cold-start-strong-wolfe"
+                    if round_index == 0
+                    else "history-reset-fixed-step-polish"
+                )
+                if row["phase"] != expected_phase:
+                    raise ValueError("probe fit solver optimization phase differs")
+                for field in ("objective", "gradient_inf_norm"):
+                    item = row[field]
+                    if (
+                        isinstance(item, bool)
+                        or not isinstance(item, (int, float))
+                        or not math.isfinite(float(item))
+                        or float(item) < 0.0
+                    ):
+                        raise ValueError(f"probe fit solver optimization round {field} differs")
+                for field in ("iterations", "function_evaluations"):
+                    item = row[field]
+                    if isinstance(item, bool) or not isinstance(item, int) or item < 1:
+                        raise ValueError(f"probe fit solver optimization round {field} differs")
+                if row["termination_reason"] not in allowed_reasons:
+                    raise ValueError("probe fit solver optimization termination reason differs")
+                assert protocol.gradient_tolerance is not None
+                passed_gradient_gate = (
+                    float(row["gradient_inf_norm"]) <= protocol.gradient_tolerance
+                )
+                if (row["termination_reason"] == "gradient-tolerance") != (passed_gradient_gate):
+                    raise ValueError(
+                        "probe fit solver termination disagrees with its external gradient"
+                    )
+                if round_index < len(rounds) - 1 and row["termination_reason"] == (
+                    "gradient-tolerance"
+                ):
+                    raise ValueError("probe fit solver continued after numerical convergence")
+            final_round = rounds[-1]
+            if final_round["termination_reason"] != "gradient-tolerance":
+                raise ValueError("probe fit solver final round did not converge")
+            if len(rounds) == 2:
+                assert protocol.gradient_tolerance is not None
+                allowance = polish_objective_allowance(
+                    parameter_count=(protocol.hidden_size + 1) * len(partition.class_counts),
+                    gradient_tolerance=protocol.gradient_tolerance,
+                    pre_objective=float(rounds[0]["objective"]),
+                    post_objective=float(rounds[1]["objective"]),
+                )
+                if float(rounds[1]["objective"]) > float(rounds[0]["objective"]) + allowance:
+                    raise ValueError("probe fit solver polish objective safeguard failed")
+            if (
+                float(final_round["objective"]) != float(metrics["objective"][layer])
+                or float(final_round["gradient_inf_norm"])
+                != float(metrics["gradient_inf_norm"][layer])
+                or sum(int(row["iterations"]) for row in rounds) != metrics["iterations"][layer]
+                or sum(int(row["function_evaluations"]) for row in rounds)
+                != metrics["function_evaluations"][layer]
+            ):
+                raise ValueError("probe fit solver optimization round summary differs")
         assert protocol.gradient_tolerance is not None
         if any(float(item) > protocol.gradient_tolerance for item in metrics["gradient_inf_norm"]):
             raise ValueError("probe fit solver did not pass its gradient gate")

@@ -21,8 +21,10 @@ from typo_robust_training.data.perturb import (
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.integrity import sha256_file
 from typo_robust_training.probe.config import (
+    POLISH_ACCEPTANCE_RULE,
     ProbeProducerProtocol,
     load_probe_producer_config,
+    polish_objective_allowance,
 )
 from typo_robust_training.probe.partition import (
     ProbeFitPartition,
@@ -421,11 +423,23 @@ class _ProbeWeights:
 
 
 @dataclass(frozen=True, slots=True)
+class _SolverRoundDiagnostics:
+    round_index: int
+    phase: str
+    objective: float
+    gradient_inf_norm: float
+    iterations: int
+    function_evaluations: int
+    termination_reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class _LayerSolverDiagnostics:
     objective: float
     gradient_inf_norm: float
     iterations: int
     function_evaluations: int
+    optimization_rounds: tuple[_SolverRoundDiagnostics, ...]
     float64_folded_logit_max_error: float
     float32_serialized_logit_max_error: float
 
@@ -551,6 +565,8 @@ def _fit_probe_lbfgs_v3(
     required = (
         protocol.max_iterations,
         protocol.max_evaluations,
+        protocol.max_history_reset_polishes,
+        protocol.polish_acceptance_rule,
         protocol.history_size,
         protocol.gradient_tolerance,
         protocol.change_tolerance,
@@ -559,6 +575,8 @@ def _fit_probe_lbfgs_v3(
     )
     if any(value is None for value in required):
         raise ValueError("convex probe solver configuration is incomplete")
+    if protocol.polish_acceptance_rule != POLISH_ACCEPTANCE_RULE:
+        raise ValueError("convex probe polish acceptance rule differs")
     values = np.asarray(activations, dtype=np.float64)
     means = values.mean(axis=0, dtype=np.float64)
     centered = values - means[None, ...]
@@ -582,16 +600,18 @@ def _fit_probe_lbfgs_v3(
         layer_values = torch.from_numpy(np.ascontiguousarray(standardized[:, layer]))
         weight = torch.nn.Parameter(torch.zeros(hidden_size, class_count, dtype=torch.float64))
         bias = torch.nn.Parameter(torch.zeros(class_count, dtype=torch.float64))
-        optimizer = torch.optim.LBFGS(
-            (weight, bias),
-            lr=1.0,
-            max_iter=int(protocol.max_iterations),
-            max_eval=int(protocol.max_evaluations),
-            tolerance_grad=float(protocol.gradient_tolerance),
-            tolerance_change=float(protocol.change_tolerance),
-            history_size=int(protocol.history_size),
-            line_search_fn="strong_wolfe",
-        )
+
+        def fresh_optimizer(*, use_strong_wolfe: bool) -> object:
+            return torch.optim.LBFGS(
+                (weight, bias),
+                lr=1.0,
+                max_iter=int(protocol.max_iterations),
+                max_eval=int(protocol.max_evaluations),
+                tolerance_grad=float(protocol.gradient_tolerance),
+                tolerance_change=float(protocol.change_tolerance),
+                history_size=int(protocol.history_size),
+                line_search_fn=("strong_wolfe" if use_strong_wolfe else None),
+            )
 
         def objective() -> object:
             logits = layer_values @ weight + bias
@@ -605,36 +625,119 @@ def _fit_probe_lbfgs_v3(
             penalty = (weight.square().sum() + bias.square().sum()) / 2.0
             return negative_log_likelihood + penalty
 
-        function_evaluations = 0
+        optimization_rounds: list[_SolverRoundDiagnostics] = []
+        objective_value = math.nan
+        gradient_inf_norm = math.inf
+        for round_index in range(int(protocol.max_history_reset_polishes) + 1):
+            # The optional second phase keeps the fitted parameters but resets
+            # L-BFGS curvature and line-search state.  It is a fixed numerical
+            # polish for finite non-convergence, never a new scientific fit.
+            optimizer = fresh_optimizer(use_strong_wolfe=round_index == 0)
+            state_before = optimizer.state.get(weight, {})
+            iterations_before = int(state_before.get("n_iter", 0))
+            evaluations_before = int(state_before.get("func_evals", 0))
+            closure_evaluations = 0
 
-        def closure() -> object:
-            nonlocal function_evaluations
-            function_evaluations += 1
+            def closure() -> object:
+                nonlocal closure_evaluations
+                closure_evaluations += 1
+                optimizer.zero_grad(set_to_none=True)
+                loss = objective()
+                loss.backward()  # type: ignore[union-attr]
+                return loss
+
+            optimizer.step(closure)
             optimizer.zero_grad(set_to_none=True)
-            loss = objective()
-            loss.backward()  # type: ignore[union-attr]
-            return loss
+            final_objective = objective()
+            final_objective.backward()  # type: ignore[union-attr]
+            gradient_inf_norm = max(
+                float(weight.grad.detach().abs().max()),
+                float(bias.grad.detach().abs().max()),
+            )
+            objective_value = float(final_objective.detach())
+            state_after = optimizer.state.get(weight, {})
+            round_iterations = int(state_after.get("n_iter", 0)) - iterations_before
+            state_evaluations = int(state_after.get("func_evals", 0)) - evaluations_before
+            if state_evaluations != closure_evaluations:
+                raise RuntimeError("LBFGS closure accounting differs from optimizer state")
+            if not math.isfinite(objective_value) or not math.isfinite(gradient_inf_norm):
+                termination_reason = "non-finite-objective-or-gradient"
+            elif gradient_inf_norm <= float(protocol.gradient_tolerance):
+                termination_reason = "gradient-tolerance"
+            elif round_iterations >= int(protocol.max_iterations):
+                termination_reason = "max-iterations"
+            elif state_evaluations >= int(protocol.max_evaluations):
+                termination_reason = "max-evaluations"
+            else:
+                direction = state_after.get("d")
+                step_size = state_after.get("t")
+                previous_gradient = state_after.get("prev_flat_grad")
+                if (
+                    direction is not None
+                    and step_size is not None
+                    and float((direction * step_size).detach().abs().max()) == 0.0
+                ):
+                    termination_reason = "zero-parameter-step"
+                elif (
+                    direction is not None
+                    and previous_gradient is not None
+                    and float(previous_gradient.dot(direction)) >= 0.0
+                ):
+                    termination_reason = "non-descent-direction"
+                else:
+                    termination_reason = "internal-or-line-search-stall"
+            optimization_rounds.append(
+                _SolverRoundDiagnostics(
+                    round_index=round_index,
+                    phase=(
+                        "cold-start-strong-wolfe"
+                        if round_index == 0
+                        else "history-reset-fixed-step-polish"
+                    ),
+                    objective=objective_value,
+                    gradient_inf_norm=gradient_inf_norm,
+                    iterations=round_iterations,
+                    function_evaluations=state_evaluations,
+                    termination_reason=termination_reason,
+                )
+            )
+            if termination_reason == "gradient-tolerance":
+                break
+            if termination_reason == "non-finite-objective-or-gradient":
+                break
 
-        optimizer.step(closure)
-        optimizer.zero_grad(set_to_none=True)
-        final_objective = objective()
-        final_objective.backward()  # type: ignore[union-attr]
-        gradient_inf_norm = max(
-            float(weight.grad.detach().abs().max()),
-            float(bias.grad.detach().abs().max()),
-        )
-        objective_value = float(final_objective.detach())
-        state = optimizer.state.get(weight, {})
-        iterations = int(state.get("n_iter", 0))
         if (
             not math.isfinite(objective_value)
             or not math.isfinite(gradient_inf_norm)
             or gradient_inf_norm > float(protocol.gradient_tolerance)
         ):
+            round_summary = "; ".join(
+                "round="
+                f"{row.round_index},termination={row.termination_reason},"
+                f"iterations={row.iterations},evaluations={row.function_evaluations},"
+                f"objective={row.objective},gradient_inf_norm={row.gradient_inf_norm}"
+                for row in optimization_rounds
+            )
             raise FloatingPointError(
                 f"convex probe solver failed its gradient gate at layer {layer}: "
-                f"objective={objective_value}, gradient_inf_norm={gradient_inf_norm}"
+                f"required_gradient_inf_norm<={protocol.gradient_tolerance}; {round_summary}"
             )
+        if len(optimization_rounds) == 2:
+            pre_objective = optimization_rounds[0].objective
+            allowance = polish_objective_allowance(
+                parameter_count=weight.numel() + bias.numel(),
+                gradient_tolerance=float(protocol.gradient_tolerance),
+                pre_objective=pre_objective,
+                post_objective=objective_value,
+            )
+            if objective_value > pre_objective + allowance:
+                raise FloatingPointError(
+                    f"convex probe polish failed its objective safeguard at layer {layer}: "
+                    f"pre_objective={pre_objective}, post_objective={objective_value}, "
+                    f"maximum_increase={allowance}"
+                )
+        iterations = sum(row.iterations for row in optimization_rounds)
+        function_evaluations = sum(row.function_evaluations for row in optimization_rounds)
 
         fitted_weight = weight.detach().numpy().copy()
         fitted_bias = bias.detach().numpy().copy()
@@ -667,6 +770,7 @@ def _fit_probe_lbfgs_v3(
                 gradient_inf_norm=gradient_inf_norm,
                 iterations=iterations,
                 function_evaluations=function_evaluations,
+                optimization_rounds=tuple(optimization_rounds),
                 float64_folded_logit_max_error=folded_error,
                 float32_serialized_logit_max_error=serialized_error,
             )
@@ -899,10 +1003,11 @@ def _convex_solver_diagnostics(
         if fit.layer_mean is None or fit.layer_scale is None:
             raise ValueError("convex probe diagnostics are incomplete")
     return {
-        "schema_version": "typo-linear-probe-fit-diagnostics/v2",
+        "schema_version": "typo-linear-probe-fit-diagnostics/v3",
         "optimizer": protocol.optimizer,
         "standardization": protocol.standardization,
         "l2_penalty": protocol.l2_penalty,
+        "polish_acceptance_rule": POLISH_ACCEPTANCE_RULE,
         "fit_partition_rule": protocol.fit_partition_rule,
         "normalization_by_seed": {
             str(seed): {
@@ -923,6 +1028,21 @@ def _convex_solver_diagnostics(
                 "iterations": [row.iterations for row in fits[seed].diagnostics],
                 "function_evaluations": [
                     row.function_evaluations for row in fits[seed].diagnostics
+                ],
+                "optimization_rounds": [
+                    [
+                        {
+                            "round_index": round_row.round_index,
+                            "phase": round_row.phase,
+                            "objective": round_row.objective,
+                            "gradient_inf_norm": round_row.gradient_inf_norm,
+                            "iterations": round_row.iterations,
+                            "function_evaluations": round_row.function_evaluations,
+                            "termination_reason": round_row.termination_reason,
+                        }
+                        for round_row in row.optimization_rounds
+                    ]
+                    for row in fits[seed].diagnostics
                 ],
                 "float64_folded_logit_max_error": [
                     row.float64_folded_logit_max_error for row in fits[seed].diagnostics

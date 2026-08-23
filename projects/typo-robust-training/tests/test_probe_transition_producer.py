@@ -152,11 +152,18 @@ def _files(tmp_path: Path) -> dict[str, Path]:
         "probe": {
             "seeds": [42, 43],
             "fit_partition_rule": "class-stratified-record-id-sha256-balanced-halves/v1",
-            "optimizer": "full-batch-lbfgs-strong-wolfe-float64/v1",
+            "optimizer": (
+                "full-batch-lbfgs-float64-strong-wolfe-then-history-reset-fixed-step-polish/v2"
+            ),
             "standardization": "fit-only-per-layer-scalar-rms-folded/v1",
             "l2_penalty": "unit-prior-sum-loss/v1",
             "max_iterations": 1000,
-            "max_evaluations": 1250,
+            "max_evaluations": 10000,
+            "max_history_reset_polishes": 1,
+            "polish_acceptance_rule": (
+                "post-objective-at-most-pre-plus-parameter-count-times-gradient-tolerance-"
+                "squared-over-two-plus-float64-roundoff/v1"
+            ),
             "history_size": 100,
             "gradient_tolerance": 1e-7,
             "change_tolerance": 0.0,
@@ -305,6 +312,23 @@ def test_producer_derives_transition_and_binds_every_output(tmp_path: Path) -> N
     )
     assert all(value > 0.0 for value in run["selection_ci_lower_by_seed"].values())
     assert all(value > 0.0 for value in run["validation_ci_lower_by_seed"].values())
+    diagnostics_path = result.artifact_path.parent / run["fit_diagnostics"]["relative_path"]
+    diagnostics = json.loads(diagnostics_path.read_text())
+    assert diagnostics["schema_version"] == "typo-linear-probe-fit-diagnostics/v3"
+    assert diagnostics["polish_acceptance_rule"] == (
+        "post-objective-at-most-pre-plus-parameter-count-times-gradient-tolerance-"
+        "squared-over-two-plus-float64-roundoff/v1"
+    )
+    for metrics in diagnostics["solver_by_seed"].values():
+        for layer, rounds in enumerate(metrics["optimization_rounds"]):
+            assert 1 <= len(rounds) <= 2
+            assert rounds[-1]["termination_reason"] == "gradient-tolerance"
+            if rounds[0]["gradient_inf_norm"] <= 1e-7:
+                assert len(rounds) == 1
+            assert metrics["iterations"][layer] == sum(row["iterations"] for row in rounds)
+            assert metrics["function_evaluations"][layer] == sum(
+                row["function_evaluations"] for row in rounds
+            )
     artifact_hash = sha256_file(result.artifact_path)
     assert result.artifact_path.name == f"probe-transition-{artifact_hash}.json"
     consumed = load_probe_transition_artifact(result.artifact_path)
@@ -333,7 +357,7 @@ def test_v3_loader_rejects_tampered_solver_diagnostics(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
-        ("gradient_inf_norm", 5e-7, "gradient gate"),
+        ("gradient_inf_norm", 5e-7, "external gradient"),
         ("float64_folded_logit_max_error", 5e-6, "folding exceeded"),
         ("float32_serialized_logit_max_error", 2e-5, "serialization exceeded"),
     ],
@@ -354,11 +378,75 @@ def test_loader_rechecks_distinct_numerical_tolerances_after_rehash(
     diagnostics_path = result.artifact_path.parent / reference["relative_path"]
     diagnostics = json.loads(diagnostics_path.read_text())
     diagnostics["solver_by_seed"]["42"][field][0] = value
+    if field == "gradient_inf_norm":
+        diagnostics["solver_by_seed"]["42"]["optimization_rounds"][0][-1][field] = value
     _write_json(diagnostics_path, diagnostics)
     reference["sha256"] = sha256_file(diagnostics_path)
     _write_json(result.artifact_path, artifact)
 
     with pytest.raises(ValueError, match=message):
+        load_probe_transition_artifact(result.artifact_path)
+
+
+def test_loader_rejects_rehashed_false_convergence_diagnostic(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    result = run_select_probe_transition(
+        _run_config(files, tmp_path / "output"),
+        activation_provider=_FakeProvider(),
+    )
+    artifact = json.loads(result.artifact_path.read_text())
+    reference = artifact["references"]["fit_diagnostics"]
+    diagnostics_path = result.artifact_path.parent / reference["relative_path"]
+    diagnostics = json.loads(diagnostics_path.read_text())
+    diagnostics["solver_by_seed"]["42"]["optimization_rounds"][0][-1]["termination_reason"] = (
+        "max-evaluations"
+    )
+    _write_json(diagnostics_path, diagnostics)
+    reference["sha256"] = sha256_file(diagnostics_path)
+    _write_json(result.artifact_path, artifact)
+
+    with pytest.raises(ValueError, match="external gradient"):
+        load_probe_transition_artifact(result.artifact_path)
+
+
+def test_loader_rejects_rehashed_polish_that_materially_worsens_objective(
+    tmp_path: Path,
+) -> None:
+    files = _files(tmp_path)
+    result = run_select_probe_transition(
+        _run_config(files, tmp_path / "output"),
+        activation_provider=_FakeProvider(),
+    )
+    artifact = json.loads(result.artifact_path.read_text())
+    reference = artifact["references"]["fit_diagnostics"]
+    diagnostics_path = result.artifact_path.parent / reference["relative_path"]
+    diagnostics = json.loads(diagnostics_path.read_text())
+    metrics = diagnostics["solver_by_seed"]["42"]
+    cold = metrics["optimization_rounds"][0][0]
+    cold["termination_reason"] = "zero-parameter-step"
+    cold["gradient_inf_norm"] = 2e-7
+    polished = dict(cold)
+    polished.update(
+        {
+            "round_index": 1,
+            "phase": "history-reset-fixed-step-polish",
+            "objective": cold["objective"] + 1e-4,
+            "gradient_inf_norm": 5e-8,
+            "termination_reason": "gradient-tolerance",
+        }
+    )
+    metrics["optimization_rounds"][0].append(polished)
+    metrics["objective"][0] = polished["objective"]
+    metrics["gradient_inf_norm"][0] = polished["gradient_inf_norm"]
+    metrics["iterations"][0] = cold["iterations"] + polished["iterations"]
+    metrics["function_evaluations"][0] = (
+        cold["function_evaluations"] + polished["function_evaluations"]
+    )
+    _write_json(diagnostics_path, diagnostics)
+    reference["sha256"] = sha256_file(diagnostics_path)
+    _write_json(result.artifact_path, artifact)
+
+    with pytest.raises(ValueError, match="polish objective safeguard failed"):
         load_probe_transition_artifact(result.artifact_path)
 
 
@@ -771,6 +859,24 @@ def test_v3_config_rejects_relaxed_numerical_gate(tmp_path: Path) -> None:
     config["probe"]["gradient_tolerance"] = 1e-3
     _write_json(files["config"], config)
     with pytest.raises(ValueError, match="gradient_tolerance differs"):
+        load_probe_producer_config(files["config"])
+
+
+def test_v3_config_rejects_extra_data_dependent_polish_restarts(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    config = json.loads(files["config"].read_text())
+    config["probe"]["max_history_reset_polishes"] = 2
+    _write_json(files["config"], config)
+    with pytest.raises(ValueError, match="max_history_reset_polishes differs"):
+        load_probe_producer_config(files["config"])
+
+
+def test_v3_config_rejects_different_polish_acceptance_rule(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    config = json.loads(files["config"].read_text())
+    config["probe"]["polish_acceptance_rule"] = "accept-any-objective/v0"
+    _write_json(files["config"], config)
+    with pytest.raises(ValueError, match="polish_acceptance_rule differs"):
         load_probe_producer_config(files["config"])
 
 
