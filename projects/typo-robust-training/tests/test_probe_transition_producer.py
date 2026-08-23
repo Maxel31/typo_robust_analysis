@@ -519,6 +519,7 @@ def test_loader_rejects_rehashed_false_convergence_diagnostic(tmp_path: Path) ->
     [
         ("zero-objective", "objective values differ"),
         ("short-max-iterations", "max-iteration termination differs"),
+        ("max-evaluations-wrong-reason", "max-evaluation termination differs"),
         ("over-budget", "optimization round budget differs"),
         ("fake-polish-after-pass", "continued after numerical convergence"),
     ],
@@ -556,6 +557,26 @@ def test_loader_rejects_rehashed_semantically_impossible_solver_rounds(
         metrics["iterations"][layer] = cold["iterations"]
         metrics["function_evaluations"][layer] = cold["function_evaluations"]
         metrics["gradient_inf_norm"][layer] = cold["gradient_inf_norm"]
+    elif mutation == "max-evaluations-wrong-reason":
+        cold["gradient_inf_norm"] = 2e-7
+        cold["function_evaluations"] = 10_000
+        cold["termination_reason"] = "internal-or-line-search-stall"
+        polished = {
+            **cold,
+            "round_index": 1,
+            "phase": "history-reset-fixed-step-polish",
+            "gradient_inf_norm": 5e-8,
+            "iterations": 1,
+            "function_evaluations": 1,
+            "termination_reason": "gradient-tolerance",
+        }
+        metrics["optimization_rounds"][layer].append(polished)
+        metrics["objective"][layer] = polished["objective"]
+        metrics["gradient_inf_norm"][layer] = polished["gradient_inf_norm"]
+        metrics["iterations"][layer] = cold["iterations"] + polished["iterations"]
+        metrics["function_evaluations"][layer] = (
+            cold["function_evaluations"] + polished["function_evaluations"]
+        )
     elif mutation == "over-budget":
         cold["iterations"] = 1001
         cold["function_evaluations"] = 1001

@@ -1053,9 +1053,13 @@ def _validate_fit_diagnostics(
                     round_iterations == protocol.max_iterations and not passed_gradient_gate
                 ):
                     raise ValueError("probe fit solver max-iteration termination differs")
-                if (
-                    row["termination_reason"] == "max-evaluations"
-                    and round_evaluations < protocol.max_evaluations
+                expected_max_evaluation_termination = (
+                    not passed_gradient_gate
+                    and round_iterations < protocol.max_iterations
+                    and round_evaluations >= protocol.max_evaluations
+                )
+                if (row["termination_reason"] == "max-evaluations") != (
+                    expected_max_evaluation_termination
                 ):
                     raise ValueError("probe fit solver max-evaluation termination differs")
                 if round_index == 0 and float(row["objective"]) > (
