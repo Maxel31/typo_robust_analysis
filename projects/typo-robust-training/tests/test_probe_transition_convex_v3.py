@@ -5,7 +5,7 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from typo_robust_training.probe.config import ProbeProducerProtocol
+from typo_robust_training.probe.config import POLISH_ACCEPTANCE_RULE, ProbeProducerProtocol
 from typo_robust_training.probe.producer import _fit_probe
 from typo_robust_training.probe.partition import build_probe_fit_partitions
 
@@ -42,13 +42,15 @@ def _protocol(*, hidden_size: int, decoder_layers: int = 2) -> ProbeProducerProt
         bootstrap_seed=1729,
         bootstrap_confidence=0.95,
         config_sha256="d" * 64,
-        schema_version="typo-linear-probe-producer-config/v3",
-        optimizer="full-batch-lbfgs-strong-wolfe-float64/v1",
+        schema_version="typo-linear-probe-producer-config/v4",
+        optimizer=("full-batch-lbfgs-float64-strong-wolfe-then-history-reset-fixed-step-polish/v2"),
         standardization="fit-only-per-layer-scalar-rms-folded/v1",
         l2_penalty="unit-prior-sum-loss/v1",
         fit_partition_rule="class-stratified-record-id-sha256-balanced-halves/v1",
         max_iterations=1000,
-        max_evaluations=1250,
+        max_evaluations=10000,
+        max_history_reset_polishes=1,
+        polish_acceptance_rule=POLISH_ACCEPTANCE_RULE,
         history_size=100,
         gradient_tolerance=1e-7,
         change_tolerance=0.0,
@@ -188,5 +190,66 @@ def test_one_lbfgs_iteration_fails_closed() -> None:
         max_iterations=1,
         max_evaluations=2,
     )
-    with pytest.raises(FloatingPointError, match="gradient gate"):
+    with pytest.raises(
+        FloatingPointError,
+        match=(
+            r"gradient gate at layer 0: required_gradient_inf_norm<=1e-07; "
+            r"round=0,termination=max-iterations.*round=1,termination=max-iterations"
+        ),
+    ):
         _fit_probe(values, labels, class_count=3, seed=42, protocol=protocol)
+
+
+def test_deterministic_history_reset_polish_crosses_the_unchanged_gradient_gate() -> None:
+    values, labels = _problem()
+    base = replace(
+        _protocol(hidden_size=values.shape[2]),
+        max_iterations=15,
+        max_evaluations=30,
+    )
+    without_polish = replace(
+        base,
+        schema_version="typo-linear-probe-producer-config/v3",
+        optimizer="full-batch-lbfgs-strong-wolfe-float64/v1",
+        max_history_reset_polishes=None,
+        polish_acceptance_rule=None,
+    )
+    with pytest.raises(FloatingPointError, match="termination=max-iterations"):
+        _fit_probe(
+            values,
+            labels,
+            class_count=3,
+            seed=42,
+            protocol=without_polish,
+        )
+
+    fit = _fit_probe(values, labels, class_count=3, seed=42, protocol=base)
+
+    assert any(len(row.optimization_rounds) == 2 for row in fit.diagnostics)
+    for row in fit.diagnostics:
+        assert row.gradient_inf_norm <= 1e-7
+        assert row.optimization_rounds[-1].termination_reason == "gradient-tolerance"
+        assert row.optimization_rounds[0].phase == "cold-start-strong-wolfe"
+        if len(row.optimization_rounds) == 2:
+            assert row.optimization_rounds[1].phase == "history-reset-fixed-step-polish"
+        assert row.iterations == sum(item.iterations for item in row.optimization_rounds)
+        assert row.function_evaluations == sum(
+            item.function_evaluations for item in row.optimization_rounds
+        )
+
+
+def test_cold_start_that_passes_does_not_run_the_conditional_polish() -> None:
+    values, labels = _problem()
+    fit = _fit_probe(
+        values,
+        labels,
+        class_count=3,
+        seed=42,
+        protocol=_protocol(hidden_size=values.shape[2]),
+    )
+
+    cold_passes = [
+        row for row in fit.diagnostics if row.optimization_rounds[0].gradient_inf_norm <= 1e-7
+    ]
+    assert cold_passes
+    assert all(len(row.optimization_rounds) == 1 for row in cold_passes)

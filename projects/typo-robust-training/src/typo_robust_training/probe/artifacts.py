@@ -26,8 +26,10 @@ from typo_robust_training.data.perturb import (
 )
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.probe.config import (
+    POLISH_ACCEPTANCE_RULE,
     ProbeProducerProtocol,
     load_probe_producer_config,
+    polish_objective_allowance,
 )
 from typo_robust_training.probe.partition import (
     ProbeFitPartition,
@@ -39,6 +41,14 @@ from typo_robust_training.probe.scoring import ProbeSeedTrajectory, select_probe
 _REVISION = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _ROLES = ("fit", "selection", "validation")
+_CONFIG_V2 = "typo-linear-probe-producer-config/v2"
+_CONFIG_V3 = "typo-linear-probe-producer-config/v3"
+_CONFIG_V4 = "typo-linear-probe-producer-config/v4"
+_SELECTION_TO_CONFIG_SCHEMA = {
+    "typo-denoising-probe-selection/v2": _CONFIG_V2,
+    "typo-denoising-probe-selection/v3": _CONFIG_V3,
+    "typo-denoising-probe-selection/v4": _CONFIG_V4,
+}
 _TOP_LEVEL_FIELDS_V2 = {
     "schema_version",
     "operation",
@@ -119,6 +129,7 @@ _WEIGHT_METADATA_FIELDS_V3 = _WEIGHT_METADATA_FIELDS_V1 | {
     "fit_partition_sha256",
     "fit_partition_record_count",
 }
+_WEIGHT_METADATA_FIELDS_V4 = _WEIGHT_METADATA_FIELDS_V3
 _SCORE_ROW_FIELDS = {
     "pair_id",
     "source_group_sha256",
@@ -129,6 +140,14 @@ _SCORE_ROW_FIELDS = {
     "clean_cross_entropy",
     "noisy_cross_entropy",
 }
+
+
+def _is_convex_protocol(protocol: ProbeProducerProtocol) -> bool:
+    return protocol.schema_version in {_CONFIG_V3, _CONFIG_V4}
+
+
+def _is_polished_protocol(protocol: ProbeProducerProtocol) -> bool:
+    return protocol.schema_version == _CONFIG_V4
 
 
 def _sha(value: object, *, field: str) -> str:
@@ -692,9 +711,13 @@ def _validate_probe_weights(
 
     expected_metadata = {
         "schema_version": (
-            "typo-linear-probe-weights/v3"
-            if protocol.schema_version.endswith("/v3")
-            else "typo-linear-probe-weights/v1"
+            "typo-linear-probe-weights/v4"
+            if _is_polished_protocol(protocol)
+            else (
+                "typo-linear-probe-weights/v3"
+                if _is_convex_protocol(protocol)
+                else "typo-linear-probe-weights/v1"
+            )
         ),
         "seed": str(seed),
         "config_sha256": protocol.config_sha256,
@@ -708,9 +731,9 @@ def _validate_probe_weights(
         "class_count": str(class_count),
     }
     expected_metadata_fields = set(_WEIGHT_METADATA_FIELDS_V1)
-    if protocol.schema_version.endswith("/v3"):
+    if _is_convex_protocol(protocol):
         if partition is None or partition.seed != seed:
-            raise ValueError("v3 probe weights require a recomputed fit partition")
+            raise ValueError("convex probe weights require a recomputed fit partition")
         expected_metadata.update(
             {
                 "fit_partition_rule": str(protocol.fit_partition_rule),
@@ -718,7 +741,11 @@ def _validate_probe_weights(
                 "fit_partition_record_count": str(len(partition.indices)),
             }
         )
-        expected_metadata_fields = set(_WEIGHT_METADATA_FIELDS_V3)
+        expected_metadata_fields = set(
+            _WEIGHT_METADATA_FIELDS_V4
+            if _is_polished_protocol(protocol)
+            else _WEIGHT_METADATA_FIELDS_V3
+        )
     expected_keys = {
         f"decoder_layer.{layer}.{kind}"
         for layer in range(protocol.decoder_layers)
@@ -769,6 +796,7 @@ def _validate_fit_diagnostics(
     partitions: Mapping[int, ProbeFitPartition],
 ) -> None:
     value = _json_file(path)
+    polished = _is_polished_protocol(protocol)
     expected_fields = {
         "schema_version",
         "optimizer",
@@ -778,15 +806,27 @@ def _validate_fit_diagnostics(
         "normalization_by_seed",
         "solver_by_seed",
     }
-    if set(value) != expected_fields or value["schema_version"] != (
-        "typo-linear-probe-fit-diagnostics/v2"
-    ):
+    if polished:
+        expected_fields.add("polish_acceptance_rule")
+    expected_schema = (
+        "typo-linear-probe-fit-diagnostics/v4"
+        if polished
+        else "typo-linear-probe-fit-diagnostics/v2"
+    )
+    if set(value) != expected_fields or value["schema_version"] != expected_schema:
         raise ValueError("probe fit diagnostics fields or schema differ")
     if (
         value["optimizer"] != protocol.optimizer
         or value["standardization"] != protocol.standardization
         or value["l2_penalty"] != protocol.l2_penalty
         or value["fit_partition_rule"] != protocol.fit_partition_rule
+        or (
+            polished
+            and (
+                value["polish_acceptance_rule"] != POLISH_ACCEPTANCE_RULE
+                or value["polish_acceptance_rule"] != protocol.polish_acceptance_rule
+            )
+        )
     ):
         raise ValueError("probe fit diagnostics method identity differs")
     seed_keys = {str(seed) for seed in protocol.probe_seeds}
@@ -839,6 +879,8 @@ def _validate_fit_diagnostics(
         "float64_folded_logit_max_error",
         "float32_serialized_logit_max_error",
     }
+    if polished:
+        metric_fields.add("optimization_rounds")
     if not isinstance(solver, Mapping) or set(solver) != seed_keys:
         raise ValueError("probe fit solver seed inventory differs")
     for seed in protocol.probe_seeds:
@@ -848,7 +890,10 @@ def _validate_fit_diagnostics(
         partition = partitions[seed]
         if (
             metrics["fit_partition_sha256"] != partition.identity_sha256
+            or isinstance(metrics["fit_record_count"], bool)
+            or not isinstance(metrics["fit_record_count"], int)
             or metrics["fit_record_count"] != len(partition.indices)
+            or not isinstance(metrics["fit_class_counts"], Mapping)
             or metrics["fit_class_counts"]
             != {str(class_id): count for class_id, count in partition.class_counts}
         ):
@@ -867,37 +912,215 @@ def _validate_fit_diagnostics(
                     isinstance(item, bool)
                     or not isinstance(item, (int, float))
                     or not math.isfinite(float(item))
-                    or float(item) < 0.0
+                    or (float(item) <= 0.0 if field == "objective" else float(item) < 0.0)
                     for item in values
                 )
             ):
                 raise ValueError(f"probe fit solver {field} values differ")
-        for field in ("iterations", "function_evaluations"):
-            values = metrics[field]
-            if (
-                not isinstance(values, list)
-                or len(values) != protocol.decoder_layers
-                or any(
-                    isinstance(item, bool) or not isinstance(item, int) or item < 1
-                    for item in values
-                )
-            ):
-                raise ValueError(f"probe fit solver {field} values differ")
+        iterations = metrics["iterations"]
+        evaluations = metrics["function_evaluations"]
+        if (
+            not isinstance(iterations, list)
+            or not isinstance(evaluations, list)
+            or len(iterations) != protocol.decoder_layers
+            or len(evaluations) != protocol.decoder_layers
+            or any(
+                isinstance(item, bool) or not isinstance(item, int) or item < 0
+                for item in iterations
+            )
+            or any(
+                isinstance(item, bool) or not isinstance(item, int) or item < 1
+                for item in evaluations
+            )
+        ):
+            raise ValueError("probe fit solver iteration or evaluation values differ")
+        assert protocol.max_iterations is not None
+        assert protocol.max_evaluations is not None
         assert protocol.gradient_tolerance is not None
+        initial_objective = len(partition.indices) * math.log(len(partition.class_counts))
+
+        def zero_start_roundoff(actual: float) -> float:
+            return (
+                64.0
+                * float(np.finfo(np.float64).eps)
+                * max(1.0, abs(initial_objective), abs(actual))
+            )
+
+        for layer, (iteration_count, evaluation_count) in enumerate(
+            zip(iterations, evaluations, strict=True)
+        ):
+            if (
+                iteration_count > protocol.max_iterations * (2 if polished else 1)
+                or evaluation_count > protocol.max_evaluations * (2 if polished else 1)
+                or evaluation_count < max(1, iteration_count)
+            ):
+                raise ValueError("probe fit solver iteration or evaluation budget differs")
+            if not polished:
+                objective = float(metrics["objective"][layer])
+                gradient = float(metrics["gradient_inf_norm"][layer])
+                if objective > initial_objective + zero_start_roundoff(objective):
+                    raise ValueError("legacy probe objective exceeds its zero-start objective")
+                if iteration_count == 0 and (
+                    evaluation_count != 1
+                    or gradient > protocol.gradient_tolerance
+                    or abs(objective - initial_objective) > zero_start_roundoff(objective)
+                ):
+                    raise ValueError("legacy zero-iteration probe diagnostics are impossible")
+        if not polished:
+            if any(
+                float(item) > protocol.gradient_tolerance for item in metrics["gradient_inf_norm"]
+            ):
+                raise ValueError("probe fit solver did not pass its gradient gate")
+            _validate_probe_logit_errors(metrics, protocol=protocol)
+            continue
+
+        rounds_by_layer = metrics["optimization_rounds"]
+        if not isinstance(rounds_by_layer, list) or len(rounds_by_layer) != (
+            protocol.decoder_layers
+        ):
+            raise ValueError("probe fit solver optimization round inventory differs")
+        assert protocol.max_history_reset_polishes == 1
+        round_fields = {
+            "round_index",
+            "phase",
+            "objective",
+            "gradient_inf_norm",
+            "iterations",
+            "function_evaluations",
+            "termination_reason",
+        }
+        allowed_reasons = {
+            "gradient-tolerance",
+            "max-iterations",
+            "max-evaluations",
+            "zero-parameter-step",
+            "non-descent-direction",
+            "internal-or-line-search-stall",
+        }
+        for layer, rounds in enumerate(rounds_by_layer):
+            if not isinstance(rounds, list) or len(rounds) not in {1, 2}:
+                raise ValueError("probe fit solver optimization round count differs")
+            for round_index, row in enumerate(rounds):
+                if not isinstance(row, Mapping) or set(row) != round_fields:
+                    raise ValueError("probe fit solver optimization round fields differ")
+                if row["round_index"] != round_index:
+                    raise ValueError("probe fit solver optimization round index differs")
+                expected_phase = (
+                    "cold-start-strong-wolfe"
+                    if round_index == 0
+                    else "history-reset-fixed-step-polish"
+                )
+                if row["phase"] != expected_phase:
+                    raise ValueError("probe fit solver optimization phase differs")
+                for field in ("objective", "gradient_inf_norm"):
+                    item = row[field]
+                    if (
+                        isinstance(item, bool)
+                        or not isinstance(item, (int, float))
+                        or not math.isfinite(float(item))
+                        or (float(item) <= 0.0 if field == "objective" else float(item) < 0.0)
+                    ):
+                        raise ValueError(f"probe fit solver optimization round {field} differs")
+                round_iterations = row["iterations"]
+                round_evaluations = row["function_evaluations"]
+                minimum_iterations = 0 if round_index == 0 else 1
+                if (
+                    isinstance(round_iterations, bool)
+                    or not isinstance(round_iterations, int)
+                    or round_iterations < minimum_iterations
+                    or round_iterations > protocol.max_iterations
+                    or isinstance(round_evaluations, bool)
+                    or not isinstance(round_evaluations, int)
+                    or round_evaluations < 1
+                    or round_evaluations > protocol.max_evaluations
+                    or round_evaluations < max(1, round_iterations)
+                ):
+                    raise ValueError("probe fit solver optimization round budget differs")
+                if row["termination_reason"] not in allowed_reasons:
+                    raise ValueError("probe fit solver optimization termination reason differs")
+                passed_gradient_gate = (
+                    float(row["gradient_inf_norm"]) <= protocol.gradient_tolerance
+                )
+                if (row["termination_reason"] == "gradient-tolerance") != (passed_gradient_gate):
+                    raise ValueError(
+                        "probe fit solver termination disagrees with its external gradient"
+                    )
+                if round_index < len(rounds) - 1 and row["termination_reason"] == (
+                    "gradient-tolerance"
+                ):
+                    raise ValueError("probe fit solver continued after numerical convergence")
+                if (row["termination_reason"] == "max-iterations") != (
+                    round_iterations == protocol.max_iterations and not passed_gradient_gate
+                ):
+                    raise ValueError("probe fit solver max-iteration termination differs")
+                expected_max_evaluation_termination = (
+                    not passed_gradient_gate
+                    and round_iterations < protocol.max_iterations
+                    and round_evaluations >= protocol.max_evaluations
+                )
+                if (row["termination_reason"] == "max-evaluations") != (
+                    expected_max_evaluation_termination
+                ):
+                    raise ValueError("probe fit solver max-evaluation termination differs")
+                if round_index == 0 and float(row["objective"]) > (
+                    initial_objective + zero_start_roundoff(float(row["objective"]))
+                ):
+                    raise ValueError("probe cold objective exceeds its zero-start objective")
+                if (
+                    round_index == 0
+                    and round_iterations == 0
+                    and (
+                        len(rounds) != 1
+                        or round_evaluations != 1
+                        or not passed_gradient_gate
+                        or abs(float(row["objective"]) - initial_objective)
+                        > zero_start_roundoff(float(row["objective"]))
+                    )
+                ):
+                    raise ValueError("probe zero-iteration cold round is impossible")
+            final_round = rounds[-1]
+            if final_round["termination_reason"] != "gradient-tolerance":
+                raise ValueError("probe fit solver final round did not converge")
+            cold_passed = float(rounds[0]["gradient_inf_norm"]) <= protocol.gradient_tolerance
+            if (len(rounds) == 1) != cold_passed:
+                raise ValueError("probe polish presence disagrees with cold convergence")
+            if len(rounds) == 2:
+                allowance = polish_objective_allowance(
+                    parameter_count=(protocol.hidden_size + 1) * len(partition.class_counts),
+                    gradient_tolerance=protocol.gradient_tolerance,
+                    pre_objective=float(rounds[0]["objective"]),
+                    post_objective=float(rounds[1]["objective"]),
+                )
+                if float(rounds[1]["objective"]) > float(rounds[0]["objective"]) + allowance:
+                    raise ValueError("probe fit solver polish objective safeguard failed")
+            if (
+                float(final_round["objective"]) != float(metrics["objective"][layer])
+                or float(final_round["gradient_inf_norm"])
+                != float(metrics["gradient_inf_norm"][layer])
+                or sum(int(row["iterations"]) for row in rounds) != metrics["iterations"][layer]
+                or sum(int(row["function_evaluations"]) for row in rounds)
+                != metrics["function_evaluations"][layer]
+            ):
+                raise ValueError("probe fit solver optimization round summary differs")
         if any(float(item) > protocol.gradient_tolerance for item in metrics["gradient_inf_norm"]):
             raise ValueError("probe fit solver did not pass its gradient gate")
-        assert protocol.folded_logit_tolerance is not None
-        assert protocol.serialized_logit_tolerance is not None
-        if any(
-            float(item) > protocol.folded_logit_tolerance
-            for item in metrics["float64_folded_logit_max_error"]
-        ):
-            raise ValueError("probe fit standardization folding exceeded its tolerance")
-        if any(
-            float(item) > protocol.serialized_logit_tolerance
-            for item in metrics["float32_serialized_logit_max_error"]
-        ):
-            raise ValueError("probe fit serialization exceeded its tolerance")
+        _validate_probe_logit_errors(metrics, protocol=protocol)
+
+
+def _validate_probe_logit_errors(
+    metrics: Mapping[str, object],
+    *,
+    protocol: ProbeProducerProtocol,
+) -> None:
+    assert protocol.folded_logit_tolerance is not None
+    assert protocol.serialized_logit_tolerance is not None
+    folded = metrics["float64_folded_logit_max_error"]
+    serialized = metrics["float32_serialized_logit_max_error"]
+    assert isinstance(folded, list) and isinstance(serialized, list)
+    if any(float(item) > protocol.folded_logit_tolerance for item in folded):
+        raise ValueError("probe fit standardization folding exceeded its tolerance")
+    if any(float(item) > protocol.serialized_logit_tolerance for item in serialized):
+        raise ValueError("probe fit serialization exceeded its tolerance")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1011,10 +1234,17 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
     if artifact_schema not in {
         "typo-denoising-probe-selection/v2",
         "typo-denoising-probe-selection/v3",
+        "typo-denoising-probe-selection/v4",
     }:
         raise ValueError("probe transition schema_version differs")
     expected_top_level = (
-        _TOP_LEVEL_FIELDS_V3 if artifact_schema.endswith("/v3") else _TOP_LEVEL_FIELDS_V2
+        _TOP_LEVEL_FIELDS_V3
+        if artifact_schema
+        in {
+            "typo-denoising-probe-selection/v3",
+            "typo-denoising-probe-selection/v4",
+        }
+        else _TOP_LEVEL_FIELDS_V2
     )
     if set(payload) != expected_top_level:
         raise ValueError("probe transition artifact fields differ")
@@ -1072,7 +1302,10 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
         "selection_scores_by_seed",
         "validation_scores_by_seed",
     }
-    if artifact_schema.endswith("/v3"):
+    if artifact_schema in {
+        "typo-denoising-probe-selection/v3",
+        "typo-denoising-probe-selection/v4",
+    }:
         expected_reference_fields.add("fit_diagnostics")
     if not isinstance(references, Mapping) or set(references) != expected_reference_fields:
         raise ValueError("probe transition reference fields differ")
@@ -1082,7 +1315,7 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
     if config_sha256 != protocol.config_sha256:
         raise ValueError("probe config reference differs from its content hash")
     if (
-        artifact_schema.endswith("/v3") != protocol.schema_version.endswith("/v3")
+        _SELECTION_TO_CONFIG_SCHEMA[artifact_schema] != protocol.schema_version
         or model != protocol.model
         or revision != protocol.model_revision
         or decoder_layers != protocol.decoder_layers
@@ -1095,7 +1328,11 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
         or payload["stability_rule"] != protocol.stability_rule
         or payload["validation_rule"] != protocol.validation_rule
         or (
-            artifact_schema.endswith("/v3")
+            artifact_schema
+            in {
+                "typo-denoising-probe-selection/v3",
+                "typo-denoising-probe-selection/v4",
+            }
             and (
                 payload["fit_partition_rule"] != protocol.fit_partition_rule
                 or payload["probe_validity_rule"] != protocol.probe_validity_rule
@@ -1130,7 +1367,7 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
         )
     fit_partitions = (
         build_probe_fit_partitions(manifests["fit"], seeds=protocol.probe_seeds)
-        if protocol.schema_version.endswith("/v3")
+        if _is_convex_protocol(protocol)
         else {}
     )
     identity_unions = {role: _all_identities(manifests[role]) for role in _ROLES}
@@ -1186,7 +1423,7 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
         )
     if len(set(tensor_digests.values())) != len(seeds):
         raise ValueError("scientific probe fit partitions contain identical numerical tensors")
-    if protocol.schema_version.endswith("/v3"):
+    if _is_convex_protocol(protocol):
         diagnostics_path, _ = _reference(
             references["fit_diagnostics"], root=root, field="probe fit diagnostics"
         )
@@ -1270,7 +1507,10 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
             seed=1729,
         )
     clean_ce_upper_by_seed: dict[int, dict[int, float]] = {}
-    if artifact_schema.endswith("/v3"):
+    if artifact_schema in {
+        "typo-denoising-probe-selection/v3",
+        "typo-denoising-probe-selection/v4",
+    }:
         stored_clean_upper = payload["validation_clean_ce_upper_by_seed"]
         expected_seed_keys = {str(seed) for seed in seeds}
         expected_layer_keys = {str(selected - 1), str(selected)}

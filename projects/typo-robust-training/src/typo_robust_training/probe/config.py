@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,6 +69,10 @@ _PROBE_V3 = {
     "hook_site",
     "coordinate",
 }
+_PROBE_V4 = _PROBE_V3 | {
+    "max_history_reset_polishes",
+    "polish_acceptance_rule",
+}
 _SELECTION_V2 = {
     "metric",
     "rule",
@@ -91,6 +96,10 @@ VALIDATION_RULE_V3 = "group-bootstrap-95pct-lower-positive-for-both-disjoint-fit
 PROBE_VALIDITY_RULE = (
     "validation-source-group-bootstrap-95pct-upper-clean-ce-below-uniform-"
     "at-boundary-for-both-fit-partitions/v1"
+)
+POLISH_ACCEPTANCE_RULE = (
+    "post-objective-at-most-pre-plus-parameter-count-times-gradient-tolerance-"
+    "squared-over-two-plus-float64-roundoff/v1"
 )
 HOOK_SITE = "complete-decoder-block-residual-output"
 COORDINATE = "edited-word-final-token/v1"
@@ -189,6 +198,8 @@ class ProbeProducerProtocol:
     fit_partition_rule: str | None = None
     max_iterations: int | None = None
     max_evaluations: int | None = None
+    max_history_reset_polishes: int | None = None
+    polish_acceptance_rule: str | None = None
     history_size: int | None = None
     gradient_tolerance: float | None = None
     change_tolerance: float | None = None
@@ -224,8 +235,14 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
     if schema_version not in {
         "typo-linear-probe-producer-config/v2",
         "typo-linear-probe-producer-config/v3",
+        "typo-linear-probe-producer-config/v4",
     }:
         raise ValueError("probe producer config schema differs")
+    is_convex = schema_version in {
+        "typo-linear-probe-producer-config/v3",
+        "typo-linear-probe-producer-config/v4",
+    }
+    is_polished = schema_version == "typo-linear-probe-producer-config/v4"
     model = payload["model"]
     inputs = payload["inputs"]
     cohorts = payload["cohorts"]
@@ -237,10 +254,10 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
         raise ValueError("probe producer input fields differ")
     if not isinstance(cohorts, dict) or set(cohorts) != _COHORTS:
         raise ValueError("probe producer cohort fields differ")
-    expected_probe_fields = _PROBE_V3 if schema_version.endswith("/v3") else _PROBE_V2
+    expected_probe_fields = _PROBE_V4 if is_polished else (_PROBE_V3 if is_convex else _PROBE_V2)
     if not isinstance(probe, dict) or set(probe) != expected_probe_fields:
         raise ValueError("probe producer probe fields differ")
-    expected_selection_fields = _SELECTION_V3 if schema_version.endswith("/v3") else _SELECTION_V2
+    expected_selection_fields = _SELECTION_V3 if is_convex else _SELECTION_V2
     if not isinstance(selection, dict) or set(selection) != expected_selection_fields:
         raise ValueError("probe producer selection fields differ")
     bootstrap = selection["bootstrap"]
@@ -264,13 +281,15 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
         raise ValueError("probe producer seeds must be exactly [42, 43]")
     expected = {
         "optimizer": (
-            "full-batch-lbfgs-strong-wolfe-float64/v1"
-            if schema_version.endswith("/v3")
-            else "adamw"
+            "full-batch-lbfgs-float64-strong-wolfe-then-history-reset-fixed-step-polish/v2"
+            if is_polished
+            else ("full-batch-lbfgs-strong-wolfe-float64/v1" if is_convex else "adamw")
         ),
         "hook_site": HOOK_SITE,
         "coordinate": COORDINATE,
     }
+    if is_polished:
+        expected["polish_acceptance_rule"] = POLISH_ACCEPTANCE_RULE
     for field, literal in expected.items():
         if probe[field] != literal:
             raise ValueError(f"probe producer {field} differs")
@@ -278,12 +297,10 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
         "metric": SELECTION_METRIC,
         "rule": SELECTION_RULE,
         "tie_break": TIE_BREAK,
-        "stability_rule": STABILITY_RULE_V3 if schema_version.endswith("/v3") else STABILITY_RULE,
-        "validation_rule": (
-            VALIDATION_RULE_V3 if schema_version.endswith("/v3") else VALIDATION_RULE
-        ),
+        "stability_rule": STABILITY_RULE_V3 if is_convex else STABILITY_RULE,
+        "validation_rule": (VALIDATION_RULE_V3 if is_convex else VALIDATION_RULE),
     }
-    if schema_version.endswith("/v3"):
+    if is_convex:
         expected_selection["probe_validity_rule"] = PROBE_VALIDITY_RULE
     for field, literal in expected_selection.items():
         if selection[field] != literal:
@@ -320,26 +337,33 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
         raise ValueError("minimum source groups cannot exceed records per class")
     strata = _stratum_counts(cohorts["stratum_counts"])
 
-    if schema_version.endswith("/v3"):
+    if is_convex:
         if records_per_class["fit"] % 2 != 0:
-            raise ValueError("v3 probe fit records per class must be even")
+            raise ValueError("convex probe fit records per class must be even")
         if probe["fit_partition_rule"] != FIT_PARTITION_RULE:
             raise ValueError("probe producer fit partition rule differs")
         if probe["standardization"] != "fit-only-per-layer-scalar-rms-folded/v1":
             raise ValueError("probe producer standardization differs")
         if probe["l2_penalty"] != "unit-prior-sum-loss/v1":
             raise ValueError("probe producer L2 penalty differs")
-        fixed_numbers = {
+        fixed_integers = {
             "max_iterations": 1000,
-            "max_evaluations": 1250,
+            "max_evaluations": 10000 if is_polished else 1250,
             "history_size": 100,
+        }
+        if is_polished:
+            fixed_integers["max_history_reset_polishes"] = 1
+        for field, expected_value in fixed_integers.items():
+            if _integer(probe[field], field=f"probe {field}") != expected_value:
+                raise ValueError(f"probe producer {field} differs")
+        fixed_numbers = {
             "gradient_tolerance": 1e-7,
             "change_tolerance": 0.0,
             "folded_logit_tolerance": 1e-8,
             "serialized_logit_tolerance": 1e-5,
         }
         for field, expected_value in fixed_numbers.items():
-            if probe[field] != expected_value:
+            if _number(probe[field], field=f"probe {field}") != expected_value:
                 raise ValueError(f"probe producer {field} differs")
         beta1 = beta2 = None
     else:
@@ -360,29 +384,21 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
         probe_seeds=(42, 43),
         learning_rate=(
             None
-            if schema_version.endswith("/v3")
+            if is_convex
             else _number(probe["learning_rate"], field="probe learning rate", minimum=1e-12)
         ),
         weight_decay=(
-            None
-            if schema_version.endswith("/v3")
-            else _number(probe["weight_decay"], field="probe weight decay")
+            None if is_convex else _number(probe["weight_decay"], field="probe weight decay")
         ),
         beta1=beta1,
         beta2=beta2,
         epsilon=(
-            None
-            if schema_version.endswith("/v3")
-            else _number(probe["epsilon"], field="probe epsilon", minimum=1e-12)
+            None if is_convex else _number(probe["epsilon"], field="probe epsilon", minimum=1e-12)
         ),
-        epochs=(
-            None
-            if schema_version.endswith("/v3")
-            else _integer(probe["epochs"], field="probe epochs", minimum=1)
-        ),
+        epochs=(None if is_convex else _integer(probe["epochs"], field="probe epochs", minimum=1)),
         batch_size=(
             None
-            if schema_version.endswith("/v3")
+            if is_convex
             else _integer(probe["batch_size"], field="probe batch size", minimum=1)
         ),
         bootstrap_resamples=10_000,
@@ -391,30 +407,58 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
         config_sha256=hashlib.sha256(raw).hexdigest(),
         schema_version=schema_version,
         optimizer=str(probe["optimizer"]),
-        standardization=(str(probe["standardization"]) if schema_version.endswith("/v3") else None),
-        l2_penalty=(str(probe["l2_penalty"]) if schema_version.endswith("/v3") else None),
-        fit_partition_rule=(
-            str(probe["fit_partition_rule"]) if schema_version.endswith("/v3") else None
+        standardization=(str(probe["standardization"]) if is_convex else None),
+        l2_penalty=(str(probe["l2_penalty"]) if is_convex else None),
+        fit_partition_rule=(str(probe["fit_partition_rule"]) if is_convex else None),
+        max_iterations=(int(probe["max_iterations"]) if is_convex else None),
+        max_evaluations=(int(probe["max_evaluations"]) if is_convex else None),
+        max_history_reset_polishes=(
+            int(probe["max_history_reset_polishes"]) if is_polished else None
         ),
-        max_iterations=(int(probe["max_iterations"]) if schema_version.endswith("/v3") else None),
-        max_evaluations=(int(probe["max_evaluations"]) if schema_version.endswith("/v3") else None),
-        history_size=(int(probe["history_size"]) if schema_version.endswith("/v3") else None),
-        gradient_tolerance=(
-            float(probe["gradient_tolerance"]) if schema_version.endswith("/v3") else None
-        ),
-        change_tolerance=(
-            float(probe["change_tolerance"]) if schema_version.endswith("/v3") else None
-        ),
-        folded_logit_tolerance=(
-            float(probe["folded_logit_tolerance"]) if schema_version.endswith("/v3") else None
-        ),
+        polish_acceptance_rule=(str(probe["polish_acceptance_rule"]) if is_polished else None),
+        history_size=(int(probe["history_size"]) if is_convex else None),
+        gradient_tolerance=(float(probe["gradient_tolerance"]) if is_convex else None),
+        change_tolerance=(float(probe["change_tolerance"]) if is_convex else None),
+        folded_logit_tolerance=(float(probe["folded_logit_tolerance"]) if is_convex else None),
         serialized_logit_tolerance=(
-            float(probe["serialized_logit_tolerance"]) if schema_version.endswith("/v3") else None
+            float(probe["serialized_logit_tolerance"]) if is_convex else None
         ),
-        stability_rule=(STABILITY_RULE_V3 if schema_version.endswith("/v3") else STABILITY_RULE),
-        validation_rule=(VALIDATION_RULE_V3 if schema_version.endswith("/v3") else VALIDATION_RULE),
-        probe_validity_rule=(PROBE_VALIDITY_RULE if schema_version.endswith("/v3") else None),
+        stability_rule=(STABILITY_RULE_V3 if is_convex else STABILITY_RULE),
+        validation_rule=(VALIDATION_RULE_V3 if is_convex else VALIDATION_RULE),
+        probe_validity_rule=(PROBE_VALIDITY_RULE if is_convex else None),
     )
+
+
+def polish_objective_allowance(
+    *,
+    parameter_count: int,
+    gradient_tolerance: float,
+    pre_objective: float,
+    post_objective: float,
+) -> float:
+    """Return the fixed numerical allowance for one convex-solver polish.
+
+    Unit L2 regularization makes the objective one-strongly convex.  A point
+    passing the external infinity-norm gradient gate can therefore be at most
+    ``P * tau**2 / 2`` above the unique optimum.  The second term only covers
+    float64 objective-reduction roundoff and is deliberately negligible.
+    """
+
+    if parameter_count < 1:
+        raise ValueError("polish parameter count must be positive")
+    values = (gradient_tolerance, pre_objective, post_objective)
+    if any(not math.isfinite(value) for value in values) or gradient_tolerance <= 0.0:
+        raise ValueError("polish objective inputs must be finite and tolerance positive")
+    roundoff = (
+        64.0
+        * sys.float_info.epsilon
+        * max(
+            1.0,
+            abs(pre_objective),
+            abs(post_objective),
+        )
+    )
+    return 0.5 * parameter_count * gradient_tolerance**2 + roundoff
 
 
 __all__ = [
@@ -429,5 +473,7 @@ __all__ = [
     "VALIDATION_RULE",
     "VALIDATION_RULE_V3",
     "PROBE_VALIDITY_RULE",
+    "POLISH_ACCEPTANCE_RULE",
+    "polish_objective_allowance",
     "load_probe_producer_config",
 ]
