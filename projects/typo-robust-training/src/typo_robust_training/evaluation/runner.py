@@ -176,6 +176,15 @@ def _validate_production_runtime_provenance(
         or provenance.get("source_tree_sha256") != expected_source_tree_sha256
     ):
         raise ValueError("evaluation runtime source provenance differs")
+    from typo_cot.models.tokenizer_attestation import (
+        frozen_tokenizer_attestation_from_environment,
+    )
+
+    frozen = frozen_tokenizer_attestation_from_environment()
+    if frozen is None or provenance.get("tokenizer_snapshot_attestation") != (
+        frozen.provenance_dict()
+    ):
+        raise ValueError("evaluation runtime tokenizer attestation differs")
 
 
 def _validate_production_runtime_inventory(

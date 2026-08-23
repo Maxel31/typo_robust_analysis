@@ -753,6 +753,7 @@ class HuggingFaceAdapterTrainingRuntime:
             get_cosine_schedule_with_warmup,
         )
         from typo_cot.experiments.layerwise_kl_patching.patching import find_decoder_layers
+        from typo_cot.models.tokenizer_attestation import require_frozen_tokenizer_attestation
         from typo_cot.models.wrapper import create_model_wrapper
 
         self.protocol = protocol
@@ -780,6 +781,11 @@ class HuggingFaceAdapterTrainingRuntime:
                 role="teacher",
             )
         )
+        teacher_tokenizer_attestation = require_frozen_tokenizer_attestation(
+            self.teacher_wrapper,
+            expected_model=protocol.model,
+            expected_revision=protocol.model_revision,
+        )
         self.teacher.eval()
         self.teacher.requires_grad_(False)
         self.student_wrapper = create_model_wrapper(
@@ -797,8 +803,18 @@ class HuggingFaceAdapterTrainingRuntime:
                 role="student",
             )
         )
+        student_tokenizer_attestation = require_frozen_tokenizer_attestation(
+            self.student_wrapper,
+            expected_model=protocol.model,
+            expected_revision=protocol.model_revision,
+        )
         if teacher_tokenizer_revision != student_tokenizer_revision:
             raise ValueError("teacher and student tokenizer revisions differ")
+        if teacher_tokenizer_attestation.provenance_dict() != (
+            student_tokenizer_attestation.provenance_dict()
+        ):
+            raise ValueError("teacher and student tokenizer attestations differ")
+        self.tokenizer_snapshot_attestation = student_tokenizer_attestation
         self.tokenizer_revision = student_tokenizer_revision
         base_layers = find_decoder_layers(student_base)
         self.num_decoder_layers = len(base_layers)
@@ -1623,6 +1639,9 @@ class HuggingFaceAdapterTrainingRuntime:
             "teacher_revision": self.teacher_revision,
             "student_revision": self.student_revision,
             "tokenizer_revision": self.tokenizer_revision,
+            "tokenizer_snapshot_attestation": (
+                self.tokenizer_snapshot_attestation.provenance_dict()
+            ),
             "code_revision": self.code_revision,
             "source_tree_sha256": self.source_tree_sha256,
             "condition": self.protocol.condition,

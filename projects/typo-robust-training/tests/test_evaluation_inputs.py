@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from _tokenizer_attestation import tokenizer_attestation_provenance
+
 from typo_robust_training.evaluation.checkpoints import (
     load_adapter_descriptors,
     load_patch_window,
@@ -64,6 +66,10 @@ def _adapter(
                 "teacher_revision": PROTOCOL.model_revision,
                 "student_revision": PROTOCOL.model_revision,
                 "tokenizer_revision": PROTOCOL.model_revision,
+                "tokenizer_snapshot_attestation": tokenizer_attestation_provenance(
+                    PROTOCOL.model,
+                    PROTOCOL.model_revision,
+                ),
                 "code_revision": "f" * 40,
             }
             if runtime_version == "v2"

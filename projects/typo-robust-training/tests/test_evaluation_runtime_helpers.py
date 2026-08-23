@@ -12,7 +12,12 @@ import torch
 from typo_cot.evaluation import generation as generation_module
 from typo_cot.experiments.layerwise_kl_patching import patching as patching_module
 from typo_cot.models import wrapper as wrapper_module
+from typo_cot.models.tokenizer_attestation import TOKENIZER_ATTESTATION_MANIFEST_ENV
 
+from _tokenizer_attestation import (
+    frozen_tokenizer_attestation,
+    write_tokenizer_attestation_manifest,
+)
 from typo_robust_training.evaluation.checkpoints import AdapterDescriptor, PatchWindow
 from typo_robust_training.evaluation.config import load_robustness_evaluation_config
 from typo_robust_training.evaluation.prompting import EvaluationPrompts
@@ -33,6 +38,20 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = PROJECT_ROOT / "configs/gemma4b-evaluation.yaml"
 PROTOCOL = load_robustness_evaluation_config(CONFIG)
 REVISION = PROTOCOL.model_revision
+
+
+@pytest.fixture(autouse=True)
+def _frozen_tokenizer_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "tokenizer-attestation.json"
+    write_tokenizer_attestation_manifest(
+        path,
+        model=PROTOCOL.model,
+        revision=REVISION,
+    )
+    monkeypatch.setenv(TOKENIZER_ATTESTATION_MANIFEST_ENV, str(path))
 
 
 class _PieceTokenizer:
@@ -300,6 +319,7 @@ def test_runtime_factory_loads_base_once_and_switches_only_adapters(
 
     def fake_wrapper(**kwargs: object) -> SimpleNamespace:
         wrapper_calls.append(kwargs)
+        attestation = frozen_tokenizer_attestation(PROTOCOL.model, REVISION)[1]
         return SimpleNamespace(
             model=base,
             tokenizer=SimpleNamespace(
@@ -307,6 +327,7 @@ def test_runtime_factory_loads_base_once_and_switches_only_adapters(
                 padding_side=None,
                 init_kwargs={"_commit_hash": REVISION},
             ),
+            tokenizer_snapshot_attestation=attestation,
         )
 
     monkeypatch.setattr(wrapper_module, "create_model_wrapper", fake_wrapper)

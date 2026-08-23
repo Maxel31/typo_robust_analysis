@@ -148,6 +148,15 @@ def load_adapter_descriptors(
             code_revision = runtime.get("code_revision")
             if not isinstance(code_revision, str) or _REVISION40.fullmatch(code_revision) is None:
                 raise ValueError("evaluation adapter code revision is not attested")
+            from typo_cot.models.tokenizer_attestation import (
+                validate_tokenizer_attestation_provenance,
+            )
+
+            validate_tokenizer_attestation_provenance(
+                runtime.get("tokenizer_snapshot_attestation"),
+                expected_model=protocol.model,
+                expected_revision=protocol.model_revision,
+            )
         adapter_config = _object(path / "adapter_config.json", artifact="PEFT adapter config")
         if (
             adapter_config.get("base_model_name_or_path") != protocol.model

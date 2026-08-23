@@ -9,7 +9,12 @@ from pathlib import Path
 from types import MappingProxyType
 
 import pytest
+from typo_cot.models.tokenizer_attestation import TOKENIZER_ATTESTATION_MANIFEST_ENV
 
+from _tokenizer_attestation import (
+    tokenizer_attestation_provenance,
+    write_tokenizer_attestation_manifest,
+)
 from typo_robust_training.data.records import TypoEdit
 from typo_robust_training.evaluation.checkpoints import AdapterDescriptor, PatchWindow
 from typo_robust_training.evaluation.config import load_robustness_evaluation_config
@@ -40,6 +45,21 @@ CONFIG = PROJECT_ROOT / "configs/gemma4b-evaluation.yaml"
 STUDY = PROJECT_ROOT / "configs/robustness-evaluation-v1.yaml"
 EXPECTED_CODE_REVISION = "a" * 40
 EXPECTED_SOURCE_TREE_SHA256 = "b" * 64
+
+
+@pytest.fixture(autouse=True)
+def _frozen_tokenizer_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    protocol = load_robustness_evaluation_config(CONFIG)
+    path = tmp_path / "tokenizer-attestation.json"
+    write_tokenizer_attestation_manifest(
+        path,
+        model=protocol.model,
+        revision=protocol.model_revision,
+    )
+    monkeypatch.setenv(TOKENIZER_ATTESTATION_MANIFEST_ENV, str(path))
 
 
 def _pair(index: int) -> EvaluationPair:
@@ -202,6 +222,10 @@ def _completed_adapter(
         "teacher_revision": protocol.model_revision,
         "student_revision": protocol.model_revision,
         "tokenizer_revision": protocol.model_revision,
+        "tokenizer_snapshot_attestation": tokenizer_attestation_provenance(
+            protocol.model,
+            protocol.model_revision,
+        ),
         "code_revision": "f" * 40,
         "condition": condition,
         "seed": seed,
@@ -412,6 +436,10 @@ def _production_runtime_provenance(
         "requested_revision": protocol.model_revision,
         "model_revision": protocol.model_revision,
         "tokenizer_revision": protocol.model_revision,
+        "tokenizer_snapshot_attestation": tokenizer_attestation_provenance(
+            protocol.model,
+            protocol.model_revision,
+        ),
         "code_revision": EXPECTED_CODE_REVISION,
         "source_tree_sha256": EXPECTED_SOURCE_TREE_SHA256,
         "condition": condition,

@@ -457,12 +457,23 @@ def _validate_runtime(
     pca_activations_sha256: str,
 ) -> None:
     payload = _json(path, field="semantic kill runtime provenance")
+    from typo_cot.models.tokenizer_attestation import (
+        validate_tokenizer_attestation_provenance,
+    )
+
+    tokenizer_attestation = payload.get("tokenizer_snapshot_attestation")
+    validate_tokenizer_attestation_provenance(
+        tokenizer_attestation,
+        expected_model=protocol.model,
+        expected_revision=protocol.model_revision,
+    )
     expected = {
         "schema_version": "probe-semantic-subspace-kill-runtime/v2",
         "runtime": "HuggingFaceSemanticSubspaceKillRuntime/v2",
         "model": protocol.model,
         "loaded_model_revision": protocol.model_revision,
         "loaded_tokenizer_revision": protocol.model_revision,
+        "tokenizer_snapshot_attestation": tokenizer_attestation,
         "parent_probe_code_revision": protocol.parent_probe_code_revision,
         "kill_runtime_code_revision": protocol.kill_runtime_code_revision,
         "checkout_attestation": checkout_attestation.as_dict(),

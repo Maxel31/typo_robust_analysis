@@ -224,6 +224,8 @@ class ModelWrapper:
 
         # パディングトークンの設定
         if self._tokenizer.pad_token is None:
+            if self.revision is not None:
+                raise ValueError("attested tokenizer unexpectedly lacks its normalized pad token")
             self._tokenizer.pad_token = self._tokenizer.eos_token
 
         logger.info(f"トークナイザーロード完了: {self.model_name}")

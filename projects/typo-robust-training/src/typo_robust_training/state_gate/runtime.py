@@ -24,6 +24,7 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _REQUIRED_TYPO_COT_RUNTIME_MODULES = (
     "typo_cot",
     "typo_cot.experiments.layerwise_kl_patching.patching",
+    "typo_cot.models.tokenizer_attestation",
     "typo_cot.models.wrapper",
 )
 
@@ -233,6 +234,7 @@ class HuggingFaceSingleLayerGateProvider:
         if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
             raise RuntimeError("single-layer gate requires exactly one requested CUDA GPU")
         from typo_cot.experiments.layerwise_kl_patching.patching import find_decoder_layers
+        from typo_cot.models.tokenizer_attestation import require_frozen_tokenizer_attestation
         from typo_cot.models.wrapper import create_model_wrapper
 
         wrapper = create_model_wrapper(
@@ -255,6 +257,11 @@ class HuggingFaceSingleLayerGateProvider:
         self.model.eval()
         self.model.requires_grad_(False)
         self.tokenizer = wrapper.tokenizer
+        self.tokenizer_snapshot_attestation = require_frozen_tokenizer_attestation(
+            wrapper,
+            expected_model=protocol.model,
+            expected_revision=protocol.model_revision,
+        )
         if getattr(self.tokenizer, "is_fast", False) is not True:
             raise ValueError("single-layer gate requires a fast tokenizer")
         self.layers = tuple(find_decoder_layers(self.model))
@@ -617,6 +624,9 @@ class HuggingFaceSingleLayerGateProvider:
             "teacher_revision": self.teacher_revision,
             "student_revision": self.student_revision,
             "tokenizer_revision": self.tokenizer_revision,
+            "tokenizer_snapshot_attestation": (
+                self.tokenizer_snapshot_attestation.provenance_dict()
+            ),
             "code_revision": self.code_revision,
             "source_tree_sha256": self.source_tree_sha256,
             "decoder_layers": len(self.layers),

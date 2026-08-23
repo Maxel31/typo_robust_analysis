@@ -120,6 +120,8 @@ def _require_exact_model_revision(
             tokenizer_candidates.append(revision)
     if any(revision != expected for revision in tokenizer_candidates):
         raise ValueError("loaded tokenizer revision differs from the preregistration")
+    if not tokenizer_candidates:
+        raise ValueError("loaded tokenizer revision is not observable")
     return expected
 
 
@@ -177,6 +179,7 @@ class HuggingFaceProbeActivationProvider:
                 "set CUDA_VISIBLE_DEVICES to one physical device"
             )
         from typo_cot.experiments.layerwise_kl_patching.patching import find_decoder_layers
+        from typo_cot.models.tokenizer_attestation import require_frozen_tokenizer_attestation
         from typo_cot.models.wrapper import create_model_wrapper
 
         wrapper = create_model_wrapper(
@@ -192,6 +195,11 @@ class HuggingFaceProbeActivationProvider:
         if any(parameter.requires_grad for parameter in self._model.parameters()):
             raise RuntimeError("probe activation runtime failed to freeze the base model")
         self.tokenizer = wrapper.tokenizer
+        self.tokenizer_snapshot_attestation = require_frozen_tokenizer_attestation(
+            wrapper,
+            expected_model=protocol.model,
+            expected_revision=protocol.model_revision,
+        )
         if getattr(self.tokenizer, "is_fast", False) is not True:
             raise ValueError("probe activation runtime requires a fast tokenizer")
         self.layers = tuple(find_decoder_layers(self._model))
@@ -339,6 +347,9 @@ class HuggingFaceProbeActivationProvider:
             "decoder_layers": self.decoder_layers,
             "hidden_size": self.hidden_size,
             "base_model_frozen": self.base_model_frozen,
+            "tokenizer_snapshot_attestation": (
+                self.tokenizer_snapshot_attestation.provenance_dict()
+            ),
             "gpu_id": self.gpu_id,
             "python": platform.python_version(),
             "torch": _package_version("torch"),

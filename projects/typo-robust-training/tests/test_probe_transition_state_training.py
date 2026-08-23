@@ -11,6 +11,8 @@ import pytest
 import torch
 from transformers import Gemma3ForCausalLM, Gemma3TextConfig
 
+from _tokenizer_attestation import frozen_tokenizer_attestation
+
 from typo_robust_training.cli import register_commands
 from typo_robust_training.evaluation.checkpoints import load_adapter_descriptors
 from typo_robust_training.training.adapters import attach_lora_adapters
@@ -362,6 +364,10 @@ def test_state_runtime_provenance_binds_gate_evidence(
     runtime.teacher_revision = runtime.protocol.model_revision
     runtime.student_revision = runtime.protocol.model_revision
     runtime.tokenizer_revision = runtime.protocol.model_revision
+    runtime.tokenizer_snapshot_attestation = frozen_tokenizer_attestation(
+        runtime.protocol.model,
+        runtime.protocol.model_revision,
+    )[1]
     runtime.code_revision = "f" * 40
     runtime.source_tree_sha256 = "e" * 64
     runtime.seed = 42

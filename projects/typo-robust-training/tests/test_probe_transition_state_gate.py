@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from _tokenizer_attestation import tokenizer_attestation_provenance
 from test_probe_transition_artifact import _bundle as _parent_bundle
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.probe import load_probe_transition_artifact
@@ -105,6 +106,10 @@ def _gate_inputs(tmp_path: Path) -> tuple[dict[str, Path], object]:
         "teacher_revision": parent.model_revision,
         "student_revision": parent.model_revision,
         "tokenizer_revision": parent.model_revision,
+        "tokenizer_snapshot_attestation": tokenizer_attestation_provenance(
+            parent.model,
+            parent.model_revision,
+        ),
         "code_revision": "b" * 40,
         "source_tree_sha256": "d" * 64,
         "decoder_layers": parent.decoder_layers,

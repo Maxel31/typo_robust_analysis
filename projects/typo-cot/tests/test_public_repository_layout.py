@@ -247,6 +247,7 @@ PUBLIC_SOURCE_FILES = {
     Path("src/typo_cot/lrp/analyzer.py"),
     Path("src/typo_cot/models/__init__.py"),
     Path("src/typo_cot/models/prompts.py"),
+    Path("src/typo_cot/models/tokenizer_attestation.py"),
     Path("src/typo_cot/models/wrapper.py"),
 }
 

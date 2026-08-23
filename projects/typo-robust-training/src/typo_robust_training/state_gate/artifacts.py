@@ -374,6 +374,7 @@ def _load_runtime_manifest(
     expected = {
         "schema_version", "provider", "model", "model_revision", "teacher_revision",
         "student_revision", "tokenizer_revision", "code_revision", "source_tree_sha256",
+        "tokenizer_snapshot_attestation",
         "decoder_layers", "dtype", "hook_site", "coordinate", "readout",
         "base_model_frozen", "packages", "hardware",
     }
@@ -399,6 +400,15 @@ def _load_runtime_manifest(
     ):
         raise ValueError("single-layer gate runtime manifest identity differs")
     _sha(value["source_tree_sha256"], field="single-layer gate runtime source tree")
+    from typo_cot.models.tokenizer_attestation import (
+        validate_tokenizer_attestation_provenance,
+    )
+
+    validate_tokenizer_attestation_provenance(
+        value["tokenizer_snapshot_attestation"],
+        expected_model=protocol.model,
+        expected_revision=protocol.model_revision,
+    )
     json.dumps(value, sort_keys=True, allow_nan=False)
     return value
 

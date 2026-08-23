@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from safetensors.numpy import save_file
 
+from _tokenizer_attestation import tokenizer_attestation_provenance
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.probe import subspace_kill_artifacts as kill_artifacts
 from typo_robust_training.probe.artifacts import load_probe_transition_artifact
@@ -536,6 +537,10 @@ def _child_bundle(tmp_path: Path) -> tuple[Path, dict[str, Path], dict[str, obje
             "model": parent.model,
             "loaded_model_revision": parent.model_revision,
             "loaded_tokenizer_revision": parent.model_revision,
+            "tokenizer_snapshot_attestation": tokenizer_attestation_provenance(
+                parent.model,
+                parent.model_revision,
+            ),
             "parent_probe_code_revision": parent.code_revision,
             "kill_runtime_code_revision": _KILL_REVISION,
             "checkout_attestation": _ATTESTATION.as_dict(),
@@ -797,6 +802,10 @@ class _PassingKillRuntime:
             "model": protocol.model,
             "loaded_model_revision": protocol.model_revision,
             "loaded_tokenizer_revision": protocol.model_revision,
+            "tokenizer_snapshot_attestation": tokenizer_attestation_provenance(
+                protocol.model,
+                protocol.model_revision,
+            ),
             "parent_probe_code_revision": protocol.parent_probe_code_revision,
             "kill_runtime_code_revision": protocol.kill_runtime_code_revision,
             "checkout_attestation": self.checkout.as_dict(),
