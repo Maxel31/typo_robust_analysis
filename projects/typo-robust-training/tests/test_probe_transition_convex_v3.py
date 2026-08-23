@@ -42,7 +42,7 @@ def _protocol(*, hidden_size: int, decoder_layers: int = 2) -> ProbeProducerProt
         bootstrap_seed=1729,
         bootstrap_confidence=0.95,
         config_sha256="d" * 64,
-        schema_version="typo-linear-probe-producer-config/v3",
+        schema_version="typo-linear-probe-producer-config/v4",
         optimizer=("full-batch-lbfgs-float64-strong-wolfe-then-history-reset-fixed-step-polish/v2"),
         standardization="fit-only-per-layer-scalar-rms-folded/v1",
         l2_penalty="unit-prior-sum-loss/v1",
@@ -207,7 +207,13 @@ def test_deterministic_history_reset_polish_crosses_the_unchanged_gradient_gate(
         max_iterations=15,
         max_evaluations=30,
     )
-    without_polish = replace(base, max_history_reset_polishes=0)
+    without_polish = replace(
+        base,
+        schema_version="typo-linear-probe-producer-config/v3",
+        optimizer="full-batch-lbfgs-strong-wolfe-float64/v1",
+        max_history_reset_polishes=None,
+        polish_acceptance_rule=None,
+    )
     with pytest.raises(FloatingPointError, match="termination=max-iterations"):
         _fit_probe(
             values,

@@ -21,6 +21,7 @@ from typo_robust_training.probe.producer import (
     ProbeTransitionProducerRunConfig,
     run_select_probe_transition,
 )
+from typo_robust_training.probe.partition import build_probe_fit_partitions
 from typo_robust_training.probe.runtime import (
     _checkout_code_revision,
     _inflation_bucket,
@@ -84,7 +85,7 @@ def _manifest(role: str) -> dict[str, object]:
     return {"schema_version": "typo-probe-cohort/v2", "role": role, "records": rows}
 
 
-def _files(tmp_path: Path) -> dict[str, Path]:
+def _files(tmp_path: Path, *, config_version: int = 4) -> dict[str, Path]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     files = {
         "classes": _write_json(
@@ -117,7 +118,7 @@ def _files(tmp_path: Path) -> dict[str, Path]:
         ),
     }
     config = {
-        "schema_version": "typo-linear-probe-producer-config/v3",
+        "schema_version": f"typo-linear-probe-producer-config/v{config_version}",
         "model": {
             "id": "google/gemma-3-4b-it",
             "revision": "a" * 40,
@@ -194,6 +195,13 @@ def _files(tmp_path: Path) -> dict[str, Path]:
             },
         },
     }
+    if config_version == 3:
+        config["probe"]["optimizer"] = "full-batch-lbfgs-strong-wolfe-float64/v1"
+        config["probe"]["max_evaluations"] = 1250
+        del config["probe"]["max_history_reset_polishes"]
+        del config["probe"]["polish_acceptance_rule"]
+    elif config_version != 4:
+        raise ValueError("test config version must be 3 or 4")
     files["config"] = _write_json(tmp_path / "config.json", config)
     return files
 
@@ -244,6 +252,34 @@ class _FakeProvider:
         }[record.edit_type]
 
 
+class _ZeroStartLayerProvider(_FakeProvider):
+    """Make layer zero exactly label-uncorrelated within both fit halves."""
+
+    def activations(
+        self,
+        records: tuple[ProbeCohortRecord, ...],
+        *,
+        side: str,
+    ) -> np.ndarray:
+        values = super().activations(records, side=side)
+        if records and records[0].pair_id is None:
+            partitions = build_probe_fit_partitions(records, seeds=(42, 43))
+            signs: dict[str, float] = {}
+            for partition in partitions.values():
+                by_class: dict[int, list[str]] = {}
+                for index in partition.indices:
+                    record = records[index]
+                    by_class.setdefault(record.class_id, []).append(record.record_id)
+                for record_ids in by_class.values():
+                    assert len(record_ids) == 2
+                    for sign, record_id in zip((-1.0, 1.0), sorted(record_ids), strict=True):
+                        signs[record_id] = sign
+            for index, record in enumerate(records):
+                sign = signs[record.record_id]
+                values[index, 0] = (sign, -sign)
+        return values
+
+
 def _run_config(files: dict[str, Path], output_dir: Path) -> ProbeTransitionProducerRunConfig:
     return ProbeTransitionProducerRunConfig(
         config_path=files["config"],
@@ -276,7 +312,7 @@ def test_producer_derives_transition_and_binds_every_output(tmp_path: Path) -> N
                 f"decoder_layer.{layer}.{kind}" for layer in range(4) for kind in ("weight", "bias")
             }
             metadata = handle.metadata()
-            assert metadata["schema_version"] == "typo-linear-probe-weights/v3"
+            assert metadata["schema_version"] == "typo-linear-probe-weights/v4"
             assert metadata["seed"] == str(seed)
             assert metadata["config_sha256"] == protocol.config_sha256
             assert metadata["fit_manifest_sha256"] == sha256_file(files["fit"])
@@ -306,7 +342,7 @@ def test_producer_derives_transition_and_binds_every_output(tmp_path: Path) -> N
                 "probe_weights_sha256": weight_hashes[seed],
             }
     run = json.loads(result.run_path.read_text())
-    assert run["schema_version"] == "typo-linear-probe-producer-run/v2"
+    assert run["schema_version"] == "typo-linear-probe-producer-run/v4"
     assert run["fit_diagnostics"]["sha256"] == sha256_file(
         result.artifact_path.parent / run["fit_diagnostics"]["relative_path"]
     )
@@ -314,7 +350,7 @@ def test_producer_derives_transition_and_binds_every_output(tmp_path: Path) -> N
     assert all(value > 0.0 for value in run["validation_ci_lower_by_seed"].values())
     diagnostics_path = result.artifact_path.parent / run["fit_diagnostics"]["relative_path"]
     diagnostics = json.loads(diagnostics_path.read_text())
-    assert diagnostics["schema_version"] == "typo-linear-probe-fit-diagnostics/v3"
+    assert diagnostics["schema_version"] == "typo-linear-probe-fit-diagnostics/v4"
     assert diagnostics["polish_acceptance_rule"] == (
         "post-objective-at-most-pre-plus-parameter-count-times-gradient-tolerance-"
         "squared-over-two-plus-float64-roundoff/v1"
@@ -337,7 +373,76 @@ def test_producer_derives_transition_and_binds_every_output(tmp_path: Path) -> N
     assert consumed.hidden_size == 2
 
 
-def test_v3_loader_rejects_tampered_solver_diagnostics(tmp_path: Path) -> None:
+def test_loader_preserves_the_legacy_convex_v3_bundle_contract(tmp_path: Path) -> None:
+    files = _files(tmp_path, config_version=3)
+    result = run_select_probe_transition(
+        _run_config(files, tmp_path / "output"),
+        activation_provider=_FakeProvider(),
+    )
+
+    artifact = json.loads(result.artifact_path.read_text())
+    run = json.loads(result.run_path.read_text())
+    diagnostics_path = (
+        result.artifact_path.parent / artifact["references"]["fit_diagnostics"]["relative_path"]
+    )
+    diagnostics = json.loads(diagnostics_path.read_text())
+    assert artifact["schema_version"] == "typo-denoising-probe-selection/v3"
+    assert run["schema_version"] == "typo-linear-probe-producer-run/v2"
+    assert diagnostics["schema_version"] == "typo-linear-probe-fit-diagnostics/v2"
+    assert "polish_acceptance_rule" not in diagnostics
+    assert all(
+        "optimization_rounds" not in metrics for metrics in diagnostics["solver_by_seed"].values()
+    )
+    for path in result.weights_by_seed.values():
+        with safe_open(path, framework="np") as handle:
+            assert handle.metadata()["schema_version"] == "typo-linear-probe-weights/v3"
+
+    loaded = load_probe_transition_artifact(result.artifact_path)
+    assert loaded.selected_transition_layer == result.selected_transition_layer
+
+
+def test_v4_loader_accepts_a_valid_zero_iteration_cold_start(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    result = run_select_probe_transition(
+        _run_config(files, tmp_path / "output"),
+        activation_provider=_ZeroStartLayerProvider(),
+    )
+    artifact = json.loads(result.artifact_path.read_text())
+    diagnostics_path = (
+        result.artifact_path.parent / artifact["references"]["fit_diagnostics"]["relative_path"]
+    )
+    diagnostics = json.loads(diagnostics_path.read_text())
+
+    for metrics in diagnostics["solver_by_seed"].values():
+        cold = metrics["optimization_rounds"][0]
+        assert len(cold) == 1
+        assert cold[0]["phase"] == "cold-start-strong-wolfe"
+        assert cold[0]["iterations"] == 0
+        assert cold[0]["function_evaluations"] == 1
+        assert cold[0]["termination_reason"] == "gradient-tolerance"
+        assert metrics["iterations"][0] == 0
+        assert metrics["function_evaluations"][0] == 1
+        assert metrics["objective"][0] == pytest.approx(4 * np.log(2.0), abs=1e-14)
+
+    loaded = load_probe_transition_artifact(result.artifact_path)
+    assert loaded.selected_transition_layer == result.selected_transition_layer
+
+
+def test_loader_rejects_cross_family_selection_and_config_after_rehash(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    result = run_select_probe_transition(
+        _run_config(files, tmp_path / "output"),
+        activation_provider=_FakeProvider(),
+    )
+    artifact = json.loads(result.artifact_path.read_text())
+    artifact["schema_version"] = "typo-denoising-probe-selection/v3"
+    _write_json(result.artifact_path, artifact)
+
+    with pytest.raises(ValueError, match="identity differs from its preregistration"):
+        load_probe_transition_artifact(result.artifact_path)
+
+
+def test_v4_loader_rejects_tampered_solver_diagnostics(tmp_path: Path) -> None:
     files = _files(tmp_path)
     result = run_select_probe_transition(
         _run_config(files, tmp_path / "output"),
@@ -406,6 +511,74 @@ def test_loader_rejects_rehashed_false_convergence_diagnostic(tmp_path: Path) ->
     _write_json(result.artifact_path, artifact)
 
     with pytest.raises(ValueError, match="external gradient"):
+        load_probe_transition_artifact(result.artifact_path)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("zero-objective", "objective values differ"),
+        ("short-max-iterations", "max-iteration termination differs"),
+        ("over-budget", "optimization round budget differs"),
+        ("fake-polish-after-pass", "continued after numerical convergence"),
+    ],
+)
+def test_loader_rejects_rehashed_semantically_impossible_solver_rounds(
+    tmp_path: Path,
+    mutation: str,
+    message: str,
+) -> None:
+    files = _files(tmp_path)
+    result = run_select_probe_transition(
+        _run_config(files, tmp_path / "output"),
+        activation_provider=_FakeProvider(),
+    )
+    artifact = json.loads(result.artifact_path.read_text())
+    reference = artifact["references"]["fit_diagnostics"]
+    diagnostics_path = result.artifact_path.parent / reference["relative_path"]
+    diagnostics = json.loads(diagnostics_path.read_text())
+    metrics = diagnostics["solver_by_seed"]["42"]
+    layer = next(
+        index for index, rounds in enumerate(metrics["optimization_rounds"]) if len(rounds) == 1
+    )
+    cold = metrics["optimization_rounds"][layer][0]
+    if mutation == "zero-objective":
+        cold["objective"] = 0.0
+        cold["gradient_inf_norm"] = 0.0
+        cold["termination_reason"] = "gradient-tolerance"
+        metrics["objective"][layer] = 0.0
+        metrics["gradient_inf_norm"][layer] = 0.0
+    elif mutation == "short-max-iterations":
+        cold["iterations"] = 10
+        cold["function_evaluations"] = max(10, cold["function_evaluations"])
+        cold["gradient_inf_norm"] = 2e-7
+        cold["termination_reason"] = "max-iterations"
+        metrics["iterations"][layer] = cold["iterations"]
+        metrics["function_evaluations"][layer] = cold["function_evaluations"]
+        metrics["gradient_inf_norm"][layer] = cold["gradient_inf_norm"]
+    elif mutation == "over-budget":
+        cold["iterations"] = 1001
+        cold["function_evaluations"] = 1001
+        metrics["iterations"][layer] = 1001
+        metrics["function_evaluations"][layer] = 1001
+    elif mutation == "fake-polish-after-pass":
+        polished = {
+            **cold,
+            "round_index": 1,
+            "phase": "history-reset-fixed-step-polish",
+            "iterations": 1,
+            "function_evaluations": 1,
+        }
+        metrics["optimization_rounds"][layer].append(polished)
+        metrics["iterations"][layer] = cold["iterations"] + 1
+        metrics["function_evaluations"][layer] = cold["function_evaluations"] + 1
+    else:  # pragma: no cover - parameter inventory is closed above
+        raise AssertionError(mutation)
+    _write_json(diagnostics_path, diagnostics)
+    reference["sha256"] = sha256_file(diagnostics_path)
+    _write_json(result.artifact_path, artifact)
+
+    with pytest.raises(ValueError, match=message):
         load_probe_transition_artifact(result.artifact_path)
 
 
@@ -853,7 +1026,7 @@ def test_rejects_identical_tensors_as_duplicate_scientific_replications(
         )
 
 
-def test_v3_config_rejects_relaxed_numerical_gate(tmp_path: Path) -> None:
+def test_v4_config_rejects_relaxed_numerical_gate(tmp_path: Path) -> None:
     files = _files(tmp_path)
     config = json.loads(files["config"].read_text())
     config["probe"]["gradient_tolerance"] = 1e-3
@@ -862,7 +1035,7 @@ def test_v3_config_rejects_relaxed_numerical_gate(tmp_path: Path) -> None:
         load_probe_producer_config(files["config"])
 
 
-def test_v3_config_rejects_extra_data_dependent_polish_restarts(tmp_path: Path) -> None:
+def test_v4_config_rejects_extra_data_dependent_polish_restarts(tmp_path: Path) -> None:
     files = _files(tmp_path)
     config = json.loads(files["config"].read_text())
     config["probe"]["max_history_reset_polishes"] = 2
@@ -871,7 +1044,29 @@ def test_v3_config_rejects_extra_data_dependent_polish_restarts(tmp_path: Path) 
         load_probe_producer_config(files["config"])
 
 
-def test_v3_config_rejects_different_polish_acceptance_rule(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "field",
+    [
+        "max_iterations",
+        "max_evaluations",
+        "max_history_reset_polishes",
+        "history_size",
+    ],
+)
+def test_v4_config_rejects_bool_for_every_fixed_integer(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    files = _files(tmp_path)
+    config = json.loads(files["config"].read_text())
+    config["probe"][field] = True
+    _write_json(files["config"], config)
+
+    with pytest.raises(ValueError, match=f"probe {field} must be an integer"):
+        load_probe_producer_config(files["config"])
+
+
+def test_v4_config_rejects_different_polish_acceptance_rule(tmp_path: Path) -> None:
     files = _files(tmp_path)
     config = json.loads(files["config"].read_text())
     config["probe"]["polish_acceptance_rule"] = "accept-any-objective/v0"

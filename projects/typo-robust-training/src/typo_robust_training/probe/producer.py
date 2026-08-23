@@ -40,6 +40,11 @@ from typo_robust_training.training.json_io import write_json_atomic
 
 _SHA256_LENGTH = 64
 _ROLES = ("fit", "selection", "validation")
+_CONVEX_CONFIG_SCHEMAS = {
+    "typo-linear-probe-producer-config/v3",
+    "typo-linear-probe-producer-config/v4",
+}
+_POLISHED_CONFIG_SCHEMA = "typo-linear-probe-producer-config/v4"
 _COMMON_RECORD_FIELDS = {
     "record_id",
     "source_group_sha256",
@@ -58,6 +63,14 @@ _PAIRED_RECORD_FIELDS = _COMMON_RECORD_FIELDS | {
     "typo_text",
     "typo_word_char_span",
 }
+
+
+def _is_convex_protocol(protocol: ProbeProducerProtocol) -> bool:
+    return protocol.schema_version in _CONVEX_CONFIG_SCHEMAS
+
+
+def _is_polished_protocol(protocol: ProbeProducerProtocol) -> bool:
+    return protocol.schema_version == _POLISHED_CONFIG_SCHEMA
 
 
 def _json_object(path: Path, *, label: str) -> Mapping[str, object]:
@@ -565,8 +578,6 @@ def _fit_probe_lbfgs_v3(
     required = (
         protocol.max_iterations,
         protocol.max_evaluations,
-        protocol.max_history_reset_polishes,
-        protocol.polish_acceptance_rule,
         protocol.history_size,
         protocol.gradient_tolerance,
         protocol.change_tolerance,
@@ -575,8 +586,18 @@ def _fit_probe_lbfgs_v3(
     )
     if any(value is None for value in required):
         raise ValueError("convex probe solver configuration is incomplete")
-    if protocol.polish_acceptance_rule != POLISH_ACCEPTANCE_RULE:
+    polished = _is_polished_protocol(protocol)
+    if polished and (
+        protocol.max_history_reset_polishes != 1
+        or protocol.polish_acceptance_rule != POLISH_ACCEPTANCE_RULE
+    ):
         raise ValueError("convex probe polish acceptance rule differs")
+    if not polished and (
+        protocol.max_history_reset_polishes is not None
+        or protocol.polish_acceptance_rule is not None
+    ):
+        raise ValueError("legacy convex probe unexpectedly enables numerical polish")
+    max_polishes = 1 if polished else 0
     values = np.asarray(activations, dtype=np.float64)
     means = values.mean(axis=0, dtype=np.float64)
     centered = values - means[None, ...]
@@ -628,7 +649,7 @@ def _fit_probe_lbfgs_v3(
         optimization_rounds: list[_SolverRoundDiagnostics] = []
         objective_value = math.nan
         gradient_inf_norm = math.inf
-        for round_index in range(int(protocol.max_history_reset_polishes) + 1):
+        for round_index in range(max_polishes + 1):
             # The optional second phase keeps the fitted parameters but resets
             # L-BFGS curvature and line-search state.  It is a fixed numerical
             # polish for finite non-convergence, never a new scientific fit.
@@ -722,7 +743,7 @@ def _fit_probe_lbfgs_v3(
                 f"convex probe solver failed its gradient gate at layer {layer}: "
                 f"required_gradient_inf_norm<={protocol.gradient_tolerance}; {round_summary}"
             )
-        if len(optimization_rounds) == 2:
+        if polished and len(optimization_rounds) == 2:
             pre_objective = optimization_rounds[0].objective
             allowance = polish_objective_allowance(
                 parameter_count=weight.numel() + bias.numel(),
@@ -797,7 +818,7 @@ def _fit_probe(
     seed: int,
     protocol: ProbeProducerProtocol,
 ) -> _ProbeFitResult:
-    if protocol.schema_version.endswith("/v3"):
+    if _is_convex_protocol(protocol):
         return _fit_probe_lbfgs_v3(
             activations,
             labels,
@@ -992,7 +1013,7 @@ def _convex_solver_diagnostics(
 ) -> dict[str, object]:
     """Bind convergence and normalization to two disjoint scientific fits."""
 
-    if not protocol.schema_version.endswith("/v3"):
+    if not _is_convex_protocol(protocol):
         return {}
     if set(fits) != set(protocol.probe_seeds) or set(partitions) != set(protocol.probe_seeds):
         raise ValueError("convex probe fit inventory differs from its disjoint partitions")
@@ -1002,12 +1023,51 @@ def _convex_solver_diagnostics(
         fit = fits[seed]
         if fit.layer_mean is None or fit.layer_scale is None:
             raise ValueError("convex probe diagnostics are incomplete")
-    return {
-        "schema_version": "typo-linear-probe-fit-diagnostics/v3",
+    solver_by_seed: dict[str, object] = {}
+    for seed in protocol.probe_seeds:
+        solver_metrics: dict[str, object] = {
+            "fit_partition_sha256": partitions[seed].identity_sha256,
+            "fit_record_count": len(partitions[seed].indices),
+            "fit_class_counts": {
+                str(class_id): count for class_id, count in partitions[seed].class_counts
+            },
+            "objective": [row.objective for row in fits[seed].diagnostics],
+            "gradient_inf_norm": [row.gradient_inf_norm for row in fits[seed].diagnostics],
+            "iterations": [row.iterations for row in fits[seed].diagnostics],
+            "function_evaluations": [row.function_evaluations for row in fits[seed].diagnostics],
+            "float64_folded_logit_max_error": [
+                row.float64_folded_logit_max_error for row in fits[seed].diagnostics
+            ],
+            "float32_serialized_logit_max_error": [
+                row.float32_serialized_logit_max_error for row in fits[seed].diagnostics
+            ],
+        }
+        if _is_polished_protocol(protocol):
+            solver_metrics["optimization_rounds"] = [
+                [
+                    {
+                        "round_index": round_row.round_index,
+                        "phase": round_row.phase,
+                        "objective": round_row.objective,
+                        "gradient_inf_norm": round_row.gradient_inf_norm,
+                        "iterations": round_row.iterations,
+                        "function_evaluations": round_row.function_evaluations,
+                        "termination_reason": round_row.termination_reason,
+                    }
+                    for round_row in row.optimization_rounds
+                ]
+                for row in fits[seed].diagnostics
+            ]
+        solver_by_seed[str(seed)] = solver_metrics
+    payload: dict[str, object] = {
+        "schema_version": (
+            "typo-linear-probe-fit-diagnostics/v4"
+            if _is_polished_protocol(protocol)
+            else "typo-linear-probe-fit-diagnostics/v2"
+        ),
         "optimizer": protocol.optimizer,
         "standardization": protocol.standardization,
         "l2_penalty": protocol.l2_penalty,
-        "polish_acceptance_rule": POLISH_ACCEPTANCE_RULE,
         "fit_partition_rule": protocol.fit_partition_rule,
         "normalization_by_seed": {
             str(seed): {
@@ -1016,44 +1076,11 @@ def _convex_solver_diagnostics(
             }
             for seed in protocol.probe_seeds
         },
-        "solver_by_seed": {
-            str(seed): {
-                "fit_partition_sha256": partitions[seed].identity_sha256,
-                "fit_record_count": len(partitions[seed].indices),
-                "fit_class_counts": {
-                    str(class_id): count for class_id, count in partitions[seed].class_counts
-                },
-                "objective": [row.objective for row in fits[seed].diagnostics],
-                "gradient_inf_norm": [row.gradient_inf_norm for row in fits[seed].diagnostics],
-                "iterations": [row.iterations for row in fits[seed].diagnostics],
-                "function_evaluations": [
-                    row.function_evaluations for row in fits[seed].diagnostics
-                ],
-                "optimization_rounds": [
-                    [
-                        {
-                            "round_index": round_row.round_index,
-                            "phase": round_row.phase,
-                            "objective": round_row.objective,
-                            "gradient_inf_norm": round_row.gradient_inf_norm,
-                            "iterations": round_row.iterations,
-                            "function_evaluations": round_row.function_evaluations,
-                            "termination_reason": round_row.termination_reason,
-                        }
-                        for round_row in row.optimization_rounds
-                    ]
-                    for row in fits[seed].diagnostics
-                ],
-                "float64_folded_logit_max_error": [
-                    row.float64_folded_logit_max_error for row in fits[seed].diagnostics
-                ],
-                "float32_serialized_logit_max_error": [
-                    row.float32_serialized_logit_max_error for row in fits[seed].diagnostics
-                ],
-            }
-            for seed in protocol.probe_seeds
-        },
+        "solver_by_seed": solver_by_seed,
     }
+    if _is_polished_protocol(protocol):
+        payload["polish_acceptance_rule"] = POLISH_ACCEPTANCE_RULE
+    return payload
 
 
 def _addressed_copy(source: Path, output_dir: Path, *, label: str) -> Path:
@@ -1102,9 +1129,13 @@ def _addressed_weights(
         )
     metadata = {
         "schema_version": (
-            "typo-linear-probe-weights/v3"
-            if protocol.schema_version.endswith("/v3")
-            else "typo-linear-probe-weights/v1"
+            "typo-linear-probe-weights/v4"
+            if _is_polished_protocol(protocol)
+            else (
+                "typo-linear-probe-weights/v3"
+                if _is_convex_protocol(protocol)
+                else "typo-linear-probe-weights/v1"
+            )
         ),
         "seed": str(seed),
         "config_sha256": protocol.config_sha256,
@@ -1117,9 +1148,9 @@ def _addressed_weights(
         "hidden_size": str(protocol.hidden_size),
         "class_count": str(class_count),
     }
-    if protocol.schema_version.endswith("/v3"):
+    if _is_convex_protocol(protocol):
         if partition is None or partition.seed != seed:
-            raise ValueError("v3 probe weights require their exact fit partition")
+            raise ValueError("convex probe weights require their exact fit partition")
         metadata.update(
             {
                 "fit_partition_rule": str(protocol.fit_partition_rule),
@@ -1259,7 +1290,7 @@ def run_select_probe_transition(
     fit_labels = np.asarray([record.class_id for record in cohorts["fit"]], dtype=np.int64)
     fit_partitions = (
         build_probe_fit_partitions(cohorts["fit"], seeds=protocol.probe_seeds)
-        if protocol.schema_version.endswith("/v3")
+        if _is_convex_protocol(protocol)
         else {}
     )
     paired_activations: dict[str, tuple[np.ndarray, np.ndarray]] = {}
@@ -1307,7 +1338,7 @@ def run_select_probe_transition(
     tensor_digests: set[str] = set()
     for seed in protocol.probe_seeds:
         partition = fit_partitions.get(seed)
-        if protocol.schema_version.endswith("/v3"):
+        if _is_convex_protocol(protocol):
             assert partition is not None
             fit_indices = np.asarray(partition.indices, dtype=np.int64)
             seed_fit_activations = fit_activations[fit_indices]
@@ -1415,7 +1446,7 @@ def run_select_probe_transition(
         for seed in protocol.probe_seeds
     }
     clean_ce_upper_by_seed: dict[int, dict[int, float]] = {}
-    if protocol.schema_version.endswith("/v3"):
+    if _is_convex_protocol(protocol):
         for seed in protocol.probe_seeds:
             clean_ce_upper_by_seed[seed] = {
                 layer: _bootstrap_clean_ce_upper_bound(
@@ -1462,9 +1493,13 @@ def run_select_probe_transition(
         references["fit_diagnostics"] = _reference(fit_diagnostics_path, root=output_dir)
     artifact_payload = {
         "schema_version": (
-            "typo-denoising-probe-selection/v3"
-            if protocol.schema_version.endswith("/v3")
-            else "typo-denoising-probe-selection/v2"
+            "typo-denoising-probe-selection/v4"
+            if _is_polished_protocol(protocol)
+            else (
+                "typo-denoising-probe-selection/v3"
+                if _is_convex_protocol(protocol)
+                else "typo-denoising-probe-selection/v2"
+            )
         ),
         "operation": "select-linear-probe-denoising-transition",
         "model": protocol.model,
@@ -1488,7 +1523,7 @@ def run_select_probe_transition(
         "selected_transition_layer": selection.selected_layer,
         "validation_passed": passed,
     }
-    if protocol.schema_version.endswith("/v3"):
+    if _is_convex_protocol(protocol):
         artifact_payload.update(
             {
                 "fit_partition_rule": protocol.fit_partition_rule,
@@ -1503,9 +1538,13 @@ def run_select_probe_transition(
     run_path = output_dir / "run.json"
     run_payload: dict[str, object] = {
         "schema_version": (
-            "typo-linear-probe-producer-run/v2"
-            if protocol.schema_version.endswith("/v3")
-            else "typo-linear-probe-producer-run/v1"
+            "typo-linear-probe-producer-run/v4"
+            if _is_polished_protocol(protocol)
+            else (
+                "typo-linear-probe-producer-run/v2"
+                if _is_convex_protocol(protocol)
+                else "typo-linear-probe-producer-run/v1"
+            )
         ),
         "operation": "select-linear-probe-denoising-transition",
         "status": "completed" if passed else "validation-failed",
