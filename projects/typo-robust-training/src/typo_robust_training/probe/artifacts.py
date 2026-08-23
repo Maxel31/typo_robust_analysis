@@ -360,9 +360,12 @@ def _load_manifest(
             "duplication",
         }
         operation_counts = Counter(row.edit_type for row in records)
-        if set(operation_counts) != required_operations or len(set(operation_counts.values())) != 1:
+        if set(operation_counts) != required_operations or (
+            max(operation_counts.values()) - min(operation_counts.values()) > 1
+        ):
             raise ValueError(
-                f"probe {expected_role} edit operation strata must be exactly balanced"
+                f"probe {expected_role} edit operation strata must include every frozen "
+                "operation with counts differing by at most one"
             )
     return tuple(records)
 
