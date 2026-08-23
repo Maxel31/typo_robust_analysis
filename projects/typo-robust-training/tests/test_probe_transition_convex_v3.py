@@ -6,10 +6,8 @@ import numpy as np
 import pytest
 
 from typo_robust_training.probe.config import ProbeProducerProtocol
-from typo_robust_training.probe.producer import (
-    _convex_solver_diagnostics,
-    _fit_probe,
-)
+from typo_robust_training.probe.producer import _fit_probe
+from typo_robust_training.probe.partition import build_probe_fit_partitions
 
 
 def _protocol(*, hidden_size: int, decoder_layers: int = 2) -> ProbeProducerProtocol:
@@ -48,13 +46,12 @@ def _protocol(*, hidden_size: int, decoder_layers: int = 2) -> ProbeProducerProt
         optimizer="full-batch-lbfgs-strong-wolfe-float64/v1",
         standardization="fit-only-per-layer-scalar-rms-folded/v1",
         l2_penalty="unit-prior-sum-loss/v1",
+        fit_partition_rule="class-stratified-record-id-sha256-balanced-halves/v1",
         max_iterations=1000,
         max_evaluations=1250,
         history_size=100,
         gradient_tolerance=1e-7,
-        change_tolerance=1e-12,
-        solver_objective_relative_tolerance=1e-9,
-        solver_parameter_relative_tolerance=1e-5,
+        change_tolerance=0.0,
         folded_logit_tolerance=1e-8,
         serialized_logit_tolerance=1e-5,
     )
@@ -74,7 +71,7 @@ def _raw_logits(values: np.ndarray, weight: np.ndarray, bias: np.ndarray) -> np.
     return np.einsum("nld,ldc->nlc", values, weight, dtype=np.float64) + bias[None]
 
 
-def test_n_less_than_d_two_starts_converge_to_one_convex_solution() -> None:
+def test_n_less_than_d_zero_start_is_deterministic() -> None:
     values, labels = _problem()
     protocol = _protocol(hidden_size=values.shape[2])
     fits = {
@@ -82,13 +79,51 @@ def test_n_less_than_d_two_starts_converge_to_one_convex_solution() -> None:
         for seed in protocol.probe_seeds
     }
 
-    diagnostics = _convex_solver_diagnostics(fits, protocol=protocol)
-
-    assert diagnostics["schema_version"] == "typo-linear-probe-fit-diagnostics/v1"
-    assert max(diagnostics["two_start_agreement"]["parameter_relative_gap"]) <= 1e-5
+    assert np.array_equal(fits[42].weights.weight, fits[43].weights.weight)
+    assert np.array_equal(fits[42].weights.bias, fits[43].weights.bias)
     assert all(
-        max(row.gradient_inf_norm for row in fit.diagnostics) <= 1e-6 for fit in fits.values()
+        max(row.gradient_inf_norm for row in fit.diagnostics) <= 1e-7 for fit in fits.values()
     )
+
+
+def test_fit_partitions_are_balanced_disjoint_and_order_invariant() -> None:
+    from types import SimpleNamespace
+
+    records = tuple(
+        SimpleNamespace(record_id=f"class-{class_id}-record-{record}", class_id=class_id)
+        for class_id in range(3)
+        for record in range(4)
+    )
+    original = build_probe_fit_partitions(records, seeds=(42, 43))
+    reversed_partitions = build_probe_fit_partitions(tuple(reversed(records)), seeds=(42, 43))
+
+    assert set(original[42].record_ids).isdisjoint(original[43].record_ids)
+    assert set(original[42].record_ids) | set(original[43].record_ids) == {
+        record.record_id for record in records
+    }
+    assert original[42].class_counts == original[43].class_counts == ((0, 2), (1, 2), (2, 2))
+    assert {seed: partition.identity_sha256 for seed, partition in original.items()} == {
+        seed: partition.identity_sha256 for seed, partition in reversed_partitions.items()
+    }
+
+
+def test_fit_partitions_fail_closed_on_class_imbalance() -> None:
+    from types import SimpleNamespace
+
+    records = tuple(SimpleNamespace(record_id=f"record-{index}", class_id=0) for index in range(3))
+    with pytest.raises(ValueError, match="even number"):
+        build_probe_fit_partitions(records, seeds=(42, 43))
+
+
+def test_fit_partitions_fail_closed_on_duplicate_membership_identity() -> None:
+    from types import SimpleNamespace
+
+    records = (
+        SimpleNamespace(record_id="duplicate", class_id=0),
+        SimpleNamespace(record_id="duplicate", class_id=0),
+    )
+    with pytest.raises(ValueError, match="record ids must be unique"):
+        build_probe_fit_partitions(records, seeds=(42, 43))
 
 
 def test_fit_only_scalar_rms_is_affine_layer_scale_invariant() -> None:

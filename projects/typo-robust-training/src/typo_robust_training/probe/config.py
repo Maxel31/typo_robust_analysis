@@ -11,6 +11,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from typo_robust_training.data.config import strict_loads
+from typo_robust_training.probe.partition import FIT_PARTITION_RULE
 
 
 _REVISION = re.compile(r"[0-9a-f]{40}")
@@ -53,6 +54,7 @@ _PROBE_V2 = {
 }
 _PROBE_V3 = {
     "seeds",
+    "fit_partition_rule",
     "optimizer",
     "standardization",
     "l2_penalty",
@@ -61,14 +63,12 @@ _PROBE_V3 = {
     "history_size",
     "gradient_tolerance",
     "change_tolerance",
-    "solver_objective_relative_tolerance",
-    "solver_parameter_relative_tolerance",
     "folded_logit_tolerance",
     "serialized_logit_tolerance",
     "hook_site",
     "coordinate",
 }
-_SELECTION = {
+_SELECTION_V2 = {
     "metric",
     "rule",
     "tie_break",
@@ -76,13 +76,22 @@ _SELECTION = {
     "validation_rule",
     "bootstrap",
 }
+_SELECTION_V3 = _SELECTION_V2 | {"probe_validity_rule"}
 _BOOTSTRAP = {"resamples", "seed", "confidence", "unit"}
 
 SELECTION_METRIC = "largest-group-mean-paired-noise-penalty-drop/v2"
 SELECTION_RULE = "min-argmax-over-layers-one-through-last/v1"
 TIE_BREAK = "smallest-layer/v1"
 STABILITY_RULE = "selection-exact-and-validation-within-one-layer-for-both-seeds/v1"
+STABILITY_RULE_V3 = (
+    "selection-exact-and-validation-within-one-layer-for-both-disjoint-fit-partitions/v1"
+)
 VALIDATION_RULE = "group-bootstrap-95pct-lower-positive-for-both-seeds/v1"
+VALIDATION_RULE_V3 = "group-bootstrap-95pct-lower-positive-for-both-disjoint-fit-partitions/v1"
+PROBE_VALIDITY_RULE = (
+    "validation-source-group-bootstrap-95pct-upper-clean-ce-below-uniform-"
+    "at-boundary-for-both-fit-partitions/v1"
+)
 HOOK_SITE = "complete-decoder-block-residual-output"
 COORDINATE = "edited-word-final-token/v1"
 
@@ -177,13 +186,12 @@ class ProbeProducerProtocol:
     optimizer: str = "adamw"
     standardization: str | None = None
     l2_penalty: str | None = None
+    fit_partition_rule: str | None = None
     max_iterations: int | None = None
     max_evaluations: int | None = None
     history_size: int | None = None
     gradient_tolerance: float | None = None
     change_tolerance: float | None = None
-    solver_objective_relative_tolerance: float | None = None
-    solver_parameter_relative_tolerance: float | None = None
     folded_logit_tolerance: float | None = None
     serialized_logit_tolerance: float | None = None
     hook_site: str = HOOK_SITE
@@ -193,6 +201,7 @@ class ProbeProducerProtocol:
     tie_break: str = TIE_BREAK
     stability_rule: str = STABILITY_RULE
     validation_rule: str = VALIDATION_RULE
+    probe_validity_rule: str | None = None
     bootstrap_unit: str = "source-group"
 
 
@@ -231,7 +240,8 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
     expected_probe_fields = _PROBE_V3 if schema_version.endswith("/v3") else _PROBE_V2
     if not isinstance(probe, dict) or set(probe) != expected_probe_fields:
         raise ValueError("probe producer probe fields differ")
-    if not isinstance(selection, dict) or set(selection) != _SELECTION:
+    expected_selection_fields = _SELECTION_V3 if schema_version.endswith("/v3") else _SELECTION_V2
+    if not isinstance(selection, dict) or set(selection) != expected_selection_fields:
         raise ValueError("probe producer selection fields differ")
     bootstrap = selection["bootstrap"]
     if not isinstance(bootstrap, dict) or set(bootstrap) != _BOOTSTRAP:
@@ -268,9 +278,13 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
         "metric": SELECTION_METRIC,
         "rule": SELECTION_RULE,
         "tie_break": TIE_BREAK,
-        "stability_rule": STABILITY_RULE,
-        "validation_rule": VALIDATION_RULE,
+        "stability_rule": STABILITY_RULE_V3 if schema_version.endswith("/v3") else STABILITY_RULE,
+        "validation_rule": (
+            VALIDATION_RULE_V3 if schema_version.endswith("/v3") else VALIDATION_RULE
+        ),
     }
+    if schema_version.endswith("/v3"):
+        expected_selection["probe_validity_rule"] = PROBE_VALIDITY_RULE
     for field, literal in expected_selection.items():
         if selection[field] != literal:
             raise ValueError(f"probe producer selection {field} differs")
@@ -307,6 +321,10 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
     strata = _stratum_counts(cohorts["stratum_counts"])
 
     if schema_version.endswith("/v3"):
+        if records_per_class["fit"] % 2 != 0:
+            raise ValueError("v3 probe fit records per class must be even")
+        if probe["fit_partition_rule"] != FIT_PARTITION_RULE:
+            raise ValueError("probe producer fit partition rule differs")
         if probe["standardization"] != "fit-only-per-layer-scalar-rms-folded/v1":
             raise ValueError("probe producer standardization differs")
         if probe["l2_penalty"] != "unit-prior-sum-loss/v1":
@@ -316,9 +334,7 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
             "max_evaluations": 1250,
             "history_size": 100,
             "gradient_tolerance": 1e-7,
-            "change_tolerance": 1e-12,
-            "solver_objective_relative_tolerance": 1e-9,
-            "solver_parameter_relative_tolerance": 1e-5,
+            "change_tolerance": 0.0,
             "folded_logit_tolerance": 1e-8,
             "serialized_logit_tolerance": 1e-5,
         }
@@ -377,6 +393,9 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
         optimizer=str(probe["optimizer"]),
         standardization=(str(probe["standardization"]) if schema_version.endswith("/v3") else None),
         l2_penalty=(str(probe["l2_penalty"]) if schema_version.endswith("/v3") else None),
+        fit_partition_rule=(
+            str(probe["fit_partition_rule"]) if schema_version.endswith("/v3") else None
+        ),
         max_iterations=(int(probe["max_iterations"]) if schema_version.endswith("/v3") else None),
         max_evaluations=(int(probe["max_evaluations"]) if schema_version.endswith("/v3") else None),
         history_size=(int(probe["history_size"]) if schema_version.endswith("/v3") else None),
@@ -386,22 +405,15 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
         change_tolerance=(
             float(probe["change_tolerance"]) if schema_version.endswith("/v3") else None
         ),
-        solver_objective_relative_tolerance=(
-            float(probe["solver_objective_relative_tolerance"])
-            if schema_version.endswith("/v3")
-            else None
-        ),
-        solver_parameter_relative_tolerance=(
-            float(probe["solver_parameter_relative_tolerance"])
-            if schema_version.endswith("/v3")
-            else None
-        ),
         folded_logit_tolerance=(
             float(probe["folded_logit_tolerance"]) if schema_version.endswith("/v3") else None
         ),
         serialized_logit_tolerance=(
             float(probe["serialized_logit_tolerance"]) if schema_version.endswith("/v3") else None
         ),
+        stability_rule=(STABILITY_RULE_V3 if schema_version.endswith("/v3") else STABILITY_RULE),
+        validation_rule=(VALIDATION_RULE_V3 if schema_version.endswith("/v3") else VALIDATION_RULE),
+        probe_validity_rule=(PROBE_VALIDITY_RULE if schema_version.endswith("/v3") else None),
     )
 
 
@@ -412,7 +424,10 @@ __all__ = [
     "SELECTION_METRIC",
     "SELECTION_RULE",
     "STABILITY_RULE",
+    "STABILITY_RULE_V3",
     "TIE_BREAK",
     "VALIDATION_RULE",
+    "VALIDATION_RULE_V3",
+    "PROBE_VALIDITY_RULE",
     "load_probe_producer_config",
 ]

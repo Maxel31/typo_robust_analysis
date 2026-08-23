@@ -29,13 +29,17 @@ from typo_robust_training.probe.config import (
     ProbeProducerProtocol,
     load_probe_producer_config,
 )
+from typo_robust_training.probe.partition import (
+    ProbeFitPartition,
+    build_probe_fit_partitions,
+)
 from typo_robust_training.probe.scoring import ProbeSeedTrajectory, select_probe_transition
 
 
 _REVISION = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _ROLES = ("fit", "selection", "validation")
-_TOP_LEVEL_FIELDS = {
+_TOP_LEVEL_FIELDS_V2 = {
     "schema_version",
     "operation",
     "model",
@@ -53,6 +57,11 @@ _TOP_LEVEL_FIELDS = {
     "bootstrap",
     "selected_transition_layer",
     "validation_passed",
+}
+_TOP_LEVEL_FIELDS_V3 = _TOP_LEVEL_FIELDS_V2 | {
+    "fit_partition_rule",
+    "probe_validity_rule",
+    "validation_clean_ce_upper_by_seed",
 }
 _REFERENCE_FIELDS = {"relative_path", "sha256"}
 _MANIFEST_FIELDS = {"schema_version", "role", "records"}
@@ -92,7 +101,7 @@ _SCORE_BINDING_FIELDS = {
     "role_manifest_sha256",
     "probe_weights_sha256",
 }
-_WEIGHT_METADATA_FIELDS = {
+_WEIGHT_METADATA_FIELDS_V1 = {
     "schema_version",
     "seed",
     "config_sha256",
@@ -104,6 +113,11 @@ _WEIGHT_METADATA_FIELDS = {
     "decoder_layers",
     "hidden_size",
     "class_count",
+}
+_WEIGHT_METADATA_FIELDS_V3 = _WEIGHT_METADATA_FIELDS_V1 | {
+    "fit_partition_rule",
+    "fit_partition_sha256",
+    "fit_partition_record_count",
 }
 _SCORE_ROW_FIELDS = {
     "pair_id",
@@ -636,18 +650,49 @@ def _bootstrap_lower_bound(
     return samples[max(0, math.ceil(0.025 * len(samples)) - 1)]
 
 
+def _bootstrap_clean_ce_upper_bound(
+    rows: Sequence[_PairedScore],
+    *,
+    layer: int,
+    partition_seed: int,
+    bootstrap_seed: int,
+    resamples: int,
+    confidence: float,
+) -> float:
+    grouped: dict[str, list[float]] = defaultdict(list)
+    for row in rows:
+        grouped[row.source_group_sha256].append(row.clean_cross_entropy[layer])
+    group_values = tuple(sum(values) / len(values) for _group, values in sorted(grouped.items()))
+    if len(group_values) < 2:
+        raise ValueError("probe validity requires at least two independent source groups")
+    samples: list[float] = []
+    for replicate in range(resamples):
+        total = 0.0
+        for draw in range(len(group_values)):
+            material = (
+                f"probe-clean-ce-bootstrap/v1\0{bootstrap_seed}\0{partition_seed}\0"
+                f"{layer}\0{replicate}\0{draw}"
+            ).encode()
+            index = int.from_bytes(hashlib.sha256(material).digest()[:8], "big") % len(group_values)
+            total += group_values[index]
+        samples.append(total / len(group_values))
+    samples.sort()
+    return samples[min(len(samples) - 1, math.ceil(confidence * len(samples)) - 1)]
+
+
 def _validate_probe_weights(
     path: Path,
     *,
     seed: int,
     protocol: ProbeProducerProtocol,
     class_count: int,
+    partition: ProbeFitPartition | None = None,
 ) -> str:
     from safetensors import SafetensorError, safe_open
 
     expected_metadata = {
         "schema_version": (
-            "typo-linear-probe-weights/v2"
+            "typo-linear-probe-weights/v3"
             if protocol.schema_version.endswith("/v3")
             else "typo-linear-probe-weights/v1"
         ),
@@ -662,6 +707,18 @@ def _validate_probe_weights(
         "hidden_size": str(protocol.hidden_size),
         "class_count": str(class_count),
     }
+    expected_metadata_fields = set(_WEIGHT_METADATA_FIELDS_V1)
+    if protocol.schema_version.endswith("/v3"):
+        if partition is None or partition.seed != seed:
+            raise ValueError("v3 probe weights require a recomputed fit partition")
+        expected_metadata.update(
+            {
+                "fit_partition_rule": str(protocol.fit_partition_rule),
+                "fit_partition_sha256": partition.identity_sha256,
+                "fit_partition_record_count": str(len(partition.indices)),
+            }
+        )
+        expected_metadata_fields = set(_WEIGHT_METADATA_FIELDS_V3)
     expected_keys = {
         f"decoder_layer.{layer}.{kind}"
         for layer in range(protocol.decoder_layers)
@@ -672,7 +729,7 @@ def _validate_probe_weights(
             metadata = handle.metadata()
             if (
                 not isinstance(metadata, Mapping)
-                or set(metadata) != _WEIGHT_METADATA_FIELDS
+                or set(metadata) != expected_metadata_fields
                 or dict(metadata) != expected_metadata
             ):
                 raise ValueError("probe weight provenance metadata differs")
@@ -709,6 +766,7 @@ def _validate_fit_diagnostics(
     path: Path,
     *,
     protocol: ProbeProducerProtocol,
+    partitions: Mapping[int, ProbeFitPartition],
 ) -> None:
     value = _json_file(path)
     expected_fields = {
@@ -716,61 +774,70 @@ def _validate_fit_diagnostics(
         "optimizer",
         "standardization",
         "l2_penalty",
-        "normalization",
+        "fit_partition_rule",
+        "normalization_by_seed",
         "solver_by_seed",
-        "two_start_agreement",
     }
     if set(value) != expected_fields or value["schema_version"] != (
-        "typo-linear-probe-fit-diagnostics/v1"
+        "typo-linear-probe-fit-diagnostics/v2"
     ):
         raise ValueError("probe fit diagnostics fields or schema differ")
     if (
         value["optimizer"] != protocol.optimizer
         or value["standardization"] != protocol.standardization
         or value["l2_penalty"] != protocol.l2_penalty
+        or value["fit_partition_rule"] != protocol.fit_partition_rule
     ):
         raise ValueError("probe fit diagnostics method identity differs")
-    normalization = value["normalization"]
-    if not isinstance(normalization, Mapping) or set(normalization) != {
-        "layer_mean",
-        "layer_scale",
-    }:
-        raise ValueError("probe fit normalization fields differ")
-    means = normalization["layer_mean"]
-    scales = normalization["layer_scale"]
-    if (
-        not isinstance(means, list)
-        or len(means) != protocol.decoder_layers
-        or any(
-            not isinstance(row, list)
-            or len(row) != protocol.hidden_size
+    seed_keys = {str(seed) for seed in protocol.probe_seeds}
+    normalization_by_seed = value["normalization_by_seed"]
+    if not isinstance(normalization_by_seed, Mapping) or set(normalization_by_seed) != seed_keys:
+        raise ValueError("probe fit normalization seed inventory differs")
+    for seed in protocol.probe_seeds:
+        normalization = normalization_by_seed[str(seed)]
+        if not isinstance(normalization, Mapping) or set(normalization) != {
+            "layer_mean",
+            "layer_scale",
+        }:
+            raise ValueError("probe fit normalization fields differ")
+        means = normalization["layer_mean"]
+        scales = normalization["layer_scale"]
+        if (
+            not isinstance(means, list)
+            or len(means) != protocol.decoder_layers
+            or any(
+                not isinstance(row, list)
+                or len(row) != protocol.hidden_size
+                or any(
+                    isinstance(item, bool)
+                    or not isinstance(item, (int, float))
+                    or not math.isfinite(float(item))
+                    for item in row
+                )
+                for row in means
+            )
+            or not isinstance(scales, list)
+            or len(scales) != protocol.decoder_layers
             or any(
                 isinstance(item, bool)
                 or not isinstance(item, (int, float))
                 or not math.isfinite(float(item))
-                for item in row
+                or float(item) <= 0.0
+                for item in scales
             )
-            for row in means
-        )
-        or not isinstance(scales, list)
-        or len(scales) != protocol.decoder_layers
-        or any(
-            isinstance(item, bool)
-            or not isinstance(item, (int, float))
-            or not math.isfinite(float(item))
-            or float(item) <= 0.0
-            for item in scales
-        )
-    ):
-        raise ValueError("probe fit normalization values differ")
+        ):
+            raise ValueError("probe fit normalization values differ")
     solver = value["solver_by_seed"]
-    seed_keys = {str(seed) for seed in protocol.probe_seeds}
     metric_fields = {
+        "fit_partition_sha256",
+        "fit_record_count",
+        "fit_class_counts",
         "objective",
         "gradient_inf_norm",
         "iterations",
         "function_evaluations",
-        "folded_logit_max_error",
+        "float64_folded_logit_max_error",
+        "float32_serialized_logit_max_error",
     }
     if not isinstance(solver, Mapping) or set(solver) != seed_keys:
         raise ValueError("probe fit solver seed inventory differs")
@@ -778,7 +845,20 @@ def _validate_fit_diagnostics(
         metrics = solver[str(seed)]
         if not isinstance(metrics, Mapping) or set(metrics) != metric_fields:
             raise ValueError("probe fit solver metric fields differ")
-        for field in ("objective", "gradient_inf_norm", "folded_logit_max_error"):
+        partition = partitions[seed]
+        if (
+            metrics["fit_partition_sha256"] != partition.identity_sha256
+            or metrics["fit_record_count"] != len(partition.indices)
+            or metrics["fit_class_counts"]
+            != {str(class_id): count for class_id, count in partition.class_counts}
+        ):
+            raise ValueError("probe fit diagnostics partition identity differs")
+        for field in (
+            "objective",
+            "gradient_inf_norm",
+            "float64_folded_logit_max_error",
+            "float32_serialized_logit_max_error",
+        ):
             values = metrics[field]
             if (
                 not isinstance(values, list)
@@ -803,40 +883,21 @@ def _validate_fit_diagnostics(
                 )
             ):
                 raise ValueError(f"probe fit solver {field} values differ")
-        if any(float(item) > 1e-6 for item in metrics["gradient_inf_norm"]):
+        assert protocol.gradient_tolerance is not None
+        if any(float(item) > protocol.gradient_tolerance for item in metrics["gradient_inf_norm"]):
             raise ValueError("probe fit solver did not pass its gradient gate")
+        assert protocol.folded_logit_tolerance is not None
         assert protocol.serialized_logit_tolerance is not None
         if any(
-            float(item) > protocol.serialized_logit_tolerance
-            for item in metrics["folded_logit_max_error"]
+            float(item) > protocol.folded_logit_tolerance
+            for item in metrics["float64_folded_logit_max_error"]
         ):
             raise ValueError("probe fit standardization folding exceeded its tolerance")
-    agreement = value["two_start_agreement"]
-    if not isinstance(agreement, Mapping) or set(agreement) != {
-        "objective_relative_gap",
-        "parameter_relative_gap",
-    }:
-        raise ValueError("probe fit two-start agreement fields differ")
-    assert protocol.solver_objective_relative_tolerance is not None
-    assert protocol.solver_parameter_relative_tolerance is not None
-    for field, tolerance in (
-        ("objective_relative_gap", protocol.solver_objective_relative_tolerance),
-        ("parameter_relative_gap", protocol.solver_parameter_relative_tolerance),
-    ):
-        values = agreement[field]
-        if (
-            not isinstance(values, list)
-            or len(values) != protocol.decoder_layers
-            or any(
-                isinstance(item, bool)
-                or not isinstance(item, (int, float))
-                or not math.isfinite(float(item))
-                or float(item) < 0.0
-                or float(item) > tolerance
-                for item in values
-            )
+        if any(
+            float(item) > protocol.serialized_logit_tolerance
+            for item in metrics["float32_serialized_logit_max_error"]
         ):
-            raise ValueError(f"probe fit {field} failed its numerical gate")
+            raise ValueError("probe fit serialization exceeded its tolerance")
 
 
 @dataclass(frozen=True, slots=True)
@@ -896,6 +957,7 @@ class ProbeTransitionArtifact:
     config_sha256: str
     selection_ci_lower_by_seed: Mapping[int, float]
     validation_ci_lower_by_seed: Mapping[int, float]
+    validation_clean_ce_upper_by_seed: Mapping[int, Mapping[int, float]]
     identity_inventory: ProbeTransitionIdentityInventory
     protected_split_registry_sha256: str
     fit_records: tuple[ProbeFitRecord, ...]
@@ -945,14 +1007,17 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
     resolved = supplied.resolve()
     raw = resolved.read_bytes()
     payload = _json_file(resolved)
-    if set(payload) != _TOP_LEVEL_FIELDS:
-        raise ValueError("probe transition artifact fields differ")
-    artifact_schema = payload["schema_version"]
+    artifact_schema = payload.get("schema_version")
     if artifact_schema not in {
         "typo-denoising-probe-selection/v2",
         "typo-denoising-probe-selection/v3",
     }:
         raise ValueError("probe transition schema_version differs")
+    expected_top_level = (
+        _TOP_LEVEL_FIELDS_V3 if artifact_schema.endswith("/v3") else _TOP_LEVEL_FIELDS_V2
+    )
+    if set(payload) != expected_top_level:
+        raise ValueError("probe transition artifact fields differ")
     identity = {
         "operation": "select-linear-probe-denoising-transition",
         "hook_site": "complete-decoder-block-residual-output",
@@ -960,8 +1025,6 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
         "selection_metric": "largest-group-mean-paired-noise-penalty-drop/v2",
         "selection_rule": "min-argmax-over-layers-one-through-last/v1",
         "tie_break": "smallest-layer/v1",
-        "stability_rule": "selection-exact-and-validation-within-one-layer-for-both-seeds/v1",
-        "validation_rule": "group-bootstrap-95pct-lower-positive-for-both-seeds/v1",
     }
     for field, expected in identity.items():
         if payload[field] != expected:
@@ -1031,6 +1094,13 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
         or payload["tie_break"] != protocol.tie_break
         or payload["stability_rule"] != protocol.stability_rule
         or payload["validation_rule"] != protocol.validation_rule
+        or (
+            artifact_schema.endswith("/v3")
+            and (
+                payload["fit_partition_rule"] != protocol.fit_partition_rule
+                or payload["probe_validity_rule"] != protocol.probe_validity_rule
+            )
+        )
         or bootstrap
         != {
             "resamples": protocol.bootstrap_resamples,
@@ -1058,6 +1128,11 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
             class_count=len(labels),
             protocol=protocol,
         )
+    fit_partitions = (
+        build_probe_fit_partitions(manifests["fit"], seeds=protocol.probe_seeds)
+        if protocol.schema_version.endswith("/v3")
+        else {}
+    )
     identity_unions = {role: _all_identities(manifests[role]) for role in _ROLES}
     for left_index, left in enumerate(_ROLES):
         for right in _ROLES[left_index + 1 :]:
@@ -1097,7 +1172,9 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
             weights_value[str(seed)], root=root, field=f"probe seed {seed} weights"
         )
     if len(set(weights.values())) != 2 or len(set(weight_hashes.values())) != 2:
-        raise ValueError("probe seeds must use distinct independently fitted weight artifacts")
+        raise ValueError(
+            "probe replications must use distinct independently fitted weight artifacts"
+        )
     tensor_digests: dict[int, str] = {}
     for seed in seeds:
         tensor_digests[seed] = _validate_probe_weights(
@@ -1105,16 +1182,19 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
             seed=seed,
             protocol=protocol,
             class_count=len(labels),
+            partition=fit_partitions.get(seed),
         )
-    if not protocol.schema_version.endswith("/v3") and len(set(tensor_digests.values())) != len(
-        seeds
-    ):
-        raise ValueError("independent probe seeds contain identical numerical tensors")
+    if len(set(tensor_digests.values())) != len(seeds):
+        raise ValueError("scientific probe fit partitions contain identical numerical tensors")
     if protocol.schema_version.endswith("/v3"):
         diagnostics_path, _ = _reference(
             references["fit_diagnostics"], root=root, field="probe fit diagnostics"
         )
-        _validate_fit_diagnostics(diagnostics_path, protocol=protocol)
+        _validate_fit_diagnostics(
+            diagnostics_path,
+            protocol=protocol,
+            partitions=fit_partitions,
+        )
     for seed in seeds:
         selection_path, _ = _reference(
             selection_refs[str(seed)], root=root, field=f"probe seed {seed} selection scores"
@@ -1189,6 +1269,46 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
             resamples=10_000,
             seed=1729,
         )
+    clean_ce_upper_by_seed: dict[int, dict[int, float]] = {}
+    if artifact_schema.endswith("/v3"):
+        stored_clean_upper = payload["validation_clean_ce_upper_by_seed"]
+        expected_seed_keys = {str(seed) for seed in seeds}
+        expected_layer_keys = {str(selected - 1), str(selected)}
+        if not isinstance(stored_clean_upper, Mapping) or set(stored_clean_upper) != (
+            expected_seed_keys
+        ):
+            raise ValueError("probe validity seed inventory differs")
+        for seed in seeds:
+            stored_by_layer = stored_clean_upper[str(seed)]
+            if not isinstance(stored_by_layer, Mapping) or set(stored_by_layer) != (
+                expected_layer_keys
+            ):
+                raise ValueError("probe validity layer inventory differs")
+            clean_ce_upper_by_seed[seed] = {}
+            for layer in (selected - 1, selected):
+                value = _bootstrap_clean_ce_upper_bound(
+                    validation_rows[seed],
+                    layer=layer,
+                    partition_seed=seed,
+                    bootstrap_seed=protocol.bootstrap_seed,
+                    resamples=protocol.bootstrap_resamples,
+                    confidence=protocol.bootstrap_confidence,
+                )
+                stored_value = stored_by_layer[str(layer)]
+                if (
+                    isinstance(stored_value, bool)
+                    or not isinstance(stored_value, (int, float))
+                    or not math.isfinite(float(stored_value))
+                    or float(stored_value) != value
+                ):
+                    raise ValueError("stored probe validity bound differs from recomputation")
+                clean_ce_upper_by_seed[seed][layer] = value
+        if any(
+            value >= math.log(len(labels))
+            for by_layer in clean_ce_upper_by_seed.values()
+            for value in by_layer.values()
+        ):
+            raise ValueError("probe clean cross-entropy validity gate failed")
     if payload["validation_passed"] is not True or any(value <= 0.0 for value in ci_lower.values()):
         raise ValueError("probe transition did not pass group-bootstrap independent validation")
     return ProbeTransitionArtifact(
@@ -1205,6 +1325,12 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
         config_sha256=protocol.config_sha256,
         selection_ci_lower_by_seed=MappingProxyType(selection_ci_lower),
         validation_ci_lower_by_seed=MappingProxyType(ci_lower),
+        validation_clean_ce_upper_by_seed=MappingProxyType(
+            {
+                seed: MappingProxyType(dict(by_layer))
+                for seed, by_layer in clean_ce_upper_by_seed.items()
+            }
+        ),
         identity_inventory=ProbeTransitionIdentityInventory(
             fit=frozenset(identity_unions["fit"]),
             selection=frozenset(identity_unions["selection"]),
