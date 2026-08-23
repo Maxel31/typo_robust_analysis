@@ -314,9 +314,7 @@ def _load_manifest(
                     typo=typo_text[slice(*typo_span)],
                 )
             ):
-                raise ValueError(
-                    "probe keyboard substitution is not a case-preserving neighbor"
-                )
+                raise ValueError("probe keyboard substitution is not a case-preserving neighbor")
             if (
                 clean_text[: clean_span[0]] != typo_text[: typo_span[0]]
                 or clean_text[clean_span[1] :] != typo_text[typo_span[1] :]
@@ -381,9 +379,7 @@ def _validate_within_role_identities(
         for record in records
         if record.normalized_noisy_sha256 is not None
     ]
-    if len(set(clean_hashes)) != len(clean_hashes) or len(set(noisy_hashes)) != len(
-        noisy_hashes
-    ):
+    if len(set(clean_hashes)) != len(clean_hashes) or len(set(noisy_hashes)) != len(noisy_hashes):
         raise ValueError(f"probe {role} normalized content must be unique within role")
     parent_to_group: dict[str, str] = {}
     for record in records:
@@ -392,9 +388,7 @@ def _validate_within_role_identities(
             record.source_group_sha256,
         )
         if previous != record.source_group_sha256:
-            raise ValueError(
-                f"probe {role} parent source maps to multiple bootstrap groups"
-            )
+            raise ValueError(f"probe {role} parent source maps to multiple bootstrap groups")
 
 
 def _identity_sets(records: Sequence[_CohortRecord]) -> tuple[set[str], set[str], set[str]]:
@@ -436,16 +430,10 @@ def _validate_preregistered_manifest(
     minimum_groups = protocol.min_source_groups_per_class[role]
     for class_id in range(class_count):
         group_count = len(
-            {
-                record.source_group_sha256
-                for record in records
-                if record.class_id == class_id
-            }
+            {record.source_group_sha256 for record in records if record.class_id == class_id}
         )
         if group_count < minimum_groups:
-            raise ValueError(
-                f"probe {role} source-group count differs from the preregistration"
-            )
+            raise ValueError(f"probe {role} source-group count differs from the preregistration")
     if role in {"selection", "validation"} and Counter(
         _stratum_key(record) for record in records
     ) != Counter(protocol.stratum_counts[role]):
@@ -658,7 +646,11 @@ def _validate_probe_weights(
     from safetensors import SafetensorError, safe_open
 
     expected_metadata = {
-        "schema_version": "typo-linear-probe-weights/v1",
+        "schema_version": (
+            "typo-linear-probe-weights/v2"
+            if protocol.schema_version.endswith("/v3")
+            else "typo-linear-probe-weights/v1"
+        ),
         "seed": str(seed),
         "config_sha256": protocol.config_sha256,
         "fit_manifest_sha256": protocol.input_sha256["fit_manifest"],
@@ -711,6 +703,140 @@ def _validate_probe_weights(
     except SafetensorError as exc:
         raise ValueError("probe weight file is not a valid safetensors artifact") from exc
     return tensor_digest.hexdigest()
+
+
+def _validate_fit_diagnostics(
+    path: Path,
+    *,
+    protocol: ProbeProducerProtocol,
+) -> None:
+    value = _json_file(path)
+    expected_fields = {
+        "schema_version",
+        "optimizer",
+        "standardization",
+        "l2_penalty",
+        "normalization",
+        "solver_by_seed",
+        "two_start_agreement",
+    }
+    if set(value) != expected_fields or value["schema_version"] != (
+        "typo-linear-probe-fit-diagnostics/v1"
+    ):
+        raise ValueError("probe fit diagnostics fields or schema differ")
+    if (
+        value["optimizer"] != protocol.optimizer
+        or value["standardization"] != protocol.standardization
+        or value["l2_penalty"] != protocol.l2_penalty
+    ):
+        raise ValueError("probe fit diagnostics method identity differs")
+    normalization = value["normalization"]
+    if not isinstance(normalization, Mapping) or set(normalization) != {
+        "layer_mean",
+        "layer_scale",
+    }:
+        raise ValueError("probe fit normalization fields differ")
+    means = normalization["layer_mean"]
+    scales = normalization["layer_scale"]
+    if (
+        not isinstance(means, list)
+        or len(means) != protocol.decoder_layers
+        or any(
+            not isinstance(row, list)
+            or len(row) != protocol.hidden_size
+            or any(
+                isinstance(item, bool)
+                or not isinstance(item, (int, float))
+                or not math.isfinite(float(item))
+                for item in row
+            )
+            for row in means
+        )
+        or not isinstance(scales, list)
+        or len(scales) != protocol.decoder_layers
+        or any(
+            isinstance(item, bool)
+            or not isinstance(item, (int, float))
+            or not math.isfinite(float(item))
+            or float(item) <= 0.0
+            for item in scales
+        )
+    ):
+        raise ValueError("probe fit normalization values differ")
+    solver = value["solver_by_seed"]
+    seed_keys = {str(seed) for seed in protocol.probe_seeds}
+    metric_fields = {
+        "objective",
+        "gradient_inf_norm",
+        "iterations",
+        "function_evaluations",
+        "folded_logit_max_error",
+    }
+    if not isinstance(solver, Mapping) or set(solver) != seed_keys:
+        raise ValueError("probe fit solver seed inventory differs")
+    for seed in protocol.probe_seeds:
+        metrics = solver[str(seed)]
+        if not isinstance(metrics, Mapping) or set(metrics) != metric_fields:
+            raise ValueError("probe fit solver metric fields differ")
+        for field in ("objective", "gradient_inf_norm", "folded_logit_max_error"):
+            values = metrics[field]
+            if (
+                not isinstance(values, list)
+                or len(values) != protocol.decoder_layers
+                or any(
+                    isinstance(item, bool)
+                    or not isinstance(item, (int, float))
+                    or not math.isfinite(float(item))
+                    or float(item) < 0.0
+                    for item in values
+                )
+            ):
+                raise ValueError(f"probe fit solver {field} values differ")
+        for field in ("iterations", "function_evaluations"):
+            values = metrics[field]
+            if (
+                not isinstance(values, list)
+                or len(values) != protocol.decoder_layers
+                or any(
+                    isinstance(item, bool) or not isinstance(item, int) or item < 1
+                    for item in values
+                )
+            ):
+                raise ValueError(f"probe fit solver {field} values differ")
+        if any(float(item) > 1e-6 for item in metrics["gradient_inf_norm"]):
+            raise ValueError("probe fit solver did not pass its gradient gate")
+        assert protocol.serialized_logit_tolerance is not None
+        if any(
+            float(item) > protocol.serialized_logit_tolerance
+            for item in metrics["folded_logit_max_error"]
+        ):
+            raise ValueError("probe fit standardization folding exceeded its tolerance")
+    agreement = value["two_start_agreement"]
+    if not isinstance(agreement, Mapping) or set(agreement) != {
+        "objective_relative_gap",
+        "parameter_relative_gap",
+    }:
+        raise ValueError("probe fit two-start agreement fields differ")
+    assert protocol.solver_objective_relative_tolerance is not None
+    assert protocol.solver_parameter_relative_tolerance is not None
+    for field, tolerance in (
+        ("objective_relative_gap", protocol.solver_objective_relative_tolerance),
+        ("parameter_relative_gap", protocol.solver_parameter_relative_tolerance),
+    ):
+        values = agreement[field]
+        if (
+            not isinstance(values, list)
+            or len(values) != protocol.decoder_layers
+            or any(
+                isinstance(item, bool)
+                or not isinstance(item, (int, float))
+                or not math.isfinite(float(item))
+                or float(item) < 0.0
+                or float(item) > tolerance
+                for item in values
+            )
+        ):
+            raise ValueError(f"probe fit {field} failed its numerical gate")
 
 
 @dataclass(frozen=True, slots=True)
@@ -821,8 +947,13 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
     payload = _json_file(resolved)
     if set(payload) != _TOP_LEVEL_FIELDS:
         raise ValueError("probe transition artifact fields differ")
+    artifact_schema = payload["schema_version"]
+    if artifact_schema not in {
+        "typo-denoising-probe-selection/v2",
+        "typo-denoising-probe-selection/v3",
+    }:
+        raise ValueError("probe transition schema_version differs")
     identity = {
-        "schema_version": "typo-denoising-probe-selection/v2",
         "operation": "select-linear-probe-denoising-transition",
         "hook_site": "complete-decoder-block-residual-output",
         "coordinate": "edited-word-final-token/v1",
@@ -867,7 +998,7 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
     ):
         raise ValueError("probe bootstrap protocol differs")
     references = payload["references"]
-    if not isinstance(references, Mapping) or set(references) != {
+    expected_reference_fields = {
         "config",
         "class_inventory",
         "fit_manifest",
@@ -877,17 +1008,19 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
         "probe_weights_by_seed",
         "selection_scores_by_seed",
         "validation_scores_by_seed",
-    }:
+    }
+    if artifact_schema.endswith("/v3"):
+        expected_reference_fields.add("fit_diagnostics")
+    if not isinstance(references, Mapping) or set(references) != expected_reference_fields:
         raise ValueError("probe transition reference fields differ")
     root = resolved.parent.resolve()
-    config_path, config_sha256 = _reference(
-        references["config"], root=root, field="probe config"
-    )
+    config_path, config_sha256 = _reference(references["config"], root=root, field="probe config")
     protocol = load_probe_producer_config(config_path)
     if config_sha256 != protocol.config_sha256:
         raise ValueError("probe config reference differs from its content hash")
     if (
-        model != protocol.model
+        artifact_schema.endswith("/v3") != protocol.schema_version.endswith("/v3")
+        or model != protocol.model
         or revision != protocol.model_revision
         or decoder_layers != protocol.decoder_layers
         or seeds != protocol.probe_seeds
@@ -973,8 +1106,15 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
             protocol=protocol,
             class_count=len(labels),
         )
-    if len(set(tensor_digests.values())) != len(seeds):
+    if not protocol.schema_version.endswith("/v3") and len(set(tensor_digests.values())) != len(
+        seeds
+    ):
         raise ValueError("independent probe seeds contain identical numerical tensors")
+    if protocol.schema_version.endswith("/v3"):
+        diagnostics_path, _ = _reference(
+            references["fit_diagnostics"], root=root, field="probe fit diagnostics"
+        )
+        _validate_fit_diagnostics(diagnostics_path, protocol=protocol)
     for seed in seeds:
         selection_path, _ = _reference(
             selection_refs[str(seed)], root=root, field=f"probe seed {seed} selection scores"

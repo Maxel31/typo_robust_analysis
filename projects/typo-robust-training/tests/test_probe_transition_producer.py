@@ -97,12 +97,8 @@ def _files(tmp_path: Path) -> dict[str, Path]:
             },
         ),
         "fit": _write_json(tmp_path / "fit.json", _manifest("fit")),
-        "selection": _write_json(
-            tmp_path / "selection.json", _manifest("selection")
-        ),
-        "validation": _write_json(
-            tmp_path / "validation.json", _manifest("validation")
-        ),
+        "selection": _write_json(tmp_path / "selection.json", _manifest("selection")),
+        "validation": _write_json(tmp_path / "validation.json", _manifest("validation")),
         "protected": _write_json(
             tmp_path / "protected.json",
             {
@@ -120,7 +116,7 @@ def _files(tmp_path: Path) -> dict[str, Path]:
         ),
     }
     config = {
-        "schema_version": "typo-linear-probe-producer-config/v2",
+        "schema_version": "typo-linear-probe-producer-config/v3",
         "model": {
             "id": "google/gemma-3-4b-it",
             "revision": "a" * 40,
@@ -154,14 +150,18 @@ def _files(tmp_path: Path) -> dict[str, Path]:
         },
         "probe": {
             "seeds": [42, 43],
-            "optimizer": "adamw",
-            "learning_rate": 0.05,
-            "weight_decay": 0.0,
-            "beta1": 0.9,
-            "beta2": 0.999,
-            "epsilon": 1e-8,
-            "epochs": 50,
-            "batch_size": 6,
+            "optimizer": "full-batch-lbfgs-strong-wolfe-float64/v1",
+            "standardization": "fit-only-per-layer-scalar-rms-folded/v1",
+            "l2_penalty": "unit-prior-sum-loss/v1",
+            "max_iterations": 1000,
+            "max_evaluations": 1250,
+            "history_size": 100,
+            "gradient_tolerance": 1e-7,
+            "change_tolerance": 1e-12,
+            "solver_objective_relative_tolerance": 1e-9,
+            "solver_parameter_relative_tolerance": 1e-5,
+            "folded_logit_tolerance": 1e-8,
+            "serialized_logit_tolerance": 1e-5,
             "hook_site": "complete-decoder-block-residual-output",
             "coordinate": "edited-word-final-token/v1",
         },
@@ -169,9 +169,7 @@ def _files(tmp_path: Path) -> dict[str, Path]:
             "metric": "largest-group-mean-paired-noise-penalty-drop/v2",
             "rule": "min-argmax-over-layers-one-through-last/v1",
             "tie_break": "smallest-layer/v1",
-            "stability_rule": (
-                "selection-exact-and-validation-within-one-layer-for-both-seeds/v1"
-            ),
+            "stability_rule": ("selection-exact-and-validation-within-one-layer-for-both-seeds/v1"),
             "validation_rule": "group-bootstrap-95pct-lower-positive-for-both-seeds/v1",
             "bootstrap": {
                 "resamples": 10_000,
@@ -255,11 +253,10 @@ def test_producer_derives_transition_and_binds_every_output(tmp_path: Path) -> N
     for seed, path in result.weights_by_seed.items():
         with safe_open(path, framework="np") as handle:
             assert set(handle.keys()) == {
-                f"decoder_layer.{layer}.{kind}"
-                for layer in range(4)
-                for kind in ("weight", "bias")
+                f"decoder_layer.{layer}.{kind}" for layer in range(4) for kind in ("weight", "bias")
             }
             metadata = handle.metadata()
+            assert metadata["schema_version"] == "typo-linear-probe-weights/v2"
             assert metadata["seed"] == str(seed)
             assert metadata["config_sha256"] == protocol.config_sha256
             assert metadata["fit_manifest_sha256"] == sha256_file(files["fit"])
@@ -284,6 +281,10 @@ def test_producer_derives_transition_and_binds_every_output(tmp_path: Path) -> N
                 "probe_weights_sha256": weight_hashes[seed],
             }
     run = json.loads(result.run_path.read_text())
+    assert run["schema_version"] == "typo-linear-probe-producer-run/v2"
+    assert run["fit_diagnostics"]["sha256"] == sha256_file(
+        result.artifact_path.parent / run["fit_diagnostics"]["relative_path"]
+    )
     assert all(value > 0.0 for value in run["selection_ci_lower_by_seed"].values())
     assert all(value > 0.0 for value in run["validation_ci_lower_by_seed"].values())
     artifact_hash = sha256_file(result.artifact_path)
@@ -292,6 +293,23 @@ def test_producer_derives_transition_and_binds_every_output(tmp_path: Path) -> N
     assert consumed.selected_transition_layer == 2
     assert consumed.code_revision == "b" * 40
     assert consumed.hidden_size == 2
+
+
+def test_v3_loader_rejects_tampered_solver_diagnostics(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    result = run_select_probe_transition(
+        _run_config(files, tmp_path / "output"),
+        activation_provider=_FakeProvider(),
+    )
+    artifact = json.loads(result.artifact_path.read_text())
+    reference = artifact["references"]["fit_diagnostics"]
+    diagnostics_path = result.artifact_path.parent / reference["relative_path"]
+    diagnostics = json.loads(diagnostics_path.read_text())
+    diagnostics["two_start_agreement"]["parameter_relative_gap"][0] = 1.0
+    _write_json(diagnostics_path, diagnostics)
+
+    with pytest.raises(ValueError, match="hash differs"):
+        load_probe_transition_artifact(result.artifact_path)
 
 
 def test_input_hash_mismatch_fails_before_provider_construction(tmp_path: Path) -> None:
@@ -392,9 +410,7 @@ def test_cross_kind_role_identity_overlap_fails_before_provider(tmp_path: Path) 
     files = _files(tmp_path)
     fit = json.loads(files["fit"].read_text())
     selection = json.loads(files["selection"].read_text())
-    selection["records"][0]["source_group_sha256"] = fit["records"][0][
-        "parent_source_sha256"
-    ]
+    selection["records"][0]["source_group_sha256"] = fit["records"][0]["parent_source_sha256"]
     _write_json(files["selection"], selection)
     config = json.loads(files["config"].read_text())
     config["inputs"]["selection_manifest_sha256"] = sha256_file(files["selection"])
@@ -607,56 +623,39 @@ def test_token_inflation_bucket_has_closed_boundaries(delta: int, expected: str)
     assert _inflation_bucket(delta) == expected
 
 
-def test_rejects_identical_probe_tensors_despite_seed_metadata(
+def test_accepts_identical_converged_probe_tensors_with_distinct_provenance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     files = _files(tmp_path)
+    from typo_robust_training.probe import producer
 
-    def identical_fit(*_args: object, **_kwargs: object) -> object:
-        from typo_robust_training.probe import producer
+    original_fit = producer._fit_probe  # noqa: SLF001 - exercises solver boundary
+    cached: list[object] = []
 
-        return producer._ProbeWeights(  # noqa: SLF001 - falsifies seed independence
-            weight=np.zeros((4, 2, 2), dtype=np.float32),
-            bias=np.zeros((4, 2), dtype=np.float32),
-        )
+    def identical_fit(*args: object, **kwargs: object) -> object:
+        if not cached:
+            kwargs["seed"] = 42
+            cached.append(original_fit(*args, **kwargs))
+        return cached[0]
 
-    monkeypatch.setattr(
-        "typo_robust_training.probe.producer._fit_probe",
-        identical_fit,
+    monkeypatch.setattr(producer, "_fit_probe", identical_fit)
+    result = run_select_probe_transition(
+        _run_config(files, tmp_path / "output"),
+        activation_provider=_FakeProvider(),
     )
-    with pytest.raises(ValueError, match="identical numerical tensors"):
-        run_select_probe_transition(
-            _run_config(files, tmp_path / "output"),
-            activation_provider=_FakeProvider(),
-        )
+    assert result.validation_passed is True
+    assert len({sha256_file(path) for path in result.weights_by_seed.values()}) == 2
+    assert load_probe_transition_artifact(result.artifact_path).selected_transition_layer == 2
 
 
-def test_rejects_numerically_identical_probe_tensors_with_signed_zero(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_v3_config_rejects_relaxed_numerical_gate(tmp_path: Path) -> None:
     files = _files(tmp_path)
-
-    def signed_zero_fit(*_args: object, **kwargs: object) -> object:
-        from typo_robust_training.probe import producer
-
-        weight = np.ones((4, 2, 2), dtype=np.float32)
-        weight.flat[0] = -0.0 if kwargs["seed"] == 43 else 0.0
-        return producer._ProbeWeights(  # noqa: SLF001 - falsifies seed independence
-            weight=weight,
-            bias=np.ones((4, 2), dtype=np.float32),
-        )
-
-    monkeypatch.setattr(
-        "typo_robust_training.probe.producer._fit_probe",
-        signed_zero_fit,
-    )
-    with pytest.raises(ValueError, match="identical numerical tensors"):
-        run_select_probe_transition(
-            _run_config(files, tmp_path / "output"),
-            activation_provider=_FakeProvider(),
-        )
+    config = json.loads(files["config"].read_text())
+    config["probe"]["gradient_tolerance"] = 1e-3
+    _write_json(files["config"], config)
+    with pytest.raises(ValueError, match="gradient_tolerance differs"):
+        load_probe_producer_config(files["config"])
 
 
 def test_cli_registers_every_probe_producer_input() -> None:
