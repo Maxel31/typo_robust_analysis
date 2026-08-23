@@ -417,7 +417,10 @@ def _load_subspaces(
         "complement_basis_seed": str(protocol.complement_basis_seed),
     }
     with safe_open(path, framework="np") as handle:
-        if dict(handle.metadata() or {}) != expected_metadata or set(handle.keys()) != expected_keys:
+        if (
+            dict(handle.metadata() or {}) != expected_metadata
+            or set(handle.keys()) != expected_keys
+        ):
             raise ValueError("semantic kill stored subspace provenance differs")
         stored = {key: handle.get_tensor(key) for key in expected_keys}
     expected_arrays: dict[str, np.ndarray] = {
@@ -428,9 +431,7 @@ def _load_subspaces(
         expected_arrays.update(
             {
                 f"seed.{seed}.semantic_basis": semantic[seed].basis,
-                f"seed.{seed}.projected_class_weights": semantic[
-                    seed
-                ].projected_class_weights,
+                f"seed.{seed}.projected_class_weights": semantic[seed].projected_class_weights,
                 f"seed.{seed}.classifier_bias": semantic[seed].classifier_bias,
                 f"seed.{seed}.semantic_complement_basis": complement[seed],
             }
@@ -739,7 +740,7 @@ def load_semantic_subspace_kill_artifact(
     if payload["kill_test_passed"] is not True or not all(
         summary.passed for summary in summaries.values()
     ):
-        raise ValueError("semantic kill artifact did not pass both independently rederived seeds")
+        raise ValueError("semantic kill artifact did not pass both probe replications")
     return SemanticSubspaceKillArtifact(
         model=parent.model,
         model_revision=parent.model_revision,

@@ -88,8 +88,9 @@ def select_probe_transition(
 
     The offset returned by ``argmax`` is shifted by one because layer zero has
     no preceding decoder layer. Exact ties are resolved toward the shallower
-    layer. Exactly two independently initialized probes are required by the
-    frozen method contract.
+    layer. Exactly two preregistered probe replications are required.  The
+    producer contract determines whether these are legacy optimizer seeds or
+    the v3 disjoint, class-stratified scientific fit partitions.
     """
 
     if not isinstance(trajectories, tuple) or len(trajectories) != 2:

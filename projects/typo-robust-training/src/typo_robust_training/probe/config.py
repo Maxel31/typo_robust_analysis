@@ -11,6 +11,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from typo_robust_training.data.config import strict_loads
+from typo_robust_training.probe.partition import FIT_PARTITION_RULE
 
 
 _REVISION = re.compile(r"[0-9a-f]{40}")
@@ -38,7 +39,7 @@ _COHORTS = {
     "min_source_groups_per_class",
     "stratum_counts",
 }
-_PROBE = {
+_PROBE_V2 = {
     "seeds",
     "optimizer",
     "learning_rate",
@@ -51,7 +52,23 @@ _PROBE = {
     "hook_site",
     "coordinate",
 }
-_SELECTION = {
+_PROBE_V3 = {
+    "seeds",
+    "fit_partition_rule",
+    "optimizer",
+    "standardization",
+    "l2_penalty",
+    "max_iterations",
+    "max_evaluations",
+    "history_size",
+    "gradient_tolerance",
+    "change_tolerance",
+    "folded_logit_tolerance",
+    "serialized_logit_tolerance",
+    "hook_site",
+    "coordinate",
+}
+_SELECTION_V2 = {
     "metric",
     "rule",
     "tie_break",
@@ -59,13 +76,22 @@ _SELECTION = {
     "validation_rule",
     "bootstrap",
 }
+_SELECTION_V3 = _SELECTION_V2 | {"probe_validity_rule"}
 _BOOTSTRAP = {"resamples", "seed", "confidence", "unit"}
 
 SELECTION_METRIC = "largest-group-mean-paired-noise-penalty-drop/v2"
 SELECTION_RULE = "min-argmax-over-layers-one-through-last/v1"
 TIE_BREAK = "smallest-layer/v1"
 STABILITY_RULE = "selection-exact-and-validation-within-one-layer-for-both-seeds/v1"
+STABILITY_RULE_V3 = (
+    "selection-exact-and-validation-within-one-layer-for-both-disjoint-fit-partitions/v1"
+)
 VALIDATION_RULE = "group-bootstrap-95pct-lower-positive-for-both-seeds/v1"
+VALIDATION_RULE_V3 = "group-bootstrap-95pct-lower-positive-for-both-disjoint-fit-partitions/v1"
+PROBE_VALIDITY_RULE = (
+    "validation-source-group-bootstrap-95pct-upper-clean-ce-below-uniform-"
+    "at-boundary-for-both-fit-partitions/v1"
+)
 HOOK_SITE = "complete-decoder-block-residual-output"
 COORDINATE = "edited-word-final-token/v1"
 
@@ -86,9 +112,7 @@ def _number(
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{field} must be a finite number")
     result = float(value)
-    if not math.isfinite(result) or result < minimum or (
-        maximum is not None and result > maximum
-    ):
+    if not math.isfinite(result) or result < minimum or (maximum is not None and result > maximum):
         suffix = f" and <= {maximum}" if maximum is not None else ""
         raise ValueError(f"{field} must be finite and >= {minimum}{suffix}")
     return result
@@ -104,10 +128,7 @@ def _strict_role_counts(value: object, *, field: str) -> Mapping[str, int]:
     if not isinstance(value, dict) or set(value) != set(_ROLES):
         raise ValueError(f"{field} must define exactly fit, selection, and validation")
     return MappingProxyType(
-        {
-            role: _integer(value[role], field=f"{field}.{role}", minimum=2)
-            for role in _ROLES
-        }
+        {role: _integer(value[role], field=f"{field}.{role}", minimum=2) for role in _ROLES}
     )
 
 
@@ -126,12 +147,7 @@ def _stratum_counts(value: object) -> Mapping[str, Mapping[str, int]]:
                     "stratum keys must be canonical edit_type|edit_count|token_inflation_bucket"
                 )
             edit_type, edit_count, inflation = raw_key.split("|")
-            if (
-                not edit_type
-                or not inflation
-                or not edit_count.isdigit()
-                or int(edit_count) < 1
-            ):
+            if not edit_type or not inflation or not edit_count.isdigit() or int(edit_count) < 1:
                 raise ValueError(f"stratum_counts.{role} contains an invalid key")
             role_counts[raw_key] = _integer(
                 raw_count, field=f"stratum_counts.{role}.{raw_key}", minimum=1
@@ -154,13 +170,13 @@ class ProbeProducerProtocol:
     min_source_groups_per_class: Mapping[str, int]
     stratum_counts: Mapping[str, Mapping[str, int]]
     probe_seeds: tuple[int, int]
-    learning_rate: float
-    weight_decay: float
-    beta1: float
-    beta2: float
-    epsilon: float
-    epochs: int
-    batch_size: int
+    learning_rate: float | None
+    weight_decay: float | None
+    beta1: float | None
+    beta2: float | None
+    epsilon: float | None
+    epochs: int | None
+    batch_size: int | None
     bootstrap_resamples: int
     bootstrap_seed: int
     bootstrap_confidence: float
@@ -168,6 +184,16 @@ class ProbeProducerProtocol:
     schema_version: str = "typo-linear-probe-producer-config/v2"
     dtype: str = "bfloat16"
     optimizer: str = "adamw"
+    standardization: str | None = None
+    l2_penalty: str | None = None
+    fit_partition_rule: str | None = None
+    max_iterations: int | None = None
+    max_evaluations: int | None = None
+    history_size: int | None = None
+    gradient_tolerance: float | None = None
+    change_tolerance: float | None = None
+    folded_logit_tolerance: float | None = None
+    serialized_logit_tolerance: float | None = None
     hook_site: str = HOOK_SITE
     coordinate: str = COORDINATE
     selection_metric: str = SELECTION_METRIC
@@ -175,6 +201,7 @@ class ProbeProducerProtocol:
     tie_break: str = TIE_BREAK
     stability_rule: str = STABILITY_RULE
     validation_rule: str = VALIDATION_RULE
+    probe_validity_rule: str | None = None
     bootstrap_unit: str = "source-group"
 
 
@@ -193,7 +220,11 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
         raise ValueError("probe producer config must be UTF-8") from exc
     if not isinstance(payload, dict) or set(payload) != _TOP:
         raise ValueError("probe producer config fields differ")
-    if payload["schema_version"] != "typo-linear-probe-producer-config/v2":
+    schema_version = payload["schema_version"]
+    if schema_version not in {
+        "typo-linear-probe-producer-config/v2",
+        "typo-linear-probe-producer-config/v3",
+    }:
         raise ValueError("probe producer config schema differs")
     model = payload["model"]
     inputs = payload["inputs"]
@@ -206,9 +237,11 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
         raise ValueError("probe producer input fields differ")
     if not isinstance(cohorts, dict) or set(cohorts) != _COHORTS:
         raise ValueError("probe producer cohort fields differ")
-    if not isinstance(probe, dict) or set(probe) != _PROBE:
+    expected_probe_fields = _PROBE_V3 if schema_version.endswith("/v3") else _PROBE_V2
+    if not isinstance(probe, dict) or set(probe) != expected_probe_fields:
         raise ValueError("probe producer probe fields differ")
-    if not isinstance(selection, dict) or set(selection) != _SELECTION:
+    expected_selection_fields = _SELECTION_V3 if schema_version.endswith("/v3") else _SELECTION_V2
+    if not isinstance(selection, dict) or set(selection) != expected_selection_fields:
         raise ValueError("probe producer selection fields differ")
     bootstrap = selection["bootstrap"]
     if not isinstance(bootstrap, dict) or set(bootstrap) != _BOOTSTRAP:
@@ -230,7 +263,11 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
     if not isinstance(seeds, list) or seeds != [42, 43]:
         raise ValueError("probe producer seeds must be exactly [42, 43]")
     expected = {
-        "optimizer": "adamw",
+        "optimizer": (
+            "full-batch-lbfgs-strong-wolfe-float64/v1"
+            if schema_version.endswith("/v3")
+            else "adamw"
+        ),
         "hook_site": HOOK_SITE,
         "coordinate": COORDINATE,
     }
@@ -241,9 +278,13 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
         "metric": SELECTION_METRIC,
         "rule": SELECTION_RULE,
         "tie_break": TIE_BREAK,
-        "stability_rule": STABILITY_RULE,
-        "validation_rule": VALIDATION_RULE,
+        "stability_rule": STABILITY_RULE_V3 if schema_version.endswith("/v3") else STABILITY_RULE,
+        "validation_rule": (
+            VALIDATION_RULE_V3 if schema_version.endswith("/v3") else VALIDATION_RULE
+        ),
     }
+    if schema_version.endswith("/v3"):
+        expected_selection["probe_validity_rule"] = PROBE_VALIDITY_RULE
     for field, literal in expected_selection.items():
         if selection[field] != literal:
             raise ValueError(f"probe producer selection {field} differs")
@@ -257,9 +298,7 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
 
     input_hashes = MappingProxyType(
         {
-            "class_inventory": _sha(
-                inputs["class_inventory_sha256"], field="class inventory hash"
-            ),
+            "class_inventory": _sha(inputs["class_inventory_sha256"], field="class inventory hash"),
             "fit_manifest": _sha(inputs["fit_manifest_sha256"], field="fit manifest hash"),
             "selection_manifest": _sha(
                 inputs["selection_manifest_sha256"], field="selection manifest hash"
@@ -272,9 +311,7 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
             ),
         }
     )
-    records_per_class = _strict_role_counts(
-        cohorts["records_per_class"], field="records_per_class"
-    )
+    records_per_class = _strict_role_counts(cohorts["records_per_class"], field="records_per_class")
     minimum_groups = _strict_role_counts(
         cohorts["min_source_groups_per_class"],
         field="min_source_groups_per_class",
@@ -283,10 +320,33 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
         raise ValueError("minimum source groups cannot exceed records per class")
     strata = _stratum_counts(cohorts["stratum_counts"])
 
-    beta1 = _number(probe["beta1"], field="probe beta1", maximum=1.0)
-    beta2 = _number(probe["beta2"], field="probe beta2", maximum=1.0)
-    if beta1 >= 1.0 or beta2 >= 1.0:
-        raise ValueError("probe optimizer beta values must be below one")
+    if schema_version.endswith("/v3"):
+        if records_per_class["fit"] % 2 != 0:
+            raise ValueError("v3 probe fit records per class must be even")
+        if probe["fit_partition_rule"] != FIT_PARTITION_RULE:
+            raise ValueError("probe producer fit partition rule differs")
+        if probe["standardization"] != "fit-only-per-layer-scalar-rms-folded/v1":
+            raise ValueError("probe producer standardization differs")
+        if probe["l2_penalty"] != "unit-prior-sum-loss/v1":
+            raise ValueError("probe producer L2 penalty differs")
+        fixed_numbers = {
+            "max_iterations": 1000,
+            "max_evaluations": 1250,
+            "history_size": 100,
+            "gradient_tolerance": 1e-7,
+            "change_tolerance": 0.0,
+            "folded_logit_tolerance": 1e-8,
+            "serialized_logit_tolerance": 1e-5,
+        }
+        for field, expected_value in fixed_numbers.items():
+            if probe[field] != expected_value:
+                raise ValueError(f"probe producer {field} differs")
+        beta1 = beta2 = None
+    else:
+        beta1 = _number(probe["beta1"], field="probe beta1", maximum=1.0)
+        beta2 = _number(probe["beta2"], field="probe beta2", maximum=1.0)
+        if beta1 >= 1.0 or beta2 >= 1.0:
+            raise ValueError("probe optimizer beta values must be below one")
     return ProbeProducerProtocol(
         model=model_id,
         model_revision=revision,
@@ -298,19 +358,62 @@ def load_probe_producer_config(path: Path) -> ProbeProducerProtocol:
         min_source_groups_per_class=minimum_groups,
         stratum_counts=strata,
         probe_seeds=(42, 43),
-        learning_rate=_number(
-            probe["learning_rate"], field="probe learning rate", minimum=1e-12
+        learning_rate=(
+            None
+            if schema_version.endswith("/v3")
+            else _number(probe["learning_rate"], field="probe learning rate", minimum=1e-12)
         ),
-        weight_decay=_number(probe["weight_decay"], field="probe weight decay"),
+        weight_decay=(
+            None
+            if schema_version.endswith("/v3")
+            else _number(probe["weight_decay"], field="probe weight decay")
+        ),
         beta1=beta1,
         beta2=beta2,
-        epsilon=_number(probe["epsilon"], field="probe epsilon", minimum=1e-12),
-        epochs=_integer(probe["epochs"], field="probe epochs", minimum=1),
-        batch_size=_integer(probe["batch_size"], field="probe batch size", minimum=1),
+        epsilon=(
+            None
+            if schema_version.endswith("/v3")
+            else _number(probe["epsilon"], field="probe epsilon", minimum=1e-12)
+        ),
+        epochs=(
+            None
+            if schema_version.endswith("/v3")
+            else _integer(probe["epochs"], field="probe epochs", minimum=1)
+        ),
+        batch_size=(
+            None
+            if schema_version.endswith("/v3")
+            else _integer(probe["batch_size"], field="probe batch size", minimum=1)
+        ),
         bootstrap_resamples=10_000,
         bootstrap_seed=1729,
         bootstrap_confidence=0.95,
         config_sha256=hashlib.sha256(raw).hexdigest(),
+        schema_version=schema_version,
+        optimizer=str(probe["optimizer"]),
+        standardization=(str(probe["standardization"]) if schema_version.endswith("/v3") else None),
+        l2_penalty=(str(probe["l2_penalty"]) if schema_version.endswith("/v3") else None),
+        fit_partition_rule=(
+            str(probe["fit_partition_rule"]) if schema_version.endswith("/v3") else None
+        ),
+        max_iterations=(int(probe["max_iterations"]) if schema_version.endswith("/v3") else None),
+        max_evaluations=(int(probe["max_evaluations"]) if schema_version.endswith("/v3") else None),
+        history_size=(int(probe["history_size"]) if schema_version.endswith("/v3") else None),
+        gradient_tolerance=(
+            float(probe["gradient_tolerance"]) if schema_version.endswith("/v3") else None
+        ),
+        change_tolerance=(
+            float(probe["change_tolerance"]) if schema_version.endswith("/v3") else None
+        ),
+        folded_logit_tolerance=(
+            float(probe["folded_logit_tolerance"]) if schema_version.endswith("/v3") else None
+        ),
+        serialized_logit_tolerance=(
+            float(probe["serialized_logit_tolerance"]) if schema_version.endswith("/v3") else None
+        ),
+        stability_rule=(STABILITY_RULE_V3 if schema_version.endswith("/v3") else STABILITY_RULE),
+        validation_rule=(VALIDATION_RULE_V3 if schema_version.endswith("/v3") else VALIDATION_RULE),
+        probe_validity_rule=(PROBE_VALIDITY_RULE if schema_version.endswith("/v3") else None),
     )
 
 
@@ -321,7 +424,10 @@ __all__ = [
     "SELECTION_METRIC",
     "SELECTION_RULE",
     "STABILITY_RULE",
+    "STABILITY_RULE_V3",
     "TIE_BREAK",
     "VALIDATION_RULE",
+    "VALIDATION_RULE_V3",
+    "PROBE_VALIDITY_RULE",
     "load_probe_producer_config",
 ]

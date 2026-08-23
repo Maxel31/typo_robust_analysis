@@ -24,6 +24,10 @@ from typo_robust_training.probe.config import (
     ProbeProducerProtocol,
     load_probe_producer_config,
 )
+from typo_robust_training.probe.partition import (
+    ProbeFitPartition,
+    build_probe_fit_partitions,
+)
 from typo_robust_training.probe.scoring import (
     ProbeSeedTrajectory,
     ProbeTransitionSelection,
@@ -76,7 +80,9 @@ def _string(value: object, *, field: str) -> str:
 
 def _sha(value: object, *, field: str) -> str:
     result = _string(value, field=field)
-    if len(result) != _SHA256_LENGTH or any(character not in "0123456789abcdef" for character in result):
+    if len(result) != _SHA256_LENGTH or any(
+        character not in "0123456789abcdef" for character in result
+    ):
         raise ValueError(f"{field} must be a lowercase SHA-256")
     return result
 
@@ -163,9 +169,7 @@ def _load_cohort(
         if class_id >= len(labels):
             raise ValueError("probe class id is outside the class inventory")
         clean_text = _string(raw["clean_text"], field="probe clean text")
-        clean_span = _span(
-            raw["clean_word_char_span"], text=clean_text, field="clean word span"
-        )
+        clean_span = _span(raw["clean_word_char_span"], text=clean_text, field="clean word span")
         if normalized_content_sha256(clean_text) != _sha(
             raw["normalized_clean_sha256"], field="normalized clean hash"
         ):
@@ -174,12 +178,8 @@ def _load_cohort(
             raise ValueError("probe clean word span differs from its class label")
         common = {
             "record_id": _string(raw["record_id"], field="probe record id"),
-            "source_group_sha256": _sha(
-                raw["source_group_sha256"], field="source group hash"
-            ),
-            "parent_source_sha256": _sha(
-                raw["parent_source_sha256"], field="parent source hash"
-            ),
+            "source_group_sha256": _sha(raw["source_group_sha256"], field="source group hash"),
+            "parent_source_sha256": _sha(raw["parent_source_sha256"], field="parent source hash"),
             "normalized_clean_sha256": raw["normalized_clean_sha256"],
             "class_id": class_id,
             "clean_text": clean_text,
@@ -266,9 +266,7 @@ def _validate_within_role_identities(
         for record in records
         if record.normalized_noisy_sha256 is not None
     ]
-    if len(set(clean_hashes)) != len(clean_hashes) or len(set(noisy_hashes)) != len(
-        noisy_hashes
-    ):
+    if len(set(clean_hashes)) != len(clean_hashes) or len(set(noisy_hashes)) != len(noisy_hashes):
         raise ValueError(f"probe {role} normalized content must be unique within role")
     parent_to_group: dict[str, str] = {}
     for record in records:
@@ -277,9 +275,7 @@ def _validate_within_role_identities(
             record.source_group_sha256,
         )
         if previous != record.source_group_sha256:
-            raise ValueError(
-                f"probe {role} parent source maps to multiple bootstrap groups"
-            )
+            raise ValueError(f"probe {role} parent source maps to multiple bootstrap groups")
 
 
 def _stratum_key(record: ProbeCohortRecord) -> str:
@@ -305,15 +301,9 @@ def _validate_preregistered_cohort(
         raise ValueError(f"probe {role} class counts differ from the preregistration")
     minimum_groups = protocol.min_source_groups_per_class[role]
     for class_id in range(class_count):
-        groups = {
-            record.source_group_sha256
-            for record in records
-            if record.class_id == class_id
-        }
+        groups = {record.source_group_sha256 for record in records if record.class_id == class_id}
         if len(groups) < minimum_groups:
-            raise ValueError(
-                f"probe {role} source-group count differs from the preregistration"
-            )
+            raise ValueError(f"probe {role} source-group count differs from the preregistration")
     if role in {"selection", "validation"}:
         observed = Counter(_stratum_key(record) for record in records)
         expected = Counter(protocol.stratum_counts[role])
@@ -370,9 +360,7 @@ def _load_protected_registry(path: Path) -> tuple[set[str], set[str], set[str]]:
         ):
             if not isinstance(values, list):
                 raise ValueError(f"protected {field} hashes must be a list")
-            tier_sets.append(
-                {_sha(value, field=f"protected {field} hash") for value in values}
-            )
+            tier_sets.append({_sha(value, field=f"protected {field} hash") for value in values})
         if not any(tier_sets):
             raise ValueError("every protected split tier must contain an identity")
         identities_by_tier[tier] = (tier_sets[0], tier_sets[1], tier_sets[2])
@@ -381,9 +369,7 @@ def _load_protected_registry(path: Path) -> tuple[set[str], set[str], set[str]]:
     ordered = sorted(required_tiers)
     for left_index, left in enumerate(ordered):
         for right in ordered[left_index + 1 :]:
-            if set().union(*identities_by_tier[left]) & set().union(
-                *identities_by_tier[right]
-            ):
+            if set().union(*identities_by_tier[left]) & set().union(*identities_by_tier[right]):
                 raise ValueError("protected split tiers overlap transitively")
     return (
         set().union(*(identities_by_tier[tier][0] for tier in ordered)),
@@ -396,9 +382,7 @@ def _validate_role_isolation(
     cohorts: Mapping[str, Sequence[ProbeCohortRecord]],
     protected: tuple[set[str], set[str], set[str]],
 ) -> None:
-    identities = {
-        role: set().union(*_identity_sets(cohorts[role])) for role in _ROLES
-    }
+    identities = {role: set().union(*_identity_sets(cohorts[role])) for role in _ROLES}
     for left_index, left in enumerate(_ROLES):
         for right in _ROLES[left_index + 1 :]:
             if identities[left] & identities[right]:
@@ -434,6 +418,26 @@ class ProbeActivationProvider(Protocol):
 class _ProbeWeights:
     weight: np.ndarray
     bias: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
+class _LayerSolverDiagnostics:
+    objective: float
+    gradient_inf_norm: float
+    iterations: int
+    function_evaluations: int
+    float64_folded_logit_max_error: float
+    float32_serialized_logit_max_error: float
+
+
+@dataclass(frozen=True, slots=True)
+class _ProbeFitResult:
+    weights: _ProbeWeights
+    standardized_weight: np.ndarray | None
+    standardized_bias: np.ndarray | None
+    layer_mean: np.ndarray | None
+    layer_scale: np.ndarray | None
+    diagnostics: tuple[_LayerSolverDiagnostics, ...]
 
 
 def _probe_tensor_digest(weights: _ProbeWeights) -> str:
@@ -475,7 +479,7 @@ def _activation_matrix(
     return np.ascontiguousarray(matrix), int(matrix.shape[2])
 
 
-def _fit_probe(
+def _fit_probe_adamw_v2(
     activations: np.ndarray,
     labels: np.ndarray,
     *,
@@ -527,6 +531,190 @@ def _fit_probe(
     return _ProbeWeights(
         weight=weight.detach().cpu().numpy(),
         bias=bias.detach().cpu().numpy(),
+    )
+
+
+def _fit_probe_lbfgs_v3(
+    activations: np.ndarray,
+    labels: np.ndarray,
+    *,
+    class_count: int,
+    seed: int,
+    protocol: ProbeProducerProtocol,
+) -> _ProbeFitResult:
+    """Fit one unique, scale-invariant convex probe solution per layer."""
+
+    import torch
+
+    if labels.shape != (activations.shape[0],):
+        raise ValueError("probe fit labels differ from the activation inventory")
+    required = (
+        protocol.max_iterations,
+        protocol.max_evaluations,
+        protocol.history_size,
+        protocol.gradient_tolerance,
+        protocol.change_tolerance,
+        protocol.folded_logit_tolerance,
+        protocol.serialized_logit_tolerance,
+    )
+    if any(value is None for value in required):
+        raise ValueError("convex probe solver configuration is incomplete")
+    values = np.asarray(activations, dtype=np.float64)
+    means = values.mean(axis=0, dtype=np.float64)
+    centered = values - means[None, ...]
+    scales = np.sqrt(np.mean(np.square(centered), axis=(0, 2), dtype=np.float64))
+    if not np.isfinite(means).all() or not np.isfinite(scales).all() or (scales <= 0.0).any():
+        raise FloatingPointError("probe fit-only layer standardization is degenerate")
+    standardized = centered / scales[None, :, None]
+    targets = torch.from_numpy(labels.astype(np.int64, copy=False))
+    _sample_count, decoder_layers, hidden_size = values.shape
+    raw_weight = np.empty((decoder_layers, hidden_size, class_count), dtype=np.float64)
+    raw_bias = np.empty((decoder_layers, class_count), dtype=np.float64)
+    standardized_weight = np.empty_like(raw_weight)
+    standardized_bias = np.empty_like(raw_bias)
+    diagnostics: list[_LayerSolverDiagnostics] = []
+    # Scientific replication comes from disjoint fit data partitions.  A
+    # deterministic zero start prevents optimizer randomness from being
+    # misrepresented as an independent scientific replication.
+    _ = seed
+
+    for layer in range(decoder_layers):
+        layer_values = torch.from_numpy(np.ascontiguousarray(standardized[:, layer]))
+        weight = torch.nn.Parameter(torch.zeros(hidden_size, class_count, dtype=torch.float64))
+        bias = torch.nn.Parameter(torch.zeros(class_count, dtype=torch.float64))
+        optimizer = torch.optim.LBFGS(
+            (weight, bias),
+            lr=1.0,
+            max_iter=int(protocol.max_iterations),
+            max_eval=int(protocol.max_evaluations),
+            tolerance_grad=float(protocol.gradient_tolerance),
+            tolerance_change=float(protocol.change_tolerance),
+            history_size=int(protocol.history_size),
+            line_search_fn="strong_wolfe",
+        )
+
+        def objective() -> object:
+            logits = layer_values @ weight + bias
+            negative_log_likelihood = torch.nn.functional.cross_entropy(
+                logits,
+                targets,
+                reduction="sum",
+            )
+            # Summed NLL plus a unit isotropic Gaussian prior is strictly convex
+            # and avoids scaling convergence tolerances by the cohort size.
+            penalty = (weight.square().sum() + bias.square().sum()) / 2.0
+            return negative_log_likelihood + penalty
+
+        function_evaluations = 0
+
+        def closure() -> object:
+            nonlocal function_evaluations
+            function_evaluations += 1
+            optimizer.zero_grad(set_to_none=True)
+            loss = objective()
+            loss.backward()  # type: ignore[union-attr]
+            return loss
+
+        optimizer.step(closure)
+        optimizer.zero_grad(set_to_none=True)
+        final_objective = objective()
+        final_objective.backward()  # type: ignore[union-attr]
+        gradient_inf_norm = max(
+            float(weight.grad.detach().abs().max()),
+            float(bias.grad.detach().abs().max()),
+        )
+        objective_value = float(final_objective.detach())
+        state = optimizer.state.get(weight, {})
+        iterations = int(state.get("n_iter", 0))
+        if (
+            not math.isfinite(objective_value)
+            or not math.isfinite(gradient_inf_norm)
+            or gradient_inf_norm > float(protocol.gradient_tolerance)
+        ):
+            raise FloatingPointError(
+                f"convex probe solver failed its gradient gate at layer {layer}: "
+                f"objective={objective_value}, gradient_inf_norm={gradient_inf_norm}"
+            )
+
+        fitted_weight = weight.detach().numpy().copy()
+        fitted_bias = bias.detach().numpy().copy()
+        folded_weight = fitted_weight / scales[layer]
+        folded_bias = fitted_bias - means[layer] @ folded_weight
+        standardized_logits = standardized[:, layer] @ fitted_weight + fitted_bias
+        folded_logits = values[:, layer] @ folded_weight + folded_bias
+        folded_error = float(np.max(np.abs(standardized_logits - folded_logits)))
+        if not math.isfinite(folded_error) or folded_error > float(protocol.folded_logit_tolerance):
+            raise FloatingPointError(
+                f"probe standardization folding failed at layer {layer}: {folded_error}"
+            )
+        standardized_weight[layer] = fitted_weight
+        standardized_bias[layer] = fitted_bias
+        raw_weight[layer] = folded_weight
+        raw_bias[layer] = folded_bias
+        serialized_weight = np.asarray(folded_weight, dtype=np.float32)
+        serialized_bias = np.asarray(folded_bias, dtype=np.float32)
+        serialized_logits = values[:, layer] @ serialized_weight + serialized_bias
+        serialized_error = float(np.max(np.abs(standardized_logits - serialized_logits)))
+        if not math.isfinite(serialized_error) or serialized_error > float(
+            protocol.serialized_logit_tolerance
+        ):
+            raise FloatingPointError(
+                f"probe float32 serialization changed logits at layer {layer}: {serialized_error}"
+            )
+        diagnostics.append(
+            _LayerSolverDiagnostics(
+                objective=objective_value,
+                gradient_inf_norm=gradient_inf_norm,
+                iterations=iterations,
+                function_evaluations=function_evaluations,
+                float64_folded_logit_max_error=folded_error,
+                float32_serialized_logit_max_error=serialized_error,
+            )
+        )
+
+    return _ProbeFitResult(
+        weights=_ProbeWeights(
+            weight=np.ascontiguousarray(raw_weight, dtype=np.float32),
+            bias=np.ascontiguousarray(raw_bias, dtype=np.float32),
+        ),
+        standardized_weight=standardized_weight,
+        standardized_bias=standardized_bias,
+        layer_mean=np.ascontiguousarray(means, dtype=np.float64),
+        layer_scale=np.ascontiguousarray(scales, dtype=np.float64),
+        diagnostics=tuple(diagnostics),
+    )
+
+
+def _fit_probe(
+    activations: np.ndarray,
+    labels: np.ndarray,
+    *,
+    class_count: int,
+    seed: int,
+    protocol: ProbeProducerProtocol,
+) -> _ProbeFitResult:
+    if protocol.schema_version.endswith("/v3"):
+        return _fit_probe_lbfgs_v3(
+            activations,
+            labels,
+            class_count=class_count,
+            seed=seed,
+            protocol=protocol,
+        )
+    weights = _fit_probe_adamw_v2(
+        activations,
+        labels,
+        class_count=class_count,
+        seed=seed,
+        protocol=protocol,
+    )
+    return _ProbeFitResult(
+        weights=weights,
+        standardized_weight=None,
+        standardized_bias=None,
+        layer_mean=None,
+        layer_scale=None,
+        diagnostics=(),
     )
 
 
@@ -631,9 +819,7 @@ def _bootstrap_lower_bound(
         before = float(noisy[selected_layer - 1]) - float(clean[selected_layer - 1])
         after = float(noisy[selected_layer]) - float(clean[selected_layer])
         grouped[str(raw["source_group_sha256"])].append(before - after)
-    group_values = tuple(
-        sum(values) / len(values) for _group, values in sorted(grouped.items())
-    )
+    group_values = tuple(sum(values) / len(values) for _group, values in sorted(grouped.items()))
     if len(group_values) < 2:
         raise ValueError("probe validation requires at least two source groups")
     samples: list[float] = []
@@ -641,9 +827,7 @@ def _bootstrap_lower_bound(
         total = 0.0
         for draw in range(len(group_values)):
             material = f"probe-bootstrap/v1\0{seed}\0{replicate}\0{draw}".encode()
-            index = int.from_bytes(hashlib.sha256(material).digest()[:8], "big") % len(
-                group_values
-            )
+            index = int.from_bytes(hashlib.sha256(material).digest()[:8], "big") % len(group_values)
             total += group_values[index]
         samples.append(total / len(group_values))
     samples.sort()
@@ -651,11 +835,105 @@ def _bootstrap_lower_bound(
     return samples[max(0, math.ceil(lower_tail * len(samples)) - 1)]
 
 
+def _bootstrap_clean_ce_upper_bound(
+    payload: Mapping[str, object],
+    *,
+    layer: int,
+    partition_seed: int,
+    bootstrap_seed: int,
+    resamples: int,
+    confidence: float,
+) -> float:
+    """One-sided source-group bootstrap upper bound for clean probe CE."""
+
+    grouped: dict[str, list[float]] = defaultdict(list)
+    raw_rows = payload["records"]
+    assert isinstance(raw_rows, list)
+    for raw in raw_rows:
+        assert isinstance(raw, Mapping)
+        clean = raw["clean_cross_entropy"]
+        assert isinstance(clean, list)
+        grouped[str(raw["source_group_sha256"])].append(float(clean[layer]))
+    group_values = tuple(sum(values) / len(values) for _group, values in sorted(grouped.items()))
+    if len(group_values) < 2:
+        raise ValueError("probe validity requires at least two source groups")
+    samples: list[float] = []
+    for replicate in range(resamples):
+        total = 0.0
+        for draw in range(len(group_values)):
+            material = (
+                f"probe-clean-ce-bootstrap/v1\0{bootstrap_seed}\0{partition_seed}\0"
+                f"{layer}\0{replicate}\0{draw}"
+            ).encode()
+            index = int.from_bytes(hashlib.sha256(material).digest()[:8], "big") % len(group_values)
+            total += group_values[index]
+        samples.append(total / len(group_values))
+    samples.sort()
+    return samples[min(len(samples) - 1, math.ceil(confidence * len(samples)) - 1)]
+
+
 def _validation_peak(trajectory: ProbeSeedTrajectory) -> int:
     maximum = max(trajectory.transition_drop)
-    return next(
-        index for index, value in enumerate(trajectory.transition_drop) if value == maximum
-    ) + 1
+    return (
+        next(index for index, value in enumerate(trajectory.transition_drop) if value == maximum)
+        + 1
+    )
+
+
+def _convex_solver_diagnostics(
+    fits: Mapping[int, _ProbeFitResult],
+    *,
+    partitions: Mapping[int, ProbeFitPartition],
+    protocol: ProbeProducerProtocol,
+) -> dict[str, object]:
+    """Bind convergence and normalization to two disjoint scientific fits."""
+
+    if not protocol.schema_version.endswith("/v3"):
+        return {}
+    if set(fits) != set(protocol.probe_seeds) or set(partitions) != set(protocol.probe_seeds):
+        raise ValueError("convex probe fit inventory differs from its disjoint partitions")
+    if len({partitions[seed].identity_sha256 for seed in protocol.probe_seeds}) != 2:
+        raise ValueError("convex probe scientific fit partitions are not distinct")
+    for seed in protocol.probe_seeds:
+        fit = fits[seed]
+        if fit.layer_mean is None or fit.layer_scale is None:
+            raise ValueError("convex probe diagnostics are incomplete")
+    return {
+        "schema_version": "typo-linear-probe-fit-diagnostics/v2",
+        "optimizer": protocol.optimizer,
+        "standardization": protocol.standardization,
+        "l2_penalty": protocol.l2_penalty,
+        "fit_partition_rule": protocol.fit_partition_rule,
+        "normalization_by_seed": {
+            str(seed): {
+                "layer_mean": fits[seed].layer_mean.tolist(),  # type: ignore[union-attr]
+                "layer_scale": fits[seed].layer_scale.tolist(),  # type: ignore[union-attr]
+            }
+            for seed in protocol.probe_seeds
+        },
+        "solver_by_seed": {
+            str(seed): {
+                "fit_partition_sha256": partitions[seed].identity_sha256,
+                "fit_record_count": len(partitions[seed].indices),
+                "fit_class_counts": {
+                    str(class_id): count for class_id, count in partitions[seed].class_counts
+                },
+                "objective": [row.objective for row in fits[seed].diagnostics],
+                "gradient_inf_norm": [row.gradient_inf_norm for row in fits[seed].diagnostics],
+                "iterations": [row.iterations for row in fits[seed].diagnostics],
+                "function_evaluations": [
+                    row.function_evaluations for row in fits[seed].diagnostics
+                ],
+                "float64_folded_logit_max_error": [
+                    row.float64_folded_logit_max_error for row in fits[seed].diagnostics
+                ],
+                "float32_serialized_logit_max_error": [
+                    row.float32_serialized_logit_max_error for row in fits[seed].diagnostics
+                ],
+            }
+            for seed in protocol.probe_seeds
+        },
+    }
 
 
 def _addressed_copy(source: Path, output_dir: Path, *, label: str) -> Path:
@@ -682,6 +960,7 @@ def _addressed_weights(
     weights: _ProbeWeights,
     protocol: ProbeProducerProtocol,
     class_count: int,
+    partition: ProbeFitPartition | None = None,
 ) -> Path:
     from safetensors.numpy import save_file
 
@@ -702,7 +981,11 @@ def _addressed_weights(
             dtype=np.float32,
         )
     metadata = {
-        "schema_version": "typo-linear-probe-weights/v1",
+        "schema_version": (
+            "typo-linear-probe-weights/v3"
+            if protocol.schema_version.endswith("/v3")
+            else "typo-linear-probe-weights/v1"
+        ),
         "seed": str(seed),
         "config_sha256": protocol.config_sha256,
         "fit_manifest_sha256": protocol.input_sha256["fit_manifest"],
@@ -714,6 +997,16 @@ def _addressed_weights(
         "hidden_size": str(protocol.hidden_size),
         "class_count": str(class_count),
     }
+    if protocol.schema_version.endswith("/v3"):
+        if partition is None or partition.seed != seed:
+            raise ValueError("v3 probe weights require their exact fit partition")
+        metadata.update(
+            {
+                "fit_partition_rule": str(protocol.fit_partition_rule),
+                "fit_partition_sha256": partition.identity_sha256,
+                "fit_partition_record_count": str(len(partition.indices)),
+            }
+        )
     temporary = output_dir / f".probe-weights-seed-{seed}.safetensors"
     save_file(tensors, temporary, metadata=metadata)
     digest = sha256_file(temporary)
@@ -790,9 +1083,7 @@ def run_select_probe_transition(
     labels = _load_classes(config.class_inventory_path)
     cohorts = {
         "fit": _load_cohort(config.fit_manifest_path, role="fit", labels=labels),
-        "selection": _load_cohort(
-            config.selection_manifest_path, role="selection", labels=labels
-        ),
+        "selection": _load_cohort(config.selection_manifest_path, role="selection", labels=labels),
         "validation": _load_cohort(
             config.validation_manifest_path, role="validation", labels=labels
         ),
@@ -836,9 +1127,7 @@ def run_select_probe_transition(
         for record in cohorts[role]:
             observed_bucket = provider.token_inflation_bucket(record)
             if observed_bucket != record.token_inflation_bucket:
-                raise ValueError(
-                    "probe token inflation bucket differs from the runtime tokenizer"
-                )
+                raise ValueError("probe token inflation bucket differs from the runtime tokenizer")
     output_dir.mkdir(parents=True, exist_ok=True)
     fit_activations, hidden_size = _activation_matrix(
         provider,
@@ -848,6 +1137,11 @@ def run_select_probe_transition(
         hidden_size=protocol.hidden_size,
     )
     fit_labels = np.asarray([record.class_id for record in cohorts["fit"]], dtype=np.int64)
+    fit_partitions = (
+        build_probe_fit_partitions(cohorts["fit"], seeds=protocol.probe_seeds)
+        if protocol.schema_version.endswith("/v3")
+        else {}
+    )
     paired_activations: dict[str, tuple[np.ndarray, np.ndarray]] = {}
     for role in ("selection", "validation"):
         clean, clean_hidden = _activation_matrix(
@@ -873,9 +1167,7 @@ def run_select_probe_transition(
         "class_inventory": _addressed_copy(
             config.class_inventory_path, output_dir, label="class-inventory"
         ),
-        "fit_manifest": _addressed_copy(
-            config.fit_manifest_path, output_dir, label="fit-manifest"
-        ),
+        "fit_manifest": _addressed_copy(config.fit_manifest_path, output_dir, label="fit-manifest"),
         "selection_manifest": _addressed_copy(
             config.selection_manifest_path, output_dir, label="selection-manifest"
         ),
@@ -891,20 +1183,30 @@ def run_select_probe_transition(
     validation_paths: dict[int, Path] = {}
     selection_payloads: dict[int, dict[str, object]] = {}
     validation_payloads: dict[int, dict[str, object]] = {}
+    fits_by_seed: dict[int, _ProbeFitResult] = {}
     tensor_digests: set[str] = set()
     for seed in protocol.probe_seeds:
-        weights = _fit_probe(
-            fit_activations,
-            fit_labels,
+        partition = fit_partitions.get(seed)
+        if protocol.schema_version.endswith("/v3"):
+            assert partition is not None
+            fit_indices = np.asarray(partition.indices, dtype=np.int64)
+            seed_fit_activations = fit_activations[fit_indices]
+            seed_fit_labels = fit_labels[fit_indices]
+        else:
+            seed_fit_activations = fit_activations
+            seed_fit_labels = fit_labels
+        fit = _fit_probe(
+            seed_fit_activations,
+            seed_fit_labels,
             class_count=len(labels),
             seed=seed,
             protocol=protocol,
         )
-        tensor_digest = _probe_tensor_digest(weights)
+        fits_by_seed[seed] = fit
+        weights = fit.weights
+        tensor_digest = _probe_tensor_digest(fit.weights)
         if tensor_digest in tensor_digests:
-            raise ValueError(
-                "independent probe seeds produced identical numerical tensors"
-            )
+            raise ValueError("scientific probe fit partitions produced identical numerical tensors")
         tensor_digests.add(tensor_digest)
         weights_by_seed[seed] = _addressed_weights(
             output_dir,
@@ -912,17 +1214,14 @@ def run_select_probe_transition(
             weights=weights,
             protocol=protocol,
             class_count=len(labels),
+            partition=partition,
         )
         weight_sha256 = sha256_file(weights_by_seed[seed])
         for role in ("selection", "validation"):
             records = cohorts[role]
             role_labels = np.asarray([record.class_id for record in records], dtype=np.int64)
-            clean_loss = _cross_entropy_by_layer(
-                paired_activations[role][0], role_labels, weights
-            )
-            noisy_loss = _cross_entropy_by_layer(
-                paired_activations[role][1], role_labels, weights
-            )
+            clean_loss = _cross_entropy_by_layer(paired_activations[role][0], role_labels, weights)
+            noisy_loss = _cross_entropy_by_layer(paired_activations[role][1], role_labels, weights)
             payload = _score_payload(
                 records,
                 role=role,
@@ -935,17 +1234,13 @@ def run_select_probe_transition(
                     "model_revision": protocol.model_revision,
                     "code_revision": protocol.code_revision,
                     "config_sha256": protocol.config_sha256,
-                    "class_inventory_sha256": protocol.input_sha256[
-                        "class_inventory"
-                    ],
+                    "class_inventory_sha256": protocol.input_sha256["class_inventory"],
                     "fit_manifest_sha256": protocol.input_sha256["fit_manifest"],
                     "role_manifest_sha256": protocol.input_sha256[f"{role}_manifest"],
                     "probe_weights_sha256": weight_sha256,
                 },
             )
-            path = _addressed_json(
-                output_dir, label=f"{role}-scores-seed-{seed}", payload=payload
-            )
+            path = _addressed_json(output_dir, label=f"{role}-scores-seed-{seed}", payload=payload)
             if role == "selection":
                 selection_payloads[seed] = payload
                 selection_paths[seed] = path
@@ -953,20 +1248,31 @@ def run_select_probe_transition(
                 validation_payloads[seed] = payload
                 validation_paths[seed] = path
 
-    if len({sha256_file(path) for path in weights_by_seed.values()}) != len(
-        protocol.probe_seeds
-    ):
-        raise ValueError("independent probe seeds produced identical weight artifacts")
+    if len({sha256_file(path) for path in weights_by_seed.values()}) != len(protocol.probe_seeds):
+        raise ValueError(
+            "probe fit partitions produced identical provenance-bound weight artifacts"
+        )
+
+    fit_diagnostics_payload = _convex_solver_diagnostics(
+        fits_by_seed,
+        partitions=fit_partitions,
+        protocol=protocol,
+    )
+    fit_diagnostics_path = (
+        _addressed_json(
+            output_dir,
+            label="probe-fit-diagnostics",
+            payload=fit_diagnostics_payload,
+        )
+        if fit_diagnostics_payload
+        else None
+    )
 
     selection: ProbeTransitionSelection = select_probe_transition(
-        tuple(
-            _group_mean_trajectory(selection_payloads[seed])
-            for seed in protocol.probe_seeds
-        )
+        tuple(_group_mean_trajectory(selection_payloads[seed]) for seed in protocol.probe_seeds)
     )
     validation_trajectories = {
-        seed: _group_mean_trajectory(validation_payloads[seed])
-        for seed in protocol.probe_seeds
+        seed: _group_mean_trajectory(validation_payloads[seed]) for seed in protocol.probe_seeds
     }
     selection_lower = {
         seed: _bootstrap_lower_bound(
@@ -988,6 +1294,25 @@ def run_select_probe_transition(
         )
         for seed in protocol.probe_seeds
     }
+    clean_ce_upper_by_seed: dict[int, dict[int, float]] = {}
+    if protocol.schema_version.endswith("/v3"):
+        for seed in protocol.probe_seeds:
+            clean_ce_upper_by_seed[seed] = {
+                layer: _bootstrap_clean_ce_upper_bound(
+                    validation_payloads[seed],
+                    layer=layer,
+                    partition_seed=seed,
+                    bootstrap_seed=protocol.bootstrap_seed,
+                    resamples=protocol.bootstrap_resamples,
+                    confidence=protocol.bootstrap_confidence,
+                )
+                for layer in (selection.selected_layer - 1, selection.selected_layer)
+            }
+    clean_ce_valid = all(
+        value < math.log(len(labels))
+        for by_layer in clean_ce_upper_by_seed.values()
+        for value in by_layer.values()
+    )
     passed = (
         all(layer == selection.selected_layer for _seed, layer in selection.seed_selected_layers)
         and all(value > 0.0 for value in selection_lower.values())
@@ -996,6 +1321,7 @@ def run_select_probe_transition(
             for seed in protocol.probe_seeds
         )
         and all(value > 0.0 for value in validation_lower.values())
+        and clean_ce_valid
     )
     references = {
         **{name: _reference(path, root=output_dir) for name, path in copied.items()},
@@ -1012,8 +1338,14 @@ def run_select_probe_transition(
             for seed in protocol.probe_seeds
         },
     }
+    if fit_diagnostics_path is not None:
+        references["fit_diagnostics"] = _reference(fit_diagnostics_path, root=output_dir)
     artifact_payload = {
-        "schema_version": "typo-denoising-probe-selection/v2",
+        "schema_version": (
+            "typo-denoising-probe-selection/v3"
+            if protocol.schema_version.endswith("/v3")
+            else "typo-denoising-probe-selection/v2"
+        ),
         "operation": "select-linear-probe-denoising-transition",
         "model": protocol.model,
         "model_revision": protocol.model_revision,
@@ -1036,38 +1368,55 @@ def run_select_probe_transition(
         "selected_transition_layer": selection.selected_layer,
         "validation_passed": passed,
     }
-    artifact_path = _addressed_json(
-        output_dir, label="probe-transition", payload=artifact_payload
-    )
+    if protocol.schema_version.endswith("/v3"):
+        artifact_payload.update(
+            {
+                "fit_partition_rule": protocol.fit_partition_rule,
+                "probe_validity_rule": protocol.probe_validity_rule,
+                "validation_clean_ce_upper_by_seed": {
+                    str(seed): {str(layer): value for layer, value in sorted(by_layer.items())}
+                    for seed, by_layer in sorted(clean_ce_upper_by_seed.items())
+                },
+            }
+        )
+    artifact_path = _addressed_json(output_dir, label="probe-transition", payload=artifact_payload)
     run_path = output_dir / "run.json"
-    write_json_atomic(
-        run_path,
-        {
-            "schema_version": "typo-linear-probe-producer-run/v1",
-            "operation": "select-linear-probe-denoising-transition",
-            "status": "completed" if passed else "validation-failed",
-            "config_sha256": protocol.config_sha256,
-            "input_sha256": actual_input_hashes,
-            "model": protocol.model,
-            "model_revision": protocol.model_revision,
-            "code_revision": protocol.code_revision,
-            "decoder_layers": protocol.decoder_layers,
-            "hidden_size": protocol.hidden_size,
-            "probe_seeds": list(protocol.probe_seeds),
-            "base_model_frozen": True,
-            "selected_transition_layer": selection.selected_layer,
-            "selection_ci_lower_by_seed": {
-                str(seed): selection_lower[seed] for seed in protocol.probe_seeds
-            },
-            "validation_ci_lower_by_seed": {
-                str(seed): validation_lower[seed] for seed in protocol.probe_seeds
-            },
-            "validation_passed": passed,
-            "artifact": _reference(artifact_path, root=output_dir),
-            "runtime": provider_provenance,
-            "python": platform.python_version(),
+    run_payload: dict[str, object] = {
+        "schema_version": (
+            "typo-linear-probe-producer-run/v2"
+            if protocol.schema_version.endswith("/v3")
+            else "typo-linear-probe-producer-run/v1"
+        ),
+        "operation": "select-linear-probe-denoising-transition",
+        "status": "completed" if passed else "validation-failed",
+        "config_sha256": protocol.config_sha256,
+        "input_sha256": actual_input_hashes,
+        "model": protocol.model,
+        "model_revision": protocol.model_revision,
+        "code_revision": protocol.code_revision,
+        "decoder_layers": protocol.decoder_layers,
+        "hidden_size": protocol.hidden_size,
+        "probe_seeds": list(protocol.probe_seeds),
+        "base_model_frozen": True,
+        "selected_transition_layer": selection.selected_layer,
+        "selection_ci_lower_by_seed": {
+            str(seed): selection_lower[seed] for seed in protocol.probe_seeds
         },
-    )
+        "validation_ci_lower_by_seed": {
+            str(seed): validation_lower[seed] for seed in protocol.probe_seeds
+        },
+        "validation_passed": passed,
+        "artifact": _reference(artifact_path, root=output_dir),
+        "runtime": provider_provenance,
+        "python": platform.python_version(),
+    }
+    if fit_diagnostics_path is not None:
+        run_payload["fit_diagnostics"] = _reference(fit_diagnostics_path, root=output_dir)
+        run_payload["validation_clean_ce_upper_by_seed"] = {
+            str(seed): {str(layer): value for layer, value in sorted(by_layer.items())}
+            for seed, by_layer in sorted(clean_ce_upper_by_seed.items())
+        }
+    write_json_atomic(run_path, run_payload)
     return ProbeTransitionProducerResult(
         selected_transition_layer=selection.selected_layer,
         validation_passed=passed,
