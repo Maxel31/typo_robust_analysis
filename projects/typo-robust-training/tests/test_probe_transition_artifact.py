@@ -80,6 +80,51 @@ def _manifest(role: str) -> dict[str, object]:
     return {"schema_version": "typo-probe-cohort/v2", "role": role, "records": rows}
 
 
+def _paired_manifest_with_operations(operations: list[str]) -> dict[str, object]:
+    """Build an exactly class-balanced cohort with a prescribed operation mix."""
+
+    if len(operations) % 2:
+        raise ValueError("test cohort size must be divisible by two classes")
+    typo_words = {
+        "keyboard-neighbor-substitution": ("slpha", "neta"),
+        "deletion": ("apha", "eta"),
+        "duplication": ("allpha", "betaa"),
+    }
+    rows: list[dict[str, object]] = []
+    for index, operation in enumerate(operations):
+        class_id = index % 2
+        clean_word = ("alpha", "beta")[class_id]
+        clean_text = f"Remainder-balanced context {index} contains {clean_word} today."
+        clean_start = clean_text.index(clean_word)
+        typo_word = typo_words[operation][class_id]
+        typo_text = (
+            clean_text[:clean_start] + typo_word + clean_text[clean_start + len(clean_word) :]
+        )
+        rows.append(
+            {
+                "record_id": f"selection-{index}",
+                "source_group_sha256": _sha(f"remainder-group-{index}"),
+                "parent_source_sha256": _sha(f"remainder-parent-{index}"),
+                "normalized_clean_sha256": normalized_content_sha256(clean_text),
+                "clean_text": clean_text,
+                "clean_word_char_span": [clean_start, clean_start + len(clean_word)],
+                "class_id": class_id,
+                "pair_id": f"remainder-pair-{index}",
+                "normalized_noisy_sha256": normalized_content_sha256(typo_text),
+                "typo_text": typo_text,
+                "typo_word_char_span": [clean_start, clean_start + len(typo_word)],
+                "edit_type": operation,
+                "edit_count": 1,
+                "token_inflation_bucket": "frozen-test-bucket",
+            }
+        )
+    return {
+        "schema_version": "typo-probe-cohort/v2",
+        "role": "selection",
+        "records": rows,
+    }
+
+
 def _scores(
     role: str,
     seed: int,
@@ -334,6 +379,46 @@ def test_artifact_recomputes_selection_and_resolves_suffix(tmp_path: Path) -> No
         result.protected_identities,
         *result.cohort_identities_by_role.values(),
     )
+
+
+def test_artifact_loader_accepts_remainder_balanced_operation_strata(
+    tmp_path: Path,
+) -> None:
+    manifest = _paired_manifest_with_operations(
+        ["keyboard-neighbor-substitution"] * 67 + ["deletion"] * 67 + ["duplication"] * 66
+    )
+    path = _write_json(tmp_path / "selection-remainder-balanced.json", manifest)
+
+    records = probe_artifacts._load_manifest(  # noqa: SLF001 - loader boundary falsification
+        path,
+        expected_role="selection",
+        class_labels=("alpha", "beta"),
+    )
+
+    assert len(records) == 200
+
+
+@pytest.mark.parametrize(
+    "operations",
+    [
+        ["keyboard-neighbor-substitution"] * 4 + ["deletion"] * 4,
+        ["keyboard-neighbor-substitution"] * 4 + ["deletion"] * 2 + ["duplication"] * 2,
+    ],
+    ids=("missing-frozen-operation", "operation-count-spread-greater-than-one"),
+)
+def test_artifact_loader_rejects_incomplete_or_imbalanced_operation_strata(
+    tmp_path: Path,
+    operations: list[str],
+) -> None:
+    manifest = _paired_manifest_with_operations(operations)
+    path = _write_json(tmp_path / "selection-invalid-operation-balance.json", manifest)
+
+    with pytest.raises(ValueError, match="counts differing by at most one"):
+        probe_artifacts._load_manifest(  # noqa: SLF001 - loader boundary falsification
+            path,
+            expected_role="selection",
+            class_labels=("alpha", "beta"),
+        )
 
 
 def test_training_consumer_loads_the_real_validated_artifact_bundle(tmp_path: Path) -> None:
