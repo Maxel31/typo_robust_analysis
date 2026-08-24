@@ -58,6 +58,7 @@ CORE_COMMANDS = frozenset(
 TRAINING_PLUGIN_COMMANDS = frozenset(
     {
         "prepare-kojima-faithful-data",
+        "prepare-mistral-factorial-data",
         "build-robustness-training-data",
         "build-probe-transition-data",
         "build-sae-clean-corpus",

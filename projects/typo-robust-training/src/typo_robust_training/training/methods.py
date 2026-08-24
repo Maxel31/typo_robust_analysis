@@ -458,14 +458,28 @@ def materialize_probe_output_factorial_configs(
         template.read_text(encoding="utf-8"),
         context=str(template.resolve()),
     )
+    template_schema = payload.get("schema_version") if isinstance(payload, Mapping) else None
+    is_mistral_64m = template_schema == "robustness-adapter-training-config/v8-template"
     expected_top = {
-        "schema_version", "condition", "method_evidence", "model", "sequence",
-        "adapter", "optimization", "objective",
+        "schema_version",
+        "condition",
+        "method_evidence",
+        "model",
+        "sequence",
+        "adapter",
+        "optimization",
+        "objective",
     }
+    if is_mistral_64m:
+        expected_top.add("method_identity")
     if not isinstance(payload, Mapping) or set(payload) != expected_top:
         raise ValueError("probe-factorial template fields differ")
     if (
-        payload["schema_version"] != "robustness-adapter-training-config/v7-template"
+        template_schema
+        not in {
+            "robustness-adapter-training-config/v7-template",
+            "robustness-adapter-training-config/v8-template",
+        }
         or payload["condition"] is not None
         or payload["method_evidence"]
         != {
@@ -474,6 +488,10 @@ def materialize_probe_output_factorial_configs(
         }
     ):
         raise ValueError("probe-factorial template binding differs")
+    if is_mistral_64m and payload.get("method_identity") != (
+        "mistral-state-free-probe-factorial/v1"
+    ):
+        raise ValueError("Mistral factorial template method identity differs")
     model_fields = payload["model"]
     adapter_fields = payload["adapter"]
     objective_fields = payload["objective"]
@@ -500,7 +518,11 @@ def materialize_probe_output_factorial_configs(
         for condition in PROBE_FACTORIAL_CONDITIONS:
             layer_scope, layer_policy, output_scope = _FACTORIAL_ARM_FIELDS[condition]
             arm = copy.deepcopy(dict(payload))
-            arm["schema_version"] = "robustness-adapter-training-config/v7"
+            arm["schema_version"] = (
+                "robustness-adapter-training-config/v8"
+                if is_mistral_64m
+                else "robustness-adapter-training-config/v7"
+            )
             arm["condition"] = condition
             arm["method_evidence"]["artifact_sha256"] = (  # type: ignore[index]
                 loaded_evidence.evidence_sha256
@@ -517,7 +539,16 @@ def materialize_probe_output_factorial_configs(
             resolve_training_method(protocol, evidence=loaded_evidence)
             protocols[condition] = protocol
         manifest = {
-            "schema_version": "probe-output-factorial-manifest/v1",
+            "schema_version": (
+                "probe-output-factorial-manifest/v2"
+                if is_mistral_64m
+                else "probe-output-factorial-manifest/v1"
+            ),
+            **(
+                {"method_identity": "mistral-state-free-probe-factorial/v1"}
+                if is_mistral_64m
+                else {}
+            ),
             "method_evidence_sha256": loaded_evidence.evidence_sha256,
             "arms": {
                 condition: {
@@ -529,9 +560,7 @@ def materialize_probe_output_factorial_configs(
                         ).adapter_layers
                     ),
                     "output_scope": protocols[condition].output_scope,
-                    "initialization_policy": protocols[
-                        condition
-                    ].adapter_initialization_policy,
+                    "initialization_policy": protocols[condition].adapter_initialization_policy,
                 }
                 for condition in PROBE_FACTORIAL_CONDITIONS
             },

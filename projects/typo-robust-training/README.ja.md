@@ -389,6 +389,9 @@ exact checkpointがある場合だけ`--resume`を追加します。W&Bでは
 Linear Probe境界とActivation Patching由来の下流horizonを使い、hidden-state lossを
 使わない5条件factorialの定義と実行契約は
 [`docs/state_free_probe_factorial_v1.ja.md`](docs/state_free_probe_factorial_v1.ja.md)を参照してください。
+固定Mistral-7B・64M-token本実験、hash-attested data wrapper、Gemma v7および
+faithful Kojimaとの境界は
+[`docs/mistral_state_free_factorial_64m_v1.md`](docs/mistral_state_free_factorial_64m_v1.md)を参照してください。
 
 ```bash
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \

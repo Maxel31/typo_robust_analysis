@@ -60,6 +60,33 @@ def _run_prepare_kojima_faithful_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_prepare_mistral_factorial_data(args: argparse.Namespace) -> int:
+    from typo_robust_training.training.mistral_factorial import (
+        PrepareMistralFactorialDataConfig,
+        prepare_mistral_factorial_data,
+    )
+
+    try:
+        result = prepare_mistral_factorial_data(
+            PrepareMistralFactorialDataConfig(
+                seed=args.seed,
+                packed_source_dir=args.packed_source_dir,
+                output_dir=args.output_dir,
+            )
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"prepare-mistral-factorial-data: error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"prepared {result.usable_examples} prevalidated factorial pair(s), "
+        f"exactly {result.student_tokens} student token(s): {result.pairs_path}"
+    )
+    print(f"skip ledger: {result.skips_path}")
+    print(f"manifest: {result.manifest_path}")
+    print(f"run manifest: {result.run_path}")
+    return 0
+
+
 def _run_freeze_evaluation(args: argparse.Namespace) -> int:
     from typo_robust_training.evaluation.freeze import (
         FreezeEvaluationRunConfig,
@@ -730,6 +757,15 @@ def register_commands(
     faithful_data.add_argument("--cache-dir", type=Path)
     faithful_data.add_argument("--output-dir", required=True, type=Path)
     faithful_data.set_defaults(_typo_cot_plugin_handler=_run_prepare_kojima_faithful_data)
+
+    factorial_data = commands.add_parser(
+        "prepare-mistral-factorial-data",
+        help="Freeze one prevalidated 64M pair stream shared by all five Mistral arms.",
+    )
+    factorial_data.add_argument("--seed", required=True, type=int, choices=(42, 43, 44))
+    factorial_data.add_argument("--packed-source-dir", required=True, type=Path)
+    factorial_data.add_argument("--output-dir", required=True, type=Path)
+    factorial_data.set_defaults(_typo_cot_plugin_handler=_run_prepare_mistral_factorial_data)
 
     freeze = commands.add_parser(
         "freeze-robustness-evaluation",

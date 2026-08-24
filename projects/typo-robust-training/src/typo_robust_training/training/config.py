@@ -64,6 +64,7 @@ _TOP = {
 }
 _TOP_V4 = _TOP | {"method_evidence"}
 _TOP_V7 = _TOP | {"method_identity"}
+_TOP_V8 = _TOP_V4 | {"method_identity"}
 _METHOD_EVIDENCE_V4 = {"schema_version", "artifact_sha256"}
 _MODEL = {"id", "revision", "dtype"}
 _MODEL_V2 = _MODEL | {"decoder_layers"}
@@ -131,6 +132,7 @@ _OBJECTIVE_V2 = _OBJECTIVE | {
 }
 _GRADIENT_RATIO_GUARD_OPTIMIZER_STEPS = 50
 _KOJIMA_METHOD_IDENTITY = "kojima-faithful-output-matching/v1"
+_MISTRAL_FACTORIAL_METHOD_IDENTITY = "mistral-state-free-probe-factorial/v1"
 _KOJIMA_FROZEN_SECTIONS: Mapping[str, object] = {
     "model": {
         "id": "mistralai/Mistral-7B-v0.1",
@@ -148,9 +150,7 @@ _KOJIMA_FROZEN_SECTIONS: Mapping[str, object] = {
         "training_corpus_revision": "9bb295ddab0e05d785b879661af7260fed5140fc",
         "training_corpus_data_file": "sample/10BT/000_00000.parquet",
         "packing_policy": "kojima-bos-overfill500-canonicalize-truncate8192/v2",
-        "data_runtime_policy": (
-            "hash-attested-8800-attempt-skip-replace-stream/v2"
-        ),
+        "data_runtime_policy": ("hash-attested-8800-attempt-skip-replace-stream/v2"),
         "upstream_code_revision": "4cb90b28e9f6976046a6e93aec2dcab27e76555d",
     },
     "adapter": {
@@ -181,6 +181,62 @@ _KOJIMA_FROZEN_SECTIONS: Mapping[str, object] = {
         "seed_inventory": [1, 42, 43, 44],
         "public_anchor_seed": 1,
         "matched_replication_seeds": [42, 43, 44],
+        "resume_contract": "exact-next-sample-and-rng/v1",
+    },
+    "objective": {
+        "weights": {
+            "noisy_language_model": 0,
+            "answer": 0,
+            "output": 1,
+            "state": 0,
+            "clean": 0,
+        },
+        "state_scope": "none",
+        "state_distance": "none",
+        "output_scope": "aligned-non-edited-next-token/v1",
+        "noisy_language_model_scope": "all-nonpadding-next-tokens/v1",
+        "temperature": 1.0,
+        "epsilon": 1e-8,
+        "state_gradient_ratio": None,
+        "calibration_micro_batches": 0,
+        "state_window_policy": "none",
+    },
+}
+_MISTRAL_FACTORIAL_FROZEN_SECTIONS: Mapping[str, object] = {
+    "model": {
+        "id": "mistralai/Mistral-7B-v0.1",
+        "revision": "7231864981174d9bee8c7687c24c8344414eae6b",
+        "dtype": "bfloat16",
+        "decoder_layers": 32,
+    },
+    "sequence": {
+        "max_length": 8192,
+        "on_the_fly_typo": "precomputed-record-local-three-operation/v1",
+        "natural_pairs": "disabled/v1",
+        "answer_format": "no-hard-answer-target/v1",
+        "pairing_policy": "exact-alternating-clean-noisy-precomputed/v1",
+        "training_corpus": "HuggingFaceFW/fineweb",
+        "training_corpus_revision": "9bb295ddab0e05d785b879661af7260fed5140fc",
+        "training_corpus_data_file": "sample/10BT/000_00000.parquet",
+        "packing_policy": "kojima-bos-overfill500-canonicalize-truncate8192/v2",
+        "data_runtime_policy": "hash-attested-prevalidated-8000-pair-stream/v1",
+        "upstream_code_revision": "4cb90b28e9f6976046a6e93aec2dcab27e76555d",
+    },
+    "optimization": {
+        "optimizer": "adamw",
+        "learning_rate": 0.0001,
+        "weight_decay": 0.01,
+        "warmup_ratio": 0.0,
+        "scheduler": "constant-with-warmup",
+        "gradient_checkpointing": True,
+        "micro_batch_size": 1,
+        "gradient_accumulation_steps": 8,
+        "max_optimizer_steps": 1000,
+        "max_student_tokens": 65536000,
+        "max_grad_norm": 1.0,
+        "checkpoint_every_optimizer_steps": 250,
+        "log_every_micro_steps": 1,
+        "seed_inventory": [42, 43, 44],
         "resume_contract": "exact-next-sample-and-rng/v1",
     },
     "objective": {
@@ -439,6 +495,16 @@ def is_probe_factorial_protocol(protocol: AdapterTrainingProtocol) -> bool:
     return getattr(protocol, "condition", None) in _FACTORIAL_CONDITIONS
 
 
+def is_mistral_factorial_protocol(protocol: AdapterTrainingProtocol) -> bool:
+    """Select the 64M packed Mistral factorial by exact method identity."""
+
+    return (
+        getattr(protocol, "schema_version", None) == "robustness-adapter-training-config/v8"
+        and getattr(protocol, "condition", None) in _FACTORIAL_CONDITIONS
+        and getattr(protocol, "method_identity", None) == _MISTRAL_FACTORIAL_METHOD_IDENTITY
+    )
+
+
 def _validate_condition(
     condition: str,
     *,
@@ -449,10 +515,7 @@ def _validate_condition(
     state_window_policy: str,
     layer_policy: str,
 ) -> None:
-    if (
-        schema_version == "robustness-adapter-training-config/v7"
-        and condition == _KOJIMA_CONDITION
-    ):
+    if schema_version == "robustness-adapter-training-config/v7" and condition == _KOJIMA_CONDITION:
         if (
             layer_scope != "all-linear-lora-including-embedding-and-lm-head"
             or layer_policy != "kojima-all-linear-with-embedding-head/v1"
@@ -469,7 +532,10 @@ def _validate_condition(
         ):
             raise ValueError("Kojima-faithful condition and objective disagree")
         return
-    if schema_version == "robustness-adapter-training-config/v7":
+    if schema_version in {
+        "robustness-adapter-training-config/v7",
+        "robustness-adapter-training-config/v8",
+    }:
         expected = {
             "factorial-all-layers-all-tokens": (
                 "all-decoder-layers",
@@ -513,10 +579,8 @@ def _validate_condition(
             condition != "probe-transition-single-layer-state-distillation"
             or layer_scope != "probe-transition-suffix"
             or layer_policy != "validated-linear-probe-transition-suffix/v1"
-            or state_scope
-            != "probe-transition-single-layer-edited-word-final-token/v1"
-            or state_window_policy
-            != "validated-probe-transition-single-layer/v1"
+            or state_scope != "probe-transition-single-layer-edited-word-final-token/v1"
+            or state_window_policy != "validated-probe-transition-single-layer/v1"
             or dict(weights)
             != {
                 "noisy_language_model": 0.0,
@@ -667,18 +731,26 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         decoded_schema == "robustness-adapter-training-config/v7"
         and decoded_condition == _KOJIMA_CONDITION
     )
+    decoded_is_mistral_factorial = (
+        decoded_schema == "robustness-adapter-training-config/v8"
+        and decoded_condition in _FACTORIAL_CONDITIONS
+    )
     root = _mapping(
         decoded,
         field="config",
         fields=(
             _TOP_V7
             if decoded_is_kojima
+            else _TOP_V8
+            if decoded_is_mistral_factorial
             else _TOP_V4
-            if decoded_schema in {
+            if decoded_schema
+            in {
                 "robustness-adapter-training-config/v4",
                 "robustness-adapter-training-config/v5",
                 "robustness-adapter-training-config/v6",
                 "robustness-adapter-training-config/v7",
+                "robustness-adapter-training-config/v8",
             }
             else _TOP
         ),
@@ -692,29 +764,44 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         "robustness-adapter-training-config/v5",
         "robustness-adapter-training-config/v6",
         "robustness-adapter-training-config/v7",
+        "robustness-adapter-training-config/v8",
     }:
         raise ValueError("adapter training schema_version differs")
     condition = _string(root["condition"], field="condition")
     if condition not in _CONDITIONS:
         raise ValueError("training condition is unsupported")
     is_kojima = (
-        schema_version == "robustness-adapter-training-config/v7"
-        and condition == _KOJIMA_CONDITION
+        schema_version == "robustness-adapter-training-config/v7" and condition == _KOJIMA_CONDITION
     )
     is_factorial = (
-        schema_version == "robustness-adapter-training-config/v7"
+        schema_version
+        in {
+            "robustness-adapter-training-config/v7",
+            "robustness-adapter-training-config/v8",
+        }
         and condition in _FACTORIAL_CONDITIONS
+    )
+    is_mistral_factorial = (
+        schema_version == "robustness-adapter-training-config/v8" and is_factorial
     )
     if schema_version.endswith("/v7") and not (is_kojima or is_factorial):
         raise ValueError("v7 training condition is unsupported")
+    if schema_version.endswith("/v8") and not is_mistral_factorial:
+        raise ValueError("v8 training condition is unsupported")
     if is_kojima:
         if root["method_identity"] != _KOJIMA_METHOD_IDENTITY:
             raise ValueError("Kojima-faithful method_identity differs")
         for section, expected in _KOJIMA_FROZEN_SECTIONS.items():
             if _canonical_json(root[section]) != _canonical_json(expected):
-                raise ValueError(
-                    f"Kojima-faithful {section} differs from the frozen protocol"
-                )
+                raise ValueError(f"Kojima-faithful {section} differs from the frozen protocol")
+    if is_mistral_factorial:
+        if root["method_identity"] != _MISTRAL_FACTORIAL_METHOD_IDENTITY:
+            raise ValueError("Mistral factorial method_identity differs")
+        for section in ("model", "sequence", "optimization"):
+            if _canonical_json(root[section]) != _canonical_json(
+                _MISTRAL_FACTORIAL_FROZEN_SECTIONS[section]
+            ):
+                raise ValueError(f"Mistral factorial {section} differs")
     if schema_version.endswith("/v6"):
         if condition != "probe-semantic-subspace-distillation":
             raise ValueError("semantic training condition differs from the frozen template")
@@ -722,10 +809,11 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
             if _canonical_json(root[section]) != _canonical_json(expected):
                 raise ValueError(f"semantic training {section} differs from the frozen template")
     if is_factorial:
+        factorial_recipe = (
+            _MISTRAL_FACTORIAL_FROZEN_SECTIONS if is_mistral_factorial else _V4_FROZEN_SECTIONS
+        )
         for section in ("model", "sequence", "optimization"):
-            if _canonical_json(root[section]) != _canonical_json(
-                _V4_FROZEN_SECTIONS[section]
-            ):
+            if _canonical_json(root[section]) != _canonical_json(factorial_recipe[section]):
                 raise ValueError(f"probe-factorial {section} differs from the frozen recipe")
         raw_adapter = root["adapter"]
         raw_objective = root["objective"]
@@ -738,25 +826,35 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         }
         expected_adapter_common = {
             key: value
-            for key, value in _V4_FROZEN_SECTIONS["adapter"].items()  # type: ignore[union-attr]
+            for key, value in (
+                {
+                    "method": "lora",
+                    "rank": 16,
+                    "alpha": 8,
+                    "dropout": 0,
+                    "target_modules": list(_TARGET_MODULES),
+                    "layer_scope": "probe-transition-suffix",
+                    "layer_policy": "validated-linear-probe-transition-suffix/v1",
+                    "bias": "none",
+                    "task_type": "CAUSAL_LM",
+                }
+                if is_mistral_factorial
+                else _V4_FROZEN_SECTIONS["adapter"]
+            ).items()  # type: ignore[union-attr]
             if key not in {"layer_scope", "layer_policy"}
         }
-        expected_adapter_common["initialization_policy"] = (
-            "sha256-layer-keyed-kaiming-a-zero-b/v1"
-        )
+        expected_adapter_common["initialization_policy"] = "sha256-layer-keyed-kaiming-a-zero-b/v1"
         objective_common = {
             key: value for key, value in raw_objective.items() if key != "output_scope"
         }
         expected_objective_common = {
             key: value
-            for key, value in _V4_FROZEN_SECTIONS["objective"].items()  # type: ignore[union-attr]
+            for key, value in factorial_recipe["objective"].items()  # type: ignore[union-attr]
             if key != "output_scope"
         }
-        if (
-            _canonical_json(adapter_common) != _canonical_json(expected_adapter_common)
-            or _canonical_json(objective_common)
-            != _canonical_json(expected_objective_common)
-        ):
+        if _canonical_json(adapter_common) != _canonical_json(
+            expected_adapter_common
+        ) or _canonical_json(objective_common) != _canonical_json(expected_objective_common):
             raise ValueError("probe-factorial recipe differs outside the two frozen axes")
 
     expected_method_evidence_sha256: str | None = None
@@ -768,15 +866,12 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         )
         expected_evidence_schema = {
             "robustness-adapter-training-config/v4": "probe-transition-evidence-binding/v1",
-            "robustness-adapter-training-config/v5": (
-                "probe-transition-state-gate-binding/v1"
-            ),
+            "robustness-adapter-training-config/v5": ("probe-transition-state-gate-binding/v1"),
             "robustness-adapter-training-config/v6": (
                 "probe-semantic-subspace-evidence-binding/v1"
             ),
-            "robustness-adapter-training-config/v7": (
-                "probe-output-factorial-evidence-binding/v1"
-            ),
+            "robustness-adapter-training-config/v7": ("probe-output-factorial-evidence-binding/v1"),
+            "robustness-adapter-training-config/v8": ("probe-output-factorial-evidence-binding/v1"),
         }[str(schema_version)]
         if method_evidence["schema_version"] != expected_evidence_schema:
             raise ValueError("method_evidence.schema_version differs")
@@ -803,13 +898,17 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
             _SEQUENCE
             if schema_version.endswith("/v1")
             else _SEQUENCE_V7
-            if is_kojima
+            if is_kojima or is_mistral_factorial
             else _SEQUENCE_V2
         ),
     )
     expected_sequence: dict[str, object]
     if is_kojima:
         expected_sequence = dict(_KOJIMA_FROZEN_SECTIONS["sequence"])  # type: ignore[arg-type]
+    elif is_mistral_factorial:
+        expected_sequence = dict(
+            _MISTRAL_FACTORIAL_FROZEN_SECTIONS["sequence"]  # type: ignore[arg-type]
+        )
     else:
         expected_sequence = {
             "on_the_fly_typo": "record-epoch-counter-based/v1",
@@ -842,9 +941,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     if adapter["task_type"] != "CAUSAL_LM":
         raise ValueError("adapter.task_type must be CAUSAL_LM")
     target_modules = tuple(adapter["target_modules"])  # type: ignore[arg-type]
-    expected_target_modules = (
-        _KOJIMA_TARGET_MODULES if is_kojima else _TARGET_MODULES
-    )
+    expected_target_modules = _KOJIMA_TARGET_MODULES if is_kojima else _TARGET_MODULES
     if target_modules != expected_target_modules:
         raise ValueError("adapter.target_modules differ from the frozen module order")
     lora_rank = _integer(adapter["rank"], field="adapter.rank", minimum=1)
@@ -852,27 +949,18 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     dropout = _number(adapter["dropout"], field="adapter.dropout")
     if dropout > 1.0:
         raise ValueError("adapter.dropout must be at most one")
-    if schema_version.endswith("/v4") and (
-        lora_rank != 16 or lora_alpha != 8.0 or dropout != 0.0
-    ):
+    if schema_version.endswith("/v4") and (lora_rank != 16 or lora_alpha != 8.0 or dropout != 0.0):
         raise ValueError("probe-transition LoRA must use rank 16, alpha 8, and dropout 0")
-    if schema_version.endswith("/v6") and (
-        lora_rank != 16
-        or lora_alpha != 8.0
-        or dropout != 0.0
-    ):
+    if schema_version.endswith("/v6") and (lora_rank != 16 or lora_alpha != 8.0 or dropout != 0.0):
         raise ValueError("semantic training LoRA must be frozen at r16 alpha8 dropout0")
     if is_factorial and (
         lora_rank != 16
         or lora_alpha != 8.0
         or dropout != 0.0
-        or adapter["initialization_policy"]
-        != "sha256-layer-keyed-kaiming-a-zero-b/v1"
+        or adapter["initialization_policy"] != "sha256-layer-keyed-kaiming-a-zero-b/v1"
     ):
         raise ValueError("probe-factorial LoRA recipe or initialization differs")
-    if is_kojima and (
-        lora_rank != 16 or lora_alpha != 8.0 or dropout != 0.0
-    ):
+    if is_kojima and (lora_rank != 16 or lora_alpha != 8.0 or dropout != 0.0):
         raise ValueError("Kojima-faithful LoRA must use rank 16, alpha 8, and dropout 0")
 
     optimization = _mapping(
@@ -882,7 +970,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
             _OPTIMIZATION_V7
             if is_kojima
             else _OPTIMIZATION_V3
-            if schema_version.endswith(("/v3", "/v4", "/v5", "/v6", "/v7"))
+            if schema_version.endswith(("/v3", "/v4", "/v5", "/v6", "/v7", "/v8"))
             else _OPTIMIZATION
         ),
     )
@@ -905,9 +993,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     )
     expected_seeds = (1, 42, 43, 44) if is_kojima else (42, 43, 44)
     if seeds != expected_seeds:
-        raise ValueError(
-            "optimization.seed_inventory differs from the frozen seed inventory"
-        )
+        raise ValueError("optimization.seed_inventory differs from the frozen seed inventory")
     public_anchor_seed: int | None = None
     matched_replication_seeds: tuple[int, ...] = ()
     if is_kojima:
@@ -966,7 +1052,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     layer_scope = _string(adapter["layer_scope"], field="adapter.layer_scope")
     layer_policy = (
         _string(adapter["layer_policy"], field="adapter.layer_policy")
-        if schema_version.endswith(("/v4", "/v5", "/v6", "/v7"))
+        if schema_version.endswith(("/v4", "/v5", "/v6", "/v7", "/v8"))
         else "legacy/v1"
     )
     state_window_policy = (
@@ -989,7 +1075,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         else "frozen-probe-classifier-forward-kl/v1"
         if schema_version.endswith("/v6")
         else "none"
-        if schema_version.endswith(("/v4", "/v7"))
+        if schema_version.endswith(("/v4", "/v7", "/v8"))
         else "cosine-residual/v1"
     )
     if objective["state_distance"] != expected_distance:
@@ -997,9 +1083,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     output_scope = str(objective["output_scope"])
     allowed_output_scopes = {"aligned-non-edited-next-token/v1"}
     if is_factorial:
-        allowed_output_scopes.add(
-            "clean-all-noisy-edited-word-downstream-offsets-2-16/v1"
-        )
+        allowed_output_scopes.add("clean-all-noisy-edited-word-downstream-offsets-2-16/v1")
         horizon_condition = "downstream-horizon" in condition
         if horizon_condition != (output_scope != "aligned-non-edited-next-token/v1"):
             raise ValueError("probe-factorial condition and output horizon disagree")
@@ -1007,9 +1091,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         raise ValueError("objective.output_scope differs")
     if objective["noisy_language_model_scope"] != "all-nonpadding-next-tokens/v1":
         raise ValueError("objective.noisy_language_model_scope differs")
-    temperature = _number(
-        objective["temperature"], field="objective.temperature", minimum=1e-12
-    )
+    temperature = _number(objective["temperature"], field="objective.temperature", minimum=1e-12)
     epsilon = _number(objective["epsilon"], field="objective.epsilon", minimum=1e-12)
     if schema_version.endswith("/v6") and (temperature != 1.0 or epsilon != 1e-8):
         raise ValueError("semantic distillation temperature and epsilon differ")
@@ -1035,9 +1117,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
             )
             if gradient_ratio > 0.5 or calibration < 1:
                 raise ValueError("state gradient calibration differs from the safe range")
-            if schema_version.endswith("/v6") and (
-                gradient_ratio != 0.05 or calibration != 8
-            ):
+            if schema_version.endswith("/v6") and (gradient_ratio != 0.05 or calibration != 8):
                 raise ValueError("semantic state calibration must be rho=0.05 over 8 batches")
     else:
         gradient_ratio = None
@@ -1086,9 +1166,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     if frozen_recipe is not None:
         for section, expected in frozen_recipe.items():
             if _canonical_json(root[section]) != _canonical_json(expected):
-                raise ValueError(
-                    f"probe-transition {section} differs from the frozen 10M recipe"
-                )
+                raise ValueError(f"probe-transition {section} differs from the frozen 10M recipe")
 
     max_optimizer_steps = _integer(
         optimization["max_optimizer_steps"],
@@ -1101,19 +1179,19 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
             field="optimization.max_student_tokens",
             minimum=1,
         )
-        if schema_version.endswith(("/v3", "/v4", "/v5", "/v6", "/v7"))
+        if schema_version.endswith(("/v3", "/v4", "/v5", "/v6", "/v7", "/v8"))
         else None
     )
-    max_sequence_length = _integer(
-        sequence["max_length"], field="sequence.max_length", minimum=2
-    )
-    if is_kojima and (
+    max_sequence_length = _integer(sequence["max_length"], field="sequence.max_length", minimum=2)
+    if (is_kojima or is_mistral_factorial) and (
         max_student_tokens
-        != max_sequence_length * micro_batch_size * gradient_accumulation_steps
+        != max_sequence_length
+        * micro_batch_size
+        * gradient_accumulation_steps
         * max_optimizer_steps
     ):
         raise ValueError(
-            "Kojima-faithful context, batch, token budget, and optimizer steps disagree"
+            "packed Mistral context, batch, token budget, and optimizer steps disagree"
         )
 
     return AdapterTrainingProtocol(
@@ -1122,6 +1200,8 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         method_identity=(
             _KOJIMA_METHOD_IDENTITY
             if is_kojima
+            else _MISTRAL_FACTORIAL_METHOD_IDENTITY
+            if is_mistral_factorial
             else "legacy-output-matching-pilot/v1"
             if condition == "output-matching" and schema_version.endswith("/v1")
             else "kojima-inspired-output-matching/v1"
@@ -1142,30 +1222,24 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         answer_format=str(sequence["answer_format"]),
         pairing_policy=pairing_policy,
         training_corpus=(
-            str(sequence["training_corpus"]) if is_kojima else None
+            str(sequence["training_corpus"]) if is_kojima or is_mistral_factorial else None
         ),
         training_corpus_revision=(
-            str(sequence["training_corpus_revision"])
-            if is_kojima
-            else None
+            str(sequence["training_corpus_revision"]) if is_kojima or is_mistral_factorial else None
         ),
         training_corpus_data_file=(
             str(sequence["training_corpus_data_file"])
-            if is_kojima
+            if is_kojima or is_mistral_factorial
             else None
         ),
         packing_policy=(
-            str(sequence["packing_policy"]) if is_kojima else None
+            str(sequence["packing_policy"]) if is_kojima or is_mistral_factorial else None
         ),
         data_runtime_policy=(
-            str(sequence["data_runtime_policy"])
-            if is_kojima
-            else None
+            str(sequence["data_runtime_policy"]) if is_kojima or is_mistral_factorial else None
         ),
         upstream_code_revision=(
-            str(sequence["upstream_code_revision"])
-            if is_kojima
-            else None
+            str(sequence["upstream_code_revision"]) if is_kojima or is_mistral_factorial else None
         ),
         adapter_method="lora",
         lora_rank=lora_rank,
@@ -1177,9 +1251,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         adapter_bias="none",
         adapter_task_type="CAUSAL_LM",
         adapter_initialization_policy=(
-            str(adapter["initialization_policy"])
-            if is_factorial
-            else "peft-default/v1"
+            str(adapter["initialization_policy"]) if is_factorial else "peft-default/v1"
         ),
         optimizer="adamw",
         learning_rate=_number(optimization["learning_rate"], field="optimization.learning_rate"),
@@ -1227,6 +1299,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
 __all__ = [
     "AdapterTrainingProtocol",
     "is_kojima_faithful_protocol",
+    "is_mistral_factorial_protocol",
     "is_probe_factorial_protocol",
     "load_adapter_training_config",
 ]
