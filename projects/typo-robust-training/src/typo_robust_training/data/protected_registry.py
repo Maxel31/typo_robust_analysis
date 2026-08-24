@@ -764,7 +764,7 @@ def _audit_protected_inputs(
         )
     overlap_components.sort(
         key=lambda component: (
-            tuple(tier_order[tier] for tier in component.tiers),
+            component.tiers,
             tuple((identity.kind, identity.sha256) for identity in component.identities),
             tuple(
                 (

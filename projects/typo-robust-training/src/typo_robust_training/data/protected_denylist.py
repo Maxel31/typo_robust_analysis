@@ -236,6 +236,13 @@ def freeze_protected_exclusion_denylist(
                 != audit.spec.sha256
             ):
                 raise ValueError("protected JSONL input changed before publication")
+        # The source rehash seam above is deliberately late.  Re-verify the
+        # complete staging tree after it so a concurrent artifact/link/tree
+        # substitution cannot be published after the first self-check.
+        load_protected_exclusion_denylist_bundle(
+            run_path,
+            expected_producer_record_sha256=producer_record_sha256,
+        )
         registry._publish_directory_noreplace(temporary, target)  # noqa: SLF001
     except BaseException:
         shutil.rmtree(temporary, ignore_errors=True)

@@ -1020,12 +1020,16 @@ def test_exclusion_denylist_accepts_realistic_historical_collisions_only_for_exc
 ) -> None:
     inventory, inventory_sha, _, rows = _overlapping_historical_inventory(tmp_path)
     strict_output = tmp_path / "strict-output"
-    with pytest.raises(ProtectedSplitOverlapError):
+    with pytest.raises(ProtectedSplitOverlapError) as strict_error:
         freeze_protected_split_registry(
             inventory_path=inventory,
             inventory_sha256=inventory_sha,
             output_dir=strict_output,
         )
+    assert [component.tiers for component in strict_error.value.components] == [
+        ("pre-pr", "sealed"),
+        ("tune", "pre-pr"),
+    ]
     assert not strict_output.exists()
 
     result = freeze_protected_exclusion_denylist(
@@ -1065,8 +1069,8 @@ def test_exclusion_denylist_accepts_realistic_historical_collisions_only_for_exc
     assert audit["schema_version"] == OVERLAP_AUDIT_SCHEMA
     assert len(audit["collision_components"]) == 2
     assert [component["tiers"] for component in audit["collision_components"]] == [
-        ["tune", "pre-pr"],
         ["pre-pr", "sealed"],
+        ["tune", "pre-pr"],
     ]
     audit_text = result.overlap_audit_path.read_text()
     for tier_rows in rows.values():
@@ -1220,6 +1224,28 @@ def test_exclusion_denylist_freeze_rehashes_sources_and_preserves_existing_outpu
             output_dir=existing,
         )
     assert sentinel.read_text() == "do not replace"
+
+
+def test_exclusion_denylist_freeze_reverifies_staging_after_final_seam(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory, inventory_sha, _, _ = _overlapping_historical_inventory(tmp_path)
+    output = tmp_path / "reverified-output"
+
+    def mutate_staging() -> None:
+        denylist = next(tmp_path.glob(".reverified-output.*")) / "denylist.json"
+        denylist.write_bytes(denylist.read_bytes() + b" ")
+
+    monkeypatch.setattr(denylist_module, "_before_denylist_final_rehash", mutate_staging)
+    with pytest.raises(ValueError, match="differs from replayed inputs"):
+        freeze_protected_exclusion_denylist(
+            inventory_path=inventory,
+            inventory_sha256=inventory_sha,
+            output_dir=output,
+        )
+    assert not output.exists()
+    assert not list(tmp_path.glob(".reverified-output.*"))
 
 
 def test_exclusion_denylist_atomic_publish_preserves_race_winner(
