@@ -4,14 +4,17 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from typo_robust_training.cli import register_commands
 from typo_robust_training.data.records import record_id_for
 from typo_robust_training.data.splits import normalized_content_sha256
+from typo_robust_training.probe import cohort_builder
 from typo_robust_training.probe.cohort_builder import (
     ProbeTransitionDataBuildConfig,
+    load_probe_transition_data_bundle,
     load_probe_cohort_template,
     probe_parent_source_sha256,
     probe_source_group_sha256,
@@ -31,6 +34,10 @@ SOURCE_REVISION = "fc9850dff5e2d0f8f776efe41b24a1c49556cfc5"
 
 def _sha(label: str) -> str:
     return hashlib.sha256(label.encode()).hexdigest()
+
+
+def _file_sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _write_json(path: Path, value: object) -> Path:
@@ -163,9 +170,63 @@ class _Counter:
 
     def provenance(self) -> dict[str, object]:
         return {
-            "provider": "fixture-tokenizer-only/v1",
+            "provider": "attested-tokenizer-only-inflation-counter/v1",
             "model_outputs_observed": False,
+            "tokenizer_snapshot_attestation": {"fixture": "exact-mistral-tokenizer/v1"},
         }
+
+
+def _tokenizer_fixture(tmp_path: Path, *, name: str = "tokenizer") -> tuple[Path, str]:
+    directory = tmp_path / name
+    directory.mkdir(exist_ok=True)
+    _write_json(directory / "tokenizer-attestation.json", {})
+    run = _write_json(directory / "tokenizer-attestation-freeze-run.json", {})
+    return run, _sha(f"{name}-externally-pinned-run")
+
+
+def _fixture_tokenizer_bundle_loader(
+    run_path: Path,
+    *,
+    expected_model: str,
+    expected_revision: str,
+    expected_run_sha256: str,
+) -> object:
+    assert expected_model == "mistralai/Mistral-7B-v0.1"
+    assert expected_revision == "7231864981174d9bee8c7687c24c8344414eae6b"
+    return SimpleNamespace(
+        attestation_path=run_path.parent / "tokenizer-attestation.json",
+        freeze_run_sha256=expected_run_sha256,
+        provenance={"fixture": "exact-mistral-tokenizer/v1"},
+    )
+
+
+def _build_config(
+    tmp_path: Path,
+    *,
+    source: Path | None = None,
+    protected: Path | None = None,
+    output_name: str = "output",
+    source_sha256: str | None = None,
+    output_path: Path | None = None,
+) -> ProbeTransitionDataBuildConfig:
+    template = _small_template(tmp_path)
+    source_path = source or _source_manifest(tmp_path)
+    protected_path = protected or _protected_registry(tmp_path)
+    tokenizer_run, tokenizer_run_sha = _tokenizer_fixture(
+        tmp_path,
+        name="tokenizer-shared",
+    )
+    return ProbeTransitionDataBuildConfig(
+        template_path=template,
+        template_sha256=_file_sha(template),
+        source_manifest_path=source_path,
+        source_manifest_sha256=source_sha256 or _file_sha(source_path),
+        protected_registry_path=protected_path,
+        protected_registry_sha256=_file_sha(protected_path),
+        tokenizer_freeze_run_path=tokenizer_run,
+        tokenizer_freeze_run_sha256=tokenizer_run_sha,
+        output_dir=output_path or tmp_path / output_name,
+    )
 
 
 def _run(
@@ -175,16 +236,15 @@ def _run(
     protected: Path | None = None,
     output_name: str = "output",
 ) -> object:
-    attestation = _write_json(tmp_path / f"attestation-{output_name}.json", {})
     return run_build_probe_transition_data(
-        ProbeTransitionDataBuildConfig(
-            template_path=_small_template(tmp_path),
-            source_manifest_path=source or _source_manifest(tmp_path),
-            protected_registry_path=protected or _protected_registry(tmp_path),
-            tokenizer_attestation_path=attestation,
-            output_dir=tmp_path / output_name,
+        _build_config(
+            tmp_path,
+            source=source,
+            protected=protected,
+            output_name=output_name,
         ),
         counter=_Counter(),
+        tokenizer_bundle_loader=_fixture_tokenizer_bundle_loader,
         code_revision="c" * 40,
     )
 
@@ -229,11 +289,15 @@ def test_builder_emits_existing_producer_schemas_without_model_outputs(tmp_path:
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["model_outputs_observed"] is False
     assert run["token_counter"]["model_outputs_observed"] is False
+    assert run["tokenizer"]["freeze_run_sha256"] == _sha(
+        "tokenizer-shared-externally-pinned-run"
+    )
     assert (
         run["source"]["manifest_sha256"]
         == hashlib.sha256((tmp_path / "clean-sources.jsonl").read_bytes()).hexdigest()
     )
     self_hash = run.pop("self_hash")
+    assert result.run_sha256 == self_hash["sha256"]
     assert self_hash == {
         "algorithm": "sha256",
         "canonicalization": "canonical-json-without-self-hash/v1",
@@ -299,6 +363,190 @@ def test_builder_is_byte_deterministic_for_the_same_inputs(tmp_path: Path) -> No
         assert getattr(first, name).read_bytes() == getattr(second, name).read_bytes()
 
 
+def test_frozen_bundle_requires_external_hash_and_rejects_rehashed_forgery(
+    tmp_path: Path,
+) -> None:
+    result = _run(tmp_path)
+    bundle = load_probe_transition_data_bundle(
+        result.run_path,
+        expected_run_sha256=result.run_sha256,
+    )
+    assert bundle.producer_config_path == result.producer_config_path
+
+    report = json.loads(result.feasibility_report_path.read_text(encoding="utf-8"))
+    report["forged_after_freeze"] = True
+    _write_json(result.feasibility_report_path, report)
+    run = json.loads(result.run_path.read_text(encoding="utf-8"))
+    artifact = run["artifacts"]["feasibility_report"]
+    artifact["sha256"] = _file_sha(result.feasibility_report_path)
+    artifact["bytes"] = result.feasibility_report_path.stat().st_size
+    unsigned = dict(run)
+    unsigned.pop("self_hash")
+    forged_sha = hashlib.sha256(
+        json.dumps(
+            unsigned,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    run["self_hash"]["sha256"] = forged_sha
+    result.run_path.write_text(
+        json.dumps(run, sort_keys=True, indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="externally pinned"):
+        load_probe_transition_data_bundle(
+            result.run_path,
+            expected_run_sha256=result.run_sha256,
+        )
+
+
+def test_frozen_bundle_rejects_symlinked_artifact_even_with_identical_bytes(
+    tmp_path: Path,
+) -> None:
+    result = _run(tmp_path)
+    real = tmp_path / "real-feasibility.json"
+    result.feasibility_report_path.rename(real)
+    result.feasibility_report_path.symlink_to(real)
+
+    with pytest.raises(ValueError, match="must be one regular file"):
+        load_probe_transition_data_bundle(
+            result.run_path,
+            expected_run_sha256=result.run_sha256,
+        )
+
+
+def test_frozen_bundle_rejects_tokenizer_provenance_not_bound_to_exact_mistral(
+    tmp_path: Path,
+) -> None:
+    result = _run(tmp_path)
+    run = json.loads(result.run_path.read_text(encoding="utf-8"))
+    run["token_counter"]["provider"] = "unattested-lookalike-tokenizer/v1"
+    unsigned = dict(run)
+    unsigned.pop("self_hash")
+    forged_sha = hashlib.sha256(
+        json.dumps(
+            unsigned,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    run["self_hash"]["sha256"] = forged_sha
+    result.run_path.write_text(
+        json.dumps(run, sort_keys=True, indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="tokenizer provenance"):
+        load_probe_transition_data_bundle(
+            result.run_path,
+            expected_run_sha256=forged_sha,
+        )
+
+
+def test_builder_rejects_fully_rehashed_source_against_external_pin(tmp_path: Path) -> None:
+    source = _source_manifest(tmp_path)
+    pinned_sha = _file_sha(source)
+    rows = source.read_text(encoding="utf-8").splitlines()
+    changed = json.loads(rows[0])
+    changed["text"] += " silently replaced"
+    changed["content_sha256"] = hashlib.sha256(changed["text"].encode()).hexdigest()
+    changed["normalized_content_sha256"] = normalized_content_sha256(changed["text"])
+    rows[0] = json.dumps(changed, sort_keys=True)
+    source.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    output = tmp_path / "rehashed-source-output"
+
+    with pytest.raises(ValueError, match="externally pinned"):
+        run_build_probe_transition_data(
+            _build_config(
+                tmp_path,
+                source=source,
+                source_sha256=pinned_sha,
+                output_path=output,
+            ),
+            counter=_Counter(),
+            tokenizer_bundle_loader=_fixture_tokenizer_bundle_loader,
+            code_revision="c" * 40,
+        )
+    assert not output.exists()
+
+
+def test_builder_quarantines_an_entire_identity_component_touching_protected_data(
+    tmp_path: Path,
+) -> None:
+    protocol = load_probe_cohort_template(_small_template(tmp_path))
+    bridge_source = TrainingSource.from_dict(_source_row("alpha", 0))
+    neighbour_row = _source_row("alpha", 1)
+    neighbour_row["group_id"] = bridge_source.group_id
+    neighbour_source = TrainingSource.from_dict(neighbour_row)
+    bridge = cohort_builder._candidate_for_source(bridge_source, protocol=protocol)
+    neighbour = cohort_builder._candidate_for_source(neighbour_source, protocol=protocol)
+    assert bridge is not None and neighbour is not None
+
+    kept = cohort_builder._deduplicate_identity_components(
+        (neighbour, bridge),
+        protected={probe_parent_source_sha256(bridge_source)},
+    )
+
+    assert kept == ()
+
+
+def test_builder_preserves_full_source_content_identity_after_prefix_bounding(
+    tmp_path: Path,
+) -> None:
+    protocol = load_probe_cohort_template(_small_template(tmp_path))
+    row = _source_row("alpha", 0)
+    text = "aa alpha zz " + ("context " * 40)
+    row["text"] = text
+    row["content_sha256"] = hashlib.sha256(text.encode()).hexdigest()
+    row["normalized_content_sha256"] = normalized_content_sha256(text)
+    source = TrainingSource.from_dict(row)
+    candidate = cohort_builder._candidate_for_source(source, protocol=protocol)
+    assert candidate is not None
+    assert candidate.normalized_clean_sha256 != normalized_content_sha256(text)
+
+    kept = cohort_builder._deduplicate_identity_components(
+        (candidate,),
+        protected={normalized_content_sha256(text)},
+    )
+
+    assert kept == ()
+
+
+def test_builder_rejects_impossible_max_flow_quota_before_atomic_publish(
+    tmp_path: Path,
+) -> None:
+    class _SameOnlyCounter(_Counter):
+        def bucket(self, *, clean_text: str, typo_text: str) -> str:
+            del clean_text, typo_text
+            return "same"
+
+    output = tmp_path / "impossible-flow-output"
+    with pytest.raises(ValueError, match="global class/stratum quotas"):
+        run_build_probe_transition_data(
+            _build_config(tmp_path, output_path=output),
+            counter=_SameOnlyCounter(),
+            tokenizer_bundle_loader=_fixture_tokenizer_bundle_loader,
+            code_revision="c" * 40,
+        )
+    assert not output.exists()
+
+
+def test_builder_rejects_output_symlink_before_writing(tmp_path: Path) -> None:
+    output = tmp_path / "output-link"
+    output.symlink_to(tmp_path / "redirected-output", target_is_directory=True)
+    with pytest.raises(FileExistsError, match="must not exist"):
+        run_build_probe_transition_data(
+            _build_config(tmp_path, output_path=output),
+            counter=_Counter(),
+            tokenizer_bundle_loader=_fixture_tokenizer_bundle_loader,
+            code_revision="c" * 40,
+        )
+
+
 def test_builder_balances_classes_and_strata_globally_not_as_impossible_cross_product(
     tmp_path: Path,
 ) -> None:
@@ -319,15 +567,23 @@ def test_builder_balances_classes_and_strata_globally_not_as_impossible_cross_pr
             del typo_text
             return "same" if " alpha " in clean_text else "plus-one"
 
+    source = _source_manifest(tmp_path)
+    protected = _protected_registry(tmp_path)
+    tokenizer_run, tokenizer_run_sha = _tokenizer_fixture(tmp_path)
     result = run_build_probe_transition_data(
         ProbeTransitionDataBuildConfig(
             template_path=template,
-            source_manifest_path=_source_manifest(tmp_path),
-            protected_registry_path=_protected_registry(tmp_path),
-            tokenizer_attestation_path=_write_json(tmp_path / "attestation.json", {}),
+            template_sha256=_file_sha(template),
+            source_manifest_path=source,
+            source_manifest_sha256=_file_sha(source),
+            protected_registry_path=protected,
+            protected_registry_sha256=_file_sha(protected),
+            tokenizer_freeze_run_path=tokenizer_run,
+            tokenizer_freeze_run_sha256=tokenizer_run_sha,
             output_dir=tmp_path / "global-strata-output",
         ),
         counter=_ClassConstrainedCounter(),
+        tokenizer_bundle_loader=_fixture_tokenizer_bundle_loader,
         code_revision="c" * 40,
     )
     labels = _load_classes(result.class_inventory_path)
@@ -436,16 +692,25 @@ def test_builder_rejects_protected_tier_overlap_and_counter_output_access(
         def provenance(self) -> dict[str, object]:
             return {"provider": "bad/v1", "model_outputs_observed": True}
 
+    template = _small_template(tmp_path)
+    source = _source_manifest(tmp_path)
+    protected = _protected_registry(tmp_path)
+    tokenizer_run, tokenizer_run_sha = _tokenizer_fixture(tmp_path)
     with pytest.raises(ValueError, match="no model outputs"):
         run_build_probe_transition_data(
             ProbeTransitionDataBuildConfig(
-                template_path=_small_template(tmp_path),
-                source_manifest_path=_source_manifest(tmp_path),
-                protected_registry_path=_protected_registry(tmp_path),
-                tokenizer_attestation_path=_write_json(tmp_path / "attestation.json", {}),
+                template_path=template,
+                template_sha256=_file_sha(template),
+                source_manifest_path=source,
+                source_manifest_sha256=_file_sha(source),
+                protected_registry_path=protected,
+                protected_registry_sha256=_file_sha(protected),
+                tokenizer_freeze_run_path=tokenizer_run,
+                tokenizer_freeze_run_sha256=tokenizer_run_sha,
                 output_dir=tmp_path / "bad-counter-output",
             ),
             counter=_BadCounter(),
+            tokenizer_bundle_loader=_fixture_tokenizer_bundle_loader,
             code_revision="c" * 40,
         )
 
@@ -456,6 +721,11 @@ def test_template_and_cli_freeze_exact_mistral_inputs(tmp_path: Path) -> None:
     assert protocol.model_revision == "7231864981174d9bee8c7687c24c8344414eae6b"
     assert protocol.decoder_layers == 32
     assert protocol.hidden_size == 4096
+    assert protocol.source_id == "fineweb_edu"
+    assert protocol.source_dataset == "HuggingFaceFW/fineweb-edu"
+    assert protocol.source_revision == SOURCE_REVISION
+    assert protocol.source_subset == "sample-10BT"
+    assert protocol.source_split == "train"
     assert protocol.class_count == 17
     assert protocol.paired_records_per_class == 9
     assert sum(protocol.stratum_counts.values()) == 153
@@ -483,19 +753,31 @@ def test_template_and_cli_freeze_exact_mistral_inputs(tmp_path: Path) -> None:
             "build-probe-transition-data",
             "--template",
             "template.json",
+            "--template-sha256",
+            "a" * 64,
             "--source-manifest",
             "source.jsonl",
+            "--source-manifest-sha256",
+            "b" * 64,
             "--protected-registry",
             "protected.json",
-            "--tokenizer-attestation",
-            "tokenizer.json",
+            "--protected-registry-sha256",
+            "c" * 64,
+            "--tokenizer-freeze-run",
+            "tokenizer-run.json",
+            "--tokenizer-freeze-run-sha256",
+            "d" * 64,
             "--output-dir",
             "cohorts",
         ]
     )
     assert args.command == "build-probe-transition-data"
     assert args.template == Path("template.json")
+    assert args.template_sha256 == "a" * 64
     assert args.source_manifest == Path("source.jsonl")
+    assert args.source_manifest_sha256 == "b" * 64
     assert args.protected_registry == Path("protected.json")
-    assert args.tokenizer_attestation == Path("tokenizer.json")
+    assert args.protected_registry_sha256 == "c" * 64
+    assert args.tokenizer_freeze_run == Path("tokenizer-run.json")
+    assert args.tokenizer_freeze_run_sha256 == "d" * 64
     assert args.output_dir == Path("cohorts")

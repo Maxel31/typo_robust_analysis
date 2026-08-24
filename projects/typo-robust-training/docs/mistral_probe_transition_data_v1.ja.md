@@ -12,7 +12,7 @@
   `training_sources.jsonl`形式manifest
 - training / localization / tune / pre-pr / sealedの5 tierを含む
   `typo-protected-split-registry/v1`
-- exact Mistral tokenizerのfrozen attestation manifest
+- exact Mistral tokenizerのfrozen producer runと、その事前登録済みrecord SHA-256
 
 source manifestはFineWeb-Eduの固定revision
 `fc9850dff5e2d0f8f776efe41b24a1c49556cfc5`だけを許します。既存training streamを
@@ -63,15 +63,20 @@ TRAIN_PROJECT=projects/typo-robust-training
 
 uv run --project "${TRAIN_PROJECT}" --locked typo-cot build-probe-transition-data \
   --template "${TRAIN_PROJECT}/configs/proposals/mistral7b-probe-transition-data.template.yaml" \
+  --template-sha256 "${PROBE_TEMPLATE_SHA256}" \
   --source-manifest /absolute/path/to/disjoint-fineweb-edu-clean-sources.jsonl \
+  --source-manifest-sha256 "${PROBE_SOURCE_SHA256}" \
   --protected-registry /absolute/path/to/protected-split-registry.json \
-  --tokenizer-attestation /absolute/path/to/mistral-tokenizer-attestation.json \
+  --protected-registry-sha256 "${PROTECTED_REGISTRY_SHA256}" \
+  --tokenizer-freeze-run /absolute/path/to/tokenizer-attestation-freeze-run.json \
+  --tokenizer-freeze-run-sha256 "${TOKENIZER_FREEZE_RUN_SHA256}" \
   --output-dir /absolute/path/to/mistral-probe-transition-data
 ```
 
 実行checkoutはcleanでなければならず、builderはそのcommitをproducer configへ固定します。
-入力symlink、duplicate JSON key、source content hash不一致、tokenizer attestation不一致、
-protected tier相互のtransitive overlapはすべてfail-closedです。
+template / source manifest / protected registryのSHA-256も実行前に外部で固定し、CLIへ明示します。
+入力symlink、duplicate JSON key、source content hash不一致、外部pin後の再hash、tokenizer
+freeze-run不一致、protected tier相互のtransitive overlapはすべてfail-closedです。
 
 ## 出力
 
@@ -84,8 +89,18 @@ protected tier相互のtransitive overlapはすべてfail-closedです。
 - `probe_producer_config.json`: 全入力hashと実行commitを固定した
   `typo-linear-probe-producer-config/v4`
 - `build_probe_transition_data_run.json`: source、tokenizer、規則、artifact hashの監査記録。
-  `self_hash`は当該fieldを除くcanonical JSONのSHA-256であり、run record自身の改変も検出する
+  `self_hash`は当該fieldを除くcanonical JSONのSHA-256。表示された値を事前登録へ外部pinする
 
-この出力を `select-probe-transition` へ渡した後に初めてGPU forwardを実行します。cohort構築時に
+GPU側は個別manifestを任意に渡さず、外部pin済みbundleだけを受理します。
+
+```bash
+uv run --project "${TRAIN_PROJECT}" --locked typo-cot select-probe-transition \
+  --cohort-build-run /absolute/path/to/mistral-probe-transition-data/build_probe_transition_data_run.json \
+  --cohort-build-run-sha256 "${PROBE_COHORT_BUILD_RUN_SHA256}" \
+  --gpu-id 0 \
+  --output-dir /absolute/path/to/mistral-probe-transition-evidence
+```
+
+この検証済みbundleを `select-probe-transition` へ渡した後に初めてGPU forwardを実行します。cohort構築時に
 モデル挙動を見ないため、Linear Probeの境界選択をtask accuracyやadapter結果へ適合させる余地は
 ありません。

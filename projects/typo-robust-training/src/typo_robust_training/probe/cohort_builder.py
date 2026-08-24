@@ -25,13 +25,20 @@ from typo_robust_training.data.perturb import (
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.integrity import sha256_file
 from typo_robust_training.probe.config import load_probe_producer_config
-from typo_robust_training.probe.producer import _load_protected_registry
+from typo_robust_training.probe.producer import (
+    _load_classes,
+    _load_cohort,
+    _load_protected_registry,
+    _validate_preregistered_cohort,
+    _validate_role_isolation,
+)
 from typo_robust_training.probe.runtime import _inflation_bucket
 from typo_robust_training.training.json_io import write_json_atomic
 from typo_robust_training.training.pairs import TrainingSource
 
 
 _REVISION = re.compile(r"[0-9a-f]{40}")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 _OPERATIONS = (
     "keyboard-neighbor-substitution",
     "deletion",
@@ -128,6 +135,32 @@ def _regular_file(path: Path, *, label: str) -> Path:
     if supplied.is_symlink() or not supplied.is_file():
         raise ValueError(f"{label} must be one regular file")
     return supplied.resolve()
+
+
+def _pinned_regular_file(path: Path, *, expected_sha256: str, label: str) -> Path:
+    if not isinstance(expected_sha256, str) or _SHA256.fullmatch(expected_sha256) is None:
+        raise ValueError(f"expected {label} SHA-256 must be one lowercase digest")
+    resolved = _regular_file(path, label=label)
+    if sha256_file(resolved) != expected_sha256:
+        raise ValueError(f"{label} differs from its externally pinned SHA-256")
+    return resolved
+
+
+def _new_output_directory(path: Path) -> Path:
+    """Return a no-clobber output path without erasing a supplied symlink."""
+
+    supplied = Path(path).absolute()
+    if os.path.lexists(supplied):
+        raise FileExistsError(f"probe transition data output must not exist: {supplied}")
+    existing = supplied.parent
+    while not os.path.lexists(existing):
+        existing = existing.parent
+    if existing.is_symlink():
+        raise ValueError("probe transition data output ancestor must not be a symlink")
+    supplied.parent.mkdir(parents=True, exist_ok=True)
+    if supplied.parent.is_symlink() or supplied.parent.resolve() != supplied.parent:
+        raise ValueError("probe transition data output parent must not contain symlinks")
+    return supplied
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,6 +323,51 @@ class TokenInflationCounter(Protocol):
     def provenance(self) -> Mapping[str, object]: ...
 
 
+@dataclass(frozen=True, slots=True)
+class _BoundTokenizerAttestation:
+    attestation_path: Path
+    freeze_run_sha256: str
+    provenance: Mapping[str, object]
+
+
+def _load_bound_tokenizer_attestation(
+    run_path: Path,
+    *,
+    expected_model: str,
+    expected_revision: str,
+    expected_run_sha256: str,
+) -> _BoundTokenizerAttestation:
+    """Load the tokenizer through its externally pinned producer record."""
+
+    from typo_robust_training.tokenizer_freeze import (
+        load_tokenizer_attestation_freeze_bundle,
+    )
+
+    resolved = _regular_file(run_path, label="tokenizer freeze-run manifest")
+    try:
+        payload = strict_loads(resolved.read_text(encoding="utf-8"), context=str(resolved))
+    except UnicodeDecodeError as exc:
+        raise ValueError("tokenizer freeze-run manifest must be UTF-8") from exc
+    if not isinstance(payload, Mapping):
+        raise ValueError("tokenizer freeze-run manifest must contain one object")
+    code = payload.get("code")
+    code_revision = code.get("revision") if isinstance(code, Mapping) else None
+    if not isinstance(code_revision, str) or _REVISION.fullmatch(code_revision) is None:
+        raise ValueError("tokenizer freeze-run code revision is unavailable")
+    result = load_tokenizer_attestation_freeze_bundle(
+        resolved,
+        expected_model=expected_model,
+        expected_revision=expected_revision,
+        expected_code_revision=code_revision,
+        expected_run_sha256=expected_run_sha256,
+    )
+    return _BoundTokenizerAttestation(
+        attestation_path=result.attestation_path,
+        freeze_run_sha256=result.run_sha256,
+        provenance=result.attestation.provenance_dict(),
+    )
+
+
 class _AttestedMistralTokenCounter:
     def __init__(
         self,
@@ -373,6 +451,7 @@ class _SourceCandidate:
     label: str
     source_group_sha256: str
     parent_source_sha256: str
+    normalized_source_sha256: str
     normalized_clean_sha256: str
     variants: Mapping[str, tuple[str, tuple[int, int], str, str]]
 
@@ -382,6 +461,7 @@ class _SourceCandidate:
             (
                 self.source_group_sha256,
                 self.parent_source_sha256,
+                self.normalized_source_sha256,
                 self.normalized_clean_sha256,
             )
         )
@@ -472,6 +552,11 @@ def _candidate_for_source(
         label=label,
         source_group_sha256=probe_source_group_sha256(source),
         parent_source_sha256=probe_parent_source_sha256(source),
+        # The emitted clean text can be a bounded prefix.  Keep the full source
+        # identity as well, otherwise a protected long document could re-enter
+        # through a different source/group identity after truncation changed
+        # its normalized-content hash.
+        normalized_source_sha256=normalized_content_sha256(source.clean_text),
         normalized_clean_sha256=normalized_content_sha256(text),
         variants={},
     )
@@ -523,6 +608,7 @@ def _attach_variants(
         label=candidate.label,
         source_group_sha256=candidate.source_group_sha256,
         parent_source_sha256=candidate.parent_source_sha256,
+        normalized_source_sha256=candidate.normalized_source_sha256,
         normalized_clean_sha256=candidate.normalized_clean_sha256,
         variants=variants,
     )
@@ -802,24 +888,63 @@ def _allocate_complete_cohort(
     return paired, fit_rows, frozenset(allocated_identities)
 
 
-def _deduplicate_full_candidates(
+def _deduplicate_identity_components(
     candidates: Sequence[_SourceCandidate],
     *,
     protected: set[str],
 ) -> tuple[_SourceCandidate, ...]:
-    """Keep one deterministic representative of every transitive identity component."""
+    """Keep one representative per component and quarantine protected components.
 
-    observed = set(protected)
+    A rejected bridge still connects its neighbours.  A greedy ``seen`` set is
+    therefore insufficient: ``A--B--C`` could otherwise admit both A and C when
+    B overlaps A before exposing a second identity shared with C.
+    """
+
+    rows = tuple(candidates)
+    parents = list(range(len(rows)))
+
+    def find(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root == right_root:
+            return
+        if left_root > right_root:
+            left_root, right_root = right_root, left_root
+        parents[right_root] = left_root
+
+    owner_by_identity: dict[str, int] = {}
+    for index, candidate in enumerate(rows):
+        for identity in candidate.all_identities:
+            previous = owner_by_identity.setdefault(identity, index)
+            union(index, previous)
+
+    components: dict[int, list[_SourceCandidate]] = {}
+    for index, candidate in enumerate(rows):
+        components.setdefault(find(index), []).append(candidate)
+
     accepted: list[_SourceCandidate] = []
-    for candidate in sorted(
-        candidates,
-        key=lambda item: _order_key("full-identity", item.source.record_id),
-    ):
-        if candidate.all_identities & observed:
+    for component in components.values():
+        identities = set().union(*(candidate.all_identities for candidate in component))
+        if identities & protected:
             continue
-        accepted.append(candidate)
-        observed.update(candidate.all_identities)
-    return tuple(accepted)
+        accepted.append(
+            min(
+                component,
+                key=lambda item: _order_key("full-identity", item.source.record_id),
+            )
+        )
+    return tuple(
+        sorted(
+            accepted,
+            key=lambda item: _order_key("full-identity", item.source.record_id),
+        )
+    )
 
 
 def _group_candidates(
@@ -902,9 +1027,13 @@ def _attest_clean_code_revision() -> str:
 @dataclass(frozen=True, slots=True)
 class ProbeTransitionDataBuildConfig:
     template_path: Path
+    template_sha256: str
     source_manifest_path: Path
+    source_manifest_sha256: str
     protected_registry_path: Path
-    tokenizer_attestation_path: Path
+    protected_registry_sha256: str
+    tokenizer_freeze_run_path: Path
+    tokenizer_freeze_run_sha256: str
     output_dir: Path
 
 
@@ -918,11 +1047,215 @@ class ProbeTransitionDataBuildResult:
     feasibility_report_path: Path
     producer_config_path: Path
     run_path: Path
+    run_sha256: str
     classes: int
     records: int
 
 
+@dataclass(frozen=True, slots=True)
+class ProbeTransitionDataBundle:
+    """Externally pinned, fully revalidated input bundle for the GPU probe run."""
+
+    class_inventory_path: Path
+    fit_manifest_path: Path
+    selection_manifest_path: Path
+    validation_manifest_path: Path
+    protected_registry_path: Path
+    feasibility_report_path: Path
+    producer_config_path: Path
+    run_path: Path
+    run_sha256: str
+
+
+_BUNDLE_ARTIFACT_FILENAMES = {
+    "class_inventory": "class_inventory.json",
+    "fit_manifest": "fit_manifest.json",
+    "selection_manifest": "selection_manifest.json",
+    "validation_manifest": "validation_manifest.json",
+    "protected_registry": "protected_split_registry.json",
+    "feasibility_report": "probe_cohort_feasibility.json",
+    "producer_config": "probe_producer_config.json",
+}
+
+
+def load_probe_transition_data_bundle(
+    run_path: Path,
+    *,
+    expected_run_sha256: str,
+) -> ProbeTransitionDataBundle:
+    """Reject adjacent-file rewrites even when their self-hashes were recomputed."""
+
+    if not isinstance(expected_run_sha256, str) or _SHA256.fullmatch(expected_run_sha256) is None:
+        raise ValueError("expected probe cohort build-run SHA-256 must be one lowercase digest")
+    resolved_run = _regular_file(run_path, label="probe cohort build-run manifest")
+    raw = resolved_run.read_bytes()
+    try:
+        payload = strict_loads(raw.decode("utf-8"), context=str(resolved_run))
+    except UnicodeDecodeError as exc:
+        raise ValueError("probe cohort build-run manifest must be UTF-8") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("probe cohort build-run manifest must contain one object")
+    canonical_raw = (
+        json.dumps(payload, sort_keys=True, indent=2, allow_nan=False) + "\n"
+    ).encode("utf-8")
+    if raw != canonical_raw:
+        raise ValueError("probe cohort build-run manifest must be canonical JSON")
+    self_hash = payload.get("self_hash")
+    if not isinstance(self_hash, Mapping) or dict(self_hash) != {
+        "algorithm": "sha256",
+        "canonicalization": "canonical-json-without-self-hash/v1",
+        "sha256": expected_run_sha256,
+    }:
+        raise ValueError("probe cohort build-run differs from its externally pinned SHA-256")
+    unsigned = dict(payload)
+    del unsigned["self_hash"]
+    if _canonical_sha256(unsigned) != expected_run_sha256:
+        raise ValueError("probe cohort build-run self-hash differs")
+    expected_top = {
+        "schema_version",
+        "status",
+        "code_revision",
+        "model_outputs_observed",
+        "template",
+        "source",
+        "protected_registry_sha256",
+        "token_counter",
+        "tokenizer",
+        "identity_rules",
+        "cohorts",
+        "artifacts",
+        "self_hash",
+    }
+    if (
+        set(payload) != expected_top
+        or payload.get("schema_version") != "build-probe-transition-data-run/v1"
+        or payload.get("status") != "completed"
+        or payload.get("model_outputs_observed") is not False
+        or not isinstance(payload.get("code_revision"), str)
+        or _REVISION.fullmatch(payload["code_revision"]) is None
+    ):
+        raise ValueError("probe cohort build-run fields or completion state differ")
+    template = payload.get("template")
+    if (
+        not isinstance(template, Mapping)
+        or set(template) != {"sha256", "schema_version"}
+        or not isinstance(template.get("sha256"), str)
+        or _SHA256.fullmatch(template["sha256"]) is None
+        or template.get("schema_version") != "typo-probe-transition-data-template/v1"
+    ):
+        raise ValueError("probe cohort build-run template identity differs")
+    token_counter = payload.get("token_counter")
+    tokenizer = payload.get("tokenizer")
+    if (
+        not isinstance(token_counter, Mapping)
+        or set(token_counter)
+        != {
+            "provider",
+            "tokenizer_snapshot_attestation",
+            "model_outputs_observed",
+        }
+        or token_counter.get("provider")
+        != "attested-tokenizer-only-inflation-counter/v1"
+        or token_counter.get("model_outputs_observed") is not False
+        or not isinstance(tokenizer, Mapping)
+        or set(tokenizer)
+        != {
+            "freeze_run_sha256",
+            "attestation_manifest_sha256",
+            "snapshot_attestation",
+        }
+        or not isinstance(tokenizer.get("freeze_run_sha256"), str)
+        or _SHA256.fullmatch(tokenizer["freeze_run_sha256"]) is None
+        or not isinstance(tokenizer.get("attestation_manifest_sha256"), str)
+        or _SHA256.fullmatch(tokenizer["attestation_manifest_sha256"]) is None
+        or token_counter.get("tokenizer_snapshot_attestation")
+        != tokenizer.get("snapshot_attestation")
+    ):
+        raise ValueError("probe cohort tokenizer provenance differs")
+    artifacts = payload.get("artifacts")
+    if not isinstance(artifacts, Mapping) or set(artifacts) != set(_BUNDLE_ARTIFACT_FILENAMES):
+        raise ValueError("probe cohort build-run artifact inventory differs")
+    resolved_artifacts: dict[str, Path] = {}
+    for name, filename in _BUNDLE_ARTIFACT_FILENAMES.items():
+        record = artifacts[name]
+        if not isinstance(record, Mapping) or set(record) != {
+            "relative_path",
+            "sha256",
+            "bytes",
+        }:
+            raise ValueError("probe cohort build-run artifact record differs")
+        if record.get("relative_path") != filename:
+            raise ValueError("probe cohort build-run artifact path differs")
+        expected_sha = record.get("sha256")
+        expected_bytes = record.get("bytes")
+        if (
+            not isinstance(expected_sha, str)
+            or _SHA256.fullmatch(expected_sha) is None
+            or isinstance(expected_bytes, bool)
+            or not isinstance(expected_bytes, int)
+            or expected_bytes <= 0
+        ):
+            raise ValueError("probe cohort build-run artifact identity differs")
+        artifact_path = _regular_file(
+            resolved_run.parent / filename,
+            label=f"probe cohort artifact {name}",
+        )
+        if artifact_path.parent != resolved_run.parent:
+            raise ValueError("probe cohort artifact escaped its frozen bundle")
+        if artifact_path.stat().st_size != expected_bytes or sha256_file(artifact_path) != expected_sha:
+            raise ValueError("probe cohort artifact differs from the frozen build-run")
+        resolved_artifacts[name] = artifact_path
+
+    if payload.get("protected_registry_sha256") != sha256_file(
+        resolved_artifacts["protected_registry"]
+    ):
+        raise ValueError("probe cohort protected registry identity differs")
+
+    producer_protocol = load_probe_producer_config(resolved_artifacts["producer_config"])
+    actual_input_hashes = {
+        "class_inventory": sha256_file(resolved_artifacts["class_inventory"]),
+        "fit_manifest": sha256_file(resolved_artifacts["fit_manifest"]),
+        "selection_manifest": sha256_file(resolved_artifacts["selection_manifest"]),
+        "validation_manifest": sha256_file(resolved_artifacts["validation_manifest"]),
+        "protected_split_registry": sha256_file(resolved_artifacts["protected_registry"]),
+    }
+    if actual_input_hashes != dict(producer_protocol.input_sha256):
+        raise ValueError("probe cohort producer config input hashes differ")
+    labels = _load_classes(resolved_artifacts["class_inventory"])
+    cohorts = {
+        role: _load_cohort(
+            resolved_artifacts[f"{role}_manifest"],
+            role=role,
+            labels=labels,
+        )
+        for role in ("fit", "selection", "validation")
+    }
+    for role, records in cohorts.items():
+        _validate_preregistered_cohort(
+            records,
+            role=role,
+            class_count=len(labels),
+            protocol=producer_protocol,
+        )
+    _validate_role_isolation(
+        cohorts,
+        _load_protected_registry(resolved_artifacts["protected_registry"]),
+    )
+    return ProbeTransitionDataBundle(
+        class_inventory_path=resolved_artifacts["class_inventory"],
+        fit_manifest_path=resolved_artifacts["fit_manifest"],
+        selection_manifest_path=resolved_artifacts["selection_manifest"],
+        validation_manifest_path=resolved_artifacts["validation_manifest"],
+        protected_registry_path=resolved_artifacts["protected_registry"],
+        feasibility_report_path=resolved_artifacts["feasibility_report"],
+        producer_config_path=resolved_artifacts["producer_config"],
+        run_path=resolved_run,
+        run_sha256=expected_run_sha256,
+    )
+
+
 CounterFactory = Callable[[ProbeCohortTemplate, Path], TokenInflationCounter]
+TokenizerBundleLoader = Callable[..., _BoundTokenizerAttestation]
 
 
 def _default_counter_factory(
@@ -949,21 +1282,42 @@ def run_build_probe_transition_data(
     *,
     counter: TokenInflationCounter | None = None,
     counter_factory: CounterFactory = _default_counter_factory,
+    tokenizer_bundle_loader: TokenizerBundleLoader = _load_bound_tokenizer_attestation,
     code_revision: str | None = None,
 ) -> ProbeTransitionDataBuildResult:
     """Materialize every hash-bound input required by ``select-probe-transition``."""
 
     if not isinstance(config, ProbeTransitionDataBuildConfig):
         raise TypeError("probe transition data build config has the wrong type")
-    target = Path(config.output_dir).resolve()
-    if target.exists():
-        raise FileExistsError(f"probe transition data output must not exist: {target}")
-    protocol = load_probe_cohort_template(config.template_path)
-    source_path = _regular_file(config.source_manifest_path, label="probe clean source manifest")
-    protected_path = _regular_file(config.protected_registry_path, label="protected registry")
-    attestation_path = _regular_file(
-        config.tokenizer_attestation_path, label="tokenizer attestation"
+    target = _new_output_directory(config.output_dir)
+    template_path = _pinned_regular_file(
+        config.template_path,
+        expected_sha256=config.template_sha256,
+        label="probe cohort template",
     )
+    source_path = _pinned_regular_file(
+        config.source_manifest_path,
+        expected_sha256=config.source_manifest_sha256,
+        label="probe clean source manifest",
+    )
+    protected_path = _pinned_regular_file(
+        config.protected_registry_path,
+        expected_sha256=config.protected_registry_sha256,
+        label="protected registry",
+    )
+    protocol = load_probe_cohort_template(template_path)
+    tokenizer_binding = tokenizer_bundle_loader(
+        config.tokenizer_freeze_run_path,
+        expected_model=protocol.model,
+        expected_revision=protocol.model_revision,
+        expected_run_sha256=config.tokenizer_freeze_run_sha256,
+    )
+    attestation_path = _regular_file(
+        tokenizer_binding.attestation_path,
+        label="tokenizer attestation",
+    )
+    if tokenizer_binding.freeze_run_sha256 != config.tokenizer_freeze_run_sha256:
+        raise ValueError("tokenizer freeze-run differs from its externally pinned SHA-256")
     protected_sets = _load_protected_registry(protected_path)
     protected_union = set().union(*protected_sets)
     sources = _load_sources(source_path, protocol=protocol)
@@ -971,20 +1325,19 @@ def run_build_probe_transition_data(
     if _REVISION.fullmatch(observed_revision) is None:
         raise ValueError("probe cohort builder code revision must be one pinned commit")
 
-    base_candidates: list[_SourceCandidate] = []
-    source_identities_seen: set[str] = set()
+    candidate_rows: list[_SourceCandidate] = []
     for source in sources:
         candidate = _candidate_for_source(source, protocol=protocol)
         if candidate is None:
             continue
-        if candidate.base_identities & protected_union:
-            continue
-        # Keep one deterministic representative from every transitive source,
-        # parent, or exact-content component before assigning scientific roles.
-        if candidate.base_identities & source_identities_seen:
-            continue
-        source_identities_seen.update(candidate.base_identities)
-        base_candidates.append(candidate)
+        candidate_rows.append(candidate)
+    # Resolve full connected components before class selection.  This prevents
+    # a discarded bridge record from leaking a protected identity into the
+    # apparently disjoint feasibility or materialization partitions.
+    base_candidates = _deduplicate_identity_components(
+        candidate_rows,
+        protected=protected_union,
+    )
 
     feasibility_base = tuple(
         candidate for candidate in base_candidates if _is_feasibility_candidate(candidate)
@@ -996,12 +1349,16 @@ def run_build_probe_transition_data(
         raise ValueError(
             "probe cohort token counter must attest that no model outputs were observed"
         )
+    if provenance.get("tokenizer_snapshot_attestation") != dict(
+        tokenizer_binding.provenance
+    ):
+        raise ValueError("probe cohort token counter differs from the pinned tokenizer freeze")
     with_variants = tuple(
         _attach_variants(candidate, protocol=protocol, counter=token_counter)
         for candidate in base_candidates
         if candidate.label in labels
     )
-    unique_candidates = _deduplicate_full_candidates(
+    unique_candidates = _deduplicate_identity_components(
         with_variants,
         protected=protected_union,
     )
@@ -1163,8 +1520,30 @@ def run_build_probe_transition_data(
             "selection": dict(protocol.selection),
         }
         write_json_atomic(paths["producer_config"], producer_config)
-        # The consumer's existing closed-world loader is the final schema oracle.
-        load_probe_producer_config(paths["producer_config"])
+        # The consumer's complete CPU preflight is the final schema oracle.  No
+        # directory is published until every cohort, quota, hash, and isolation
+        # rule accepted by the later GPU producer has passed here as well.
+        producer_protocol = load_probe_producer_config(paths["producer_config"])
+        loaded_labels = _load_classes(paths["class_inventory"])
+        loaded_cohorts = {
+            role: _load_cohort(
+                paths[f"{role}_manifest"],
+                role=role,
+                labels=loaded_labels,
+            )
+            for role in ("fit", "selection", "validation")
+        }
+        for role, records in loaded_cohorts.items():
+            _validate_preregistered_cohort(
+                records,
+                role=role,
+                class_count=len(loaded_labels),
+                protocol=producer_protocol,
+            )
+        _validate_role_isolation(
+            loaded_cohorts,
+            _load_protected_registry(paths["protected_registry"]),
+        )
         artifacts = {
             name: {
                 "relative_path": path.name,
@@ -1195,8 +1574,13 @@ def run_build_probe_transition_data(
                 "manifest_sha256": sha256_file(source_path),
                 "records": len(sources),
             },
+            "protected_registry_sha256": sha256_file(protected_path),
             "token_counter": provenance,
-            "tokenizer_attestation_manifest_sha256": sha256_file(attestation_path),
+            "tokenizer": {
+                "freeze_run_sha256": tokenizer_binding.freeze_run_sha256,
+                "attestation_manifest_sha256": sha256_file(attestation_path),
+                "snapshot_attestation": dict(tokenizer_binding.provenance),
+            },
             "identity_rules": {
                 "source_group": "typo-probe-source-group/v1",
                 "parent_source": "typo-probe-parent-source/v1",
@@ -1224,8 +1608,16 @@ def run_build_probe_transition_data(
             "canonicalization": "canonical-json-without-self-hash/v1",
             "sha256": _canonical_sha256(run_payload),
         }
+        run_sha256 = run_payload["self_hash"]["sha256"]
+        assert isinstance(run_sha256, str)
         write_json_atomic(paths["run"], run_payload)
-        os.replace(temporary, target)
+        load_probe_transition_data_bundle(
+            paths["run"],
+            expected_run_sha256=run_sha256,
+        )
+        if os.path.lexists(target):
+            raise FileExistsError(f"probe transition data output appeared before publish: {target}")
+        temporary.rename(target)
     except BaseException:
         shutil.rmtree(temporary, ignore_errors=True)
         raise
@@ -1240,6 +1632,7 @@ def run_build_probe_transition_data(
         feasibility_report_path=target / "probe_cohort_feasibility.json",
         producer_config_path=target / "probe_producer_config.json",
         run_path=target / "build_probe_transition_data_run.json",
+        run_sha256=run_sha256,
         classes=protocol.class_count,
         records=total_records,
     )
@@ -1247,9 +1640,11 @@ def run_build_probe_transition_data(
 
 __all__ = [
     "ProbeCohortTemplate",
+    "ProbeTransitionDataBundle",
     "ProbeTransitionDataBuildConfig",
     "ProbeTransitionDataBuildResult",
     "TokenInflationCounter",
+    "load_probe_transition_data_bundle",
     "load_probe_cohort_template",
     "probe_parent_source_sha256",
     "probe_source_group_sha256",

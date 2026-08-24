@@ -233,20 +233,27 @@ def _run_validate_generic_joint_window(args: argparse.Namespace) -> int:
 
 
 def _run_select_probe_transition(args: argparse.Namespace) -> int:
+    from typo_robust_training.probe.cohort_builder import (
+        load_probe_transition_data_bundle,
+    )
     from typo_robust_training.probe.producer import (
         ProbeTransitionProducerRunConfig,
         run_select_probe_transition,
     )
 
     try:
+        bundle = load_probe_transition_data_bundle(
+            args.cohort_build_run,
+            expected_run_sha256=args.cohort_build_run_sha256,
+        )
         result = run_select_probe_transition(
             ProbeTransitionProducerRunConfig(
-                config_path=args.config,
-                class_inventory_path=args.class_inventory,
-                fit_manifest_path=args.fit_manifest,
-                selection_manifest_path=args.selection_manifest,
-                validation_manifest_path=args.validation_manifest,
-                protected_registry_path=args.protected_registry,
+                config_path=bundle.producer_config_path,
+                class_inventory_path=bundle.class_inventory_path,
+                fit_manifest_path=bundle.fit_manifest_path,
+                selection_manifest_path=bundle.selection_manifest_path,
+                validation_manifest_path=bundle.validation_manifest_path,
+                protected_registry_path=bundle.protected_registry_path,
                 gpu_id=args.gpu_id,
                 output_dir=args.output_dir,
             )
@@ -272,9 +279,13 @@ def _run_build_probe_transition_data(args: argparse.Namespace) -> int:
         result = run_build_probe_transition_data(
             ProbeTransitionDataBuildConfig(
                 template_path=args.template,
+                template_sha256=args.template_sha256,
                 source_manifest_path=args.source_manifest,
+                source_manifest_sha256=args.source_manifest_sha256,
                 protected_registry_path=args.protected_registry,
-                tokenizer_attestation_path=args.tokenizer_attestation,
+                protected_registry_sha256=args.protected_registry_sha256,
+                tokenizer_freeze_run_path=args.tokenizer_freeze_run,
+                tokenizer_freeze_run_sha256=args.tokenizer_freeze_run_sha256,
                 output_dir=args.output_dir,
             )
         )
@@ -286,6 +297,7 @@ def _run_build_probe_transition_data(args: argparse.Namespace) -> int:
         f"{result.producer_config_path}"
     )
     print(f"run manifest: {result.run_path}")
+    print(f"externally pin this build-run SHA256: {result.run_sha256}")
     return 0
 
 
@@ -779,12 +791,8 @@ def register_commands(
         "select-probe-transition",
         help="Fit frozen word-identity probes and select a validated denoising transition.",
     )
-    probe_transition.add_argument("--config", required=True, type=Path)
-    probe_transition.add_argument("--class-inventory", required=True, type=Path)
-    probe_transition.add_argument("--fit-manifest", required=True, type=Path)
-    probe_transition.add_argument("--selection-manifest", required=True, type=Path)
-    probe_transition.add_argument("--validation-manifest", required=True, type=Path)
-    probe_transition.add_argument("--protected-registry", required=True, type=Path)
+    probe_transition.add_argument("--cohort-build-run", required=True, type=Path)
+    probe_transition.add_argument("--cohort-build-run-sha256", required=True)
     probe_transition.add_argument("--gpu-id", required=True)
     probe_transition.add_argument("--output-dir", required=True, type=Path)
     probe_transition.set_defaults(_typo_cot_plugin_handler=_run_select_probe_transition)
@@ -794,9 +802,13 @@ def register_commands(
         help="Build hash-bound Mistral word-probe cohorts without reading model outputs.",
     )
     probe_data.add_argument("--template", required=True, type=Path)
+    probe_data.add_argument("--template-sha256", required=True)
     probe_data.add_argument("--source-manifest", required=True, type=Path)
+    probe_data.add_argument("--source-manifest-sha256", required=True)
     probe_data.add_argument("--protected-registry", required=True, type=Path)
-    probe_data.add_argument("--tokenizer-attestation", required=True, type=Path)
+    probe_data.add_argument("--protected-registry-sha256", required=True)
+    probe_data.add_argument("--tokenizer-freeze-run", required=True, type=Path)
+    probe_data.add_argument("--tokenizer-freeze-run-sha256", required=True)
     probe_data.add_argument("--output-dir", required=True, type=Path)
     probe_data.set_defaults(_typo_cot_plugin_handler=_run_build_probe_transition_data)
 
