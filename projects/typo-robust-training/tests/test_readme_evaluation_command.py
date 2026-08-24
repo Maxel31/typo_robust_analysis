@@ -59,6 +59,7 @@ TRAINING_PLUGIN_COMMANDS = frozenset(
     {
         "prepare-kojima-faithful-data",
         "build-robustness-training-data",
+        "build-probe-transition-data",
         "build-sae-clean-corpus",
         "calibrate-evaluation-v2-severity",
         "calibrate-sparse-autoencoder-l1",

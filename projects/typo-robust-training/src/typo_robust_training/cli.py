@@ -262,6 +262,33 @@ def _run_select_probe_transition(args: argparse.Namespace) -> int:
     return 0 if result.validation_passed else 1
 
 
+def _run_build_probe_transition_data(args: argparse.Namespace) -> int:
+    from typo_robust_training.probe.cohort_builder import (
+        ProbeTransitionDataBuildConfig,
+        run_build_probe_transition_data,
+    )
+
+    try:
+        result = run_build_probe_transition_data(
+            ProbeTransitionDataBuildConfig(
+                template_path=args.template,
+                source_manifest_path=args.source_manifest,
+                protected_registry_path=args.protected_registry,
+                tokenizer_attestation_path=args.tokenizer_attestation,
+                output_dir=args.output_dir,
+            )
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"build-probe-transition-data: error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"built {result.classes} word classes and {result.records} role-disjoint record(s): "
+        f"{result.producer_config_path}"
+    )
+    print(f"run manifest: {result.run_path}")
+    return 0
+
+
 def _run_validate_probe_transition_single_layer_gate(args: argparse.Namespace) -> int:
     from typo_robust_training.state_gate.config import load_single_layer_gate_config
     from typo_robust_training.state_gate.producer import produce_single_layer_gate_artifact
@@ -761,6 +788,17 @@ def register_commands(
     probe_transition.add_argument("--gpu-id", required=True)
     probe_transition.add_argument("--output-dir", required=True, type=Path)
     probe_transition.set_defaults(_typo_cot_plugin_handler=_run_select_probe_transition)
+
+    probe_data = commands.add_parser(
+        "build-probe-transition-data",
+        help="Build hash-bound Mistral word-probe cohorts without reading model outputs.",
+    )
+    probe_data.add_argument("--template", required=True, type=Path)
+    probe_data.add_argument("--source-manifest", required=True, type=Path)
+    probe_data.add_argument("--protected-registry", required=True, type=Path)
+    probe_data.add_argument("--tokenizer-attestation", required=True, type=Path)
+    probe_data.add_argument("--output-dir", required=True, type=Path)
+    probe_data.set_defaults(_typo_cot_plugin_handler=_run_build_probe_transition_data)
 
     gate = commands.add_parser(
         "validate-probe-transition-single-layer-gate",
