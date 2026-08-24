@@ -37,6 +37,33 @@ uv sync --project "${TRAIN_PROJECT}" --locked
 公開commandは科学的操作ごとに1つです。現在の実験では物理GPU 5と6を使用します。
 公開cloneでは利用可能なGPUを指定できます。
 
+### 科学的runtimeの前にexact tokenizerを凍結する
+
+probe・学習・評価は、すべて同じ凍結済みtokenizer manifestを要求します。実験を実行する
+exact code revisionのclean checkoutから次を実行します。
+
+```bash
+MODEL_ID=mistralai/Mistral-7B-v0.1
+MODEL_REVISION=7231864981174d9bee8c7687c24c8344414eae6b
+CODE_REVISION="$(git rev-parse HEAD)"
+TOKENIZER_FREEZE="${TRAIN_ROOT}/tokenizers/mistral-7b-v0.1"
+
+uv run --project "${TRAIN_PROJECT}" --locked typo-cot freeze-tokenizer-attestation \
+  --model "${MODEL_ID}" \
+  --revision "${MODEL_REVISION}" \
+  --code-revision "${CODE_REVISION}" \
+  --output-dir "${TOKENIZER_FREEZE}"
+
+export TYPO_COT_TOKENIZER_ATTESTATION_MANIFEST="${TOKENIZER_FREEZE}/tokenizer-attestation.json"
+```
+
+consumer fileは既存の `typo-cot-tokenizer-snapshot-attestation/v1` schemaをそのまま使い、
+exact Hub commit上のtokenizer/config assetをinventory化してhashします。隣接するfreeze-run
+manifestは、そのfileをprovider identity、完全なsource-tree attestation、runtime package
+versionへbindします。両fileは決定的かつclosed-worldに検証されます。表示されたproducer
+record SHA-256を実験registryへ記録してください。この外部pinにより、両fileを自己再hash
+して改変する操作も検出できます。`main`のようなbranch名は受け付けません。
+
 ## 1. leakageを防いだ学習・評価dataを構築する
 
 初回構築前に、GitHub Typo Corpus v1.0.0を元repositoryの条件に従って取得します。

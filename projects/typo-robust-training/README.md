@@ -50,6 +50,36 @@ uv sync --project "${TRAIN_PROJECT}" --locked
 All released commands take one scientific operation. The current experiment
 uses physical GPUs 5 and 6; a public clone may select any available devices.
 
+### Freeze the exact tokenizer before any scientific runtime
+
+Probe, training, and evaluation processes all require the same frozen
+tokenizer manifest. Run this command from a clean checkout at the exact code
+revision that will execute the experiment:
+
+```bash
+MODEL_ID=mistralai/Mistral-7B-v0.1
+MODEL_REVISION=7231864981174d9bee8c7687c24c8344414eae6b
+CODE_REVISION="$(git rev-parse HEAD)"
+TOKENIZER_FREEZE="${TRAIN_ROOT}/tokenizers/mistral-7b-v0.1"
+
+uv run --project "${TRAIN_PROJECT}" --locked typo-cot freeze-tokenizer-attestation \
+  --model "${MODEL_ID}" \
+  --revision "${MODEL_REVISION}" \
+  --code-revision "${CODE_REVISION}" \
+  --output-dir "${TOKENIZER_FREEZE}"
+
+export TYPO_COT_TOKENIZER_ATTESTATION_MANIFEST="${TOKENIZER_FREEZE}/tokenizer-attestation.json"
+```
+
+The consumer file keeps the shared
+`typo-cot-tokenizer-snapshot-attestation/v1` schema. It inventories and hashes
+the tokenizer/config assets at the exact Hub commit. The adjacent freeze-run
+manifest binds that file to the provider identity, complete source-tree
+attestation, and runtime package versions; both files are deterministic and
+closed-world validated. Record the printed producer-record SHA-256 in the
+experiment registry: it is the external pin that makes self-rehashing either
+file detectable. Branch names such as `main` are rejected.
+
 ## 1. Build leakage-resistant training and evaluation data
 
 Before the first build, obtain GitHub Typo Corpus v1.0.0 under its

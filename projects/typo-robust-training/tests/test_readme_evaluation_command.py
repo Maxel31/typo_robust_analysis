@@ -64,6 +64,7 @@ TRAINING_PLUGIN_COMMANDS = frozenset(
         "evaluate-typo-robustness",
         "freeze-generic-localization-pairs",
         "freeze-robustness-evaluation",
+        "freeze-tokenizer-attestation",
         "localize-robustness-components",
         "materialize-probe-output-factorial-configs",
         "materialize-probe-transition-state-training-config",
@@ -229,7 +230,7 @@ def test_real_cli_registers_the_exact_core_and_training_plugin_commands() -> Non
     assert CORE_COMMANDS.isdisjoint(TRAINING_PLUGIN_COMMANDS)
     assert combined_commands - plugin_commands == CORE_COMMANDS
     assert combined_commands == CORE_COMMANDS | TRAINING_PLUGIN_COMMANDS
-    assert len(combined_commands) == 64
+    assert len(combined_commands) == 65
 
 
 @pytest.mark.parametrize("readme_name", ["README.md", "README.ja.md"])
