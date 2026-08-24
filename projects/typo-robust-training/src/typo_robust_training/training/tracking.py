@@ -107,6 +107,46 @@ _ARM_PRESENTATION = {
         "in the validated rank-16 probe semantic subspace at the edited-word-final "
         "probe-transition coordinate.",
     ),
+    "factorial-all-layers-all-tokens": (
+        "All-layer/all-token baseline",
+        "Full aligned output matching",
+        "factorial-all-layers-all-tokens",
+        "baseline-output-factorial",
+        "baseline",
+        "Kojima-style all-layer LoRA with output matching at every aligned non-edited token.",
+    ),
+    "factorial-all-layers-downstream-horizon": (
+        "All-layer horizon control",
+        "AP-horizon output matching",
+        "factorial-all-layers-horizon",
+        "control-output-horizon",
+        "control",
+        "All-layer LoRA with noisy supervision restricted to downstream offsets +2..+16.",
+    ),
+    "factorial-probe-suffix-all-tokens": (
+        "Probe-suffix placement control",
+        "Full aligned output matching",
+        "factorial-probe-suffix-all-tokens",
+        "control-probe-placement",
+        "control",
+        "Linear-probe suffix LoRA with full aligned output matching.",
+    ),
+    "factorial-probe-suffix-downstream-horizon": (
+        "Probe-interface proposal",
+        "Probe-suffix AP-horizon output matching",
+        "factorial-probe-suffix-horizon",
+        "proposed-probe-interface",
+        "proposed",
+        "Linear-probe suffix LoRA with noisy output matching only at AP-derived offsets +2..+16.",
+    ),
+    "factorial-random-layers-downstream-horizon": (
+        "Random-freeze placement control",
+        "Count-matched random-layer AP-horizon output matching",
+        "factorial-random-layers-horizon",
+        "control-random-freeze",
+        "control",
+        "Deterministic count-matched random LoRA layers with identical horizon supervision.",
+    ),
 }
 
 _LEGACY_ARM_PRESENTATION = {
@@ -252,7 +292,8 @@ def build_wandb_run_presentation(
     if state_gradient_ratio is not None:
         tags.append(f"state-gradient-ratio:{float(state_gradient_ratio):g}")
     if layer_label is not None:
-        notes = f"{notes} State layers: {layer_label}."
+        layer_role = "Adapter" if condition.startswith("factorial-") else "State"
+        notes = f"{notes} {layer_role} layers: {layer_label}."
     return WandbRunPresentation(
         name=" · ".join(parts),
         group=f"Cycle {cycle} · {model_name} · {budget_label}",
@@ -494,11 +535,7 @@ def start_wandb_training_tracker(
         run_id = metadata["run_id"]
         if not isinstance(run_id, str) or not run_id:
             raise ValueError("W&B run ID is invalid")
-        intent_only = (
-            status == "initializing"
-            and prior_step == 0
-            and metadata.get("url") is None
-        )
+        intent_only = status == "initializing" and prior_step == 0 and metadata.get("url") is None
         init_resume = {"id": run_id, "resume": "allow" if intent_only else "must"}
         last_logged_optimizer_step = prior_step
     else:

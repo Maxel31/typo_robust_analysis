@@ -29,6 +29,7 @@ from typo_robust_training.training.config import AdapterTrainingProtocol
 from typo_robust_training.training.encoding import (
     PairedEncoding,
     encode_training_pair,
+    output_logit_pairs_for_scope,
     retained_clean_character_extent,
 )
 from typo_robust_training.training.evidence import (
@@ -36,6 +37,7 @@ from typo_robust_training.training.evidence import (
     ResidualStateEvidence,
 )
 from typo_robust_training.training.methods import (
+    PROBE_FACTORIAL_CONDITIONS,
     ProbeTransitionStateTrainingEvidence,
     ProbeSemanticSubspaceTrainingEvidence,
     ProbeTransitionTrainingEvidence,
@@ -44,6 +46,7 @@ from typo_robust_training.training.methods import (
 )
 from typo_robust_training.training.pairs import TrainingPair, UnusableTrainingPairError
 from typo_robust_training.training.runner import (
+    factorial_group_balanced_accumulation_scales,
     TrainingMicroStepResult,
     TrainingMicroStepScales,
     normalized_accumulation_scales,
@@ -632,6 +635,10 @@ def _resolve_probe_transition_runtime_method(
         "probe-transition-output-matching": ProbeTransitionTrainingEvidence,
         "probe-transition-single-layer-state-distillation": (ProbeTransitionStateTrainingEvidence),
         "probe-semantic-subspace-distillation": ProbeSemanticSubspaceTrainingEvidence,
+        **{
+            condition: ProbeTransitionTrainingEvidence
+            for condition in PROBE_FACTORIAL_CONDITIONS
+        },
     }
     expected_type = expected_types.get(protocol.condition)
     if expected_type is None:
@@ -648,6 +655,25 @@ def _resolve_probe_transition_runtime_method(
     if not isinstance(evidence, expected_type):
         raise ValueError("probe training requires probe evidence matching its exact condition")
     resolved = resolve_training_method(protocol, evidence=evidence)
+    if protocol.condition in PROBE_FACTORIAL_CONDITIONS:
+        expected_weights = {
+            "noisy_language_model": 0.0,
+            "answer": 0.0,
+            "output": 1.0,
+            "state": 0.0,
+            "clean": 0.0,
+        }
+        if (
+            dict(protocol.loss_weights) != expected_weights
+            or resolved.state_layers
+            or resolved.state_target != "none"
+            or protocol.state_scope != "none"
+            or protocol.state_distance != "none"
+            or protocol.state_gradient_ratio is not None
+            or protocol.calibration_micro_batches != 0
+        ):
+            raise ValueError("probe-factorial output matching must disable auxiliary losses")
+        return resolved
     if protocol.condition == "probe-transition-output-matching":
         expected_weights = {
             "noisy_language_model": 0.0,
@@ -895,6 +921,7 @@ class HuggingFaceAdapterTrainingRuntime:
             student_base,
             protocol=protocol,
             decoder_layers=adapter_layers,
+            initialization_seed=seed,
         )
         self.device = next(self.student.parameters()).device
         if next(self.teacher.parameters()).device != self.device:
@@ -980,6 +1007,9 @@ class HuggingFaceAdapterTrainingRuntime:
             max_length=self.protocol.max_sequence_length,
             require_answer_targets=self.protocol.loss_weights["answer"] > 0.0,
             require_all_edits_visible=not self.protocol.schema_version.endswith("/v1"),
+            require_downstream_targets=(
+                self.protocol.schema_version.endswith("/v7") and not pair.is_noop
+            ),
         )
 
     def pair_is_usable(self, pair: TrainingPair) -> bool:
@@ -1057,13 +1087,31 @@ class HuggingFaceAdapterTrainingRuntime:
             raise ValueError("prepared accumulation size differs from the config")
         encodings = tuple(self._encode_pair(pair) for pair in rows)
         state_active = self.protocol.loss_weights["state"] > 0.0
-        scales = normalized_accumulation_scales(
-            output_token_counts=tuple(len(encoding.output_logit_pairs) for encoding in encodings),
-            state_coordinate_counts=tuple(
-                len(encoding.clean_edit_positions) if state_active else 0 for encoding in encodings
-            ),
-            state_active=state_active,
+        output_token_counts = tuple(
+            len(
+                output_logit_pairs_for_scope(
+                    encoding,
+                    output_scope=self.protocol.output_scope,
+                )
+            )
+            for encoding in encodings
         )
+        if self.protocol.condition in PROBE_FACTORIAL_CONDITIONS:
+            if state_active:
+                raise ValueError("probe-factorial accumulation cannot contain state supervision")
+            scales = factorial_group_balanced_accumulation_scales(
+                output_token_counts=output_token_counts,
+                is_noop_rows=tuple(encoding.is_noop for encoding in encodings),
+            )
+        else:
+            scales = normalized_accumulation_scales(
+                output_token_counts=output_token_counts,
+                state_coordinate_counts=tuple(
+                    len(encoding.clean_edit_positions) if state_active else 0
+                    for encoding in encodings
+                ),
+                state_active=state_active,
+            )
         self._prepared_encodings.extend(zip(rows, encodings, strict=True))
         return scales
 
@@ -1677,6 +1725,8 @@ class HuggingFaceAdapterTrainingRuntime:
             "gpu_total_memory_bytes": torch.cuda.get_device_properties(0).total_memory,
             "decoder_layers": self.num_decoder_layers,
             "adapter_layers": list(self.adapter_layers),
+            "adapter_initialization_policy": self.protocol.adapter_initialization_policy,
+            "output_scope": self.protocol.output_scope,
             "state_layers": list(self.state_layers),
             **(
                 {"method_evidence_sha256": self.evidence.evidence_sha256}

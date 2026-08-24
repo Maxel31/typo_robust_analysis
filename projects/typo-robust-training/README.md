@@ -395,6 +395,10 @@ also includes the operation, layer range, model, token budget, and seed.
 
 ## 6. Evaluate held-out robustness
 
+The five-arm, hidden-state-loss-free factorial based on the Linear Probe boundary
+and the Activation-Patching downstream horizon is specified in
+[`docs/state_free_probe_factorial_v1.ja.md`](docs/state_free_probe_factorial_v1.ja.md).
+
 ```bash
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot evaluate-typo-robustness \

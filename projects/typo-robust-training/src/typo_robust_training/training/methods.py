@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 import numpy as np
 
@@ -19,6 +21,40 @@ from typo_robust_training.training.config import load_adapter_training_config
 
 _REVISION = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+PROBE_FACTORIAL_CONDITIONS = (
+    "factorial-all-layers-all-tokens",
+    "factorial-all-layers-downstream-horizon",
+    "factorial-probe-suffix-all-tokens",
+    "factorial-probe-suffix-downstream-horizon",
+    "factorial-random-layers-downstream-horizon",
+)
+_FACTORIAL_ARM_FIELDS: Mapping[str, tuple[str, str, str]] = {
+    "factorial-all-layers-all-tokens": (
+        "all-decoder-layers",
+        "all-decoder-layers/v1",
+        "aligned-non-edited-next-token/v1",
+    ),
+    "factorial-all-layers-downstream-horizon": (
+        "all-decoder-layers",
+        "all-decoder-layers/v1",
+        "clean-all-noisy-edited-word-downstream-offsets-2-16/v1",
+    ),
+    "factorial-probe-suffix-all-tokens": (
+        "probe-transition-suffix",
+        "validated-linear-probe-transition-suffix/v1",
+        "aligned-non-edited-next-token/v1",
+    ),
+    "factorial-probe-suffix-downstream-horizon": (
+        "probe-transition-suffix",
+        "validated-linear-probe-transition-suffix/v1",
+        "clean-all-noisy-edited-word-downstream-offsets-2-16/v1",
+    ),
+    "factorial-random-layers-downstream-horizon": (
+        "probe-count-matched-random-layers",
+        "sha256-seed42-count-matched-random-freeze/v1",
+        "clean-all-noisy-edited-word-downstream-offsets-2-16/v1",
+    ),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +197,51 @@ class ResolvedTrainingMethod:
     state_layers: tuple[int, ...]
     state_target: str
     method_evidence_sha256: str
+
+
+def count_matched_random_layers(
+    *,
+    decoder_layers: int,
+    selected_transition_layer: int,
+) -> tuple[int, ...]:
+    """Return the preregistered same-count random-freeze control.
+
+    The fixed seed is part of the policy name, not a runtime/tuning seed.  The
+    selected count exactly equals the transition suffix, while layer identity
+    is derived only from the model depth and transition boundary.
+    """
+
+    if (
+        isinstance(decoder_layers, bool)
+        or not isinstance(decoder_layers, int)
+        or decoder_layers < 2
+        or isinstance(selected_transition_layer, bool)
+        or not isinstance(selected_transition_layer, int)
+        or not 1 <= selected_transition_layer < decoder_layers
+    ):
+        raise ValueError("random-freeze layer inventory is invalid")
+    count = decoder_layers - selected_transition_layer
+    ranked = sorted(
+        range(decoder_layers),
+        key=lambda layer: hashlib.sha256(
+            (
+                "probe-count-matched-random-layers/v1"
+                f"\0seed=42\0layers={decoder_layers}"
+                f"\0transition={selected_transition_layer}\0layer={layer}"
+            ).encode("utf-8")
+        ).digest(),
+    )
+    selected = set(ranked[:count])
+    suffix = set(range(selected_transition_layer, decoder_layers))
+    if selected == suffix:
+        # A deterministic anti-degeneracy clause ensures this is an actual
+        # location control, not an accidental duplicate of the proposal arm.
+        selected.remove(min(selected))
+        selected.add(min(set(range(decoder_layers)) - selected - suffix))
+    result = tuple(sorted(selected))
+    if len(result) != count or set(result) == suffix:
+        raise RuntimeError("random-freeze control did not produce a distinct matched scope")
+    return result
 
 
 def load_probe_transition_training_evidence(
@@ -356,6 +437,117 @@ def materialize_probe_transition_training_config(
     return load_adapter_training_config(output)
 
 
+def materialize_probe_output_factorial_configs(
+    template_path: Path,
+    *,
+    evidence_path: Path,
+    output_dir: Path,
+) -> Mapping[str, AdapterTrainingProtocol]:
+    """Bind one probe artifact and atomically emit the frozen 2x2 plus control."""
+
+    template = Path(template_path)
+    evidence = Path(evidence_path)
+    destination = Path(output_dir)
+    if template.is_symlink() or not template.is_file():
+        raise ValueError("probe-factorial template must be one regular file")
+    if evidence.is_symlink():
+        raise ValueError("probe-factorial evidence must not be a symlink")
+    if destination.exists() and (not destination.is_dir() or any(destination.iterdir())):
+        raise FileExistsError("probe-factorial output directory must be absent or empty")
+    payload = strict_loads(
+        template.read_text(encoding="utf-8"),
+        context=str(template.resolve()),
+    )
+    expected_top = {
+        "schema_version", "condition", "method_evidence", "model", "sequence",
+        "adapter", "optimization", "objective",
+    }
+    if not isinstance(payload, Mapping) or set(payload) != expected_top:
+        raise ValueError("probe-factorial template fields differ")
+    if (
+        payload["schema_version"] != "robustness-adapter-training-config/v7-template"
+        or payload["condition"] is not None
+        or payload["method_evidence"]
+        != {
+            "schema_version": "probe-output-factorial-evidence-binding/v1",
+            "artifact_sha256": None,
+        }
+    ):
+        raise ValueError("probe-factorial template binding differs")
+    model_fields = payload["model"]
+    adapter_fields = payload["adapter"]
+    objective_fields = payload["objective"]
+    if (
+        not isinstance(model_fields, Mapping)
+        or not isinstance(adapter_fields, Mapping)
+        or not isinstance(objective_fields, Mapping)
+        or adapter_fields.get("layer_scope") is not None
+        or adapter_fields.get("layer_policy") is not None
+        or objective_fields.get("output_scope") is not None
+    ):
+        raise ValueError("probe-factorial template must leave only arm axes null")
+    loaded_evidence = load_probe_transition_training_evidence(
+        evidence,
+        model=str(model_fields.get("id")),
+        model_revision=str(model_fields.get("revision")),
+        decoder_layers=int(model_fields.get("decoder_layers", 0)),
+    )
+    destination.mkdir(parents=True, exist_ok=True)
+    temporary_dir = destination / f".materializing.{os.getpid()}"
+    temporary_dir.mkdir()
+    protocols: dict[str, AdapterTrainingProtocol] = {}
+    try:
+        for condition in PROBE_FACTORIAL_CONDITIONS:
+            layer_scope, layer_policy, output_scope = _FACTORIAL_ARM_FIELDS[condition]
+            arm = copy.deepcopy(dict(payload))
+            arm["schema_version"] = "robustness-adapter-training-config/v7"
+            arm["condition"] = condition
+            arm["method_evidence"]["artifact_sha256"] = (  # type: ignore[index]
+                loaded_evidence.evidence_sha256
+            )
+            arm["adapter"]["layer_scope"] = layer_scope  # type: ignore[index]
+            arm["adapter"]["layer_policy"] = layer_policy  # type: ignore[index]
+            arm["objective"]["output_scope"] = output_scope  # type: ignore[index]
+            temporary = temporary_dir / f"{condition}.json"
+            temporary.write_text(
+                json.dumps(arm, sort_keys=True, indent=2, allow_nan=False) + "\n",
+                encoding="utf-8",
+            )
+            protocol = load_adapter_training_config(temporary)
+            resolve_training_method(protocol, evidence=loaded_evidence)
+            protocols[condition] = protocol
+        manifest = {
+            "schema_version": "probe-output-factorial-manifest/v1",
+            "method_evidence_sha256": loaded_evidence.evidence_sha256,
+            "arms": {
+                condition: {
+                    "config": f"{condition}.json",
+                    "config_sha256": protocols[condition].config_sha256,
+                    "adapter_layers": list(
+                        resolve_training_method(
+                            protocols[condition], evidence=loaded_evidence
+                        ).adapter_layers
+                    ),
+                    "output_scope": protocols[condition].output_scope,
+                    "initialization_policy": protocols[
+                        condition
+                    ].adapter_initialization_policy,
+                }
+                for condition in PROBE_FACTORIAL_CONDITIONS
+            },
+        }
+        (temporary_dir / "manifest.json").write_text(
+            json.dumps(manifest, sort_keys=True, indent=2, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        for path in sorted(temporary_dir.iterdir()):
+            os.replace(path, destination / path.name)
+    finally:
+        if temporary_dir.exists():
+            temporary_dir.rmdir()
+    return MappingProxyType(protocols)
+
+
 def materialize_probe_semantic_subspace_training_config(
     template_path: Path,
     *,
@@ -447,6 +639,33 @@ def resolve_training_method(
 
     if not isinstance(protocol, AdapterTrainingProtocol):
         raise TypeError("training protocol must be AdapterTrainingProtocol")
+    if protocol.condition in PROBE_FACTORIAL_CONDITIONS:
+        if not isinstance(evidence, ProbeTransitionTrainingEvidence) or isinstance(
+            evidence, ProbeTransitionStateTrainingEvidence
+        ):
+            raise ValueError("probe-factorial conditions require transition evidence")
+        if protocol.decoder_layers is None or (
+            evidence.model != protocol.model
+            or evidence.model_revision != protocol.model_revision
+            or evidence.decoder_layers != protocol.decoder_layers
+            or protocol.expected_method_evidence_sha256 != evidence.evidence_sha256
+        ):
+            raise ValueError("probe-factorial evidence identity or hash differs")
+        if "all-layers" in protocol.condition:
+            adapter_layers = tuple(range(evidence.decoder_layers))
+        elif "probe-suffix" in protocol.condition:
+            adapter_layers = evidence.suffix_layers
+        else:
+            adapter_layers = count_matched_random_layers(
+                decoder_layers=evidence.decoder_layers,
+                selected_transition_layer=evidence.selected_transition_layer,
+            )
+        return ResolvedTrainingMethod(
+            adapter_layers=adapter_layers,
+            state_layers=(),
+            state_target="none",
+            method_evidence_sha256=evidence.evidence_sha256,
+        )
     if isinstance(evidence, ProbeSemanticSubspaceTrainingEvidence):
         if protocol.condition != "probe-semantic-subspace-distillation":
             raise ValueError("semantic subspace evidence cannot configure this condition")
@@ -579,14 +798,17 @@ def materialize_probe_transition_state_training_config(
 
 
 __all__ = [
+    "PROBE_FACTORIAL_CONDITIONS",
     "ProbeSemanticSubspaceTrainingEvidence",
     "ProbeTransitionTrainingEvidence",
     "ProbeTransitionStateTrainingEvidence",
     "ResolvedTrainingMethod",
+    "count_matched_random_layers",
     "load_probe_semantic_subspace_training_evidence",
     "load_probe_transition_training_evidence",
     "load_probe_transition_state_training_evidence",
     "materialize_probe_transition_state_training_config",
+    "materialize_probe_output_factorial_configs",
     "materialize_probe_semantic_subspace_training_config",
     "materialize_probe_transition_training_config",
     "resolve_training_method",

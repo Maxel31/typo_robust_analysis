@@ -28,6 +28,11 @@ METHOD_EVIDENCE_CONDITIONS = frozenset(
         "probe-transition-single-layer-state-distillation",
         "causal-probe-subspace-distillation",
         "probe-semantic-subspace-distillation",
+        "factorial-all-layers-all-tokens",
+        "factorial-all-layers-downstream-horizon",
+        "factorial-probe-suffix-all-tokens",
+        "factorial-probe-suffix-downstream-horizon",
+        "factorial-random-layers-downstream-horizon",
     }
 )
 SUPPORTED_ADAPTER_CONDITIONS = LEGACY_ADAPTER_CONDITIONS | METHOD_EVIDENCE_CONDITIONS

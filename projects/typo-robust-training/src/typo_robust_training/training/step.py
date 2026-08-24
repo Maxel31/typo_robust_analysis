@@ -10,7 +10,10 @@ from typing import Any
 from typo_robust_training.localization.components import ComponentRef
 from typo_robust_training.training.activations import forward_with_component_activations
 from typo_robust_training.training.config import AdapterTrainingProtocol
-from typo_robust_training.training.encoding import PairedEncoding
+from typo_robust_training.training.encoding import (
+    PairedEncoding,
+    output_logit_pairs_for_scope,
+)
 from typo_robust_training.training.losses import (
     aligned_output_kl,
     answer_cross_entropy,
@@ -180,7 +183,10 @@ def compute_training_step(
         losses["output"] = aligned_output_kl(
             teacher_output.logits,
             logits,
-            logit_pairs=encoding.output_logit_pairs,
+            logit_pairs=output_logit_pairs_for_scope(
+                encoding,
+                output_scope=protocol.output_scope,
+            ),
             temperature=protocol.temperature,
         )
     if protocol.loss_weights["state"] > 0.0:

@@ -32,9 +32,28 @@ _CONDITIONS = (
     "probe-transition-single-layer-state-distillation",
     "causal-probe-subspace-distillation",
     "probe-semantic-subspace-distillation",
+    "factorial-all-layers-all-tokens",
+    "factorial-all-layers-downstream-horizon",
+    "factorial-probe-suffix-all-tokens",
+    "factorial-probe-suffix-downstream-horizon",
+    "factorial-random-layers-downstream-horizon",
 )
 if frozenset(_CONDITIONS) != SUPPORTED_ADAPTER_CONDITIONS:  # pragma: no cover - import invariant
     raise RuntimeError("evaluation adapter condition order is incomplete")
+
+_FACTORIAL_OUTPUT_SCOPES = {
+    "factorial-all-layers-all-tokens": "aligned-non-edited-next-token/v1",
+    "factorial-all-layers-downstream-horizon": (
+        "clean-all-noisy-edited-word-downstream-offsets-2-16/v1"
+    ),
+    "factorial-probe-suffix-all-tokens": "aligned-non-edited-next-token/v1",
+    "factorial-probe-suffix-downstream-horizon": (
+        "clean-all-noisy-edited-word-downstream-offsets-2-16/v1"
+    ),
+    "factorial-random-layers-downstream-horizon": (
+        "clean-all-noisy-edited-word-downstream-offsets-2-16/v1"
+    ),
+}
 
 
 def _object(path: Path, *, artifact: str) -> Mapping[str, object]:
@@ -84,6 +103,54 @@ def _digest(value: object, *, field: str, optional: bool = False) -> str | None:
     return value
 
 
+def _validate_factorial_runtime(condition: object, runtime: Mapping[str, object]) -> None:
+    """Bind a factorial condition to its actual trained scope at evaluation."""
+
+    if condition not in _FACTORIAL_OUTPUT_SCOPES:
+        return
+    decoder_layers = runtime.get("decoder_layers")
+    adapter_layers_raw = runtime.get("adapter_layers")
+    if (
+        isinstance(decoder_layers, bool)
+        or not isinstance(decoder_layers, int)
+        or decoder_layers < 2
+        or not isinstance(adapter_layers_raw, list)
+        or not adapter_layers_raw
+        or any(
+            isinstance(layer, bool) or not isinstance(layer, int) for layer in adapter_layers_raw
+        )
+    ):
+        raise ValueError("evaluation factorial adapter layer inventory differs")
+    adapter_layers = tuple(adapter_layers_raw)
+    if (
+        tuple(sorted(set(adapter_layers))) != adapter_layers
+        or adapter_layers[0] < 0
+        or adapter_layers[-1] >= decoder_layers
+        or runtime.get("output_scope") != _FACTORIAL_OUTPUT_SCOPES[condition]
+        or runtime.get("adapter_initialization_policy") != "sha256-layer-keyed-kaiming-a-zero-b/v1"
+        or runtime.get("state_layers") != []
+        or runtime.get("state_weight") != 0.0
+        or runtime.get("state_calibration") is not None
+    ):
+        raise ValueError("evaluation factorial runtime objective or scope differs")
+    if str(condition).startswith("factorial-all-layers-"):
+        expected_layers = tuple(range(decoder_layers))
+    elif str(condition).startswith("factorial-probe-suffix-"):
+        if adapter_layers[0] < 1:
+            raise ValueError("evaluation factorial probe suffix starts before the probe boundary")
+        expected_layers = tuple(range(adapter_layers[0], decoder_layers))
+    else:
+        from typo_robust_training.training.methods import count_matched_random_layers
+
+        selected_transition_layer = decoder_layers - len(adapter_layers)
+        expected_layers = count_matched_random_layers(
+            decoder_layers=decoder_layers,
+            selected_transition_layer=selected_transition_layer,
+        )
+    if adapter_layers != expected_layers:
+        raise ValueError("evaluation factorial adapter layers differ from the condition")
+
+
 def load_adapter_descriptors(
     paths: Sequence[Path],
     *,
@@ -130,15 +197,13 @@ def load_adapter_descriptors(
             runtime.get(field) != value for field, value in expected_runtime.items()
         ):
             raise ValueError("evaluation adapter runtime identity differs")
+        _validate_factorial_runtime(condition, runtime)
         actual_revision_fields = (
             "teacher_revision",
             "student_revision",
             "tokenizer_revision",
         )
-        if any(
-            runtime.get(field) != protocol.model_revision
-            for field in actual_revision_fields
-        ):
+        if any(runtime.get(field) != protocol.model_revision for field in actual_revision_fields):
             raise ValueError("evaluation adapter actual runtime revision differs")
         code_revision = runtime.get("code_revision")
         if not isinstance(code_revision, str) or _REVISION40.fullmatch(code_revision) is None:

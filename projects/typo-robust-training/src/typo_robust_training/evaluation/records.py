@@ -23,6 +23,11 @@ _CONDITIONS = frozenset(
         "probe-transition-single-layer-state-distillation",
         "causal-probe-subspace-distillation",
         "probe-semantic-subspace-distillation",
+        "factorial-all-layers-all-tokens",
+        "factorial-all-layers-downstream-horizon",
+        "factorial-probe-suffix-all-tokens",
+        "factorial-probe-suffix-downstream-horizon",
+        "factorial-random-layers-downstream-horizon",
     }
 )
 _EVALUATION_CONDITIONS = frozenset(

@@ -356,6 +356,10 @@ exact checkpointがある場合だけ`--resume`を追加します。W&Bでは
 
 ## 6. held-out頑健性を評価する
 
+Linear Probe境界とActivation Patching由来の下流horizonを使い、hidden-state lossを
+使わない5条件factorialの定義と実行契約は
+[`docs/state_free_probe_factorial_v1.ja.md`](docs/state_free_probe_factorial_v1.ja.md)を参照してください。
+
 ```bash
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
   typo-cot evaluate-typo-robustness \

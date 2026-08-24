@@ -447,6 +447,24 @@ def _run_materialize_probe_transition_training_config(args: argparse.Namespace) 
     return 0
 
 
+def _run_materialize_probe_output_factorial_configs(args: argparse.Namespace) -> int:
+    from typo_robust_training.training.methods import (
+        materialize_probe_output_factorial_configs,
+    )
+
+    try:
+        protocols = materialize_probe_output_factorial_configs(
+            args.template,
+            evidence_path=args.probe_selection,
+            output_dir=args.output_dir,
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"materialize-probe-output-factorial-configs: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"materialized {len(protocols)} factorial configs: {args.output_dir}")
+    return 0
+
+
 def _run_materialize_probe_transition_state_training_config(
     args: argparse.Namespace,
 ) -> int:
@@ -763,6 +781,16 @@ def register_commands(
     materialize_probe_config.set_defaults(
         _typo_cot_plugin_handler=_run_materialize_probe_transition_training_config
     )
+    materialize_factorial = commands.add_parser(
+        "materialize-probe-output-factorial-configs",
+        help="Bind one probe artifact into the frozen 2x2 output-KD arms and control.",
+    )
+    materialize_factorial.add_argument("--template", required=True, type=Path)
+    materialize_factorial.add_argument("--probe-selection", required=True, type=Path)
+    materialize_factorial.add_argument("--output-dir", required=True, type=Path)
+    materialize_factorial.set_defaults(
+        _typo_cot_plugin_handler=_run_materialize_probe_output_factorial_configs
+    )
     materialize_semantic_config = commands.add_parser(
         "materialize-probe-semantic-training-config",
         help="Bind passed semantic kill evidence into a non-runnable training template.",
@@ -806,6 +834,23 @@ def register_commands(
             "train-probe-semantic-subspace-distillation",
             "probe-semantic-subspace-distillation",
         ),
+        ("train-factorial-all-layers-all-tokens", "factorial-all-layers-all-tokens"),
+        (
+            "train-factorial-all-layers-downstream-horizon",
+            "factorial-all-layers-downstream-horizon",
+        ),
+        (
+            "train-factorial-probe-suffix-all-tokens",
+            "factorial-probe-suffix-all-tokens",
+        ),
+        (
+            "train-factorial-probe-suffix-downstream-horizon",
+            "factorial-probe-suffix-downstream-horizon",
+        ),
+        (
+            "train-factorial-random-layers-downstream-horizon",
+            "factorial-random-layers-downstream-horizon",
+        ),
     ):
         training = commands.add_parser(
             command,
@@ -825,6 +870,11 @@ def register_commands(
             in {
                 "probe-transition-output-matching",
                 "probe-semantic-subspace-distillation",
+                "factorial-all-layers-all-tokens",
+                "factorial-all-layers-downstream-horizon",
+                "factorial-probe-suffix-all-tokens",
+                "factorial-probe-suffix-downstream-horizon",
+                "factorial-random-layers-downstream-horizon",
             },
             accepts_state_gate=(
                 condition == "probe-transition-single-layer-state-distillation"
