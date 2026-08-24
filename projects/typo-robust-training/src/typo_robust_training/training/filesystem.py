@@ -31,7 +31,12 @@ def reject_path_symlink_components(path: Path, *, artifact: str) -> None:
             raise ValueError(f"{artifact} path contains a symlink: {cursor}")
 
 
-def publish_directory_noreplace(staged: Path, output: Path) -> None:
+def publish_directory_noreplace(
+    staged: Path,
+    output: Path,
+    *,
+    expected_parent_identity: tuple[int, int] | None = None,
+) -> None:
     """Atomically publish one sibling directory without replacing an existing path."""
 
     source = Path(staged)
@@ -52,6 +57,16 @@ def publish_directory_noreplace(staged: Path, output: Path) -> None:
     directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     parent_descriptor = os.open(source.parent, directory_flags)
     try:
+        opened_parent = os.fstat(parent_descriptor)
+        if (
+            expected_parent_identity is not None
+            and (
+                opened_parent.st_dev,
+                opened_parent.st_ino,
+            )
+            != expected_parent_identity
+        ):
+            raise ValueError("atomic publication parent changed before rename")
         staged_metadata = os.stat(source.name, dir_fd=parent_descriptor, follow_symlinks=False)
         if not stat.S_ISDIR(staged_metadata.st_mode):
             raise ValueError("staged publication source must be one directory")

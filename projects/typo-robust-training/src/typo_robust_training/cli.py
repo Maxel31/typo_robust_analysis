@@ -222,8 +222,8 @@ def _run_freeze_probe_source_pool(args: argparse.Namespace) -> int:
             ProbeSourcePoolFreezeConfig(
                 parquet_path=args.source_parquet,
                 parquet_sha256=args.source_parquet_sha256,
-                protected_registry_path=args.protected_registry,
-                protected_registry_sha256=args.protected_registry_sha256,
+                protected_exclusion_run_path=args.protected_exclusion_run,
+                protected_exclusion_producer_sha256=(args.protected_exclusion_producer_sha256),
                 code_revision=args.code_revision,
                 output_dir=args.output_dir,
             )
@@ -233,6 +233,9 @@ def _run_freeze_probe_source_pool(args: argparse.Namespace) -> int:
         return 1
     print(f"frozen probe source records: {result.records}")
     print(f"source manifest: {result.source_manifest_path}")
+    print(f"decision ledger: {result.decision_ledger_path}")
+    print(f"protected exclusion producer: {result.protected_exclusion_run_path}")
+    print(f"protected exclusion producer SHA256: {args.protected_exclusion_producer_sha256}")
     print(f"freeze producer manifest: {result.run_path}")
     print(f"freeze producer record SHA256: {result.run_sha256}")
     return 0
@@ -852,12 +855,15 @@ def register_commands(
 
     probe_source_pool = commands.add_parser(
         "freeze-probe-source-pool",
-        help="Freeze the unused pinned FineWeb-Edu shard after five-tier exclusion.",
+        help=(
+            "Freeze the unused pinned FineWeb-Edu shard after historical "
+            "protected-identity exclusion."
+        ),
     )
     probe_source_pool.add_argument("--source-parquet", required=True, type=Path)
     probe_source_pool.add_argument("--source-parquet-sha256", required=True)
-    probe_source_pool.add_argument("--protected-registry", required=True, type=Path)
-    probe_source_pool.add_argument("--protected-registry-sha256", required=True)
+    probe_source_pool.add_argument("--protected-exclusion-run", required=True, type=Path)
+    probe_source_pool.add_argument("--protected-exclusion-producer-sha256", required=True)
     probe_source_pool.add_argument("--code-revision", required=True)
     probe_source_pool.add_argument("--output-dir", required=True, type=Path)
     probe_source_pool.set_defaults(_typo_cot_plugin_handler=_run_freeze_probe_source_pool)
