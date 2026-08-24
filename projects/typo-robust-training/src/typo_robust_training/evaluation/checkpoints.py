@@ -32,6 +32,7 @@ _CONDITIONS = (
     "probe-transition-single-layer-state-distillation",
     "causal-probe-subspace-distillation",
     "probe-semantic-subspace-distillation",
+    "kojima-faithful-output-matching",
     "factorial-all-layers-all-tokens",
     "factorial-all-layers-downstream-horizon",
     "factorial-probe-suffix-all-tokens",

@@ -1,0 +1,84 @@
+{
+  "schema_version": "robustness-evaluation-v2-registry/v1",
+  "protocol_id": "typo-robustness-evaluation-v2.0",
+  "state": "pending-calibration",
+  "protocol_sha256": null,
+  "model_inventory": [
+    {
+      "id": "google/gemma-3-4b-it",
+      "revision": "093f9f388b31de276ce2de164bdc2081324b9767"
+    },
+    {
+      "id": "mistralai/Mistral-7B-v0.1",
+      "revision": "7231864981174d9bee8c7687c24c8344414eae6b"
+    }
+  ],
+  "governance_attestation": {
+    "adapter_outputs_used_for_calibration": false,
+    "severity_grid_extended": false,
+    "model_inventory_changed_after_calibration": false
+  },
+  "calibration": {
+    "status": "pending",
+    "item_manifest_sha256": null,
+    "realized_typo_manifest_sha256": null,
+    "base_observations_sha256": null,
+    "result_sha256": null,
+    "selected_primary_edit_count": null
+  },
+  "confirmatory": {
+    "status": "pending",
+    "factorial_arm_inventory": [
+      "base",
+      "factorial-all-layers-all-tokens",
+      "factorial-all-layers-downstream-horizon",
+      "factorial-probe-suffix-all-tokens",
+      "factorial-probe-suffix-downstream-horizon",
+      "factorial-random-layers-downstream-horizon"
+    ],
+    "mistral_only_direct_comparison_arm": "kojima-faithful-output-matching",
+    "mistral_only_direct_comparison_seeds": [42, 43, 44],
+    "training_contract_identities": {
+      "factorial_config_schema": "robustness-adapter-training-config/v7",
+      "factorial_method_identity": "probe-output-factorial/v1",
+      "factorial_evidence_schema": "probe-output-factorial-evidence-binding/v1",
+      "kojima_faithful_config_schema": "robustness-adapter-training-config/v7",
+      "kojima_faithful_method_identity": "kojima-faithful-output-matching/v1"
+    },
+    "final_merged_implementation_commit": null,
+    "final_merged_source_tree_sha256": null,
+    "source_tree_hash_policy": "sha256-of-git-ls-tree-r-full-tree-head-lf/v1",
+    "item_manifest_sha256": null,
+    "realized_typo_variant_manifest_sha256": null,
+    "tier_id_role_manifest_sha256": null,
+    "factorial_arm_registry_sha256": null,
+    "probe_artifact_registry_sha256": null,
+    "training_config_registry_sha256": null,
+    "training_data_registry_sha256": null,
+    "training_preregistered_registry_sha256": null,
+    "mistral_kojima_faithful_matched_seed_42_43_44_registry_sha256": null,
+    "mistral_kojima_faithful_public_seed_1_anchor_checkpoint_sha256": null,
+    "public_seed_1_anchor_role": "reproducibility-only-not-pooled",
+    "random_layer_mask_policy": "sha256-seed42-count-matched-random-freeze/v1",
+    "arm_checkpoint_registry_sha256": null,
+    "opening_log_sha256": null
+  },
+  "legacy_random_2": {
+    "role": "secondary-continuity-only",
+    "v1_protocol_sha256": "2f52a300ab7ecb84288e3c67a38e61d1c37a17f48c9d01d37c6c29b701182054",
+    "inherited_runtime_contracts": [
+      "generation",
+      "typos.eligibility",
+      "corpus_runtime"
+    ],
+    "runtime_contract_sha256": {
+      "generation": "cb5991a6117471530ec5ac264144c7ac7a8d96a33f82058bf51ea378310e6b7a",
+      "prompt": "fb1697f2171f18f045f3681a9785746befb96dbfd27e4cfbf12e598b37dcdfa3",
+      "extractor": "8c45e1f2858cee70aa0f17b107eae1204c2e20e9c064efebdf69a52bd30481d9",
+      "decoding": "2b266b27c356187961b98929e1129b41a16e9ff7236b5cc487ab80df11f5b62a",
+      "typos.eligibility": "380e90f31ceff07370df62838722675e7be3b9d02fa65609285a58cf14e617c6",
+      "corpus_runtime": "057fb9a5e54abc82a50d834b2c68ddcc06f7f6fa4a856a4fa9463051d3da8ef3"
+    },
+    "frozen_registry_sha256": null
+  }
+}

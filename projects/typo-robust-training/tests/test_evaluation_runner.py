@@ -249,9 +249,7 @@ def _completed_adapter(
             else {}
         ),
     }
-    (adapter / "training_runtime.json").write_text(
-        json.dumps(training_runtime), encoding="utf-8"
-    )
+    (adapter / "training_runtime.json").write_text(json.dumps(training_runtime), encoding="utf-8")
     run = {
         "schema_version": "robustness-adapter-training-run/v1",
         "status": "completed",
@@ -533,6 +531,7 @@ def test_production_runtime_rejects_arbitrary_well_formed_source_digest() -> Non
             expected_source_tree_sha256=EXPECTED_SOURCE_TREE_SHA256,
         )
 
+
 def test_production_runtime_loader_requires_exact_condition_inventory() -> None:
     protocol = load_robustness_evaluation_config(CONFIG)
     descriptors = _descriptors(Path("/tmp/identity-only"))
@@ -638,8 +637,8 @@ def test_evaluator_rejects_adapter_trained_with_different_tokenizer_snapshot() -
         )
 
 
-def test_runner_rejects_legacy_evaluation_data_without_frozen_registry(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="requires a frozen evaluation registry"):
+def test_runner_rejects_unavailable_checkpoint_before_evaluation_data(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="checkpoint directory is unavailable"):
         run_robustness_evaluation(
             _config(tmp_path, tmp_path / "out", resume=False),
             runtime_factory=_RuntimeFactory(),
@@ -1068,9 +1067,7 @@ def test_runner_keeps_training_and_frozen_evaluation_identities_separate(
         lambda root, **_kwargs: FrozenEvaluationProvenance(
             root=Path(root),
             data_identity_sha256="7" * 64,
-            exclusion_artifact_sha256=MappingProxyType(
-                {"training_sources.jsonl": "1" * 64}
-            ),
+            exclusion_artifact_sha256=MappingProxyType({"training_sources.jsonl": "1" * 64}),
         ),
     )
 
@@ -1134,9 +1131,7 @@ def test_runner_rejects_frozen_population_excluding_different_training_sources(
         lambda root, **_kwargs: FrozenEvaluationProvenance(
             root=Path(root),
             data_identity_sha256="7" * 64,
-            exclusion_artifact_sha256=MappingProxyType(
-                {"training_sources.jsonl": "2" * 64}
-            ),
+            exclusion_artifact_sha256=MappingProxyType({"training_sources.jsonl": "2" * 64}),
         ),
     )
 

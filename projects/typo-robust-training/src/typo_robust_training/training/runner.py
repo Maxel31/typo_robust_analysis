@@ -94,6 +94,7 @@ class AdapterTrainingRunConfig:
     method_evidence_sha256: str | None = None
     probe_selection_path: Path | None = None
     state_gate_path: Path | None = None
+    evaluation_v2_registry_bundle_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,9 +227,7 @@ def validate_micro_step_student_tokens(
         is_kojima_faithful_protocol(protocol)
         and result.student_tokens != protocol.max_sequence_length
     ):
-        raise ValueError(
-            "Kojima-faithful packed micro-step must fill the 8192-token context"
-        )
+        raise ValueError("Kojima-faithful packed micro-step must fill the 8192-token context")
 
 
 class AdapterTrainingRuntime(Protocol):
@@ -814,6 +813,26 @@ def run_adapter_training(
     protocol = load_adapter_training_config(config.config_path)
     if config.condition != protocol.condition:
         raise ValueError("training command condition differs from its config")
+    evaluation_v2_binding = None
+    from typo_robust_training.evaluation.runtime_registry_v2 import (
+        CONFIRMATORY_TRAINING_CONDITIONS,
+        validate_confirmatory_training_runtime,
+    )
+
+    if protocol.condition in CONFIRMATORY_TRAINING_CONDITIONS:
+        # This preflight intentionally precedes training-data construction and
+        # Hugging Face/CUDA runtime creation.  A phase or artifact mismatch can
+        # therefore never mutate model/GPU state.
+        evaluation_v2_binding = validate_confirmatory_training_runtime(
+            bundle_path=config.evaluation_v2_registry_bundle_path,
+            condition=protocol.condition,
+            seed=config.seed,
+            config_path=config.config_path,
+            training_data_dir=config.training_data_dir,
+            probe_selection_path=config.probe_selection_path,
+        )
+    elif config.evaluation_v2_registry_bundle_path is not None:
+        raise ValueError("legacy training cannot claim an evaluation v2 confirmatory registry")
     if config.seed not in protocol.seed_inventory:
         raise ValueError("training seed is outside the frozen seed inventory")
     if not config.gpu_id or "," in config.gpu_id:
@@ -966,6 +985,17 @@ def run_adapter_training(
         )
     if method_evidence_sha is not None:
         bindings["method_evidence_sha256"] = method_evidence_sha
+    if evaluation_v2_binding is not None:
+        bindings.update(
+            {
+                "evaluation_v2_registry_bundle_sha256": (evaluation_v2_binding.bundle_sha256),
+                "evaluation_v2_training_registry_sha256": (evaluation_v2_binding.registry_sha256),
+                "evaluation_v2_protocol_sha256": (evaluation_v2_binding.protocol_sha256),
+                "evaluation_v2_training_data_tree_sha256": (
+                    evaluation_v2_binding.training_data_tree_sha256
+                ),
+            }
+        )
 
     output_dir = Path(config.output_dir).resolve()
     if output_dir.exists() and any(output_dir.iterdir()) and not config.resume:
@@ -1061,6 +1091,18 @@ def run_adapter_training(
         "training_data_sha256": bundle.training_data_sha256,
         "data_identity_sha256": bundle.data_identity_sha256,
         "localization_sha256": localization_sha,
+        **(
+            {
+                "evaluation_v2_registry_bundle_sha256": (evaluation_v2_binding.bundle_sha256),
+                "evaluation_v2_training_registry_sha256": (evaluation_v2_binding.registry_sha256),
+                "evaluation_v2_protocol_sha256": evaluation_v2_binding.protocol_sha256,
+                "evaluation_v2_training_data_tree_sha256": (
+                    evaluation_v2_binding.training_data_tree_sha256
+                ),
+            }
+            if evaluation_v2_binding is not None
+            else {}
+        ),
         **(
             {"method_evidence_sha256": method_evidence_sha}
             if method_evidence_sha is not None

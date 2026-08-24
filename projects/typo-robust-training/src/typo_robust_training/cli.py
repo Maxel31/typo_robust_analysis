@@ -102,6 +102,29 @@ def _run_freeze_tokenizer_attestation(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_calibrate_evaluation_v2_severity(args: argparse.Namespace) -> int:
+    from typo_robust_training.evaluation.calibration_v2 import (
+        run_base_only_severity_calibration,
+    )
+
+    try:
+        result = run_base_only_severity_calibration(
+            config_path=args.protocol,
+            observations_path=args.base_observations,
+            item_manifest_path=args.item_manifest,
+            realized_typo_manifest_path=args.realized_typo_manifest,
+            output_dir=args.output_dir,
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"calibrate-evaluation-v2-severity: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Base-only calibration status: {result.status}")
+    print(f"selected primary edit count: {result.selected_edit_count}")
+    print(f"calibration artifact: {result.artifact_path}")
+    print(f"run manifest: {result.run_path}")
+    return 0 if result.selected_edit_count is not None else 2
+
+
 def _run_select_layers(args: argparse.Namespace) -> int:
     from typo_robust_training.localization.runner import (
         LayerSelectionRunConfig,
@@ -459,6 +482,9 @@ def _run_adapter_training(args: argparse.Namespace) -> int:
                 resume=args.resume,
                 evaluation_protocol_path=args.evaluation_protocol,
                 monitor_data_dir=args.monitor_data,
+                evaluation_v2_registry_bundle_path=getattr(
+                    args, "evaluation_v2_registry_bundle", None
+                ),
             )
         )
     except (FileExistsError, RuntimeError, ValueError) as exc:
@@ -577,6 +603,7 @@ def _run_robustness_evaluation(args: argparse.Namespace) -> int:
                 output_dir=args.output_dir,
                 confirm_sealed_role=args.confirm_sealed_role,
                 resume=args.resume,
+                evaluation_v2_registry_bundle_path=args.evaluation_v2_registry_bundle,
             )
         )
     except (FileExistsError, RuntimeError, ValueError) as exc:
@@ -598,6 +625,7 @@ def _add_training_arguments(
     accepts_component_selection: bool = False,
     accepts_probe_selection: bool = False,
     accepts_state_gate: bool = False,
+    requires_evaluation_v2_registry: bool = False,
 ) -> None:
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--training-data", required=True, type=Path)
@@ -617,6 +645,13 @@ def _add_training_arguments(
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--evaluation-protocol", type=Path)
     parser.add_argument("--monitor-data", type=Path)
+    if requires_evaluation_v2_registry:
+        parser.add_argument(
+            "--evaluation-v2-registry-bundle",
+            required=True,
+            type=Path,
+            help=("Closed path bundle for the training-preregistered evaluation-v2 phase."),
+        )
     parser.add_argument("--resume", action="store_true")
     parser.set_defaults(
         _typo_cot_plugin_handler=_run_adapter_training,
@@ -666,6 +701,20 @@ def register_commands(
     freeze.add_argument("--exclude-data", required=True, type=Path)
     freeze.add_argument("--output-dir", required=True, type=Path)
     freeze.set_defaults(_typo_cot_plugin_handler=_run_freeze_evaluation)
+
+    calibration_v2 = commands.add_parser(
+        "calibrate-evaluation-v2-severity",
+        help=(
+            "Select the frozen v2 typo severity from Base-only observations, "
+            "or stop without extending the grid."
+        ),
+    )
+    calibration_v2.add_argument("--protocol", required=True, type=Path)
+    calibration_v2.add_argument("--base-observations", required=True, type=Path)
+    calibration_v2.add_argument("--item-manifest", required=True, type=Path)
+    calibration_v2.add_argument("--realized-typo-manifest", required=True, type=Path)
+    calibration_v2.add_argument("--output-dir", required=True, type=Path)
+    calibration_v2.set_defaults(_typo_cot_plugin_handler=_run_calibrate_evaluation_v2_severity)
 
     generic_pairs = commands.add_parser(
         "freeze-generic-localization-pairs",
@@ -942,6 +991,15 @@ def register_commands(
                 "factorial-random-layers-downstream-horizon",
             },
             accepts_state_gate=(condition == "probe-transition-single-layer-state-distillation"),
+            requires_evaluation_v2_registry=condition
+            in {
+                "kojima-faithful-output-matching",
+                "factorial-all-layers-all-tokens",
+                "factorial-all-layers-downstream-horizon",
+                "factorial-probe-suffix-all-tokens",
+                "factorial-probe-suffix-downstream-horizon",
+                "factorial-random-layers-downstream-horizon",
+            },
         )
 
     evaluation = commands.add_parser(
@@ -975,6 +1033,14 @@ def register_commands(
     evaluation.add_argument("--gpu-id", required=True)
     evaluation.add_argument("--output-dir", required=True, type=Path)
     evaluation.add_argument("--confirm-sealed-role", action="store_true")
+    evaluation.add_argument(
+        "--evaluation-v2-registry-bundle",
+        type=Path,
+        help=(
+            "Closed path bundle for an evaluation-opening-sealed v2 final opening; "
+            "omit for legacy evaluation protocols."
+        ),
+    )
     evaluation.add_argument("--resume", action="store_true")
     evaluation.set_defaults(_typo_cot_plugin_handler=_run_robustness_evaluation)
 

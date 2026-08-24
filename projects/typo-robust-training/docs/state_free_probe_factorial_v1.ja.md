@@ -69,7 +69,9 @@ uv run --project projects/typo-robust-training --locked \
 
 生成された各configは同じProbe artifact SHA-256を保持する。学習時は条件に対応する
 `train-factorial-*` command、生成config、同じ `--probe-selection`、同じtraining dataを
-渡す。未検証のProbe artifact、条件と異なるconfig、群欠落・順序不正・partial accumulation、
+渡し、さらに凍結済み `training-preregistered` phaseを指す単一の
+`--evaluation-v2-registry-bundle` を必須指定する。未検証のProbe artifact、条件と異なるconfig、
+registryと異なるdata tree、群欠落・順序不正・partial accumulation、
 noisy horizonが空になるpairはfail closedとする。
 
 ## 主張の境界

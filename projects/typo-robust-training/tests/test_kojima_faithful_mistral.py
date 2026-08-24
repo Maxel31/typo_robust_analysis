@@ -40,10 +40,7 @@ from typo_robust_training.training.step import _output_matching_loss
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CONFIG = (
-    PROJECT_ROOT
-    / "configs/baselines/mistral7b-v01-kojima-faithful-output-matching-64m.yaml"
-)
+CONFIG = PROJECT_ROOT / "configs/baselines/mistral7b-v01-kojima-faithful-output-matching-64m.yaml"
 
 
 def _tiny_mistral() -> MistralForCausalLM:
@@ -89,10 +86,7 @@ def test_faithful_protocol_freezes_model_data_capacity_and_budget() -> None:
     assert protocol.model_revision == "7231864981174d9bee8c7687c24c8344414eae6b"
     assert protocol.decoder_layers == 32
     assert protocol.training_corpus == "HuggingFaceFW/fineweb"
-    assert (
-        protocol.training_corpus_revision
-        == "9bb295ddab0e05d785b879661af7260fed5140fc"
-    )
+    assert protocol.training_corpus_revision == "9bb295ddab0e05d785b879661af7260fed5140fc"
     assert protocol.training_corpus_data_file == "sample/10BT/000_00000.parquet"
     assert protocol.packing_policy == "kojima-bos-overfill500-canonicalize-truncate8192/v2"
     assert protocol.data_runtime_policy == "hash-attested-8800-attempt-skip-replace-stream/v2"
@@ -161,11 +155,14 @@ def test_factorial_v7_keeps_generic_bundle_and_kl_runtime(
         faithful_loader,
     )
     assert not is_kojima_faithful_protocol(factorial_v7)  # type: ignore[arg-type]
-    assert _load_protocol_training_bundle(  # type: ignore[arg-type]
-        factorial_v7,
-        root=tmp_path,
-        seed=42,
-    ) is generic_bundle
+    assert (
+        _load_protocol_training_bundle(  # type: ignore[arg-type]
+            factorial_v7,
+            root=tmp_path,
+            seed=42,
+        )
+        is generic_bundle
+    )
     assert calls == ["generic"]
     assert _output_matching_loss(factorial_v7) is aligned_output_kl  # type: ignore[arg-type]
     assert _output_matching_loss(faithful) is aligned_soft_cross_entropy  # type: ignore[arg-type]
@@ -208,10 +205,13 @@ def test_shared_v7_encoding_routes_by_condition_not_schema(monkeypatch: pytest.M
     tokenizer = object()
     factorial_runtime = SimpleNamespace(protocol=factorial, tokenizer=tokenizer)
     assert is_probe_factorial_protocol(factorial)  # type: ignore[arg-type]
-    assert HuggingFaceAdapterTrainingRuntime._encode_pair(  # type: ignore[arg-type]
-        factorial_runtime,
-        pair,
-    ) is sentinel
+    assert (
+        HuggingFaceAdapterTrainingRuntime._encode_pair(  # type: ignore[arg-type]
+            factorial_runtime,
+            pair,
+        )
+        is sentinel
+    )
     assert generic_calls == [
         {
             "tokenizer": tokenizer,
@@ -225,10 +225,13 @@ def test_shared_v7_encoding_routes_by_condition_not_schema(monkeypatch: pytest.M
 
     faithful_runtime = SimpleNamespace(protocol=faithful, tokenizer=tokenizer)
     assert not is_probe_factorial_protocol(faithful)  # type: ignore[arg-type]
-    assert HuggingFaceAdapterTrainingRuntime._encode_pair(  # type: ignore[arg-type]
-        faithful_runtime,
-        pair,
-    ) is sentinel
+    assert (
+        HuggingFaceAdapterTrainingRuntime._encode_pair(  # type: ignore[arg-type]
+            faithful_runtime,
+            pair,
+        )
+        is sentinel
+    )
     assert faithful_calls == [tokenizer]
 
 
@@ -424,9 +427,12 @@ def test_faithful_command_and_presentation_are_not_named_kojima_inspired() -> No
             "typo-robustness-training",
             "--output-dir",
             "output",
+            "--evaluation-v2-registry-bundle",
+            "training-preregistered-bundle.json",
         ]
     )
     assert args._training_condition == "kojima-faithful-output-matching"
+    assert args.evaluation_v2_registry_bundle == Path("training-preregistered-bundle.json")
 
     faithful = build_wandb_run_presentation(
         condition="kojima-faithful-output-matching",
@@ -450,9 +456,7 @@ def test_faithful_command_and_presentation_are_not_named_kojima_inspired() -> No
     )
     assert faithful.name.startswith("Kojima-faithful baseline")
     assert inspired.name.startswith("Kojima-inspired baseline")
-    assert set(faithful.tags).isdisjoint(
-        tag for tag in inspired.tags if tag.startswith("arm:")
-    )
+    assert set(faithful.tags).isdisjoint(tag for tag in inspired.tags if tag.startswith("arm:"))
     assert "seed-role:public-anchor" in faithful.tags
     assert "reproduction:hash-attested-faithful" in faithful.tags
     assert "bit-exact:false" in faithful.tags
