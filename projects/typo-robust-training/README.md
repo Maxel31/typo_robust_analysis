@@ -76,7 +76,9 @@ The consumer file keeps the shared
 the tokenizer/config assets at the exact Hub commit. The adjacent freeze-run
 manifest binds that file to the provider identity, complete source-tree
 attestation, and runtime package versions; both files are deterministic and
-closed-world validated. Branch names such as `main` are rejected.
+closed-world validated. Record the printed producer-record SHA-256 in the
+experiment registry: it is the external pin that makes self-rehashing either
+file detectable. Branch names such as `main` are rejected.
 
 ## 1. Build leakage-resistant training and evaluation data
 

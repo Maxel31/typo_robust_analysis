@@ -122,6 +122,12 @@ def _rehash_run(path: Path, mutate: object) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
+def _run_sha(path: Path) -> str:
+    value = json.loads(path.read_text())["record_sha256"]
+    assert isinstance(value, str)
+    return value
+
+
 def test_freeze_is_deterministic_and_hashes_config_assets(
     tmp_path: Path,
     frozen_runtime: None,
@@ -170,6 +176,56 @@ def test_freeze_rejects_nonexact_revision_before_provider_access(
         )
 
 
+def test_freeze_rejects_exact_provider_revision_substitution_before_publish(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    frozen_runtime: None,
+) -> None:
+    output = tmp_path / "frozen-tokenizer"
+    monkeypatch.setattr(
+        tokenizer_freeze,
+        "load_attested_tokenizer",
+        lambda _model, _revision: (object(), _attestation(revision="d" * 40)),
+    )
+
+    with pytest.raises(ValueError, match="resolved tokenizer identity differs"):
+        tokenizer_freeze.freeze_tokenizer_attestation(
+            model=MODEL,
+            revision=REVISION,
+            code_revision=CODE_REVISION,
+            output_dir=output,
+        )
+
+    assert not output.exists()
+
+
+def test_freeze_rejects_attestation_environment_conflict_before_source_or_provider_access(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv(tokenizer_module.TOKENIZER_ATTESTATION_MANIFEST_ENV, "conflict.json")
+    monkeypatch.setattr(
+        tokenizer_freeze,
+        "attest_runtime_checkout",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("source accessed")),
+    )
+    monkeypatch.setattr(
+        tokenizer_freeze,
+        "load_attested_tokenizer",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("provider accessed")),
+    )
+
+    with pytest.raises(ValueError, match="must be unset"):
+        tokenizer_freeze.freeze_tokenizer_attestation(
+            model=MODEL,
+            revision=REVISION,
+            code_revision=CODE_REVISION,
+            output_dir=tmp_path / "output",
+        )
+
+    assert not (tmp_path / "output").exists()
+
+
 def test_bundle_rejects_revision_mismatch(
     tmp_path: Path,
     frozen_runtime: None,
@@ -181,7 +237,131 @@ def test_bundle_rejects_revision_mismatch(
             expected_model=MODEL,
             expected_revision="f" * 40,
             expected_code_revision=CODE_REVISION,
+            expected_run_sha256=result.run_sha256,
         )
+
+
+def test_bundle_rejects_consumer_and_sidecar_self_rehash_against_external_pin(
+    tmp_path: Path,
+    frozen_runtime: None,
+) -> None:
+    result = _freeze(tmp_path)
+    original_run_sha256 = result.run_sha256
+    original = load_tokenizer_attestation_manifest(result.attestation_path)
+    replacement = TokenizerSnapshotAttestation(
+        model_name=original.model_name,
+        requested_revision=original.requested_revision,
+        observed_commit=original.observed_commit,
+        assets=original.assets,
+        tokenizer_fingerprint_sha256="f" * 64,
+        transformers_version=original.transformers_version,
+        tokenizers_version=original.tokenizers_version,
+    )
+    replacement_raw = tokenizer_attestation_manifest_bytes(replacement)
+    result.attestation_path.write_bytes(replacement_raw)
+
+    def mutate(payload: dict[str, object]) -> None:
+        output = payload["output"]
+        assert isinstance(output, dict)
+        output["sha256"] = hashlib.sha256(replacement_raw).hexdigest()
+        output["attestation_sha256"] = replacement.sha256
+
+    _rehash_run(result.run_manifest_path, mutate)
+
+    with pytest.raises(ValueError, match="externally pinned"):
+        tokenizer_freeze.load_tokenizer_attestation_freeze_bundle(
+            result.run_manifest_path,
+            expected_model=MODEL,
+            expected_revision=REVISION,
+            expected_code_revision=CODE_REVISION,
+            expected_run_sha256=original_run_sha256,
+        )
+
+
+def test_bundle_rejects_noncanonical_sidecar_bytes(
+    tmp_path: Path,
+    frozen_runtime: None,
+) -> None:
+    result = _freeze(tmp_path)
+    payload = json.loads(result.run_manifest_path.read_text())
+    result.run_manifest_path.write_text(json.dumps(payload, sort_keys=True))
+
+    with pytest.raises(ValueError, match="not canonical JSON"):
+        tokenizer_freeze.load_tokenizer_attestation_freeze_bundle(
+            result.run_manifest_path,
+            expected_model=MODEL,
+            expected_revision=REVISION,
+            expected_code_revision=CODE_REVISION,
+            expected_run_sha256=result.run_sha256,
+        )
+
+
+def test_bundle_rejects_self_rehashed_output_path_escape(
+    tmp_path: Path,
+    frozen_runtime: None,
+) -> None:
+    result = _freeze(tmp_path)
+
+    def mutate(payload: dict[str, object]) -> None:
+        output = payload["output"]
+        assert isinstance(output, dict)
+        output["path"] = "../tokenizer-attestation.json"
+
+    _rehash_run(result.run_manifest_path, mutate)
+    with pytest.raises(ValueError, match="output path differs"):
+        tokenizer_freeze.load_tokenizer_attestation_freeze_bundle(
+            result.run_manifest_path,
+            expected_model=MODEL,
+            expected_revision=REVISION,
+            expected_code_revision=CODE_REVISION,
+            expected_run_sha256=_run_sha(result.run_manifest_path),
+        )
+
+
+@pytest.mark.parametrize("linked_file", ["run", "attestation"])
+def test_bundle_rejects_symlinked_bundle_files(
+    tmp_path: Path,
+    frozen_runtime: None,
+    linked_file: str,
+) -> None:
+    result = _freeze(tmp_path)
+    target = result.run_manifest_path if linked_file == "run" else result.attestation_path
+    backing = target.with_name(f"{target.name}.backing")
+    target.rename(backing)
+    target.symlink_to(backing.name)
+
+    with pytest.raises(ValueError, match="regular file"):
+        tokenizer_freeze.load_tokenizer_attestation_freeze_bundle(
+            result.run_manifest_path,
+            expected_model=MODEL,
+            expected_revision=REVISION,
+            expected_code_revision=CODE_REVISION,
+            expected_run_sha256=result.run_sha256,
+        )
+
+
+def test_bundle_rejects_incomplete_consumer_asset_inventory_after_self_rehash(
+    tmp_path: Path,
+    frozen_runtime: None,
+) -> None:
+    result = _freeze(tmp_path)
+    payload = json.loads(result.attestation_path.read_text())
+    payload["assets"] = payload["assets"][:-1]
+    unsigned = dict(payload)
+    unsigned.pop("attestation_sha256")
+    payload["attestation_sha256"] = hashlib.sha256(
+        json.dumps(
+            unsigned,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    result.attestation_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+    with pytest.raises(ValueError, match="asset inventory differs"):
+        load_tokenizer_attestation_manifest(result.attestation_path)
 
 
 @pytest.mark.parametrize("field", ["extra", "missing"])
@@ -205,6 +385,7 @@ def test_bundle_rejects_extra_or_missing_run_fields_even_after_rehash(
             expected_model=MODEL,
             expected_revision=REVISION,
             expected_code_revision=CODE_REVISION,
+            expected_run_sha256=_run_sha(result.run_manifest_path),
         )
 
 
@@ -226,6 +407,7 @@ def test_bundle_rejects_local_cache_substituted_for_provider_identity(
             expected_model=MODEL,
             expected_revision=REVISION,
             expected_code_revision=CODE_REVISION,
+            expected_run_sha256=_run_sha(result.run_manifest_path),
         )
 
 
@@ -247,6 +429,7 @@ def test_bundle_rejects_self_rehashed_runtime_tamper(
             expected_model=MODEL,
             expected_revision=REVISION,
             expected_code_revision=CODE_REVISION,
+            expected_run_sha256=_run_sha(result.run_manifest_path),
         )
 
 
@@ -268,6 +451,7 @@ def test_bundle_rejects_self_rehashed_code_tree_tamper(
             expected_model=MODEL,
             expected_revision=REVISION,
             expected_code_revision=CODE_REVISION,
+            expected_run_sha256=_run_sha(result.run_manifest_path),
         )
 
 
@@ -293,6 +477,7 @@ def test_bundle_rejects_self_rehashed_tokenizer_identity_tamper(
             expected_model=MODEL,
             expected_revision=REVISION,
             expected_code_revision=CODE_REVISION,
+            expected_run_sha256=_run_sha(result.run_manifest_path),
         )
 
 
@@ -311,6 +496,82 @@ def test_existing_attestation_validator_rejects_closed_world_field_tamper(
     result.attestation_path.write_text(json.dumps(payload, sort_keys=True) + "\n")
     with pytest.raises(ValueError, match="manifest fields differ"):
         load_tokenizer_attestation_manifest(result.attestation_path)
+
+
+def test_freeze_does_not_publish_when_source_becomes_dirty_during_provider_access(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    frozen_runtime: None,
+) -> None:
+    output = tmp_path / "frozen-tokenizer"
+    calls = 0
+
+    def attest(revision: str) -> RuntimeCheckoutAttestation:
+        nonlocal calls
+        assert revision == CODE_REVISION
+        calls += 1
+        if calls == 1:
+            return CHECKOUT
+        raise ValueError("runtime source trees became dirty")
+
+    monkeypatch.setattr(tokenizer_freeze, "attest_runtime_checkout", attest)
+
+    with pytest.raises(ValueError, match="became dirty"):
+        tokenizer_freeze.freeze_tokenizer_attestation(
+            model=MODEL,
+            revision=REVISION,
+            code_revision=CODE_REVISION,
+            output_dir=output,
+        )
+
+    assert calls == 2
+    assert not output.exists()
+    assert not output.with_name(f".{output.name}.tmp").exists()
+
+
+def test_freeze_cleans_partial_temporary_output_after_write_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    frozen_runtime: None,
+) -> None:
+    output = tmp_path / "frozen-tokenizer"
+    original_write_bytes = Path.write_bytes
+
+    def write_bytes(path: Path, value: bytes) -> int:
+        if path.name == "tokenizer-attestation-freeze-run.json":
+            raise OSError("simulated sidecar write failure")
+        return original_write_bytes(path, value)
+
+    monkeypatch.setattr(Path, "write_bytes", write_bytes)
+
+    with pytest.raises(OSError, match="simulated sidecar"):
+        tokenizer_freeze.freeze_tokenizer_attestation(
+            model=MODEL,
+            revision=REVISION,
+            code_revision=CODE_REVISION,
+            output_dir=output,
+        )
+
+    assert not output.exists()
+    assert not output.with_name(f".{output.name}.tmp").exists()
+
+
+def test_freeze_rejects_broken_output_symlink_without_replacing_it(
+    tmp_path: Path,
+    frozen_runtime: None,
+) -> None:
+    output = tmp_path / "frozen-tokenizer"
+    output.symlink_to("missing-directory", target_is_directory=True)
+
+    with pytest.raises(FileExistsError, match="output already exists"):
+        tokenizer_freeze.freeze_tokenizer_attestation(
+            model=MODEL,
+            revision=REVISION,
+            code_revision=CODE_REVISION,
+            output_dir=output,
+        )
+
+    assert output.is_symlink()
 
 
 def test_generated_manifest_is_accepted_by_shared_scientific_consumer_contract(
@@ -353,6 +614,7 @@ def test_cli_registers_exact_freeze_command(
     result = SimpleNamespace(
         attestation_path=tmp_path / "tokenizer-attestation.json",
         run_manifest_path=tmp_path / "tokenizer-attestation-freeze-run.json",
+        run_sha256="f" * 64,
     )
     calls: list[dict[str, object]] = []
     monkeypatch.setattr(

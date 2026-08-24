@@ -122,6 +122,8 @@ def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _read_json_object(path: Path) -> dict[str, object]:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("tokenizer freeze-run manifest must be one regular file")
     try:
         raw = path.read_bytes()
     except OSError as exc:
@@ -132,6 +134,8 @@ def _read_json_object(path: Path) -> dict[str, object]:
         raise ValueError("tokenizer freeze-run manifest is invalid JSON") from exc
     if not isinstance(value, dict):
         raise ValueError("tokenizer freeze-run manifest must be an object")
+    if raw != _pretty_json_bytes(value):
+        raise ValueError("tokenizer freeze-run manifest is not canonical JSON")
     return value
 
 
@@ -169,8 +173,15 @@ def load_tokenizer_attestation_freeze_bundle(
     expected_model: str,
     expected_revision: str,
     expected_code_revision: str,
+    expected_run_sha256: str,
 ) -> TokenizerAttestationFreezeResult:
-    """Fail closed over a frozen tokenizer file and its producer record."""
+    """Fail closed over a frozen tokenizer file and its externally pinned record.
+
+    ``record_sha256`` inside the sidecar is only a self-check.  Requiring its
+    expected value from the registry/preregistration is what prevents an
+    attacker (or an accidental rewrite tool) from changing the consumer file
+    and then simply recomputing both adjacent hashes.
+    """
 
     if not expected_model:
         raise ValueError("expected tokenizer model must not be empty")
@@ -178,6 +189,10 @@ def load_tokenizer_attestation_freeze_bundle(
         raise ValueError("expected tokenizer revision must be one exact 40-hex commit")
     if _REVISION.fullmatch(expected_code_revision) is None:
         raise ValueError("expected code revision must be one exact 40-hex commit")
+    if not isinstance(expected_run_sha256, str) or _SHA256.fullmatch(expected_run_sha256) is None:
+        raise ValueError("expected tokenizer freeze-run SHA256 must be one exact digest")
+    if run_manifest_path.name != _RUN_FILENAME:
+        raise ValueError("tokenizer freeze-run manifest path differs")
 
     payload = _read_json_object(run_manifest_path)
     expected_top_level = {
@@ -198,6 +213,8 @@ def load_tokenizer_attestation_freeze_bundle(
     del unsigned["record_sha256"]
     if _sha256_bytes(_canonical_json_bytes(unsigned)) != record_sha256:
         raise ValueError("tokenizer freeze-run aggregate SHA256 differs")
+    if record_sha256 != expected_run_sha256:
+        raise ValueError("tokenizer freeze-run differs from the externally pinned SHA256")
 
     expected_provider = {
         "identity": _PROVIDER,
@@ -233,6 +250,8 @@ def load_tokenizer_attestation_freeze_bundle(
         raise ValueError("tokenizer freeze output digest differs")
 
     attestation_path = run_manifest_path.parent / _ATTESTATION_FILENAME
+    if attestation_path.is_symlink() or not attestation_path.is_file():
+        raise ValueError("frozen tokenizer attestation output must be one regular file")
     try:
         attestation_raw = attestation_path.read_bytes()
     except OSError as exc:
@@ -274,7 +293,7 @@ def freeze_tokenizer_attestation(
         raise ValueError(
             f"{TOKENIZER_ATTESTATION_MANIFEST_ENV} must be unset while freezing a new manifest"
         )
-    if output_dir.exists():
+    if os.path.lexists(output_dir):
         raise FileExistsError(f"tokenizer attestation output already exists: {output_dir}")
 
     checkout = attest_runtime_checkout(code_revision)
@@ -297,16 +316,26 @@ def freeze_tokenizer_attestation(
         checkout=checkout,
         runtime=runtime,
     )
-    run_raw = _pretty_json_bytes(_with_record_sha256(producer))
+    producer_record = _with_record_sha256(producer)
+    generated_run_sha256 = producer_record["record_sha256"]
+    assert isinstance(generated_run_sha256, str)
+    run_raw = _pretty_json_bytes(producer_record)
 
     temporary = output_dir.with_name(f".{output_dir.name}.tmp")
     output_dir.parent.mkdir(parents=True, exist_ok=True)
-    if temporary.exists():
+    if os.path.lexists(temporary):
         raise FileExistsError(f"tokenizer attestation temporary output exists: {temporary}")
     try:
         temporary.mkdir(parents=False)
         (temporary / _ATTESTATION_FILENAME).write_bytes(attestation_raw)
         (temporary / _RUN_FILENAME).write_bytes(run_raw)
+        temporary_result = load_tokenizer_attestation_freeze_bundle(
+            temporary / _RUN_FILENAME,
+            expected_model=model,
+            expected_revision=revision,
+            expected_code_revision=code_revision,
+            expected_run_sha256=generated_run_sha256,
+        )
         temporary.rename(output_dir)
     except Exception:
         if temporary.exists():
@@ -315,11 +344,11 @@ def freeze_tokenizer_attestation(
             temporary.rmdir()
         raise
 
-    return load_tokenizer_attestation_freeze_bundle(
-        output_dir / _RUN_FILENAME,
-        expected_model=model,
-        expected_revision=revision,
-        expected_code_revision=code_revision,
+    return TokenizerAttestationFreezeResult(
+        attestation_path=output_dir / _ATTESTATION_FILENAME,
+        run_manifest_path=output_dir / _RUN_FILENAME,
+        attestation=temporary_result.attestation,
+        run_sha256=temporary_result.run_sha256,
     )
 
 

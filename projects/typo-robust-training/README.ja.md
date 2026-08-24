@@ -60,8 +60,9 @@ export TYPO_COT_TOKENIZER_ATTESTATION_MANIFEST="${TOKENIZER_FREEZE}/tokenizer-at
 consumer fileは既存の `typo-cot-tokenizer-snapshot-attestation/v1` schemaをそのまま使い、
 exact Hub commit上のtokenizer/config assetをinventory化してhashします。隣接するfreeze-run
 manifestは、そのfileをprovider identity、完全なsource-tree attestation、runtime package
-versionへbindします。両fileは決定的かつclosed-worldに検証されます。`main`のようなbranch
-名は受け付けません。
+versionへbindします。両fileは決定的かつclosed-worldに検証されます。表示されたproducer
+record SHA-256を実験registryへ記録してください。この外部pinにより、両fileを自己再hash
+して改変する操作も検出できます。`main`のようなbranch名は受け付けません。
 
 ## 1. leakageを防いだ学習・評価dataを構築する
 

@@ -98,6 +98,7 @@ def _run_freeze_tokenizer_attestation(args: argparse.Namespace) -> int:
         return 1
     print(f"frozen tokenizer attestation: {result.attestation_path}")
     print(f"freeze producer manifest: {result.run_manifest_path}")
+    print(f"freeze producer record SHA256: {result.run_sha256}")
     return 0
 
 
