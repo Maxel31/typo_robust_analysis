@@ -118,10 +118,11 @@ def test_wandb_presentation_names_the_scientific_arm_and_operation() -> None:
         state_layers=(),
     )
     assert baseline.name == (
-        "Kojima baseline · Output-distribution matching · Gemma-3-4B-IT · 300 steps · seed 44"
+        "Kojima-inspired baseline · Output-distribution matching · "
+        "Gemma-3-4B-IT · 300 steps · seed 44"
     )
     assert baseline.job_type == "baseline-output-matching"
-    assert "arm:kojima-output-matching" in baseline.tags
+    assert "arm:kojima-inspired-output-matching" in baseline.tags
     assert "state-gradient-ratio" not in " ".join(baseline.tags)
 
     probe_baseline = build_wandb_run_presentation(

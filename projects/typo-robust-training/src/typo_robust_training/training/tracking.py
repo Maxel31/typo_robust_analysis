@@ -45,13 +45,22 @@ class WandbRunPresentation:
 
 _ARM_PRESENTATION = {
     "output-matching": (
-        "Kojima baseline",
+        "Kojima-inspired baseline",
         "Output-distribution matching",
-        "kojima-output-matching",
+        "kojima-inspired-output-matching",
         "baseline-output-matching",
         "baseline",
-        "Kojima-style clean-teacher/noisy-student output distribution matching; "
-        "no state-alignment loss.",
+        "Kojima-inspired clean-teacher/noisy-student output distribution matching "
+        "on the project-native Gemma/data protocol; no state-alignment loss.",
+    ),
+    "kojima-faithful-output-matching": (
+        "Kojima-faithful baseline",
+        "All-linear output-distribution matching",
+        "kojima-faithful-output-matching",
+        "baseline-output-matching-faithful",
+        "baseline",
+        "Faithful Mistral-7B-v0.1 comparison with embedding, every decoder "
+        "projection, and LM-head LoRA over packed FineWeb contexts.",
     ),
     "localized-state-distillation": (
         "Proposed method",

@@ -16,6 +16,9 @@ LEGACY_ADAPTER_CONDITIONS = frozenset(
         "random-window-state-distillation",
     }
 )
+EVIDENCE_FREE_ADAPTER_CONDITIONS = LEGACY_ADAPTER_CONDITIONS | frozenset(
+    {"kojima-faithful-output-matching"}
+)
 LOCALIZATION_EVIDENCE_CONDITIONS = frozenset(
     {
         "localized-state-distillation",
@@ -36,6 +39,9 @@ METHOD_EVIDENCE_CONDITIONS = frozenset(
     }
 )
 SUPPORTED_ADAPTER_CONDITIONS = LEGACY_ADAPTER_CONDITIONS | METHOD_EVIDENCE_CONDITIONS
+TRAINING_ADAPTER_CONDITIONS = (
+    EVIDENCE_FREE_ADAPTER_CONDITIONS | METHOD_EVIDENCE_CONDITIONS
+)
 
 
 def optional_sha256(value: object, *, field: str) -> str | None:
@@ -61,7 +67,7 @@ def validate_condition_evidence(
     artifact can never be misrepresented as Activation Patching localization.
     """
 
-    if condition not in SUPPORTED_ADAPTER_CONDITIONS:
+    if condition not in TRAINING_ADAPTER_CONDITIONS:
         raise ValueError("adapter condition is unsupported")
     localization = optional_sha256(
         localization_sha256,
@@ -83,10 +89,12 @@ def validate_condition_evidence(
 
 
 __all__ = [
+    "EVIDENCE_FREE_ADAPTER_CONDITIONS",
     "LEGACY_ADAPTER_CONDITIONS",
     "LOCALIZATION_EVIDENCE_CONDITIONS",
     "METHOD_EVIDENCE_CONDITIONS",
     "SUPPORTED_ADAPTER_CONDITIONS",
+    "TRAINING_ADAPTER_CONDITIONS",
     "optional_sha256",
     "validate_condition_evidence",
 ]

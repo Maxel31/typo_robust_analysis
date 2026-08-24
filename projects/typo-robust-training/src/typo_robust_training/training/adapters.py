@@ -11,7 +11,13 @@ from typing import Any
 from typo_robust_training.training.config import AdapterTrainingProtocol
 
 
-_DECODER_LAYER = re.compile(r"(?:^|\.)(?:language_model|model)\.layers\.(\d+)(?:\.|$)")
+_DECODER_LAYER = re.compile(
+    r"(?:^|\.)(?:language_model|model)\.layers\.(\d+)(?:\.|$)"
+)
+_VISION_SCOPE = re.compile(
+    r"(?:^|\.)(?:vision|vision_model|vision_tower)(?:\.|$)"
+)
+_GLOBAL_TARGET_MODULES = ("embed_tokens", "lm_head")
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +51,19 @@ def _modules(value: tuple[str, ...]) -> tuple[str, ...]:
     return value
 
 
+def _partition_target_modules(
+    value: tuple[str, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    modules = _modules(value)
+    global_modules = tuple(module for module in modules if module in _GLOBAL_TARGET_MODULES)
+    decoder_modules = tuple(module for module in modules if module not in _GLOBAL_TARGET_MODULES)
+    if global_modules and set(global_modules) != set(_GLOBAL_TARGET_MODULES):
+        raise ValueError("global LoRA scope must include both embed_tokens and lm_head")
+    if not decoder_modules:
+        raise ValueError("LoRA scope must include decoder projection modules")
+    return decoder_modules, global_modules
+
+
 def _decoder_target_module_names(
     model: Any,
     *,
@@ -72,6 +91,30 @@ def _decoder_target_module_names(
         missing = sorted(expected - set(observed))
         raise ValueError(f"decoder LoRA target modules are missing: {missing}")
     return tuple(observed[coordinate] for coordinate in sorted(observed))
+
+
+def _global_target_module_names(
+    model: Any,
+    *,
+    target_modules: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Resolve the one text embedding and one LM head without crossing into vision."""
+
+    modules = _modules(target_modules)
+    observed: dict[str, str] = {}
+    for name, _module in model.named_modules():
+        leaf = name.rsplit(".", 1)[-1]
+        if leaf not in modules or _DECODER_LAYER.search(name) is not None:
+            continue
+        if _VISION_SCOPE.search(name) is not None:
+            raise ValueError(f"vision module collides with the global LoRA scope: {name}")
+        if leaf in observed:
+            raise ValueError(f"multiple global LoRA modules resolve to {leaf}: {name}")
+        observed[leaf] = name
+    if set(observed) != set(modules):
+        missing = sorted(set(modules) - set(observed))
+        raise ValueError(f"global LoRA target modules are missing: {missing}")
+    return tuple(observed[module] for module in modules)
 
 
 def attach_lora_adapters(
@@ -104,11 +147,18 @@ def attach_lora_adapters(
         protocol.adapter_initialization_policy != "peft-default/v1"
     ):
         raise ValueError("LoRA initialization policy is unsupported")
-    target_names = _decoder_target_module_names(
+    decoder_modules, global_modules = _partition_target_modules(modules)
+    decoder_target_names = _decoder_target_module_names(
         model,
         decoder_layers=layers,
-        target_modules=modules,
+        target_modules=decoder_modules,
     )
+    global_target_names = (
+        _global_target_module_names(model, target_modules=global_modules)
+        if global_modules
+        else ()
+    )
+    target_names = (*decoder_target_names, *global_target_names)
     model.requires_grad_(False)
     if hasattr(model, "config"):
         model.config.use_cache = False
@@ -143,7 +193,7 @@ def attach_lora_adapters(
                 adapted,
                 seed=initialization_seed,
                 expected_layers=layers,
-                expected_modules=modules,
+                expected_modules=decoder_modules,
             )
     finally:
         if cpu_rng_state is not None:
@@ -240,10 +290,12 @@ def trainable_parameter_report(
 
     layers = _layers(expected_layers)
     modules = _modules(expected_modules)
+    decoder_modules, global_modules = _partition_target_modules(modules)
     names: list[str] = []
     observed_layers: set[int] = set()
     observed_modules: set[str] = set()
     observed_coordinates: set[tuple[int, str]] = set()
+    observed_global_modules: set[str] = set()
     trainable = total = 0
     for name, parameter in model.named_parameters():
         count = int(parameter.numel())
@@ -255,25 +307,36 @@ def trainable_parameter_report(
         if "lora_" not in name:
             raise ValueError(f"non-LoRA parameter is trainable: {name}")
         match = _DECODER_LAYER.search(name)
-        if match is None:
-            raise ValueError(f"trainable LoRA parameter has no decoder-layer coordinate: {name}")
-        layer = int(match.group(1))
-        observed_layers.add(layer)
         matches = [module for module in modules if f".{module}." in name]
         if len(matches) != 1:
             raise ValueError(f"trainable LoRA parameter has an unexpected module: {name}")
         module = matches[0]
         observed_modules.add(module)
-        observed_coordinates.add((layer, module))
+        if match is None:
+            if module not in global_modules or _VISION_SCOPE.search(name) is not None:
+                raise ValueError(
+                    f"trainable LoRA parameter has no allowed decoder/global coordinate: {name}"
+                )
+            observed_global_modules.add(module)
+        else:
+            if module not in decoder_modules:
+                raise ValueError(f"global LoRA module appeared inside a decoder layer: {name}")
+            layer = int(match.group(1))
+            observed_layers.add(layer)
+            observed_coordinates.add((layer, module))
     if not names or trainable <= 0:
         raise ValueError("adapter exposes no trainable parameters")
     if tuple(sorted(observed_layers)) != layers:
         raise ValueError("trainable LoRA decoder layers differ from the intended scope")
     if observed_modules != set(modules):
         raise ValueError("trainable LoRA modules differ from the intended scope")
-    expected_coordinates = {(layer, module) for layer in layers for module in modules}
+    expected_coordinates = {
+        (layer, module) for layer in layers for module in decoder_modules
+    }
     if observed_coordinates != expected_coordinates:
         raise ValueError("trainable LoRA decoder coordinates differ from the intended scope")
+    if observed_global_modules != set(global_modules):
+        raise ValueError("trainable global LoRA modules differ from the intended scope")
     return TrainableParameterReport(
         trainable_parameters=trainable,
         total_parameters=total,

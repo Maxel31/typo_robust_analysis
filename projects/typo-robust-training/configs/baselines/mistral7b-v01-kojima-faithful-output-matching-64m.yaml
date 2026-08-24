@@ -1,0 +1,77 @@
+{
+  "schema_version": "robustness-adapter-training-config/v7",
+  "condition": "kojima-faithful-output-matching",
+  "method_identity": "kojima-faithful-output-matching/v1",
+  "model": {
+    "id": "mistralai/Mistral-7B-v0.1",
+    "revision": "7231864981174d9bee8c7687c24c8344414eae6b",
+    "dtype": "bfloat16",
+    "decoder_layers": 32
+  },
+  "sequence": {
+    "max_length": 8192,
+    "on_the_fly_typo": "kojima-random-frequency-four-operation/v1",
+    "natural_pairs": "disabled/v1",
+    "answer_format": "no-hard-answer-target/v1",
+    "pairing_policy": "kojima-50pct-clean-document-noise/v1",
+    "training_corpus": "HuggingFaceFW/fineweb",
+    "training_corpus_data_file": "sample/10BT/000_00000.parquet",
+    "packing_policy": "bos-separated-documents-overfill-500-truncate/v1"
+  },
+  "adapter": {
+    "method": "lora",
+    "rank": 16,
+    "alpha": 8,
+    "dropout": 0,
+    "target_modules": [
+      "embed_tokens",
+      "q_proj",
+      "k_proj",
+      "v_proj",
+      "o_proj",
+      "gate_proj",
+      "up_proj",
+      "down_proj",
+      "lm_head"
+    ],
+    "layer_scope": "all-linear-lora-including-embedding-and-lm-head",
+    "layer_policy": "kojima-all-linear-with-embedding-head/v1",
+    "bias": "none",
+    "task_type": "CAUSAL_LM"
+  },
+  "optimization": {
+    "optimizer": "adamw",
+    "learning_rate": 0.0001,
+    "weight_decay": 0.01,
+    "warmup_ratio": 0.0,
+    "scheduler": "constant-with-warmup",
+    "gradient_checkpointing": true,
+    "micro_batch_size": 1,
+    "gradient_accumulation_steps": 8,
+    "max_optimizer_steps": 1000,
+    "max_student_tokens": 65536000,
+    "max_grad_norm": 1.0,
+    "checkpoint_every_optimizer_steps": 250,
+    "log_every_micro_steps": 1,
+    "seed_inventory": [1],
+    "resume_contract": "exact-next-sample-and-rng/v1"
+  },
+  "objective": {
+    "weights": {
+      "noisy_language_model": 0,
+      "answer": 0,
+      "output": 1,
+      "state": 0,
+      "clean": 0
+    },
+    "state_scope": "none",
+    "state_distance": "none",
+    "output_scope": "aligned-non-edited-next-token/v1",
+    "noisy_language_model_scope": "all-nonpadding-next-tokens/v1",
+    "temperature": 1.0,
+    "epsilon": 1e-8,
+    "state_gradient_ratio": null,
+    "calibration_micro_batches": 0,
+    "state_window_policy": "none"
+  }
+}

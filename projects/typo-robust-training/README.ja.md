@@ -350,7 +350,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 
 利用可能なGPUが1枚の場合は4条件を直列に実行します。同じoutput directoryに互換性のある
 exact checkpointがある場合だけ`--resume`を追加します。W&Bでは
-`Kojima baseline`、`Proposed method`、`Random-window control`、または
+`Kojima-inspired baseline`、`Proposed method`、`Random-window control`、または
 `All-layer control`から始まり、操作、層範囲、モデル、token budget、seedを含む説明的な名前を
 使用します。
 

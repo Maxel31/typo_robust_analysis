@@ -205,6 +205,25 @@ def factorial_group_balanced_accumulation_scales(
     )
 
 
+def validate_micro_step_student_tokens(
+    protocol: AdapterTrainingProtocol,
+    result: TrainingMicroStepResult,
+) -> None:
+    """Require every declared fixed-context packed record to fill that context."""
+
+    if not isinstance(protocol, AdapterTrainingProtocol):
+        raise TypeError("micro-step token validation requires AdapterTrainingProtocol")
+    if not isinstance(result, TrainingMicroStepResult):
+        raise TypeError("micro-step token validation requires TrainingMicroStepResult")
+    if (
+        protocol.packing_policy == "bos-separated-documents-overfill-500-truncate/v1"
+        and result.student_tokens != protocol.max_sequence_length
+    ):
+        raise ValueError(
+            "Kojima-faithful packed micro-step must fill the 8192-token context"
+        )
+
+
 class AdapterTrainingRuntime(Protocol):
     def train_micro_step(
         self,
@@ -965,6 +984,7 @@ def run_adapter_training(
         "schema_version": "robustness-adapter-training-run/v1",
         "operation": f"train-{protocol.condition}",
         "condition": protocol.condition,
+        "method_identity": protocol.method_identity,
         "config_sha256": protocol.config_sha256,
         "training_data_sha256": bundle.training_data_sha256,
         "data_identity_sha256": bundle.data_identity_sha256,
@@ -1148,6 +1168,7 @@ def run_adapter_training(
                 )
                 if not isinstance(result, TrainingMicroStepResult):
                     raise TypeError("training runtime returned an invalid micro-step result")
+                validate_micro_step_student_tokens(protocol, result)
                 cursor = replace(
                     cursor,
                     student_tokens=cursor.student_tokens + result.student_tokens,
@@ -1355,4 +1376,5 @@ __all__ = [
     "TrainingMicroStepScales",
     "normalized_accumulation_scales",
     "run_adapter_training",
+    "validate_micro_step_student_tokens",
 ]

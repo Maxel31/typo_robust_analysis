@@ -816,6 +816,10 @@ def register_commands(
     for command, condition in (
         ("train-noisy-language-model", "noisy-language-model"),
         ("train-output-matching", "output-matching"),
+        (
+            "train-kojima-faithful-output-matching",
+            "kojima-faithful-output-matching",
+        ),
         ("train-global-state-alignment", "global-state-alignment"),
         (
             "train-random-window-state-distillation",
