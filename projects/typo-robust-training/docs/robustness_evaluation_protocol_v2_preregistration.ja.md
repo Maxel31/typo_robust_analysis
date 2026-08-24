@@ -322,3 +322,36 @@ matched-seed registry、公開seed 1 checkpoint、全arm checkpoint registry、o
 照合する。64桁の架空文字列や、存在しない成果物をregistryへ記録しただけではphaseを通過できない。
 
 これらのいずれかが欠けるregistryから、確証評価を開始してはならない。
+
+### 9.1 Runnerへの接続
+
+phase registryはhashを持ち、実行時のpathは
+`robustness-evaluation-v2-runtime-registry-bundle/v1` という単一bundleで渡す。bundleは
+`phase` とclosed-worldな `artifacts` mapだけを持ち、相対pathはbundle自身の親directoryを
+基準に解決する。factorial 5条件とfaithful Kojima条件のtraining commandでは
+`--evaluation-v2-registry-bundle` が必須であり、legacy training commandにはこの引数を
+要求しない。
+
+`training-preregistered` bundleではpost-training pathをすべてnullにする。runnerはモデルや
+CUDA runtimeを作る前に、次の実成果物を再hashして一致させる。
+
+- `robustness-evaluation-v2-training-config-registry/v1`: model/revision/conditionごとのconfig。
+- `robustness-evaluation-v2-training-data-registry/v1`: 上記にseedを加えたtraining data tree。
+- `robustness-evaluation-v2-probe-artifact-registry/v1`: model/revisionごとのProbe成果物。
+- `robustness-evaluation-v2-factorial-arm-registry/v1`: factorial conditionのconfigとProbeの組。
+
+config、data directory、`--probe-selection` のどれか一つでも、実行引数とregistryのhashが
+異なれば学習を開始しない。faithful KojimaはProbeを受理せず、factorialはProbeを必須とする。
+このpreflightのhashはtraining run/checkpoint resume bindingにも保存する。
+
+`evaluation-opening-sealed` bundleはpost-training pathをすべて必須にする。checkpointは
+`robustness-evaluation-v2-arm-checkpoint-registry/v1` により固定する。1回の評価呼出しは
+単一modelの完全batchでなければならない。Gemmaは5 factorial条件×3 seed、Mistralはそれに
+faithful Kojima×3 seedを加えた全checkpointを同時に指定する。1 armや1 seedだけを選ぶ
+cherry-pickingはopening前に拒否する。Baseはadapter checkpointを持たず、同じ評価呼出し内で
+暗黙に実行する。2モデルはmodel固有runtimeのため別callだが、同一のsealed opening registryと
+item/typo manifestを共有する。
+
+確証境界へ供給するbundle、registry、config、data/probe、checkpoint、evaluation dataは
+symbolic linkを許可しない。runnerはpathを解決する前にlinkを拒否し、directory tree内のlinkも
+tree hash計算で拒否する。これにより、registry検証後に別成果物へ参照先を差し替える経路を閉じる。

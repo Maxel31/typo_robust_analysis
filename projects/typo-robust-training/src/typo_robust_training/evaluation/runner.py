@@ -79,6 +79,7 @@ class RobustnessEvaluationRunConfig:
     output_dir: Path
     confirm_sealed_role: bool
     resume: bool
+    evaluation_v2_registry_bundle_path: Path | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -95,6 +96,12 @@ class RobustnessEvaluationRunConfig:
                 self,
                 "window_validation_path",
                 Path(self.window_validation_path),
+            )
+        if self.evaluation_v2_registry_bundle_path is not None:
+            object.__setattr__(
+                self,
+                "evaluation_v2_registry_bundle_path",
+                Path(self.evaluation_v2_registry_bundle_path),
             )
         object.__setattr__(
             self,
@@ -185,9 +192,11 @@ def _validate_production_runtime_provenance(
         frozen.provenance_dict()
     ):
         raise ValueError("evaluation runtime tokenizer attestation differs")
-    if descriptor is not None and provenance.get(
-        "tokenizer_snapshot_attestation"
-    ) != descriptor.tokenizer_snapshot_attestation:
+    if (
+        descriptor is not None
+        and provenance.get("tokenizer_snapshot_attestation")
+        != descriptor.tokenizer_snapshot_attestation
+    ):
         raise ValueError("evaluation tokenizer provenance differs from adapter training")
 
 
@@ -201,8 +210,7 @@ def _validate_production_runtime_inventory(
     expected_source_tree_sha256: str,
 ) -> None:
     inventory = {
-        _condition_id(descriptor): descriptor
-        for descriptor in _condition_inventory(descriptors)
+        _condition_id(descriptor): descriptor for descriptor in _condition_inventory(descriptors)
     }
     if not set(runtime).issubset(inventory) or (
         require_complete and set(runtime) != set(inventory)
@@ -452,6 +460,7 @@ def _validate_injected_inputs(
     corpus_bundle: EvaluationCorpusBundle | None,
     descriptors: Sequence[AdapterDescriptor] | None,
     patch_window: PatchWindow | None,
+    evaluation_v2_opening_bound: bool = False,
 ) -> tuple[
     tuple[AdapterDescriptor, ...],
     PatchWindow,
@@ -484,10 +493,10 @@ def _validate_injected_inputs(
         except ValueError as exc:
             raise ValueError(f"injected evaluation {exc}") from exc
     training_hashes = {item.training_data_sha256 for item in resolved_descriptors}
-    if len(training_hashes) != 1:
+    if len(training_hashes) != 1 and not evaluation_v2_opening_bound:
         raise ValueError("evaluation adapters were trained from different data identities")
     data_identities = {item.data_identity_sha256 for item in resolved_descriptors}
-    if len(data_identities) != 1:
+    if len(data_identities) != 1 and not evaluation_v2_opening_bound:
         raise ValueError("evaluation adapters use different training data identities")
     for condition in {item.condition for item in resolved_descriptors}:
         config_hashes = {
@@ -570,6 +579,32 @@ def run_robustness_evaluation(
         raise TypeError("evaluation config must be RobustnessEvaluationRunConfig")
     if not config.gpu_id or "," in config.gpu_id:
         raise ValueError("--gpu-id must name one physical GPU")
+    from typo_robust_training.evaluation.runtime_registry_v2 import (
+        confirmatory_evaluation_is_required,
+    )
+
+    requires_evaluation_v2 = confirmatory_evaluation_is_required(config.checkpoint_paths)
+    if requires_evaluation_v2 and config.evaluation_v2_registry_bundle_path is None:
+        raise ValueError("confirmatory evaluation requires --evaluation-v2-registry-bundle")
+    if not requires_evaluation_v2 and config.evaluation_v2_registry_bundle_path is not None:
+        raise ValueError("legacy evaluation cannot claim an evaluation v2 opening registry")
+    evaluation_v2_binding = None
+    if requires_evaluation_v2:
+        if config.evaluation_role != "final-test" or not config.confirm_sealed_role:
+            raise ValueError(
+                "evaluation v2 opening is allowed only for the confirmed final-test role"
+            )
+        from typo_robust_training.evaluation.runtime_registry_v2 import (
+            validate_confirmatory_evaluation_opening,
+        )
+
+        # This must run before source checkout attestation and, critically,
+        # before any production runtime can construct a model on CUDA.
+        evaluation_v2_binding = validate_confirmatory_evaluation_opening(
+            bundle_path=config.evaluation_v2_registry_bundle_path,
+            checkpoint_paths=config.checkpoint_paths,
+            evaluation_data_dir=config.evaluation_data_dir,
+        )
     protocol = load_robustness_evaluation_config(config.config_path)
     from typo_robust_training.evaluation.study import load_evaluation_study_protocol
 
@@ -610,9 +645,10 @@ def run_robustness_evaluation(
         corpus_bundle=corpus_bundle,
         descriptors=descriptors,
         patch_window=patch_window,
+        evaluation_v2_opening_bound=evaluation_v2_binding is not None,
     )
     training_sources_sha256: str | None = None
-    if injected_bundle is None:
+    if injected_bundle is None and evaluation_v2_binding is None:
         from typo_robust_training.training.data import load_training_data_provenance
 
         training_bundle = load_training_data_provenance(config.training_data_dir)
@@ -700,8 +736,10 @@ def run_robustness_evaluation(
         "splits": list(config.splits),
         "config_sha256": protocol.config_sha256,
         "evaluation_data_identity_sha256": bundle.data_identity_sha256,
-        "training_data_identity_sha256": next(
-            iter(item.data_identity_sha256 for item in resolved_descriptors)
+        "training_data_identity_sha256": (
+            next(iter(item.data_identity_sha256 for item in resolved_descriptors))
+            if len({item.data_identity_sha256 for item in resolved_descriptors}) == 1
+            else None
         ),
         "training_sources_sha256": training_sources_sha256,
         "study_protocol_sha256": study.config_sha256,
@@ -727,6 +765,18 @@ def run_robustness_evaluation(
         ],
         "gpu_id": config.gpu_id,
         "resume": config.resume,
+        **(
+            {
+                "evaluation_v2_registry_bundle_sha256": (evaluation_v2_binding.bundle_sha256),
+                "evaluation_v2_opening_registry_sha256": (evaluation_v2_binding.registry_sha256),
+                "evaluation_v2_protocol_sha256": evaluation_v2_binding.protocol_sha256,
+                "evaluation_v2_checkpoint_tree_sha256": list(
+                    evaluation_v2_binding.checkpoint_tree_sha256
+                ),
+            }
+            if evaluation_v2_binding is not None
+            else {}
+        ),
         "python": platform.python_version(),
         **(
             {
