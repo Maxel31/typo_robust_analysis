@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from statistics import fmean
 
 from typo_robust_training.evaluation.calibration_v2 import EvaluationV2Protocol
+from typo_robust_training.evaluation.registry_v2 import (
+    ConfirmatorySemanticBinding,
+    validate_outcomes_against_confirmatory_binding,
+)
 
 
 _FIELDS = {
@@ -16,12 +21,16 @@ _FIELDS = {
     "model_revision",
     "task",
     "record_id",
+    "source_text_sha256",
+    "reference_answer_sha256",
     "variant",
+    "realized_typo_sha256",
     "condition",
     "seed",
     "clean_correct",
     "typo_correct",
 }
+_SHA64 = re.compile(r"[0-9a-f]{64}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +57,7 @@ def clustered_paired_macro_contrast(
     left_condition: str,
     right_condition: str,
     outcome: str,
+    semantic_binding: ConfirmatorySemanticBinding,
 ) -> ClusteredPairedContrast:
     """Bootstrap source items, never variants or training seeds as independent rows.
 
@@ -61,6 +71,11 @@ def clustered_paired_macro_contrast(
         raise ValueError("evaluation v2 contrast outcome is unsupported")
     if left_condition == right_condition:
         raise ValueError("evaluation v2 contrast conditions must differ")
+    validate_outcomes_against_confirmatory_binding(
+        rows,
+        protocol=protocol,
+        binding=semantic_binding,
+    )
     model_ids = {model.model_id for model in protocol.models}
     model_revisions = {model.model_id: model.revision for model in protocol.models}
     condition_models = {condition: set(model_ids) for condition in protocol.arms}
@@ -91,6 +106,19 @@ def clustered_paired_macro_contrast(
             continue
         if task not in protocol.tasks or not isinstance(record_id, str) or not record_id:
             raise ValueError("evaluation v2 confirmatory outcome identity differs")
+        source_text_sha256 = value["source_text_sha256"]
+        reference_answer_sha256 = value["reference_answer_sha256"]
+        realized_typo_sha256 = value["realized_typo_sha256"]
+        if (
+            not isinstance(source_text_sha256, str)
+            or _SHA64.fullmatch(source_text_sha256) is None
+            or not isinstance(reference_answer_sha256, str)
+            or _SHA64.fullmatch(reference_answer_sha256) is None
+            or not isinstance(realized_typo_sha256, str)
+            or _SHA64.fullmatch(realized_typo_sha256) is None
+            or realized_typo_sha256 == source_text_sha256
+        ):
+            raise ValueError("evaluation v2 confirmatory semantic text identity differs")
         variant = value["variant"]
         if (
             isinstance(variant, bool)
@@ -109,7 +137,10 @@ def clustered_paired_macro_contrast(
                 str(model_id),
                 str(task),
                 record_id,
+                source_text_sha256,
+                reference_answer_sha256,
                 variant,
+                realized_typo_sha256,
                 condition,
                 seed,
                 _outcome(value[outcome], field=outcome),
@@ -125,16 +156,40 @@ def clustered_paired_macro_contrast(
     seen: set[tuple[str, str, str, int, str, int | None]] = set()
     records_by_model_task: dict[tuple[str, str], set[str]] = defaultdict(set)
     clean_values: dict[tuple[str, str, str, str, int | None], set[bool]] = defaultdict(set)
-    for model_id, task, record_id, variant, condition, seed, correct, clean_correct in selected:
+    source_hashes: dict[tuple[str, str], set[str]] = defaultdict(set)
+    reference_answer_hashes: dict[tuple[str, str], set[str]] = defaultdict(set)
+    typo_hashes: dict[tuple[str, str, int], set[str]] = defaultdict(set)
+    for (
+        model_id,
+        task,
+        record_id,
+        source_text_sha256,
+        reference_answer_sha256,
+        variant,
+        realized_typo_sha256,
+        condition,
+        seed,
+        correct,
+        clean_correct,
+    ) in selected:
         identity = (model_id, task, record_id, variant, condition, seed)
         if identity in seen:
             raise ValueError("evaluation v2 confirmatory outcomes contain duplicates")
         seen.add(identity)
         records_by_model_task[(model_id, task)].add(record_id)
+        source_hashes[(task, record_id)].add(source_text_sha256)
+        reference_answer_hashes[(task, record_id)].add(reference_answer_sha256)
+        typo_hashes[(task, record_id, variant)].add(realized_typo_sha256)
         clean_values[(model_id, task, record_id, condition, seed)].add(clean_correct)
         per_item_condition[(model_id, task, record_id, condition)].append(
             (variant, seed, float(correct))
         )
+    if any(len(values) != 1 for values in source_hashes.values()):
+        raise ValueError("evaluation v2 confirmatory source identity differs across arms")
+    if any(len(values) != 1 for values in reference_answer_hashes.values()):
+        raise ValueError("evaluation v2 confirmatory reference answer differs across arms")
+    if any(len(values) != 1 for values in typo_hashes.values()):
+        raise ValueError("evaluation v2 confirmatory realized typo identity differs across arms")
     if any(len(values) != 1 for values in clean_values.values()):
         raise ValueError("evaluation v2 clean outcome differs across typo variants")
 

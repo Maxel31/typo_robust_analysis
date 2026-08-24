@@ -4,7 +4,20 @@
   "legacy_v1": {
     "protocol_id": "typo-robustness-evaluation-v1.4",
     "protocol_sha256": "2f52a300ab7ecb84288e3c67a38e61d1c37a17f48c9d01d37c6c29b701182054",
-    "random_2_role": "secondary-continuity-only"
+    "random_2_role": "secondary-continuity-only",
+    "inherited_runtime_contracts": [
+      "generation",
+      "typos.eligibility",
+      "corpus_runtime"
+    ],
+    "runtime_contract_sha256": {
+      "generation": "cb5991a6117471530ec5ac264144c7ac7a8d96a33f82058bf51ea378310e6b7a",
+      "prompt": "fb1697f2171f18f045f3681a9785746befb96dbfd27e4cfbf12e598b37dcdfa3",
+      "extractor": "8c45e1f2858cee70aa0f17b107eae1204c2e20e9c064efebdf69a52bd30481d9",
+      "decoding": "2b266b27c356187961b98929e1129b41a16e9ff7236b5cc487ab80df11f5b62a",
+      "typos.eligibility": "380e90f31ceff07370df62838722675e7be3b9d02fa65609285a58cf14e617c6",
+      "corpus_runtime": "057fb9a5e54abc82a50d834b2c68ddcc06f7f6fa4a856a4fa9463051d3da8ef3"
+    }
   },
   "model_inventory": [
     {
@@ -161,6 +174,7 @@
     "calibration_result_sha256_required": true,
     "confirmatory_item_manifest_sha256_required": true,
     "realized_typo_variant_manifest_sha256_required": true,
+    "tier_id_role_manifest_sha256_required": true,
     "training_contract_semantic_identities_required": true,
     "final_merged_implementation_commit_required": true,
     "final_merged_source_tree_sha256_required": true,

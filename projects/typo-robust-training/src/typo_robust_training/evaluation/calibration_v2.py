@@ -50,6 +50,7 @@ _OBSERVATION_FIELDS = {
     "task",
     "record_id",
     "source_text_sha256",
+    "reference_answer_sha256",
     "severity_edit_count",
     "variant",
     "realized_typo_sha256",
@@ -62,6 +63,8 @@ _ITEM_MANIFEST_FIELDS = {
     "record_id",
     "source_text",
     "source_text_sha256",
+    "reference_answer",
+    "reference_answer_sha256",
 }
 _TYPO_MANIFEST_FIELDS = {
     "schema_version",
@@ -110,6 +113,16 @@ _DESCRIPTIVE_ANCHORS = (
             "role": "reproducibility-only-not-pooled",
         }
     ),
+)
+_RUNTIME_CONTRACT_SHA256 = MappingProxyType(
+    {
+        "generation": "cb5991a6117471530ec5ac264144c7ac7a8d96a33f82058bf51ea378310e6b7a",
+        "prompt": "fb1697f2171f18f045f3681a9785746befb96dbfd27e4cfbf12e598b37dcdfa3",
+        "extractor": "8c45e1f2858cee70aa0f17b107eae1204c2e20e9c064efebdf69a52bd30481d9",
+        "decoding": "2b266b27c356187961b98929e1129b41a16e9ff7236b5cc487ab80df11f5b62a",
+        "typos.eligibility": ("380e90f31ceff07370df62838722675e7be3b9d02fa65609285a58cf14e617c6"),
+        "corpus_runtime": ("057fb9a5e54abc82a50d834b2c68ddcc06f7f6fa4a856a4fa9463051d3da8ef3"),
+    }
 )
 _PRIMARY_NOVELTY_CONTRASTS = tuple(
     MappingProxyType(
@@ -211,6 +224,7 @@ class EvaluationV2Protocol:
     schema_version: str
     protocol_id: str
     legacy_v1_protocol_sha256: str
+    runtime_contract_sha256: Mapping[str, str]
     models: tuple[FrozenEvaluationModel, ...]
     tasks: tuple[str, ...]
     calibration_records_per_task: int
@@ -255,13 +269,27 @@ def load_evaluation_v2_protocol(path: Path) -> EvaluationV2Protocol:
     legacy = _mapping(
         top["legacy_v1"],
         field="legacy_v1",
-        fields={"protocol_id", "protocol_sha256", "random_2_role"},
+        fields={
+            "protocol_id",
+            "protocol_sha256",
+            "random_2_role",
+            "inherited_runtime_contracts",
+            "runtime_contract_sha256",
+        },
+    )
+    runtime_contract_sha256 = _mapping(
+        legacy["runtime_contract_sha256"],
+        field="legacy_v1.runtime_contract_sha256",
+        fields=set(_RUNTIME_CONTRACT_SHA256),
     )
     if (
         legacy["protocol_id"] != "typo-robustness-evaluation-v1.4"
         or legacy["protocol_sha256"]
         != "2f52a300ab7ecb84288e3c67a38e61d1c37a17f48c9d01d37c6c29b701182054"
         or legacy["random_2_role"] != "secondary-continuity-only"
+        or legacy["inherited_runtime_contracts"]
+        != ["generation", "typos.eligibility", "corpus_runtime"]
+        or dict(runtime_contract_sha256) != dict(_RUNTIME_CONTRACT_SHA256)
     ):
         raise ValueError("evaluation v2 legacy random-2 contract differs")
 
@@ -573,6 +601,7 @@ def load_evaluation_v2_protocol(path: Path) -> EvaluationV2Protocol:
             "calibration_result_sha256_required",
             "confirmatory_item_manifest_sha256_required",
             "realized_typo_variant_manifest_sha256_required",
+            "tier_id_role_manifest_sha256_required",
             "training_contract_semantic_identities_required",
             "final_merged_implementation_commit_required",
             "final_merged_source_tree_sha256_required",
@@ -587,6 +616,7 @@ def load_evaluation_v2_protocol(path: Path) -> EvaluationV2Protocol:
         schema_version="robustness-evaluation-study/v2",
         protocol_id="typo-robustness-evaluation-v2.0",
         legacy_v1_protocol_sha256=str(legacy["protocol_sha256"]),
+        runtime_contract_sha256=MappingProxyType(dict(runtime_contract_sha256)),
         models=tuple(models),
         tasks=tasks,
         calibration_records_per_task=records_per_task,
@@ -621,6 +651,7 @@ class BaseCalibrationObservation:
     task: str
     record_id: str
     source_text_sha256: str
+    reference_answer_sha256: str
     severity_edit_count: int
     variant: int
     realized_typo_sha256: str
@@ -645,7 +676,12 @@ class BaseCalibrationObservation:
             raise ValueError("evaluation v2 calibration model/task identity is invalid")
         if any(
             not isinstance(value, str) or _SHA64.fullmatch(value) is None
-            for value in (self.record_id, self.source_text_sha256, self.realized_typo_sha256)
+            for value in (
+                self.record_id,
+                self.source_text_sha256,
+                self.reference_answer_sha256,
+                self.realized_typo_sha256,
+            )
         ):
             raise ValueError("evaluation v2 calibration text identity must use SHA-256")
         if (
@@ -671,6 +707,7 @@ class BaseCalibrationObservation:
             "task": self.task,
             "record_id": self.record_id,
             "source_text_sha256": self.source_text_sha256,
+            "reference_answer_sha256": self.reference_answer_sha256,
             "severity_edit_count": self.severity_edit_count,
             "variant": self.variant,
             "realized_typo_sha256": self.realized_typo_sha256,
@@ -693,7 +730,12 @@ class BaseCalibrationObservation:
             or not task
         ):
             raise ValueError("evaluation v2 calibration model/task identity is invalid")
-        hashes = (row["record_id"], row["source_text_sha256"], row["realized_typo_sha256"])
+        hashes = (
+            row["record_id"],
+            row["source_text_sha256"],
+            row["reference_answer_sha256"],
+            row["realized_typo_sha256"],
+        )
         if any(not isinstance(value, str) or _SHA64.fullmatch(value) is None for value in hashes):
             raise ValueError("evaluation v2 calibration text identity must use SHA-256")
         clean, typo = row["clean_correct"], row["typo_correct"]
@@ -708,6 +750,7 @@ class BaseCalibrationObservation:
             task=task,
             record_id=str(row["record_id"]),
             source_text_sha256=str(row["source_text_sha256"]),
+            reference_answer_sha256=str(row["reference_answer_sha256"]),
             severity_edit_count=_integer(
                 row["severity_edit_count"], field="severity_edit_count", minimum=1
             ),
@@ -724,17 +767,21 @@ class CalibrationItemManifestRow:
     record_id: str
     source_text: str
     source_text_sha256: str
+    reference_answer: str
+    reference_answer_sha256: str
 
     @classmethod
     def from_mapping(cls, value: object) -> CalibrationItemManifestRow:
         row = _mapping(value, field="calibration item manifest", fields=_ITEM_MANIFEST_FIELDS)
         if row["schema_version"] != "robustness-evaluation-v2-calibration-item/v1":
             raise ValueError("evaluation v2 calibration item schema differs")
-        task, record_id, source_text, source_hash = (
+        task, record_id, source_text, source_hash, reference_answer, reference_hash = (
             row["task"],
             row["record_id"],
             row["source_text"],
             row["source_text_sha256"],
+            row["reference_answer"],
+            row["reference_answer_sha256"],
         )
         if not isinstance(task, str) or not task:
             raise ValueError("evaluation v2 calibration item task is invalid")
@@ -746,7 +793,20 @@ class CalibrationItemManifestRow:
             raise ValueError("evaluation v2 calibration source hash is invalid")
         if hashlib.sha256(source_text.encode("utf-8")).hexdigest() != source_hash:
             raise ValueError("evaluation v2 calibration source text/hash binding differs")
-        return cls(task, record_id, source_text, source_hash)
+        if not isinstance(reference_answer, str) or not reference_answer:
+            raise ValueError("evaluation v2 calibration reference answer is invalid")
+        if not isinstance(reference_hash, str) or _SHA64.fullmatch(reference_hash) is None:
+            raise ValueError("evaluation v2 calibration reference answer hash is invalid")
+        if hashlib.sha256(reference_answer.encode("utf-8")).hexdigest() != reference_hash:
+            raise ValueError("evaluation v2 calibration reference answer/hash binding differs")
+        return cls(
+            task,
+            record_id,
+            source_text,
+            source_hash,
+            reference_answer,
+            reference_hash,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -837,7 +897,7 @@ def validate_calibration_semantic_bindings(
     protocol: EvaluationV2Protocol,
     item_manifest_path: Path,
     realized_typo_manifest_path: Path,
-) -> None:
+) -> Mapping[tuple[str, str], str]:
     """Bind observations to parsed source and realized-typo text manifests."""
 
     item_rows = _load_manifest_rows(item_manifest_path, typo=False)
@@ -855,6 +915,10 @@ def validate_calibration_semantic_bindings(
     for task in protocol.tasks:
         if sum(key[0] == task for key in items) != protocol.calibration_records_per_task:
             raise ValueError("evaluation v2 calibration item manifest sample size differs")
+    if len({row.record_id for row in items.values()}) != len(items) or len(
+        {row.source_text_sha256 for row in items.values()}
+    ) != len(items):
+        raise ValueError("evaluation v2 calibration source items are not globally unique")
 
     typos: dict[tuple[str, str, int, int], CalibrationTypoManifestRow] = {}
     expected_cells = {
@@ -896,6 +960,8 @@ def validate_calibration_semantic_bindings(
             raise ValueError("evaluation v2 observation has no semantic manifest binding")
         if row.source_text_sha256 != item.source_text_sha256:
             raise ValueError("evaluation v2 observation/source manifest binding differs")
+        if row.reference_answer_sha256 != item.reference_answer_sha256:
+            raise ValueError("evaluation v2 observation/reference answer manifest binding differs")
         if row.realized_typo_sha256 != typo_row.realized_typo_sha256:
             raise ValueError("evaluation v2 observation/typo manifest binding differs")
         observation_cells[row.model_id].add(typo_key)
@@ -904,6 +970,7 @@ def validate_calibration_semantic_bindings(
         cells != expected_typo_keys for cells in observation_cells.values()
     ):
         raise ValueError("evaluation v2 observation/manifest coverage differs")
+    return MappingProxyType({key: row.source_text_sha256 for key, row in items.items()})
 
 
 def _validate_calibration_cohort(
@@ -917,6 +984,7 @@ def _validate_calibration_cohort(
     seen: set[tuple[str, str, str, int, int]] = set()
     record_sets: dict[tuple[str, str], set[str]] = defaultdict(set)
     source_hashes: dict[tuple[str, str], set[str]] = defaultdict(set)
+    reference_answer_hashes: dict[tuple[str, str], set[str]] = defaultdict(set)
     typo_hashes: dict[tuple[str, str, int, int], set[str]] = defaultdict(set)
     clean_values: dict[tuple[str, str, str], set[bool]] = defaultdict(set)
     coverage: dict[tuple[str, str, str], set[tuple[int, int]]] = defaultdict(set)
@@ -945,6 +1013,7 @@ def _validate_calibration_cohort(
         seen.add(key)
         record_sets[(row.model_id, row.task)].add(row.record_id)
         source_hashes[(row.task, row.record_id)].add(row.source_text_sha256)
+        reference_answer_hashes[(row.task, row.record_id)].add(row.reference_answer_sha256)
         typo_hashes[(row.task, row.record_id, row.severity_edit_count, row.variant)].add(
             row.realized_typo_sha256
         )
@@ -971,6 +1040,8 @@ def _validate_calibration_cohort(
         raise ValueError("evaluation v2 calibration grid coverage differs")
     if any(len(values) != 1 for values in source_hashes.values()):
         raise ValueError("evaluation v2 calibration source text differs across models")
+    if any(len(values) != 1 for values in reference_answer_hashes.values()):
+        raise ValueError("evaluation v2 calibration reference answer differs across models")
     if any(len(values) != 1 for values in typo_hashes.values()):
         raise ValueError("evaluation v2 calibration typo text differs across models")
     if any(len(values) != 1 for values in clean_values.values()):

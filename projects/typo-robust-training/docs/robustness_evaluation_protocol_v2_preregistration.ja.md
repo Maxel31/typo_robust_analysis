@@ -47,6 +47,14 @@ source-tree SHA-256は`git ls-tree -r --full-tree HEAD`のraw LF bytesをSHA-256
 `sha256-of-git-ls-tree-r-full-tree-head-lf/v1`で一意に計算する。未統合commitを科学契約として
 扱わない。
 
+生成・採点ハーネスはv1.4から変更しない。v2 configに記録したv1.4 exact SHA-256が、
+`generation`（paper CoT prompt、task別shot数、task別抽出器、greedy、bf16、最大512
+new tokens、抽出不能=不正解）、`typos.eligibility`、`corpus_runtime`を継承契約として
+固定する。さらにfull generation、prompt+shot、extractor、decoding、eligibility、
+corpus runtimeをcanonical JSONとして個別にSHA-256化し、v2 protocolとsealed registryの
+両方で一致を必須化する。v2のseverity・母集団・統計だけを変更し、armごとにprompt、
+decoding、抽出器を分岐させない。
+
 ## 2. 固定モデル
 
 モデル集合はseverity calibrationより先に固定し、calibration後の交換を禁止する。
@@ -114,10 +122,11 @@ calibrationのitem manifest、実現typo manifest、Base observations、選択�
 textを使用する。選択後に再生成しない。
 
 ファイル全体のSHA-256だけでは十分でない。item manifestは各行に`task`、
-`record_id`、`source_text`、`source_text_sha256`を持ち、typo manifestはそれらへの
+`record_id`、`source_text`、`source_text_sha256`、`reference_answer`、
+`reference_answer_sha256`を持ち、typo manifestはsourceへの
 参照に加えて`severity_edit_count`、`variant`、`realized_typo_text`、
 `realized_typo_sha256`を持つ。較正CLIは両manifestを厳格にparseし、textからhashを
-再計算したうえで、全observationのrecord/source/typo hashが対応行と一致すること、
+再計算したうえで、全observationのrecord/source/reference-answer/typo hashが対応行と一致すること、
 過不足なく全gridを覆うことを検証する。したがって、古いmanifestを単に再hashした
 ファイルや、任意ファイルのdigestだけを登録したものは有効な凍結成果物ではない。
 text digestは正規化を加えないUTF-8 exact text bytesのSHA-256とする。
@@ -145,6 +154,12 @@ uv run --project projects/typo-robust-training typo-cot \
 診断に限り、primaryには使用しない。
 同じ`model × arm × item × learning seed`のclean入力はtypo variantによらず同一なので、
 `clean_correct`がvariant間で変化する出力は評価配管の不整合としてfail closedする。
+各outcome行は`source_text_sha256`、`reference_answer_sha256`、
+`realized_typo_sha256`も持つ。統計処理は、確証item
+manifestと2-variant typo manifestをUTF-8 exact textから再検証し、各行のhashが対応する
+凍結行と一致する場合に限って開始する。同じ`record_id`と`variant`というラベルだけでは
+同一評価例の証拠にならず、arm・seed・model間で入力bytesまたはreference answerが
+異なる出力は拒否する。
 
 旧v1.4の`random-2`は`secondary-continuity-only`として残す。旧結果を破棄せず、
 同じhash-bound manifest上で全新armを再評価する。primary severityの代わりには
@@ -157,8 +172,8 @@ uv run --project projects/typo-robust-training typo-cot \
 1. clean非劣性: 提案−Baseのmodel/task等重みmacro 95% CI下限が`-1.0pp`より大きい。
    task単位の点推定が`-3.0pp`以下にならず、clean PPL比が`1.02`以下。
 2. 対all/all優越: full−all/allの95% CI下限が0より大きく、点推定が`+1.5pp`以上。
-3. targeting寄与: full−all/horizonの95% CI下限が0より大きい。
-4. placement寄与: full−suffix/allの95% CI下限が0より大きい。
+3. placement寄与: full−all/horizonの95% CI下限が0より大きい。
+4. targeting寄与: full−suffix/allの95% CI下限が0より大きい。
 5. Probe配置特異性: full−random/horizonの95% CI下限が0より大きい。
 6. 対Base typo改善: full−Baseの95% CI下限が0より大きく、点推定が`+2.0pp`以上。
 7. Mistral直接比較: full−faithful Kojimaの95% CI下限が0より大きい。両armとも
@@ -254,9 +269,20 @@ hash凍結する。一方、旧random-2のregistry hashをv2 registryから参�
 - 1モデルだけ成功: model-specificと明記。
 - 開封後の閾値、severity、モデル、item、loss、境界変更は禁止。
 
-## 9. Registryをsealedへ進める条件
+## 9. Registryの二段階freeze
 
-templateのnullを埋めるだけでは足りない。次をすべて確認してからstateをsealedへ進める。
+学習開始条件と評価開封条件を同じstateにすると、まだ存在しないcheckpoint hashを学習前に
+要求する循環依存が生じる。そこでregistryは次の二段階だけを順に通る。
+
+1. `training-preregistered`: protocol、severity、item/typo、model、Linear Probe成果物、
+   arm別training config/data、実装commit/source treeを固定する。checkpoint registry、公開seed 1
+   checkpoint、opening logはすべてnullでなければならない。学習runnerが受理できるのはこのphaseだけ。
+2. `evaluation-opening-sealed`: 学習完了後、全checkpoint registryとopening logを追記する。
+   確証評価runnerが受理できるのはこのphaseだけ。学習前のphaseを評価へ流用してはならない。
+   このphaseは直前のexact `training-preregistered` registry SHA-256を必須参照し、post-only
+   fields以外の差分を拒否する。
+
+templateのnullを埋めるだけでは足りない。各phaseへ進める前に、該当する次の条件をすべて確認する。
 
 1. protocol file自身のSHA-256。
 2. exact model revision inventory。
@@ -267,9 +293,32 @@ templateのnullを埋めるだけでは足りない。次をすべて確認し�
 7. `model_inventory_changed_after_calibration=false`。
 8. 学習実装の意味的identityがprotocolと一致し、実行に使う最終merged commitとcanonical
    source-tree SHA-256がregistryへ記録されていること。
-9. confirmatory item/2-variant typo/5 factorial arm checkpoint registryの各SHA-256。
-10. Mistral faithful matched seed `{42,43,44}` registryのSHA-256。
-11. 公開seed 1 anchor checkpointのSHA-256と`reproducibility-only-not-pooled`表記。
-12. v1 random-2 frozen registryのSHA-256。
+9. confirmatory item/2-variant typo/5 factorial arm定義、Linear Probe成果物、training config、
+   training data registryの各SHA-256（`training-preregistered`で必須）。
+10. 5 factorial arm checkpoint registryのSHA-256（`evaluation-opening-sealed`で必須）。
+11. Mistral faithful matched seed `{42,43,44}` registryのSHA-256（同上）。
+12. 公開seed 1 anchor checkpointのSHA-256と`reproducibility-only-not-pooled`表記（同上）。
+13. opening logのSHA-256（同上）。
+14. v1 random-2 frozen registryのSHA-256。
+
+さらに、training、Linear Probe選択、Linear Probe検証、tune、pre-PR、calibration、
+confirmatoryの全roleを列挙したID manifestを凍結し、record IDだけでなくexact source-text
+SHA-256のrole間重複も拒否する。これにより、同じ本文へ別IDを振る再ラベル化も分離とは
+扱わない。評価を開く実行環境はregistryのfinal merged commitを`HEAD`としてcheckoutし、
+tracked/untracked差分がゼロでなければならない。登録commitの`git ls-tree` hashだけが正しくても、
+dirty worktreeから評価コードを実行することは禁止する。
+
+runtime loaderはregistryに記録されたSHA-256文字列をそのまま信用しない。実際の
+calibration item/typo/Base observation/resultを再解析してBase-only calibrationを再計算し、
+selected severityと要約統計が一致することを検証する。同様に、実際の全role ID manifestを
+再解析してrole間のrecord ID/source-text SHA-256非重複を検証し、confirmatory manifestの
+source text、reference answer、realized typoを再hashする。その後にのみ、各実ファイルの
+SHA-256をregistryと照合する。ファイルを改変して自己再hashしたregistryも、このsemantic
+validationを通過しない限り拒否する。
+
+同じ規則を学習・checkpoint側の成果物にも適用する。Linear Probe、factorial arm、training
+config/data、legacy v1 registryは学習前に実ファイルを読み、その実hashと照合する。評価開封時は
+matched-seed registry、公開seed 1 checkpoint、全arm checkpoint registry、opening logの実ファイルを
+照合する。64桁の架空文字列や、存在しない成果物をregistryへ記録しただけではphaseを通過できない。
 
 これらのいずれかが欠けるregistryから、確証評価を開始してはならない。
