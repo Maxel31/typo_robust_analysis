@@ -486,7 +486,11 @@ def is_kojima_faithful_protocol(protocol: AdapterTrainingProtocol) -> bool:
     replace their group-balanced data/KL path with the public-reproduction path.
     """
 
-    return getattr(protocol, "condition", None) == _KOJIMA_CONDITION
+    return (
+        getattr(protocol, "schema_version", None) == "robustness-adapter-training-config/v7"
+        and getattr(protocol, "condition", None) == _KOJIMA_CONDITION
+        and getattr(protocol, "method_identity", None) == _KOJIMA_METHOD_IDENTITY
+    )
 
 
 def is_probe_factorial_protocol(protocol: AdapterTrainingProtocol) -> bool:
@@ -1020,6 +1024,8 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
             or set(seeds) != {public_anchor_seed, *matched_replication_seeds}
         ):
             raise ValueError("Kojima anchor/matched seed roles differ")
+    elif is_mistral_factorial:
+        matched_replication_seeds = (42, 43, 44)
     warmup = _number(optimization["warmup_ratio"], field="optimization.warmup_ratio")
     if warmup > 1.0:
         raise ValueError("optimization.warmup_ratio must be at most one")

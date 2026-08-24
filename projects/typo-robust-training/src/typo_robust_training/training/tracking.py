@@ -310,6 +310,17 @@ def build_wandb_run_presentation(
             tags.extend(("seed-role:matched-replication", "matched-inference:true"))
         else:
             raise ValueError("Kojima-faithful W&B seed has no preregistered role")
+    elif cycle == 8 and condition.startswith("factorial-"):
+        if seed not in {42, 43, 44}:
+            raise ValueError("Mistral factorial W&B seed has no preregistered role")
+        parts.append("matched replication")
+        tags.extend(
+            (
+                "method:mistral-state-free-probe-factorial-v1",
+                "seed-role:matched-replication",
+                "matched-inference:true",
+            )
+        )
     if cycle == 1:
         # Preserve the historical condition identity even though legacy runs
         # intentionally share one broad presentation arm.

@@ -7,6 +7,8 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +19,10 @@ import numpy as np
 from typo_robust_training.data.config import strict_loads
 from typo_robust_training.training.config import AdapterTrainingProtocol
 from typo_robust_training.training.config import load_adapter_training_config
+from typo_robust_training.training.filesystem import (
+    publish_directory_noreplace,
+    reject_path_symlink_components,
+)
 
 
 _REVISION = re.compile(r"[0-9a-f]{40}")
@@ -448,12 +454,18 @@ def materialize_probe_output_factorial_configs(
     template = Path(template_path)
     evidence = Path(evidence_path)
     destination = Path(output_dir)
+    reject_path_symlink_components(template, artifact="probe-factorial template")
+    reject_path_symlink_components(evidence, artifact="probe-factorial evidence")
+    reject_path_symlink_components(destination, artifact="probe-factorial output")
+    template = template.resolve()
+    evidence = evidence.resolve()
+    destination = destination.resolve()
     if template.is_symlink() or not template.is_file():
         raise ValueError("probe-factorial template must be one regular file")
     if evidence.is_symlink():
         raise ValueError("probe-factorial evidence must not be a symlink")
-    if destination.exists() and (not destination.is_dir() or any(destination.iterdir())):
-        raise FileExistsError("probe-factorial output directory must be absent or empty")
+    if destination.exists():
+        raise FileExistsError("probe-factorial output directory must be absent")
     payload = strict_loads(
         template.read_text(encoding="utf-8"),
         context=str(template.resolve()),
@@ -510,10 +522,15 @@ def materialize_probe_output_factorial_configs(
         model_revision=str(model_fields.get("revision")),
         decoder_layers=int(model_fields.get("decoder_layers", 0)),
     )
-    destination.mkdir(parents=True, exist_ok=True)
-    temporary_dir = destination / f".materializing.{os.getpid()}"
-    temporary_dir.mkdir()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary_dir = Path(
+        tempfile.mkdtemp(
+            prefix=f".{destination.name}.materializing-",
+            dir=destination.parent,
+        )
+    )
     protocols: dict[str, AdapterTrainingProtocol] = {}
+    published = False
     try:
         for condition in PROBE_FACTORIAL_CONDITIONS:
             layer_scope, layer_policy, output_scope = _FACTORIAL_ARM_FIELDS[condition]
@@ -569,11 +586,11 @@ def materialize_probe_output_factorial_configs(
             json.dumps(manifest, sort_keys=True, indent=2, allow_nan=False) + "\n",
             encoding="utf-8",
         )
-        for path in sorted(temporary_dir.iterdir()):
-            os.replace(path, destination / path.name)
+        publish_directory_noreplace(temporary_dir, destination)
+        published = True
     finally:
-        if temporary_dir.exists():
-            temporary_dir.rmdir()
+        if not published:
+            shutil.rmtree(temporary_dir, ignore_errors=True)
     return MappingProxyType(protocols)
 
 

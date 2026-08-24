@@ -12,6 +12,7 @@ import hashlib
 import json
 import re
 import shutil
+import stat
 import tempfile
 from collections import Counter
 from collections.abc import Mapping
@@ -25,6 +26,10 @@ from typo_robust_training.data.jsonl import read_lf_jsonl_lines
 from typo_robust_training.data.perturb import TypoGenerator
 from typo_robust_training.data.records import TypoEdit
 from typo_robust_training.training.encoding import encode_training_pair
+from typo_robust_training.training.filesystem import (
+    publish_directory_noreplace,
+    reject_path_symlink_components,
+)
 from typo_robust_training.training.kojima_faithful import (
     FINEWEB_DATASET,
     FINEWEB_DATA_FILE,
@@ -47,6 +52,7 @@ FACTORIAL_PAIRING_POLICY = "exact-alternating-clean-noisy-precomputed/v1"
 FACTORIAL_NOISE_POLICY = "record-local-three-operation-fixed-mixture/v1"
 FACTORIAL_RUNTIME_POLICY = "hash-attested-prevalidated-8000-pair-stream/v1"
 FACTORIAL_INITIALIZATION_POLICY = "sha256-layer-keyed-kaiming-a-zero-b/v1"
+FACTORIAL_PARENT_PREFIX_POLICY = "faithful-parent-prefix-no-added-special-tokens/v1"
 FACTORIAL_OPERATIONS = MappingProxyType(
     {
         "deletion": 1.0 / 3.0,
@@ -98,31 +104,84 @@ def _write_json(path: Path, value: object) -> None:
     )
 
 
-def _object(path: Path) -> Mapping[str, object]:
+def _object(path: Path) -> tuple[Mapping[str, object], str]:
     if not path.is_file() or path.is_symlink():
         raise ValueError(f"factorial data artifact is not one regular file: {path}")
-    value = strict_loads(path.read_text(encoding="utf-8"), context=str(path))
+    raw = path.read_bytes()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"factorial data artifact is not UTF-8: {path}") from exc
+    value = strict_loads(text, context=str(path))
     if not isinstance(value, Mapping):
         raise ValueError(f"factorial data artifact must contain an object: {path}")
-    return value
+    return value, hashlib.sha256(raw).hexdigest()
 
 
-def _reject_supplied_root_symlink(path: Path, *, artifact: str) -> None:
-    """Reject a caller-supplied root before ``resolve`` can erase that fact."""
-
-    if path.is_symlink():
-        raise ValueError(f"factorial {artifact} root cannot be a symlink")
+def _reject_path_symlink_components(path: Path, *, artifact: str) -> None:
+    reject_path_symlink_components(path, artifact=f"factorial {artifact}")
 
 
-def _reject_tree_symlinks(root: Path, *, artifact: str) -> None:
-    """Reject every symlink in a closed-world artifact tree."""
+def _reject_tree_links(root: Path, *, artifact: str) -> None:
+    """Reject symlinks, hard-linked files, and special nodes in an artifact tree."""
 
     if root.is_symlink():
         raise ValueError(f"factorial {artifact} root cannot be a symlink")
-    if root.is_dir():
-        for path in root.rglob("*"):
-            if path.is_symlink():
-                raise ValueError(f"factorial {artifact} tree contains a symlink: {path}")
+    if not root.is_dir():
+        raise ValueError(f"factorial {artifact} root must be a directory")
+    for path in root.rglob("*"):
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ValueError(f"factorial {artifact} tree contains a symlink: {path}")
+        if stat.S_ISREG(metadata.st_mode):
+            if metadata.st_nlink != 1:
+                raise ValueError(f"factorial {artifact} tree contains a hard link: {path}")
+        elif not stat.S_ISDIR(metadata.st_mode):
+            raise ValueError(f"factorial {artifact} tree contains a special node: {path}")
+
+
+def _publish_directory_noreplace(staged: Path, output: Path) -> None:
+    """Publish with the factorial-specific race error kept stable for callers."""
+
+    try:
+        publish_directory_noreplace(staged, output)
+    except FileExistsError as exc:
+        raise FileExistsError(f"factorial output appeared during preparation: {output}") from exc
+
+
+def _token_ids_sha256(values: tuple[int, ...]) -> str:
+    return hashlib.sha256(
+        b"".join(int(token).to_bytes(4, "big", signed=False) for token in values)
+    ).hexdigest()
+
+
+def _encode_factorial_pair(
+    pair: TrainingPair,
+    *,
+    source: object,
+    tokenizer: Any,
+) -> object:
+    """Encode against the faithful prefix without silently prepending another BOS."""
+
+    encoding = encode_training_pair(
+        pair,
+        tokenizer=tokenizer,
+        max_length=MAX_SEQUENCE_LENGTH,
+        require_all_edits_visible=True,
+        require_downstream_targets=not pair.is_noop,
+        add_special_tokens=False,
+    )
+    metadata = getattr(source, "metadata", None)
+    expected_prefix = (
+        metadata.get("clean_prefix_token_ids_sha256") if isinstance(metadata, Mapping) else None
+    )
+    if _SHA256.fullmatch(str(expected_prefix)) is None or (
+        _token_ids_sha256(encoding.clean_input_ids) != expected_prefix
+    ):
+        raise ValueError("factorial clean context differs from its faithful parent prefix")
+    if encoding.student_tokens != MAX_SEQUENCE_LENGTH:
+        raise ValueError("factorial packed pair does not fill the 8,192-token context")
+    return encoding
 
 
 def _load_attested_factorial_tokenizer() -> tuple[Any, Mapping[str, object]]:
@@ -398,15 +457,11 @@ def _prepare_mistral_factorial_data_in_directory(
                 force_noop=force_noop,
             )
             try:
-                encoding = encode_training_pair(
+                _encode_factorial_pair(
                     pair,
+                    source=source,
                     tokenizer=tokenizer,
-                    max_length=MAX_SEQUENCE_LENGTH,
-                    require_all_edits_visible=True,
-                    require_downstream_targets=not force_noop,
                 )
-                if encoding.student_tokens != MAX_SEQUENCE_LENGTH:
-                    raise ValueError("factorial packed pair does not fill the 8,192-token context")
             except (ValueError, RuntimeError) as exc:
                 skip = {
                     "schema_version": _SKIP_SCHEMA,
@@ -502,6 +557,7 @@ def _prepare_mistral_factorial_data_in_directory(
         },
         "runtime": {
             "policy": FACTORIAL_RUNTIME_POLICY,
+            "parent_prefix_policy": FACTORIAL_PARENT_PREFIX_POLICY,
             "prevalidated_downstream_offsets": [2, 16],
             "skipped_attempts": len(skip_rows),
         },
@@ -553,15 +609,15 @@ def prepare_mistral_factorial_data(
 
     raw_parent = Path(config.packed_source_dir)
     raw_output = Path(config.output_dir)
-    _reject_supplied_root_symlink(raw_parent, artifact="packed source")
-    _reject_supplied_root_symlink(raw_output, artifact="output")
+    _reject_path_symlink_components(raw_parent, artifact="packed source")
+    _reject_path_symlink_components(raw_output, artifact="output")
     parent_root = raw_parent.resolve()
     output = raw_output.resolve()
     if output.exists():
         raise FileExistsError(f"factorial output already exists: {output}")
     if parent_root == output or parent_root in output.parents or output in parent_root.parents:
         raise ValueError("factorial output cannot contain its source artifact")
-    _reject_tree_symlinks(parent_root, artifact="packed source")
+    _reject_tree_links(parent_root, artifact="packed source")
     parent = load_kojima_faithful_data_bundle(parent_root, seed=config.seed)
     if len(parent.sources) < config.target_usable_examples:
         raise ValueError("factorial packed source has too few attempts for its usable target")
@@ -573,6 +629,7 @@ def prepare_mistral_factorial_data(
     tokenizer, tokenizer_provenance = _load_attested_factorial_tokenizer()
 
     output.parent.mkdir(parents=True, exist_ok=True)
+    _reject_path_symlink_components(raw_output, artifact="output")
     staged = Path(
         tempfile.mkdtemp(
             prefix=f".{output.name}.tmp-",
@@ -589,9 +646,7 @@ def prepare_mistral_factorial_data(
             tokenizer=tokenizer,
             tokenizer_provenance=tokenizer_provenance,
         )
-        if output.exists():
-            raise FileExistsError(f"factorial output appeared during preparation: {output}")
-        staged.replace(output)
+        _publish_directory_noreplace(staged, output)
         published = True
         return PrepareMistralFactorialDataResult(
             manifest_path=output / staged_result.manifest_path.name,
@@ -614,9 +669,9 @@ def load_mistral_factorial_data_bundle(
     """Load one closed-world factorial pair stream and reject any drift."""
 
     raw_root = Path(root)
-    _reject_supplied_root_symlink(raw_root, artifact="data")
+    _reject_path_symlink_components(raw_root, artifact="data")
     resolved = raw_root.resolve()
-    _reject_tree_symlinks(resolved, artifact="data")
+    _reject_tree_links(resolved, artifact="data")
     if seed not in MATCHED_REPLICATION_SEEDS:
         raise ValueError("factorial data seed differs")
     run_path = resolved / "run.json"
@@ -640,8 +695,8 @@ def load_mistral_factorial_data_bundle(
     }
     if actual_tree_files != expected_tree_files or actual_tree_dirs != {_SOURCE_DIR}:
         raise ValueError("factorial data closed-world tree inventory differs")
-    run = _object(run_path)
-    manifest = _object(manifest_path)
+    run, run_sha = _object(run_path)
+    manifest, manifest_sha = _object(manifest_path)
     expected_artifacts = {
         "pairs.jsonl",
         "skips.jsonl",
@@ -667,7 +722,6 @@ def load_mistral_factorial_data_bundle(
         or set(artifacts) != expected_artifacts
     ):
         raise ValueError("factorial data closed-world artifact inventory differs")
-    manifest_sha = _sha256_file(manifest_path)
     if run.get("manifest_sha256") != manifest_sha or outputs.get("manifest.json") != {
         "sha256": manifest_sha
     }:
@@ -760,9 +814,18 @@ def load_mistral_factorial_data_bundle(
         or noise.get("edit_count_distribution") != dict(FACTORIAL_EDIT_COUNTS)
         or noise.get("minimum_word_letters") != 2
         or not isinstance(runtime, Mapping)
+        or set(runtime)
+        != {
+            "policy",
+            "parent_prefix_policy",
+            "prevalidated_downstream_offsets",
+            "skipped_attempts",
+        }
         or runtime.get("policy") != FACTORIAL_RUNTIME_POLICY
+        or runtime.get("parent_prefix_policy") != FACTORIAL_PARENT_PREFIX_POLICY
         or runtime.get("prevalidated_downstream_offsets") != [2, 16]
         or not isinstance(parent_fields, Mapping)
+        or set(parent_fields) != {"data_identity_sha256", "artifacts"}
         or parent_fields.get("data_identity_sha256") != parent.data_identity_sha256
         or parent_fields.get("artifacts")
         != {
@@ -772,6 +835,10 @@ def load_mistral_factorial_data_bundle(
         }
     ):
         raise ValueError("factorial frozen source/noise contract differs")
+
+    attested_tokenizer, observed_tokenizer_provenance = _load_attested_factorial_tokenizer()
+    if dict(tokenizer_provenance) != dict(observed_tokenizer_provenance):
+        raise ValueError("factorial tokenizer differs from its external frozen attestation")
 
     generator = TypoGenerator(
         seed=seed,
@@ -788,21 +855,6 @@ def load_mistral_factorial_data_bundle(
         attempt = int(pair.metadata["attempt_index"])
         if attempt <= previous_attempt:
             raise ValueError("factorial pair attempt order differs")
-        expected_pair = materialize_training_pair(
-            parent.sources[attempt],
-            generator=generator,
-            epoch=0,
-            variant=0,
-            force_noop=len(rows) % 2 == 0,
-        )
-        if (
-            pair.record_id != expected_pair.record_id
-            or pair.clean_text != expected_pair.clean_text
-            or pair.typo_text != expected_pair.typo_text
-            or pair.edits != expected_pair.edits
-            or pair.is_noop != expected_pair.is_noop
-        ):
-            raise ValueError("factorial pair differs from its deterministic source realization")
         previous_attempt = attempt
         rows.append(pair)
     realized_clean = sum(pair.is_noop for pair in rows)
@@ -873,6 +925,8 @@ def load_mistral_factorial_data_bundle(
         len(skipped_attempts) != len(set(skipped_attempts))
         or used_attempts.intersection(skipped_attempts)
         or used_attempts.union(skipped_attempts) != expected_attempts
+        or isinstance(runtime.get("skipped_attempts"), bool)
+        or not isinstance(runtime.get("skipped_attempts"), int)
         or runtime.get("skipped_attempts") != len(skipped_attempts)
     ):
         raise ValueError("factorial skip/replacement decisions are incomplete")
@@ -880,17 +934,61 @@ def load_mistral_factorial_data_bundle(
     accepted = 0
     for attempt in range(int(packing["consumed_attempts"])):
         intended_is_noop = accepted % 2 == 0
+        expected_pair = materialize_training_pair(
+            parent.sources[attempt],
+            generator=generator,
+            epoch=0,
+            variant=0,
+            force_noop=intended_is_noop,
+        )
+        encoding_error: ValueError | RuntimeError | None = None
+        try:
+            _encode_factorial_pair(
+                expected_pair,
+                source=parent.sources[attempt],
+                tokenizer=attested_tokenizer,
+            )
+        except (ValueError, RuntimeError) as exc:
+            encoding_error = exc
         if attempt in used_by_attempt:
-            if used_by_attempt[attempt].is_noop != intended_is_noop:
+            pair = used_by_attempt[attempt]
+            if encoding_error is not None:
+                raise ValueError("factorial accepted attempt fails tokenizer revalidation")
+            if (
+                pair.record_id != expected_pair.record_id
+                or pair.clean_text != expected_pair.clean_text
+                or pair.typo_text != expected_pair.typo_text
+                or pair.edits != expected_pair.edits
+                or pair.is_noop != expected_pair.is_noop
+            ):
+                raise ValueError("factorial pair differs from its deterministic source realization")
+            if pair.is_noop != intended_is_noop:
                 raise ValueError("factorial usable attempt changes the alternating group")
             accepted += 1
             continue
         skip = skip_rows[attempt]
         if (
-            skip.get("intended_is_noop") != intended_is_noop
+            encoding_error is None
+            or skip.get("reason_type") != type(encoding_error).__name__
+            or skip.get("reason_sha256") != hashlib.sha256(str(encoding_error).encode()).hexdigest()
+            or skip.get("intended_is_noop") != intended_is_noop
             or skip.get("source_record_id") != parent.sources[attempt].record_id
         ):
             raise ValueError("factorial skip ledger differs from its source attempt")
+
+    _reject_tree_links(resolved, artifact="data")
+    final_tree_files = {
+        str(path.relative_to(resolved)) for path in resolved.rglob("*") if path.is_file()
+    }
+    final_tree_dirs = {
+        str(path.relative_to(resolved)) for path in resolved.rglob("*") if path.is_dir()
+    }
+    if final_tree_files != expected_tree_files or final_tree_dirs != {_SOURCE_DIR}:
+        raise ValueError("factorial data tree changed during validation")
+    if _sha256_file(run_path) != run_sha or any(
+        _sha256_file(resolved / name) != digest for name, digest in artifact_hashes.items()
+    ):
+        raise ValueError("factorial data changed during validation")
 
     identity = _canonical_sha(
         {
@@ -926,6 +1024,7 @@ __all__ = [
     "FACTORIAL_METHOD_IDENTITY",
     "FACTORIAL_NOISE_POLICY",
     "FACTORIAL_OPERATIONS",
+    "FACTORIAL_PARENT_PREFIX_POLICY",
     "FACTORIAL_PAIRING_POLICY",
     "FACTORIAL_RUNTIME_POLICY",
     "MistralFactorialDataBundle",

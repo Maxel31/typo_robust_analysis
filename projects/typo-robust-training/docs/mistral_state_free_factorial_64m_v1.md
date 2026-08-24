@@ -56,6 +56,13 @@ for the faithful Kojima run. The factorial preparation command copies the
 closed-world packed-source artifact and creates its own encoding/noise wrapper;
 it never routes through faithful Kojima noise or masking.
 
+The packed text already contains the faithful artifact's BOS token. Factorial
+encoding therefore sets `add_special_tokens=False` and re-hashes the retained
+8,192 clean token IDs against every consumed parent's
+`clean_prefix_token_ids_sha256`. Prepending a second BOS, using a tokenizer that
+only claims the pinned revision, or otherwise shifting the faithful prefix is a
+hard failure.
+
 The wrapper freezes:
 
 - 8,000 usable 8,192-token pairs, hence exactly 65,536,000 student tokens;
@@ -70,9 +77,12 @@ The wrapper freezes:
   counts, and realized edit-count counts.
 
 Preparation occurs in a sibling temporary directory. The complete artifact is
-hash-validated and round-tripped before one atomic rename publishes it. Root or
-in-tree symlinks, partial output, rehashed source substitutions, invalid skip
-ledgers, and tokenizer-attestation substitutions fail closed.
+hash-validated and round-tripped before one atomic no-replace rename publishes
+it. Root, ancestor, or in-tree symlinks; hard-linked files; partial output;
+rehashed source substitutions; fabricated skips; invalid skip ledgers; and
+tokenizer-attestation substitutions fail closed. Loading replays tokenizer
+eligibility for every consumed attempt, so rewriting the local hashes cannot
+turn a usable source into a skip or an unusable source into a training row.
 
 For a fixed seed, every arm must receive the same prepared directory. Re-running
 preparation against the same packed parent and frozen tokenizer produces
@@ -93,6 +103,14 @@ Schema number alone must never select a runtime. Loaders dispatch the Mistral
 path only when schema, exact method identity, and factorial condition all match.
 Evaluation provenance must likewise bind the Mistral model, revision, and method
 identity rather than interpreting a v8 adapter as the Gemma v7 pilot.
+
+The separately produced evaluation-v2 registry interface must additionally bind
+the seed-specific factorial data tree/identity, concrete config hash, probe
+artifact hash, adapter run hash, model/revision, and
+`mistral-state-free-probe-factorial/v1`. A Gemma-v7 registry entry or a registry
+that identifies an arm only by its shared condition label is not compatible.
+Until that model-specific registry bundle exists, the production training CLI
+correctly remains blocked before GPU/runtime construction.
 
 The faithful Kojima condition remains a separate v7 method. It includes
 embedding/LM-head adapters, the public four-operation noise process, its public
@@ -143,6 +161,7 @@ uv run --project projects/typo-robust-training typo-cot \
   --config /abs/configs/mistral-factorial-64m/factorial-probe-suffix-downstream-horizon.json \
   --training-data /abs/data/mistral-factorial/seed-42 \
   --probe-selection /abs/evidence/mistral-probe-transition.json \
+  --evaluation-v2-registry-bundle /abs/evaluation/v2/mistral-registry-bundle.json \
   --seed 42 --gpu-id 0 \
   --evaluation-protocol /abs/evaluation/protocol.json \
   --monitor-data /abs/evaluation/tune-monitor \
