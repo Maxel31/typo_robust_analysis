@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import importlib.metadata
+import hashlib
+import io
 import json
 import math
 import os
 import platform
 import random
+import stat
 import sys
 from collections import deque
 from collections.abc import Mapping, Sequence
@@ -28,6 +31,7 @@ from typo_robust_training.training.adapters import (
 from typo_robust_training.training.config import (
     AdapterTrainingProtocol,
     is_kojima_faithful_protocol,
+    is_mistral_factorial_protocol,
     is_probe_factorial_protocol,
 )
 from typo_robust_training.training.encoding import (
@@ -62,6 +66,45 @@ from typo_robust_training.training.runner import (
 from typo_robust_training.training.step import compute_training_step
 
 
+def _mistral_attested_state_buffer(path: Path, *, expected_sha256: str) -> io.BytesIO:
+    """Return one immutable buffer bound to the checkpoint's recorded digest."""
+
+    if (
+        not isinstance(expected_sha256, str)
+        or len(expected_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in expected_sha256)
+    ):
+        raise ValueError("adapter runtime expected state hash differs")
+    state_path = Path(path)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(state_path, flags)
+    except OSError as exc:
+        raise ValueError("Mistral runtime state must be one unlinked regular file") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise ValueError("Mistral runtime state must be one unlinked regular file")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            raw_state = handle.read()
+        final_metadata = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    try:
+        visible_metadata = state_path.lstat()
+    except OSError as exc:
+        raise ValueError("Mistral runtime state changed during attested loading") from exc
+    if (
+        final_metadata.st_nlink != 1
+        or (metadata.st_dev, metadata.st_ino) != (final_metadata.st_dev, final_metadata.st_ino)
+        or (metadata.st_dev, metadata.st_ino) != (visible_metadata.st_dev, visible_metadata.st_ino)
+    ):
+        raise ValueError("Mistral runtime state changed during attested loading")
+    if hashlib.sha256(raw_state).hexdigest() != expected_sha256:
+        raise ValueError("Mistral runtime state changed before attested loading")
+    return io.BytesIO(raw_state)
+
+
 def _version(name: str) -> str:
     try:
         return importlib.metadata.version(name)
@@ -83,9 +126,7 @@ def resolve_attention_head_dim(config: object) -> int:
     hidden_size = _positive_architecture_integer(text_config, "hidden_size")
     attention_heads = _positive_architecture_integer(text_config, "num_attention_heads")
     if hidden_size % attention_heads != 0:
-        raise ValueError(
-            "training model hidden_size must be divisible by num_attention_heads"
-        )
+        raise ValueError("training model hidden_size must be divisible by num_attention_heads")
     derived = hidden_size // attention_heads
     explicit = getattr(text_config, "head_dim", None)
     if explicit is None:
@@ -679,10 +720,7 @@ def _resolve_probe_transition_runtime_method(
         "probe-transition-output-matching": ProbeTransitionTrainingEvidence,
         "probe-transition-single-layer-state-distillation": (ProbeTransitionStateTrainingEvidence),
         "probe-semantic-subspace-distillation": ProbeSemanticSubspaceTrainingEvidence,
-        **{
-            condition: ProbeTransitionTrainingEvidence
-            for condition in PROBE_FACTORIAL_CONDITIONS
-        },
+        **{condition: ProbeTransitionTrainingEvidence for condition in PROBE_FACTORIAL_CONDITIONS},
     }
     expected_type = expected_types.get(protocol.condition)
     if expected_type is None:
@@ -926,9 +964,7 @@ class HuggingFaceAdapterTrainingRuntime:
         self.mlp_intermediate_size = _positive_architecture_integer(
             text_config, "intermediate_size"
         )
-        self.attention_heads = _positive_architecture_integer(
-            text_config, "num_attention_heads"
-        )
+        self.attention_heads = _positive_architecture_integer(text_config, "num_attention_heads")
         teacher_architecture = (
             teacher_attention_head_dim,
             _positive_architecture_integer(teacher_text_config, "intermediate_size"),
@@ -1056,8 +1092,17 @@ class HuggingFaceAdapterTrainingRuntime:
         torch.cuda.reset_peak_memory_stats()
 
     def _encode_pair(self, pair: TrainingPair) -> PairedEncoding:
-        if is_kojima_faithful_protocol(self.protocol):
+        lightweight_kojima_protocol = (
+            not isinstance(self.protocol, AdapterTrainingProtocol)
+            and getattr(self.protocol, "schema_version", None)
+            == "robustness-adapter-training-config/v7"
+            and getattr(self.protocol, "condition", None) == "kojima-faithful-output-matching"
+        )
+        if is_kojima_faithful_protocol(self.protocol) or lightweight_kojima_protocol:
             return encode_kojima_faithful_pair(pair, tokenizer=self.tokenizer)
+        encoding_options: dict[str, object] = {}
+        if is_mistral_factorial_protocol(self.protocol):
+            encoding_options["add_special_tokens"] = False
         return encode_training_pair(
             pair,
             tokenizer=self.tokenizer,
@@ -1067,6 +1112,7 @@ class HuggingFaceAdapterTrainingRuntime:
             require_downstream_targets=(
                 is_probe_factorial_protocol(self.protocol) and not pair.is_noop
             ),
+            **encoding_options,
         )
 
     def pair_is_usable(self, pair: TrainingPair) -> bool:
@@ -1118,11 +1164,7 @@ class HuggingFaceAdapterTrainingRuntime:
         else:
             encoding = self._encode_pair(pair)
         return compute_training_step(
-            teacher=(
-                self.student
-                if is_kojima_faithful_protocol(self.protocol)
-                else self.teacher
-            ),
+            teacher=(self.student if is_kojima_faithful_protocol(self.protocol) else self.teacher),
             student=self.student,
             encoding=encoding,
             protocol=self.protocol,
@@ -1633,10 +1675,22 @@ class HuggingFaceAdapterTrainingRuntime:
         path: Path,
         *,
         expected_state_calibration: Mapping[str, object] | None = None,
+        expected_state_sha256: str | None = None,
     ) -> None:
         from peft import get_peft_model_state_dict, set_peft_model_state_dict
 
-        state_path = Path(path).resolve()
+        supplied_state_path = Path(path)
+        state_path = supplied_state_path.resolve()
+        serialized_state: io.BytesIO | Path = state_path
+        if expected_state_sha256 is not None:
+            if not is_mistral_factorial_protocol(self.protocol):
+                raise ValueError("attested runtime-state loading is reserved for Mistral v8")
+            # Deserialize exactly the bytes whose digest was checked.  Reopening
+            # the path inside torch.load would leave a check/use substitution gap.
+            serialized_state = _mistral_attested_state_buffer(
+                supplied_state_path,
+                expected_sha256=expected_state_sha256,
+            )
         if self.protocol.condition == "probe-transition-single-layer-state-distillation":
             if (
                 self._verified_resume_state_path != state_path
@@ -1647,7 +1701,7 @@ class HuggingFaceAdapterTrainingRuntime:
                     "Priority B checkpoint must pass exact calibration replay before loading"
                 )
         payload = self._torch.load(
-            state_path,
+            serialized_state,
             map_location="cpu",
             weights_only=False,
         )
@@ -1699,6 +1753,13 @@ class HuggingFaceAdapterTrainingRuntime:
             payload["condition"] != self.protocol.condition
             or payload["config_sha256"] != self.protocol.config_sha256
             or payload["seed"] != self.seed
+            or isinstance(payload["optimizer_steps"], bool)
+            or not isinstance(payload["optimizer_steps"], int)
+            or payload["optimizer_steps"] < 0
+            or (
+                is_mistral_factorial_protocol(self.protocol)
+                and payload["optimizer_steps"] > self.protocol.max_optimizer_steps
+            )
         ):
             raise ValueError("adapter runtime checkpoint identity differs")
         resumed_state: tuple[float, dict[str, object] | None] | None = None
@@ -1748,6 +1809,18 @@ class HuggingFaceAdapterTrainingRuntime:
         self._torch.cuda.set_rng_state_all(_cpu_cuda_rng_states(payload["cuda_rng"]))
         self._verified_resume_state_path = None
         self._verified_resume_state_sha256 = None
+
+    def verify_resume_optimizer_step(self, expected_optimizer_steps: int) -> None:
+        """Bind the opaque optimizer/scheduler state to the runner checkpoint cursor."""
+
+        if (
+            isinstance(expected_optimizer_steps, bool)
+            or not isinstance(expected_optimizer_steps, int)
+            or expected_optimizer_steps < 0
+            or self._optimizer_steps != expected_optimizer_steps
+            or getattr(self.scheduler, "last_epoch", None) != expected_optimizer_steps
+        ):
+            raise ValueError("adapter runtime optimizer state differs from the resume cursor")
 
     def save_adapter(self, path: Path) -> None:
         output = Path(path).resolve()

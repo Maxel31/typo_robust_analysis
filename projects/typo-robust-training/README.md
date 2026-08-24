@@ -429,6 +429,9 @@ also includes the operation, layer range, model, token budget, and seed.
 The five-arm, hidden-state-loss-free factorial based on the Linear Probe boundary
 and the Activation-Patching downstream horizon is specified in
 [`docs/state_free_probe_factorial_v1.ja.md`](docs/state_free_probe_factorial_v1.ja.md).
+The pinned Mistral-7B 64M-token production profile, its attested data wrapper,
+and its strict separation from both Gemma v7 and faithful Kojima are specified
+in [`docs/mistral_state_free_factorial_64m_v1.md`](docs/mistral_state_free_factorial_64m_v1.md).
 
 ```bash
 CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \

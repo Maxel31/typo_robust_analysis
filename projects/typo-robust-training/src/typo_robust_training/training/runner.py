@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
+from typo_robust_training.data.config import strict_loads
 from typo_robust_training.data.perturb import TypoGenerator, eligible_word_spans
 from typo_robust_training.integrity import sha256_tree
 from typo_robust_training.training.checkpoint import (
@@ -26,6 +27,7 @@ from typo_robust_training.training.checkpoint import (
 from typo_robust_training.training.config import (
     AdapterTrainingProtocol,
     is_kojima_faithful_protocol,
+    is_mistral_factorial_protocol,
     load_adapter_training_config,
 )
 from typo_robust_training.training.data import (
@@ -37,6 +39,13 @@ from typo_robust_training.training.kojima_faithful import (
     TARGET_USABLE_EXAMPLES,
     KojimaFaithfulDataBundle,
     load_kojima_faithful_data_bundle,
+)
+from typo_robust_training.training.mistral_factorial import (
+    FACTORIAL_NOISE_POLICY,
+    FACTORIAL_PAIRING_POLICY,
+    FACTORIAL_RUNTIME_POLICY,
+    MistralFactorialDataBundle,
+    load_mistral_factorial_data_bundle,
 )
 from typo_robust_training.training.evidence import (
     LocalizationEvidence,
@@ -224,10 +233,37 @@ def validate_micro_step_student_tokens(
     if not isinstance(result, TrainingMicroStepResult):
         raise TypeError("micro-step token validation requires TrainingMicroStepResult")
     if (
-        is_kojima_faithful_protocol(protocol)
-        and result.student_tokens != protocol.max_sequence_length
+        is_kojima_faithful_protocol(protocol) or is_mistral_factorial_protocol(protocol)
+    ) and result.student_tokens != protocol.max_sequence_length:
+        raise ValueError("packed Mistral micro-step must fill the 8192-token context")
+
+
+def validate_mistral_factorial_resume_cursor(
+    protocol: AdapterTrainingProtocol,
+    bundle: MistralFactorialDataBundle,
+    cursor: TrainingCursor,
+) -> None:
+    """Reject stale or internally inconsistent fixed-stream resume cursors."""
+
+    if not is_mistral_factorial_protocol(protocol):
+        raise ValueError("Mistral factorial resume validation requires the v8 method")
+    if not isinstance(bundle, MistralFactorialDataBundle) or not isinstance(cursor, TrainingCursor):
+        raise TypeError("Mistral factorial resume validation received the wrong artifact type")
+    expected_micro_steps = cursor.optimizer_steps * protocol.gradient_accumulation_steps
+    expected_student_tokens = expected_micro_steps * protocol.max_sequence_length
+    if expected_micro_steps < len(bundle.pairs):
+        expected_epoch, expected_source_index = 0, expected_micro_steps
+    elif expected_micro_steps == len(bundle.pairs):
+        expected_epoch, expected_source_index = 1, 0
+    else:
+        raise ValueError("Mistral factorial resume cursor exceeds the frozen pair stream")
+    if (
+        cursor.micro_steps != expected_micro_steps
+        or cursor.student_tokens != expected_student_tokens
+        or cursor.epoch != expected_epoch
+        or cursor.source_index != expected_source_index
     ):
-        raise ValueError("Kojima-faithful packed micro-step must fill the 8192-token context")
+        raise ValueError("Mistral factorial resume cursor is stale or internally inconsistent")
 
 
 class AdapterTrainingRuntime(Protocol):
@@ -268,7 +304,10 @@ class AdapterTrainingRuntime(Protocol):
         path: Path,
         *,
         expected_state_calibration: Mapping[str, object] | None = None,
+        expected_state_sha256: str | None = None,
     ) -> None: ...
+
+    def verify_resume_optimizer_step(self, expected_optimizer_steps: int) -> None: ...
 
     def save_adapter(self, path: Path) -> None: ...
 
@@ -410,7 +449,7 @@ def _forced_noop(protocol: AdapterTrainingProtocol, *, micro_step: int) -> bool 
 
 def _state_calibration_pairs(
     *,
-    bundle: TrainingDataBundle | KojimaFaithfulDataBundle,
+    bundle: TrainingDataBundle | KojimaFaithfulDataBundle | MistralFactorialDataBundle,
     protocol: AdapterTrainingProtocol,
     seed: int,
     runtime: AdapterTrainingRuntime,
@@ -421,7 +460,11 @@ def _state_calibration_pairs(
     if required == 0:
         return ()
     cursor = TrainingCursor(0, 0, 0, 0, 0)
-    order_cache = EpochSourceOrderCache(bundle.sources, seed=seed)
+    order_cache = (
+        None
+        if isinstance(bundle, (KojimaFaithfulDataBundle, MistralFactorialDataBundle))
+        else EpochSourceOrderCache(bundle.sources, seed=seed)
+    )
     pairs: list[TrainingPair] = []
     while len(pairs) < required:
         pair, _epoch, cursor = _next_usable_training_pair(
@@ -517,7 +560,7 @@ def _materialize_usable_pair(
 
 def _next_usable_training_pair(
     *,
-    bundle: TrainingDataBundle | KojimaFaithfulDataBundle,
+    bundle: TrainingDataBundle | KojimaFaithfulDataBundle | MistralFactorialDataBundle,
     cursor: TrainingCursor,
     seed: int,
     protocol: AdapterTrainingProtocol,
@@ -526,7 +569,37 @@ def _next_usable_training_pair(
 ) -> tuple[TrainingPair, int, TrainingCursor]:
     """Advance past unusable sources without consuming a training micro-step."""
 
-    if is_kojima_faithful_protocol(protocol):
+    if is_mistral_factorial_protocol(protocol):
+        if not isinstance(bundle, MistralFactorialDataBundle):
+            raise TypeError("Mistral factorial training requires its frozen pair stream")
+        if cursor.epoch != 0 or cursor.source_index >= len(bundle.pairs):
+            raise ValueError("Mistral factorial pair stream exhausted or repeated")
+        pair = bundle.pairs[cursor.source_index]
+        pair_is_usable = getattr(runtime, "pair_is_usable", None)
+        if not callable(pair_is_usable) or not pair_is_usable(pair):
+            raise ValueError("prevalidated factorial pair failed runtime revalidation")
+        source_index = cursor.source_index + 1
+        next_epoch = int(source_index == len(bundle.pairs))
+        return (
+            pair,
+            0,
+            TrainingCursor(
+                epoch=next_epoch,
+                source_index=0 if next_epoch else source_index,
+                micro_steps=cursor.micro_steps + 1,
+                optimizer_steps=cursor.optimizer_steps,
+                student_tokens=cursor.student_tokens,
+            ),
+        )
+
+    # Internal production calls always carry the validated dataclass.  Retain
+    # the narrow duck-typed seam used by unit-level stream tests without letting
+    # a mutated v8 AdapterTrainingProtocol dispatch into the Kojima runtime.
+    lightweight_kojima_protocol = (
+        not isinstance(protocol, AdapterTrainingProtocol)
+        and getattr(protocol, "condition", None) == "kojima-faithful-output-matching"
+    )
+    if is_kojima_faithful_protocol(protocol) or lightweight_kojima_protocol:
         if not isinstance(bundle, KojimaFaithfulDataBundle):
             raise TypeError("Kojima-faithful training requires its packed FineWeb bundle")
         if cursor.epoch != 0 or cursor.source_index >= len(bundle.sources):
@@ -585,11 +658,13 @@ def _load_protocol_training_bundle(
     *,
     root: Path,
     seed: int,
-) -> TrainingDataBundle | KojimaFaithfulDataBundle:
+) -> TrainingDataBundle | KojimaFaithfulDataBundle | MistralFactorialDataBundle:
     """Keep shared-schema factorial arms on the generic frozen-data path."""
 
     if is_kojima_faithful_protocol(protocol):
         return load_kojima_faithful_data_bundle(root, seed=seed)
+    if is_mistral_factorial_protocol(protocol):
+        return load_mistral_factorial_data_bundle(root, seed=seed)
     return load_training_data_bundle(root, protocol=protocol, seed=seed)
 
 
@@ -669,6 +744,52 @@ def _validate_adapter_checkpoints(
         if not (output_dir / f"adapter-step-{step:06d}").is_dir():
             raise RuntimeError(f"training adapter checkpoint is missing at step {step}")
     return expected
+
+
+def _validate_mistral_factorial_resume_metrics(
+    work_dir: Path,
+    *,
+    protocol: AdapterTrainingProtocol,
+    bundle: MistralFactorialDataBundle,
+    cursor: TrainingCursor,
+) -> None:
+    """Require every completed fixed-stream step ledger before resuming."""
+
+    for step in range(1, cursor.optimizer_steps + 1):
+        path = _metrics_step_path(work_dir, step)
+        if not path.is_file() or path.is_symlink():
+            raise ValueError(f"Mistral factorial resume metrics are missing at step {step}")
+        payload = strict_loads(
+            path.read_text(encoding="utf-8"),
+            context=f"Mistral factorial resume metrics step {step}",
+        )
+        start = (step - 1) * protocol.gradient_accumulation_steps
+        stop = step * protocol.gradient_accumulation_steps
+        expected_pairs = bundle.pairs[start:stop]
+        micro_batches = payload.get("micro_batches") if isinstance(payload, Mapping) else None
+        if (
+            not isinstance(payload, Mapping)
+            or payload.get("schema_version") != "robustness-adapter-training-step/v1"
+            or payload.get("optimizer_step") != step
+            or payload.get("micro_steps") != stop
+            or payload.get("student_tokens") != stop * protocol.max_sequence_length
+            or not isinstance(micro_batches, list)
+            or len(micro_batches) != len(expected_pairs)
+        ):
+            raise ValueError(f"Mistral factorial resume metrics differ at step {step}")
+        for accumulation_index, (row, pair) in enumerate(
+            zip(micro_batches, expected_pairs, strict=True)
+        ):
+            if (
+                not isinstance(row, Mapping)
+                or row.get("accumulation_index") != accumulation_index
+                or row.get("epoch") != 0
+                or row.get("record_id") != pair.record_id
+                or row.get("is_noop") is not pair.is_noop
+                or row.get("edit_count") != len(pair.edits)
+                or row.get("student_tokens") != protocol.max_sequence_length
+            ):
+                raise ValueError(f"Mistral factorial resume stream differs at step {step}")
 
 
 def _assemble_metrics(path: Path, *, work_dir: Path, optimizer_steps: int) -> None:
@@ -795,7 +916,9 @@ def run_adapter_training(
     config: AdapterTrainingRunConfig,
     *,
     runtime: AdapterTrainingRuntime | None = None,
-    data_bundle: TrainingDataBundle | KojimaFaithfulDataBundle | None = None,
+    data_bundle: (
+        TrainingDataBundle | KojimaFaithfulDataBundle | MistralFactorialDataBundle | None
+    ) = None,
     evidence: (
         LocalizationEvidence
         | ResidualStateEvidence
@@ -858,6 +981,35 @@ def run_adapter_training(
             != protocol.max_student_tokens
         ):
             raise ValueError("Kojima-faithful data/config provenance differs")
+    elif is_mistral_factorial_protocol(protocol):
+        if not isinstance(bundle, MistralFactorialDataBundle):
+            raise TypeError("Mistral factorial training cannot consume another data path")
+        if (
+            config.seed != bundle.seed
+            or protocol.training_corpus_revision != bundle.source_revision
+            or protocol.packing_policy != bundle.packing_policy
+            or protocol.pairing_policy != bundle.pairing_policy
+            or protocol.data_runtime_policy != FACTORIAL_RUNTIME_POLICY
+            or bundle.noise_policy != FACTORIAL_NOISE_POLICY
+            or bundle.pairing_policy != FACTORIAL_PAIRING_POLICY
+            or bundle.target_usable_examples != TARGET_USABLE_EXAMPLES
+            or bundle.target_student_tokens != protocol.max_student_tokens
+            or len(bundle.pairs) != TARGET_USABLE_EXAMPLES
+            or bundle.packed_attempts != PACKED_EXAMPLES
+            or not TARGET_USABLE_EXAMPLES <= bundle.consumed_attempts <= bundle.packed_attempts
+        ):
+            raise ValueError("Mistral factorial data/config provenance differs")
+        if runtime is None:
+            from typo_cot.models.tokenizer_attestation import (
+                preflight_frozen_tokenizer_attestation,
+            )
+
+            frozen_tokenizer = preflight_frozen_tokenizer_attestation(
+                expected_model=protocol.model,
+                expected_revision=protocol.model_revision,
+            )
+            if dict(bundle.tokenizer_snapshot_attestation) != (frozen_tokenizer.provenance_dict()):
+                raise ValueError("Mistral factorial data tokenizer attestation differs")
     elif not isinstance(bundle, TrainingDataBundle):
         raise TypeError("factorial training cannot consume the Kojima packed stream")
     monitor_records: tuple[object, ...] = ()
@@ -1017,6 +1169,24 @@ def run_adapter_training(
             checkpoint_path,
             expected_bindings=bindings,
         )
+        if is_mistral_factorial_protocol(protocol):
+            if not isinstance(bundle, MistralFactorialDataBundle):
+                raise TypeError("Mistral factorial resume requires its frozen pair stream")
+            validate_mistral_factorial_resume_cursor(protocol, bundle, checkpoint.cursor)
+            supplied_state_path = (
+                work_dir / f"runtime-state-step-{checkpoint.cursor.optimizer_steps:06d}.pt"
+            )
+            if supplied_state_path.is_symlink():
+                raise ValueError("Mistral factorial resume runtime-state cannot be a symlink")
+            expected_state_path = supplied_state_path.resolve()
+            if checkpoint.state_path != expected_state_path:
+                raise ValueError("Mistral factorial resume runtime-state path differs")
+            _validate_mistral_factorial_resume_metrics(
+                work_dir,
+                protocol=protocol,
+                bundle=bundle,
+                cursor=checkpoint.cursor,
+            )
         if protocol.condition == "probe-transition-single-layer-state-distillation":
             from typo_robust_training.training.runtime import validate_resume_state_calibration
 
@@ -1073,11 +1243,21 @@ def run_adapter_training(
                 checkpoint.state_path,
                 expected_state_calibration=expected_state_calibration,
             )
+        elif is_mistral_factorial_protocol(protocol):
+            runtime.load_state(
+                checkpoint.state_path,
+                expected_state_sha256=checkpoint.state_sha256,
+            )
         else:
             runtime.load_state(checkpoint.state_path)
+        if is_mistral_factorial_protocol(protocol):
+            verify_optimizer_step = getattr(runtime, "verify_resume_optimizer_step", None)
+            if not callable(verify_optimizer_step):
+                raise TypeError("Mistral factorial runtime cannot verify its resume step")
+            verify_optimizer_step(cursor.optimizer_steps)
     order_cache = (
         None
-        if isinstance(bundle, KojimaFaithfulDataBundle)
+        if isinstance(bundle, (KojimaFaithfulDataBundle, MistralFactorialDataBundle))
         else EpochSourceOrderCache(bundle.sources, seed=config.seed)
     )
     provenance = dict(runtime.provenance())
@@ -1514,4 +1694,5 @@ __all__ = [
     "normalized_accumulation_scales",
     "run_adapter_training",
     "validate_micro_step_student_tokens",
+    "validate_mistral_factorial_resume_cursor",
 ]

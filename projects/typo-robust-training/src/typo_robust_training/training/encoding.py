@@ -17,9 +17,7 @@ from typo_robust_training.training.pairs import (
 _QUESTION_PREFIX = "Question:\n"
 _ANSWER_PROMPT_SUFFIX = "\nAnswer:"
 ALL_ALIGNED_OUTPUT_SCOPE = "aligned-non-edited-next-token/v1"
-EDIT_DOWNSTREAM_OUTPUT_SCOPE = (
-    "clean-all-noisy-edited-word-downstream-offsets-2-16/v1"
-)
+EDIT_DOWNSTREAM_OUTPUT_SCOPE = "clean-all-noisy-edited-word-downstream-offsets-2-16/v1"
 _DOWNSTREAM_OFFSETS = range(2, 17)
 
 
@@ -104,11 +102,17 @@ def _flat(value: object, *, field: str) -> list[Any]:
 
 
 def _tokenize(
-    tokenizer: Any, *, text: str, max_length: int
+    tokenizer: Any,
+    *,
+    text: str,
+    max_length: int,
+    add_special_tokens: bool = True,
 ) -> tuple[tuple[int, ...], tuple[int, ...], tuple[tuple[int, int], ...]]:
+    if type(add_special_tokens) is not bool:
+        raise TypeError("training add_special_tokens must be boolean")
     encoded = tokenizer(
         text,
-        add_special_tokens=True,
+        add_special_tokens=add_special_tokens,
         truncation=True,
         max_length=max_length,
         return_attention_mask=True,
@@ -199,6 +203,7 @@ def encode_training_pair(
     require_answer_targets: bool = False,
     require_all_edits_visible: bool = False,
     require_downstream_targets: bool = False,
+    add_special_tokens: bool = True,
 ) -> PairedEncoding:
     """Tokenize one pair and derive all masks without heuristic token alignment."""
 
@@ -206,10 +211,16 @@ def encode_training_pair(
         raise ValueError("training max_length must be at least two")
     rendered = render_training_pair(pair)
     clean_ids, clean_mask, clean_offsets = _tokenize(
-        tokenizer, text=rendered.clean_text, max_length=max_length
+        tokenizer,
+        text=rendered.clean_text,
+        max_length=max_length,
+        add_special_tokens=add_special_tokens,
     )
     typo_ids, typo_mask, typo_offsets = _tokenize(
-        tokenizer, text=rendered.typo_text, max_length=max_length
+        tokenizer,
+        text=rendered.typo_text,
+        max_length=max_length,
+        add_special_tokens=add_special_tokens,
     )
     aligned = align_unchanged_token_positions(
         clean_text=rendered.clean_text,
