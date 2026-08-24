@@ -60,6 +60,7 @@ TRAINING_PLUGIN_COMMANDS = frozenset(
         "prepare-kojima-faithful-data",
         "build-robustness-training-data",
         "build-sae-clean-corpus",
+        "calibrate-evaluation-v2-severity",
         "calibrate-sparse-autoencoder-l1",
         "evaluate-typo-robustness",
         "freeze-generic-localization-pairs",

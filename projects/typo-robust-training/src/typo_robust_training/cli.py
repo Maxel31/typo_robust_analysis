@@ -102,6 +102,29 @@ def _run_freeze_tokenizer_attestation(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_calibrate_evaluation_v2_severity(args: argparse.Namespace) -> int:
+    from typo_robust_training.evaluation.calibration_v2 import (
+        run_base_only_severity_calibration,
+    )
+
+    try:
+        result = run_base_only_severity_calibration(
+            config_path=args.protocol,
+            observations_path=args.base_observations,
+            item_manifest_path=args.item_manifest,
+            realized_typo_manifest_path=args.realized_typo_manifest,
+            output_dir=args.output_dir,
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"calibrate-evaluation-v2-severity: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Base-only calibration status: {result.status}")
+    print(f"selected primary edit count: {result.selected_edit_count}")
+    print(f"calibration artifact: {result.artifact_path}")
+    print(f"run manifest: {result.run_path}")
+    return 0 if result.selected_edit_count is not None else 2
+
+
 def _run_select_layers(args: argparse.Namespace) -> int:
     from typo_robust_training.localization.runner import (
         LayerSelectionRunConfig,
@@ -666,6 +689,22 @@ def register_commands(
     freeze.add_argument("--exclude-data", required=True, type=Path)
     freeze.add_argument("--output-dir", required=True, type=Path)
     freeze.set_defaults(_typo_cot_plugin_handler=_run_freeze_evaluation)
+
+    calibration_v2 = commands.add_parser(
+        "calibrate-evaluation-v2-severity",
+        help=(
+            "Select the frozen v2 typo severity from Base-only observations, "
+            "or stop without extending the grid."
+        ),
+    )
+    calibration_v2.add_argument("--protocol", required=True, type=Path)
+    calibration_v2.add_argument("--base-observations", required=True, type=Path)
+    calibration_v2.add_argument("--item-manifest", required=True, type=Path)
+    calibration_v2.add_argument("--realized-typo-manifest", required=True, type=Path)
+    calibration_v2.add_argument("--output-dir", required=True, type=Path)
+    calibration_v2.set_defaults(
+        _typo_cot_plugin_handler=_run_calibrate_evaluation_v2_severity
+    )
 
     generic_pairs = commands.add_parser(
         "freeze-generic-localization-pairs",

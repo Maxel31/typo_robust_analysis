@@ -1,0 +1,41 @@
+{
+  "schema_version": "robustness-evaluation-v2-registry/v1",
+  "protocol_id": "typo-robustness-evaluation-v2.0",
+  "state": "pending-calibration",
+  "protocol_sha256": null,
+  "model_inventory": [
+    {
+      "id": "google/gemma-3-4b-it",
+      "revision": "093f9f388b31de276ce2de164bdc2081324b9767"
+    },
+    {
+      "id": "mistralai/Mistral-7B-Instruct-v0.3",
+      "revision": "c170c708c41dac9275d15a8fff4eca08d52bab71"
+    }
+  ],
+  "governance_attestation": {
+    "adapter_outputs_used_for_calibration": false,
+    "severity_grid_extended": false,
+    "model_inventory_changed_after_calibration": false
+  },
+  "calibration": {
+    "status": "pending",
+    "item_manifest_sha256": null,
+    "realized_typo_manifest_sha256": null,
+    "base_observations_sha256": null,
+    "result_sha256": null,
+    "selected_primary_edit_count": null
+  },
+  "confirmatory": {
+    "status": "pending",
+    "item_manifest_sha256": null,
+    "realized_typo_variant_manifest_sha256": null,
+    "arm_checkpoint_registry_sha256": null,
+    "opening_log_sha256": null
+  },
+  "legacy_random_2": {
+    "role": "secondary-continuity-only",
+    "v1_protocol_sha256": "2f52a300ab7ecb84288e3c67a38e61d1c37a17f48c9d01d37c6c29b701182054",
+    "frozen_registry_sha256": null
+  }
+}
