@@ -83,6 +83,24 @@ def _run_freeze_evaluation(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_freeze_tokenizer_attestation(args: argparse.Namespace) -> int:
+    from typo_robust_training.tokenizer_freeze import freeze_tokenizer_attestation
+
+    try:
+        result = freeze_tokenizer_attestation(
+            model=args.model,
+            revision=args.revision,
+            code_revision=args.code_revision,
+            output_dir=args.output_dir,
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"freeze-tokenizer-attestation: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"frozen tokenizer attestation: {result.attestation_path}")
+    print(f"freeze producer manifest: {result.run_manifest_path}")
+    return 0
+
+
 def _run_select_layers(args: argparse.Namespace) -> int:
     from typo_robust_training.localization.runner import (
         LayerSelectionRunConfig,
@@ -611,6 +629,16 @@ def register_commands(
 ) -> None:
     """Register training operations only when this separate project is installed."""
 
+    tokenizer = commands.add_parser(
+        "freeze-tokenizer-attestation",
+        help="Freeze an exact Hub tokenizer snapshot for all scientific runtimes.",
+    )
+    tokenizer.add_argument("--model", required=True)
+    tokenizer.add_argument("--revision", required=True)
+    tokenizer.add_argument("--code-revision", required=True)
+    tokenizer.add_argument("--output-dir", required=True, type=Path)
+    tokenizer.set_defaults(_typo_cot_plugin_handler=_run_freeze_tokenizer_attestation)
+
     parser = commands.add_parser(
         "build-robustness-training-data",
         help="Build leakage-resistant training, diagnostic, and held-out typo manifests.",
@@ -696,9 +724,7 @@ def register_commands(
     gate.add_argument("--runtime-manifest", required=True, type=Path)
     gate.add_argument("--gpu-id", required=True)
     gate.add_argument("--output-dir", required=True, type=Path)
-    gate.set_defaults(
-        _typo_cot_plugin_handler=_run_validate_probe_transition_single_layer_gate
-    )
+    gate.set_defaults(_typo_cot_plugin_handler=_run_validate_probe_transition_single_layer_gate)
 
     semantic_kill = commands.add_parser(
         "run-probe-semantic-subspace-kill-test",
@@ -710,9 +736,7 @@ def register_commands(
     semantic_kill.add_argument("--pca-fit-manifest", required=True, type=Path)
     semantic_kill.add_argument("--gpu-id", required=True)
     semantic_kill.add_argument("--output-dir", required=True, type=Path)
-    semantic_kill.set_defaults(
-        _typo_cot_plugin_handler=_run_probe_semantic_subspace_kill_test
-    )
+    semantic_kill.set_defaults(_typo_cot_plugin_handler=_run_probe_semantic_subspace_kill_test)
 
     sae_corpus = commands.add_parser(
         "build-sae-clean-corpus",
@@ -916,9 +940,7 @@ def register_commands(
                 "factorial-probe-suffix-downstream-horizon",
                 "factorial-random-layers-downstream-horizon",
             },
-            accepts_state_gate=(
-                condition == "probe-transition-single-layer-state-distillation"
-            ),
+            accepts_state_gate=(condition == "probe-transition-single-layer-state-distillation"),
         )
 
     evaluation = commands.add_parser(

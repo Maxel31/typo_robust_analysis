@@ -64,6 +64,7 @@ TRAINING_PLUGIN_COMMANDS = frozenset(
         "evaluate-typo-robustness",
         "freeze-generic-localization-pairs",
         "freeze-robustness-evaluation",
+        "freeze-tokenizer-attestation",
         "localize-robustness-components",
         "materialize-probe-output-factorial-configs",
         "materialize-probe-transition-state-training-config",
