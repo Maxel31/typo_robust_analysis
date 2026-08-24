@@ -160,6 +160,14 @@ class HuggingFaceProbeActivationProvider:
         self.code_revision = _checkout_code_revision()
         if self.code_revision != protocol.code_revision:
             raise ValueError("executing code revision differs from the preregistration")
+        from typo_cot.models.tokenizer_attestation import (
+            preflight_frozen_tokenizer_attestation,
+        )
+
+        frozen_tokenizer_attestation = preflight_frozen_tokenizer_attestation(
+            expected_model=protocol.model,
+            expected_revision=protocol.model_revision,
+        )
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None and visible != gpu_id:
             raise ValueError(
@@ -200,6 +208,10 @@ class HuggingFaceProbeActivationProvider:
             expected_model=protocol.model,
             expected_revision=protocol.model_revision,
         )
+        if self.tokenizer_snapshot_attestation.provenance_dict() != (
+            frozen_tokenizer_attestation.provenance_dict()
+        ):
+            raise ValueError("probe tokenizer attestation changed after preflight")
         if getattr(self.tokenizer, "is_fast", False) is not True:
             raise ValueError("probe activation runtime requires a fast tokenizer")
         self.layers = tuple(find_decoder_layers(self._model))

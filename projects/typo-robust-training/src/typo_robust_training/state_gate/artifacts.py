@@ -18,7 +18,10 @@ from typo_robust_training.data.perturb import (
     is_keyboard_neighbor_substitution,
 )
 from typo_robust_training.data.splits import normalized_content_sha256
-from typo_robust_training.probe import load_probe_transition_artifact
+from typo_robust_training.probe.artifacts import (
+    load_probe_transition_artifact,
+    require_probe_artifact_child_eligibility,
+)
 from typo_robust_training.state_gate.config import (
     SingleLayerGateProtocol,
     load_single_layer_gate_config,
@@ -220,7 +223,11 @@ def load_gate_cohort_manifest(
     protocol: SingleLayerGateProtocol,
 ) -> tuple[SingleLayerGateRecord, ...]:
     value = _json(path)
-    if set(value) != _MANIFEST_FIELDS or value["schema_version"] != "typo-single-layer-gate-cohort/v1" or value["role"] != "independent-generic-fineweb":
+    if (
+        set(value) != _MANIFEST_FIELDS
+        or value["schema_version"] != "typo-single-layer-gate-cohort/v1"
+        or value["role"] != "independent-generic-fineweb"
+    ):
         raise ValueError("single-layer gate cohort manifest identity differs")
     rows = value["records"]
     if not isinstance(rows, list) or len(rows) != protocol.records:
@@ -233,18 +240,32 @@ def load_gate_cohort_manifest(
         typo = _string(row["typo_text"], field="gate typo text")
         clean_hash = _sha(row["normalized_clean_sha256"], field="gate clean hash")
         typo_hash = _sha(row["normalized_noisy_sha256"], field="gate typo hash")
-        if normalized_content_sha256(clean) != clean_hash or normalized_content_sha256(typo) != typo_hash or clean == typo:
+        if (
+            normalized_content_sha256(clean) != clean_hash
+            or normalized_content_sha256(typo) != typo_hash
+            or clean == typo
+        ):
             raise ValueError("single-layer gate resolved text hash differs or pair is a no-op")
         clean_span = _span(row["clean_word_char_span"], text=clean, field="clean span")
         typo_span = _span(row["typo_word_char_span"], text=typo, field="typo span")
-        if clean[: clean_span[0]] != typo[: typo_span[0]] or clean[clean_span[1] :] != typo[typo_span[1] :]:
+        if (
+            clean[: clean_span[0]] != typo[: typo_span[0]]
+            or clean[clean_span[1] :] != typo[typo_span[1] :]
+        ):
             raise ValueError("single-layer gate pair must isolate one edited word")
         edit_type = _string(row["edit_type"], field="gate edit type")
         observed = classify_character_edit(
             clean=clean[slice(*clean_span)], typo=typo[slice(*typo_span)]
         )
-        expected = "natural-statistics-substitution" if edit_type == "keyboard-neighbor-substitution" else edit_type
-        if edit_type not in {"keyboard-neighbor-substitution", "deletion", "duplication"} or observed != expected:
+        expected = (
+            "natural-statistics-substitution"
+            if edit_type == "keyboard-neighbor-substitution"
+            else edit_type
+        )
+        if (
+            edit_type not in {"keyboard-neighbor-substitution", "deletion", "duplication"}
+            or observed != expected
+        ):
             raise ValueError("single-layer gate edit operation differs")
         if edit_type == "keyboard-neighbor-substitution" and not is_keyboard_neighbor_substitution(
             clean=clean[slice(*clean_span)], typo=typo[slice(*typo_span)]
@@ -264,12 +285,16 @@ def load_gate_cohort_manifest(
                 typo_word_char_span=typo_span,
                 edit_type=edit_type,
                 edit_count=_integer(row["edit_count"], field="gate edit count", minimum=1),
-                token_inflation_bucket=_string(row["token_inflation_bucket"], field="gate token inflation"),
+                token_inflation_bucket=_string(
+                    row["token_inflation_bucket"], field="gate token inflation"
+                ),
             )
         )
         if parsed[-1].edit_count != 1:
             raise ValueError("single-layer gate requires exactly one typo")
-    if len({row.record_id for row in parsed}) != len(parsed) or len({row.pair_id for row in parsed}) != len(parsed):
+    if len({row.record_id for row in parsed}) != len(parsed) or len(
+        {row.pair_id for row in parsed}
+    ) != len(parsed):
         raise ValueError("single-layer gate record and pair ids must be unique")
     normalized_hashes = [
         digest
@@ -277,9 +302,7 @@ def load_gate_cohort_manifest(
         for digest in (row.normalized_clean_sha256, row.normalized_noisy_sha256)
     ]
     if len(set(normalized_hashes)) != len(normalized_hashes):
-        raise ValueError(
-            "single-layer gate normalized clean/noisy content must be unique"
-        )
+        raise ValueError("single-layer gate normalized clean/noisy content must be unique")
     parent_to_group: dict[str, str] = {}
     for row in parsed:
         previous = parent_to_group.setdefault(
@@ -287,9 +310,7 @@ def load_gate_cohort_manifest(
             row.source_group_sha256,
         )
         if previous != row.source_group_sha256:
-            raise ValueError(
-                "single-layer gate parent source maps to multiple bootstrap groups"
-            )
+            raise ValueError("single-layer gate parent source maps to multiple bootstrap groups")
     if Counter(row.stratum for row in parsed) != Counter(protocol.stratum_counts):
         raise ValueError("single-layer gate manifest strata differ from preregistration")
     return tuple(parsed)
@@ -297,7 +318,10 @@ def load_gate_cohort_manifest(
 
 def _load_protected_registry(path: Path) -> frozenset[str]:
     value = _json(path)
-    if set(value) != {"schema_version", "registries"} or value["schema_version"] != "typo-protected-split-registry/v1":
+    if (
+        set(value) != {"schema_version", "registries"}
+        or value["schema_version"] != "typo-protected-split-registry/v1"
+    ):
         raise ValueError("gate protected split registry identity differs")
     rows = value["registries"]
     required = {"training", "localization", "tune", "pre-pr", "sealed"}
@@ -309,7 +333,12 @@ def _load_protected_registry(path: Path) -> frozenset[str]:
         raise ValueError("gate protected split tier inventory differs")
     by_tier: dict[str, set[str]] = {}
     for row in rows:
-        if not isinstance(row, Mapping) or set(row) != {"tier", "source_group_sha256", "parent_source_sha256", "normalized_content_sha256"}:
+        if not isinstance(row, Mapping) or set(row) != {
+            "tier",
+            "source_group_sha256",
+            "parent_source_sha256",
+            "normalized_content_sha256",
+        }:
             raise ValueError("gate protected split row fields differ")
         tier = _string(row["tier"], field="gate protected tier")
         identities: set[str] = set()
@@ -340,21 +369,28 @@ def deterministic_cross_item_donor_plan(
         raise ValueError("cross-item donor plan requires at least two records")
     for shift in range(1, len(rows)):
         donors = rows[shift:] + rows[:shift]
-        if all(row.source_group_sha256 != donor.source_group_sha256 for row, donor in zip(rows, donors, strict=True)):
+        if all(
+            row.source_group_sha256 != donor.source_group_sha256
+            for row, donor in zip(rows, donors, strict=True)
+        ):
             return MappingProxyType(
                 {row.pair_id: donor.pair_id for row, donor in zip(rows, donors, strict=True)}
             )
     raise ValueError("gate cohort has no source-group-disjoint cyclic derangement")
 
 
-def _load_donor_plan(
-    path: Path, *, records: Sequence[SingleLayerGateRecord]
-) -> Mapping[str, str]:
+def _load_donor_plan(path: Path, *, records: Sequence[SingleLayerGateRecord]) -> Mapping[str, str]:
     value = _json(path)
-    if set(value) != {"schema_version", "rule", "records"} or value["schema_version"] != "typo-cross-item-donor-plan/v1" or value["rule"] != "first-valid-cyclic-source-group-derangement/v1":
+    if (
+        set(value) != {"schema_version", "rule", "records"}
+        or value["schema_version"] != "typo-cross-item-donor-plan/v1"
+        or value["rule"] != "first-valid-cyclic-source-group-derangement/v1"
+    ):
         raise ValueError("single-layer gate donor plan identity differs")
     rows = value["records"]
-    if not isinstance(rows, list) or any(not isinstance(row, Mapping) or set(row) != {"pair_id", "donor_pair_id"} for row in rows):
+    if not isinstance(rows, list) or any(
+        not isinstance(row, Mapping) or set(row) != {"pair_id", "donor_pair_id"} for row in rows
+    ):
         raise ValueError("single-layer gate donor plan rows differ")
     observed = {
         _string(row["pair_id"], field="gate donor pair id"): _string(
@@ -372,11 +408,24 @@ def _load_runtime_manifest(
 ) -> Mapping[str, object]:
     value = _json(path)
     expected = {
-        "schema_version", "provider", "model", "model_revision", "teacher_revision",
-        "student_revision", "tokenizer_revision", "code_revision", "source_tree_sha256",
+        "schema_version",
+        "provider",
+        "model",
+        "model_revision",
+        "teacher_revision",
+        "student_revision",
+        "tokenizer_revision",
+        "code_revision",
+        "source_tree_sha256",
         "tokenizer_snapshot_attestation",
-        "decoder_layers", "dtype", "hook_site", "coordinate", "readout",
-        "base_model_frozen", "packages", "hardware",
+        "decoder_layers",
+        "dtype",
+        "hook_site",
+        "coordinate",
+        "readout",
+        "base_model_frozen",
+        "packages",
+        "hardware",
     }
     if not isinstance(value, Mapping) or set(value) != expected:
         raise ValueError("single-layer gate runtime manifest fields differ")
@@ -418,14 +467,22 @@ def _offsets(value: object, *, field: str) -> tuple[tuple[int, int], ...]:
         raise ValueError(f"{field} must be a non-empty offset list")
     result: list[tuple[int, int]] = []
     for row in value:
-        if not isinstance(row, list) or len(row) != 2 or any(isinstance(item, bool) or not isinstance(item, int) for item in row):
+        if (
+            not isinstance(row, list)
+            or len(row) != 2
+            or any(isinstance(item, bool) or not isinstance(item, int) for item in row)
+        ):
             raise ValueError(f"{field} contains an invalid token offset")
         result.append((row[0], row[1]))
     return tuple(result)
 
 
 def _word_final(offsets: Sequence[tuple[int, int]], span: tuple[int, int]) -> int:
-    positions = [index for index, (start, stop) in enumerate(offsets) if stop > start and start < span[1] and stop > span[0]]
+    positions = [
+        index
+        for index, (start, stop) in enumerate(offsets)
+        if stop > start and start < span[1] and stop > span[0]
+    ]
     if not positions or max(offsets[index][1] for index in positions) < span[1]:
         raise ValueError("gate raw offsets do not cover the edited word")
     return positions[-1]
@@ -453,7 +510,11 @@ def _load_raw_observations(
     value = _json(path)
     if set(value) != _RAW_FIELDS or value["schema_version"] != "single-layer-gate-raw-kl/v1":
         raise ValueError("single-layer gate raw KL identity differs")
-    if not isinstance(value["bindings"], Mapping) or set(value["bindings"]) != _RAW_BINDINGS or dict(value["bindings"]) != dict(expected_bindings):
+    if (
+        not isinstance(value["bindings"], Mapping)
+        or set(value["bindings"]) != _RAW_BINDINGS
+        or dict(value["bindings"]) != dict(expected_bindings)
+    ):
         raise ValueError("single-layer gate raw KL provenance differs")
     rows = value["records"]
     if not isinstance(rows, list) or len(rows) != len(records):
@@ -468,7 +529,11 @@ def _load_raw_observations(
             raise ValueError("single-layer gate raw row is outside the cohort")
         record = manifests[pair_id]
         donor = manifests[donor_plan[pair_id]]
-        if raw["source_group_sha256"] != record.source_group_sha256 or raw["stratum"] != record.stratum or raw["cross_donor_pair_id"] != donor.pair_id:
+        if (
+            raw["source_group_sha256"] != record.source_group_sha256
+            or raw["stratum"] != record.stratum
+            or raw["cross_donor_pair_id"] != donor.pair_id
+        ):
             raise ValueError("single-layer gate raw row metadata differs")
         layer = _integer(raw["transition_layer"], field="gate raw transition layer", minimum=1)
         if layer != transition_layer:
@@ -477,7 +542,9 @@ def _load_raw_observations(
         typo_offsets = _offsets(raw["typo_prompt_offsets"], field="gate typo prompt offsets")
         clean_position = _integer(raw["clean_word_final_token"], field="gate clean word-final")
         typo_position = _integer(raw["typo_word_final_token"], field="gate typo word-final")
-        if clean_position != _word_final(clean_offsets, record.clean_word_char_span) or typo_position != _word_final(typo_offsets, record.typo_word_char_span):
+        if clean_position != _word_final(
+            clean_offsets, record.clean_word_char_span
+        ) or typo_position != _word_final(typo_offsets, record.typo_word_char_span):
             raise ValueError("single-layer gate raw row patched a non-word-final token")
         offset_donor = _integer(
             raw["offset_donor_clean_token"],
@@ -502,13 +569,23 @@ def _load_raw_observations(
         if not valid and (not isinstance(invalid_reason, str) or not invalid_reason):
             raise ValueError("single-layer gate invalid row requires a reason")
         target_ids = raw["target_token_ids"]
-        if not isinstance(target_ids, list) or len(target_ids) != (16 if valid else 0) or any(isinstance(item, bool) or not isinstance(item, int) or item < 0 for item in target_ids):
+        if (
+            not isinstance(target_ids, list)
+            or len(target_ids) != (16 if valid else 0)
+            or any(
+                isinstance(item, bool) or not isinstance(item, int) or item < 0
+                for item in target_ids
+            )
+        ):
             raise ValueError("single-layer gate target token inventory differs")
         untreated = _trajectory(raw["untreated_kl_2_16"], field="untreated", valid=valid)
         patched = {
             condition: _trajectory(raw[f"{field}_kl_2_16"], field=condition, valid=valid)
             for condition, field in (
-                ("correct", "correct"), ("offset", "offset"), ("cross", "cross"), ("self_copy", "self_copy")
+                ("correct", "correct"),
+                ("offset", "offset"),
+                ("cross", "cross"),
+                ("self_copy", "self_copy"),
             )
         }
         result.append(
@@ -538,6 +615,7 @@ class SingleLayerGateArtifact:
     config_sha256: str
     valid_records: int
     scores: Mapping[str, GateScore]
+    tokenizer_snapshot_attestation: Mapping[str, object]
 
 
 def load_single_layer_gate_artifact(path: Path) -> SingleLayerGateArtifact:
@@ -576,6 +654,7 @@ def load_single_layer_gate_artifact(path: Path) -> SingleLayerGateArtifact:
     if protocol.config_sha256 != hashes["config"]:
         raise ValueError("single-layer gate config content hash differs")
     parent = load_probe_transition_artifact(paths["parent_probe_artifact"])
+    require_probe_artifact_child_eligibility(parent)
     model = _string(payload["model"], field="gate model")
     revision = _string(payload["model_revision"], field="gate model revision")
     code_revision = _string(payload["code_revision"], field="gate code revision")
@@ -602,13 +681,23 @@ def load_single_layer_gate_artifact(path: Path) -> SingleLayerGateArtifact:
         raise ValueError("single-layer gate input differs from preregistration")
     records = load_gate_cohort_manifest(paths["cohort_manifest"], protocol=protocol)
     protected = _load_protected_registry(paths["protected_split_registry"])
-    if hashes["protected_split_registry"] != parent.protected_split_registry_sha256 or protected != parent.identity_inventory.protected:
+    if (
+        hashes["protected_split_registry"] != parent.protected_split_registry_sha256
+        or protected != parent.identity_inventory.protected
+    ):
         raise ValueError("single-layer gate protected registry differs from the parent probe")
     cohort_identities = frozenset().union(*(record.identities for record in records))
     if cohort_identities & parent.identity_inventory.all or cohort_identities & protected:
         raise ValueError("single-layer gate cohort overlaps parent or protected data transitively")
     donor_plan = _load_donor_plan(paths["donor_plan"], records=records)
-    _load_runtime_manifest(paths["runtime_manifest"], protocol=protocol)
+    runtime_manifest = _load_runtime_manifest(paths["runtime_manifest"], protocol=protocol)
+    runtime_attestation = runtime_manifest["tokenizer_snapshot_attestation"]
+    if not isinstance(runtime_attestation, Mapping):  # validated above; keep the edge explicit
+        raise ValueError("single-layer gate runtime tokenizer provenance differs")
+    if parent.tokenizer_snapshot_attestation is not None and dict(
+        parent.tokenizer_snapshot_attestation
+    ) != dict(runtime_attestation):
+        raise ValueError("single-layer gate tokenizer provenance differs from parent probe")
     observations = _load_raw_observations(
         paths["raw_kl"],
         protocol=protocol,
@@ -624,9 +713,7 @@ def load_single_layer_gate_artifact(path: Path) -> SingleLayerGateArtifact:
             "runtime_manifest_sha256": hashes["runtime_manifest"],
         },
     )
-    result = score_single_layer_gate(
-        observations, protocol=protocol, transition_layer=transition
-    )
+    result = score_single_layer_gate(observations, protocol=protocol, transition_layer=transition)
     if payload["passed"] is not True or not result.passed:
         raise ValueError("single-layer causal gate did not pass recomputation")
     return SingleLayerGateArtifact(
@@ -639,6 +726,7 @@ def load_single_layer_gate_artifact(path: Path) -> SingleLayerGateArtifact:
         config_sha256=protocol.config_sha256,
         valid_records=result.valid_records,
         scores=result.scores,
+        tokenizer_snapshot_attestation=MappingProxyType(dict(runtime_attestation)),
     )
 
 

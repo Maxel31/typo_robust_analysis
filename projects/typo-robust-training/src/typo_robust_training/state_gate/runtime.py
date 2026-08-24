@@ -224,6 +224,14 @@ class HuggingFaceSingleLayerGateProvider:
             raise ValueError(
                 "single-layer gate executing code revision differs from preregistration"
             )
+        from typo_cot.models.tokenizer_attestation import (
+            preflight_frozen_tokenizer_attestation,
+        )
+
+        frozen_tokenizer_attestation = preflight_frozen_tokenizer_attestation(
+            expected_model=protocol.model,
+            expected_revision=protocol.model_revision,
+        )
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None and visible != gpu_id:
             raise ValueError("CUDA_VISIBLE_DEVICES conflicts with the requested gate GPU")
@@ -262,6 +270,10 @@ class HuggingFaceSingleLayerGateProvider:
             expected_model=protocol.model,
             expected_revision=protocol.model_revision,
         )
+        if self.tokenizer_snapshot_attestation.provenance_dict() != (
+            frozen_tokenizer_attestation.provenance_dict()
+        ):
+            raise ValueError("state-gate tokenizer attestation changed after preflight")
         if getattr(self.tokenizer, "is_fast", False) is not True:
             raise ValueError("single-layer gate requires a fast tokenizer")
         self.layers = tuple(find_decoder_layers(self.model))

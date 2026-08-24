@@ -18,6 +18,8 @@ from typo_cot.models.tokenizer_attestation import (
 def frozen_tokenizer_attestation(
     model: str,
     revision: str,
+    *,
+    tokenizer_fingerprint_sha256: str = "c" * 64,
 ) -> tuple[bytes, TokenizerSnapshotAttestation]:
     assets = tuple(
         TokenizerAssetAttestation(
@@ -32,7 +34,7 @@ def frozen_tokenizer_attestation(
         requested_revision=revision,
         observed_commit=revision,
         assets=assets,
-        tokenizer_fingerprint_sha256="c" * 64,
+        tokenizer_fingerprint_sha256=tokenizer_fingerprint_sha256,
         transformers_version=importlib.metadata.version("transformers"),
         tokenizers_version=importlib.metadata.version("tokenizers"),
     )
@@ -44,8 +46,17 @@ def frozen_tokenizer_attestation(
     return raw, frozen
 
 
-def tokenizer_attestation_provenance(model: str, revision: str) -> dict[str, object]:
-    return frozen_tokenizer_attestation(model, revision)[1].provenance_dict()
+def tokenizer_attestation_provenance(
+    model: str,
+    revision: str,
+    *,
+    tokenizer_fingerprint_sha256: str = "c" * 64,
+) -> dict[str, object]:
+    return frozen_tokenizer_attestation(
+        model,
+        revision,
+        tokenizer_fingerprint_sha256=tokenizer_fingerprint_sha256,
+    )[1].provenance_dict()
 
 
 def write_tokenizer_attestation_manifest(

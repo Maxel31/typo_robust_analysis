@@ -15,6 +15,7 @@ from typo_cot.models.tokenizer_attestation import (
     TokenizerSnapshotAttestation,
     _ResolvedTokenizerSnapshot,
     load_attested_tokenizer,
+    preflight_frozen_tokenizer_attestation,
     require_frozen_tokenizer_attestation,
     tokenizer_attestation_manifest_bytes,
     tokenizer_fingerprint_sha256,
@@ -538,6 +539,42 @@ def test_attested_load_rejects_remote_code_before_resolution(
     )
     with pytest.raises(ValueError, match="forbid trust_remote_code"):
         load_attested_tokenizer("org/model", "a" * 40, trust_remote_code=True)
+
+
+def test_preflight_rejects_wrong_identity_without_hub_or_tokenizer_load(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    commit = "a" * 40
+    expected = _expected_attestation(
+        commit=commit,
+        tokenizer_config_sha256="b" * 64,
+        fingerprint="c" * 64,
+    )
+    manifest_path = tmp_path / "tokenizer-attestation.json"
+    manifest_path.write_bytes(tokenizer_attestation_manifest_bytes(expected))
+    monkeypatch.setenv(module.TOKENIZER_ATTESTATION_MANIFEST_ENV, str(manifest_path))
+    monkeypatch.setattr(
+        module.HfApi,
+        "list_repo_files",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network used")),
+    )
+    monkeypatch.setattr(
+        module.AutoTokenizer,
+        "from_pretrained",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("tokenizer loaded")),
+    )
+    monkeypatch.setattr(
+        module.importlib.metadata,
+        "version",
+        lambda name: "4.57.6" if name == "transformers" else "0.22.1",
+    )
+
+    with pytest.raises(ValueError, match="identity differs"):
+        preflight_frozen_tokenizer_attestation(
+            expected_model="wrong/model",
+            expected_revision=commit,
+        )
 
 
 def test_scientific_consumer_rejects_empty_or_dynamic_attestation(

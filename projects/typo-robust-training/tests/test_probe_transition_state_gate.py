@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,11 +13,13 @@ from _tokenizer_attestation import tokenizer_attestation_provenance
 from test_probe_transition_artifact import _bundle as _parent_bundle
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.probe import load_probe_transition_artifact
+from typo_robust_training.probe import artifacts as probe_artifacts
 from typo_robust_training.state_gate.artifacts import (
     SingleLayerGateRecord,
     deterministic_cross_item_donor_plan,
     load_single_layer_gate_artifact,
 )
+from typo_robust_training.state_gate import artifacts as gate_artifacts
 from typo_robust_training.state_gate.config import load_single_layer_gate_config
 from typo_robust_training.state_gate.producer import produce_single_layer_gate_artifact
 from typo_robust_training.state_gate.runtime import (
@@ -36,12 +39,35 @@ def _write(path: Path, value: object) -> Path:
     return path
 
 
+@pytest.fixture(autouse=True)
+def _allow_exact_legacy_parent_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Let downstream tests use their deterministic pre-attestation fixture only."""
+
+    root = tmp_path / "eligibility-parent"
+    root.mkdir()
+    artifact_path, _payload, _files = _parent_bundle(root)
+    artifact = load_probe_transition_artifact(artifact_path)
+    monkeypatch.setattr(
+        probe_artifacts,
+        "_LEGACY_TOKENIZER_UNATTESTED_ALLOWLIST",
+        frozenset(
+            (*probe_artifacts._LEGACY_TOKENIZER_UNATTESTED_ALLOWLIST, artifact.artifact_sha256)
+        ),
+    )
+
+
 def _gate_inputs(tmp_path: Path) -> tuple[dict[str, Path], object]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     parent_root = tmp_path / "parent"
     parent_root.mkdir()
     parent_path, _parent_payload, parent_files = _parent_bundle(parent_root)
     parent = load_probe_transition_artifact(parent_path)
+    probe_artifacts._LEGACY_TOKENIZER_UNATTESTED_ALLOWLIST = frozenset(
+        (*probe_artifacts._LEGACY_TOKENIZER_UNATTESTED_ALLOWLIST, parent.artifact_sha256)
+    )
     rows: list[dict[str, object]] = []
     operations = (
         ("keyboard-neighbor-substitution", "slpha", "same"),
@@ -351,9 +377,7 @@ def test_gate_rejects_wrong_layer_or_word_final_coordinate(tmp_path: Path) -> No
     artifact_path, _inputs = _produce(tmp_path / "cross-token")
     _mutate_raw(
         artifact_path,
-        lambda raw: raw["records"][0].update(
-            {"cross_donor_clean_word_final_token": 1}
-        ),
+        lambda raw: raw["records"][0].update({"cross_donor_clean_word_final_token": 1}),
     )
     with pytest.raises(ValueError, match="cross donor patched a non-word-final"):
         load_single_layer_gate_artifact(artifact_path)
@@ -410,7 +434,9 @@ def test_gate_rejects_non_identity_self_copy_and_parent_tamper(tmp_path: Path) -
 
     artifact_path, _inputs = _produce(tmp_path / "parent-tamper")
     payload = json.loads(artifact_path.read_text())
-    parent_path = artifact_path.parent / payload["references"]["parent_probe_artifact"]["relative_path"]
+    parent_path = (
+        artifact_path.parent / payload["references"]["parent_probe_artifact"]["relative_path"]
+    )
     parent_path.write_bytes(parent_path.read_bytes() + b" ")
     with pytest.raises(ValueError, match="hash-mismatched"):
         load_single_layer_gate_artifact(artifact_path)
@@ -503,9 +529,7 @@ def test_gate_rejects_parent_source_split_across_bootstrap_groups(
 ) -> None:
     inputs, provenance = _gate_inputs(tmp_path)
     cohort = json.loads(inputs["cohort"].read_text())
-    cohort["records"][1]["parent_source_sha256"] = cohort["records"][0][
-        "parent_source_sha256"
-    ]
+    cohort["records"][1]["parent_source_sha256"] = cohort["records"][0]["parent_source_sha256"]
     _rewrite_cohort_and_rebind_config(inputs, cohort)
 
     with pytest.raises(ValueError, match="parent source maps to multiple bootstrap groups"):
@@ -920,3 +944,57 @@ def test_donor_plan_requires_source_group_derangement() -> None:
     )
     with pytest.raises(ValueError, match="at least two"):
         deterministic_cross_item_donor_plan((row,))
+
+
+def test_gate_rejects_rehashed_tokenizer_drift_from_attested_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_path, _inputs = _produce(tmp_path)
+    payload = json.loads(artifact_path.read_text())
+    references = payload["references"]
+
+    runtime_path = artifact_path.parent / references["runtime_manifest"]["relative_path"]
+    runtime = json.loads(runtime_path.read_text())
+    runtime["tokenizer_snapshot_attestation"] = tokenizer_attestation_provenance(
+        runtime["model"],
+        runtime["model_revision"],
+        tokenizer_fingerprint_sha256="d" * 64,
+    )
+    _write(runtime_path, runtime)
+    runtime_sha256 = hashlib.sha256(runtime_path.read_bytes()).hexdigest()
+
+    config_path = artifact_path.parent / references["config"]["relative_path"]
+    config = json.loads(config_path.read_text())
+    config["inputs"]["runtime_manifest_sha256"] = runtime_sha256
+    _write(config_path, config)
+    config_sha256 = hashlib.sha256(config_path.read_bytes()).hexdigest()
+
+    raw_path = artifact_path.parent / references["raw_kl"]["relative_path"]
+    raw = json.loads(raw_path.read_text())
+    raw["bindings"]["runtime_manifest_sha256"] = runtime_sha256
+    raw["bindings"]["config_sha256"] = config_sha256
+    _write(raw_path, raw)
+
+    references["runtime_manifest"]["sha256"] = runtime_sha256
+    references["config"]["sha256"] = config_sha256
+    references["raw_kl"]["sha256"] = hashlib.sha256(raw_path.read_bytes()).hexdigest()
+    _write(artifact_path, payload)
+
+    parent_path = artifact_path.parent / references["parent_probe_artifact"]["relative_path"]
+    legacy_parent = load_probe_transition_artifact(parent_path)
+    attested_parent = replace(
+        legacy_parent,
+        tokenizer_snapshot_attestation=tokenizer_attestation_provenance(
+            legacy_parent.model,
+            legacy_parent.model_revision,
+        ),
+    )
+    monkeypatch.setattr(
+        gate_artifacts,
+        "load_probe_transition_artifact",
+        lambda _path: attested_parent,
+    )
+
+    with pytest.raises(ValueError, match="tokenizer provenance differs from parent probe"):
+        load_single_layer_gate_artifact(artifact_path)

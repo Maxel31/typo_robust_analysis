@@ -135,6 +135,18 @@ class HuggingFaceSemanticSubspaceKillRuntime:
             or set(complement_by_seed) != set(parent.probe_seeds)
         ):
             raise ValueError("semantic kill runtime evidence identity differs")
+        from typo_cot.models.tokenizer_attestation import (
+            preflight_frozen_tokenizer_attestation,
+        )
+
+        frozen_tokenizer_attestation = preflight_frozen_tokenizer_attestation(
+            expected_model=protocol.model,
+            expected_revision=protocol.model_revision,
+        )
+        if parent.tokenizer_snapshot_attestation is not None and dict(
+            parent.tokenizer_snapshot_attestation
+        ) != frozen_tokenizer_attestation.provenance_dict():
+            raise ValueError("semantic kill tokenizer provenance differs from parent probe")
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None and visible != gpu_id:
             raise ValueError("CUDA_VISIBLE_DEVICES conflicts with semantic kill GPU")
@@ -164,6 +176,10 @@ class HuggingFaceSemanticSubspaceKillRuntime:
             expected_model=protocol.model,
             expected_revision=protocol.model_revision,
         )
+        if self.tokenizer_snapshot_attestation.provenance_dict() != (
+            frozen_tokenizer_attestation.provenance_dict()
+        ):
+            raise ValueError("semantic kill tokenizer attestation changed after preflight")
         self.loaded_model_revision, self.loaded_tokenizer_revision = attest_loaded_revisions(
             self.model, self.tokenizer, protocol.model_revision
         )

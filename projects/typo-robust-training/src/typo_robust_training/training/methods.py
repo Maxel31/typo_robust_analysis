@@ -30,6 +30,7 @@ class ProbeTransitionTrainingEvidence:
     decoder_layers: int
     selected_transition_layer: int
     evidence_sha256: str
+    tokenizer_snapshot_attestation: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.model, str) or not self.model:
@@ -50,6 +51,10 @@ class ProbeTransitionTrainingEvidence:
             raise ValueError("probe evidence transition layer is outside the decoder")
         if _SHA256.fullmatch(self.evidence_sha256) is None:
             raise ValueError("probe evidence hash must be a SHA-256 digest")
+        if self.tokenizer_snapshot_attestation is not None and not isinstance(
+            self.tokenizer_snapshot_attestation, Mapping
+        ):
+            raise ValueError("probe tokenizer attestation must be an object")
 
     @property
     def suffix_layers(self) -> tuple[int, ...]:
@@ -66,6 +71,7 @@ class ProbeTransitionStateTrainingEvidence:
     selected_transition_layer: int
     parent_probe_artifact_sha256: str
     evidence_sha256: str
+    tokenizer_snapshot_attestation: Mapping[str, object]
 
     def __post_init__(self) -> None:
         ProbeTransitionTrainingEvidence(
@@ -77,6 +83,8 @@ class ProbeTransitionStateTrainingEvidence:
         )
         if _SHA256.fullmatch(self.parent_probe_artifact_sha256) is None:
             raise ValueError("state gate parent probe hash must be a SHA-256 digest")
+        if not isinstance(self.tokenizer_snapshot_attestation, Mapping):
+            raise ValueError("state gate tokenizer attestation must be an object")
 
     @property
     def suffix_layers(self) -> tuple[int, ...]:
@@ -96,6 +104,7 @@ class ProbeSemanticSubspaceTrainingEvidence:
     projected_class_weights: np.ndarray
     classifier_bias: np.ndarray
     evidence_sha256: str
+    tokenizer_snapshot_attestation: Mapping[str, object]
 
     def __post_init__(self) -> None:
         if not isinstance(self.model, str) or not self.model:
@@ -113,6 +122,8 @@ class ProbeSemanticSubspaceTrainingEvidence:
             or _SHA256.fullmatch(self.evidence_sha256) is None
         ):
             raise ValueError("semantic evidence identity differs")
+        if not isinstance(self.tokenizer_snapshot_attestation, Mapping):
+            raise ValueError("semantic evidence tokenizer attestation must be an object")
         basis = np.asarray(self.basis, dtype=np.float64)
         weights = np.asarray(self.projected_class_weights, dtype=np.float64)
         bias = np.asarray(self.classifier_bias, dtype=np.float64)
@@ -165,8 +176,12 @@ def load_probe_transition_training_evidence(
     if supplied.is_symlink():
         raise ValueError("probe transition evidence must not be a symlink")
     from typo_robust_training.probe import load_probe_transition_artifact
+    from typo_robust_training.probe.artifacts import (
+        require_probe_artifact_child_eligibility,
+    )
 
     artifact = load_probe_transition_artifact(supplied)
+    require_probe_artifact_child_eligibility(artifact)
     if (
         artifact.model != model
         or artifact.model_revision != model_revision
@@ -179,6 +194,7 @@ def load_probe_transition_training_evidence(
         decoder_layers=artifact.decoder_layers,
         selected_transition_layer=artifact.selected_transition_layer,
         evidence_sha256=artifact.artifact_sha256,
+        tokenizer_snapshot_attestation=artifact.tokenizer_snapshot_attestation,
     )
 
 
@@ -210,6 +226,7 @@ def load_probe_transition_state_training_evidence(
         selected_transition_layer=artifact.selected_transition_layer,
         parent_probe_artifact_sha256=artifact.parent_probe_artifact_sha256,
         evidence_sha256=artifact.artifact_sha256,
+        tokenizer_snapshot_attestation=artifact.tokenizer_snapshot_attestation,
     )
 
 
@@ -249,6 +266,7 @@ def load_probe_semantic_subspace_training_evidence(
         projected_class_weights=subspace.projected_class_weights,
         classifier_bias=subspace.classifier_bias,
         evidence_sha256=artifact.artifact_sha256,
+        tokenizer_snapshot_attestation=artifact.tokenizer_snapshot_attestation,
     )
 
 
@@ -476,7 +494,10 @@ def resolve_training_method(
         raise ValueError("probe evidence identity differs from training")
     if protocol.expected_method_evidence_sha256 != evidence.evidence_sha256:
         raise ValueError("probe evidence hash differs from the preregistered training config")
-    if protocol.layer_scope != "probe-transition-suffix" or protocol.layer_policy != "validated-linear-probe-transition-suffix/v1":
+    if (
+        protocol.layer_scope != "probe-transition-suffix"
+        or protocol.layer_policy != "validated-linear-probe-transition-suffix/v1"
+    ):
         raise ValueError("probe transition adapter policy differs")
     state_active = isinstance(evidence, ProbeTransitionStateTrainingEvidence)
     return ResolvedTrainingMethod(
@@ -510,10 +531,20 @@ def materialize_probe_transition_state_training_config(
         raise FileExistsError(f"materialized state training config already exists: {output}")
     payload = strict_loads(template.read_text(encoding="utf-8"), context=str(template.resolve()))
     expected_top = {
-        "schema_version", "condition", "method_evidence", "model", "sequence",
-        "adapter", "optimization", "objective",
+        "schema_version",
+        "condition",
+        "method_evidence",
+        "model",
+        "sequence",
+        "adapter",
+        "optimization",
+        "objective",
     }
-    if not isinstance(payload, Mapping) or set(payload) != expected_top or payload["schema_version"] != "robustness-adapter-training-config/v5-template":
+    if (
+        not isinstance(payload, Mapping)
+        or set(payload) != expected_top
+        or payload["schema_version"] != "robustness-adapter-training-config/v5-template"
+    ):
         raise ValueError("state training template fields or schema differ")
     if payload["method_evidence"] != {
         "schema_version": "probe-transition-state-gate-binding/v1",

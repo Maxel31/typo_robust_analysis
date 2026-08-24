@@ -188,6 +188,21 @@ class TestModelWrapper:
         )
         assert wrapper.tokenizer_snapshot_attestation is attestation
 
+    @patch("typo_cot.models.wrapper.AutoModelForCausalLM.from_pretrained")
+    def test_pinned_remote_code_is_rejected_before_model_load(
+        self,
+        mock_model: MagicMock,
+    ) -> None:
+        with pytest.raises(ValueError, match="forbid trust_remote_code"):
+            ModelWrapper(
+                model_name="gpt2",
+                device=torch.device("cpu"),
+                revision="0123456789abcdef",
+                trust_remote_code=True,
+            )
+
+        mock_model.assert_not_called()
+
     @patch("typo_cot.models.wrapper.AutoTokenizer.from_pretrained")
     def test_tokenize(self, mock_tokenizer: MagicMock) -> None:
         """トークナイズが正しく動作することを確認."""

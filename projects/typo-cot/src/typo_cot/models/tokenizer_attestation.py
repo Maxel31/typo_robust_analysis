@@ -147,9 +147,7 @@ def tokenizer_fingerprint_payload(tokenizer: PreTrainedTokenizerBase) -> dict[st
     special_token_ids: dict[str, Any] = {}
     for name in sorted(str(key) for key in special_map):
         id_name = (
-            "additional_special_tokens_ids"
-            if name == "additional_special_tokens"
-            else f"{name}_id"
+            "additional_special_tokens_ids" if name == "additional_special_tokens" else f"{name}_id"
         )
         special_token_ids[id_name] = getattr(tokenizer, id_name, None)
 
@@ -169,9 +167,7 @@ def tokenizer_fingerprint_payload(tokenizer: PreTrainedTokenizerBase) -> dict[st
         "added_vocab": _canonical_value(get_added_vocab()),
         "special_tokens_map": _canonical_value(special_map),
         "special_token_ids": _canonical_value(special_token_ids),
-        "all_special_tokens": _canonical_value(
-            getattr(tokenizer, "all_special_tokens", None)
-        ),
+        "all_special_tokens": _canonical_value(getattr(tokenizer, "all_special_tokens", None)),
         "all_special_ids": _canonical_value(getattr(tokenizer, "all_special_ids", None)),
         "chat_template": _canonical_value(getattr(tokenizer, "chat_template", None)),
         "behavior_flags": _canonical_value(flags),
@@ -181,7 +177,9 @@ def tokenizer_fingerprint_payload(tokenizer: PreTrainedTokenizerBase) -> dict[st
 def tokenizer_fingerprint_sha256(tokenizer: PreTrainedTokenizerBase) -> str:
     """Hash the canonical tokenizer object payload."""
 
-    return hashlib.sha256(_canonical_json_bytes(tokenizer_fingerprint_payload(tokenizer))).hexdigest()
+    return hashlib.sha256(
+        _canonical_json_bytes(tokenizer_fingerprint_payload(tokenizer))
+    ).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -366,7 +364,9 @@ def _resolve_tokenizer_snapshot(
             _raise_exceptions_for_missing_entries=False,
         )
         if resolved is None:
-            raise ValueError(f"snapshot tokenizer asset is present but not locally cached: {filename}")
+            raise ValueError(
+                f"snapshot tokenizer asset is present but not locally cached: {filename}"
+            )
         asset_commit = extract_commit_hash(resolved, None)
         if asset_commit != observed_commit:
             raise ValueError(f"tokenizer asset {filename} resolved from a different commit")
@@ -463,9 +463,7 @@ def _attestation_from_payload(
         elif sha256 is not None:
             raise ValueError("absent frozen tokenizer asset must not have a SHA256")
         assets.append(TokenizerAssetAttestation(filename, present, sha256))
-    tokenizer_config = next(
-        asset for asset in assets if asset.filename == "tokenizer_config.json"
-    )
+    tokenizer_config = next(asset for asset in assets if asset.filename == "tokenizer_config.json")
     if not tokenizer_config.present:
         raise ValueError("frozen tokenizer attestation omits tokenizer_config.json")
 
@@ -478,11 +476,14 @@ def _attestation_from_payload(
         "tokenizers_version",
         "attestation_sha256",
     )
-    if any(not isinstance(payload.get(field), str) or not payload[field] for field in string_fields):
+    if any(
+        not isinstance(payload.get(field), str) or not payload[field] for field in string_fields
+    ):
         raise ValueError("frozen tokenizer attestation string field differs")
-    if _COMMIT_RE.fullmatch(payload["observed_commit"]) is None or _SHA256_RE.fullmatch(
-        payload["tokenizer_fingerprint_sha256"]
-    ) is None:
+    if (
+        _COMMIT_RE.fullmatch(payload["observed_commit"]) is None
+        or _SHA256_RE.fullmatch(payload["tokenizer_fingerprint_sha256"]) is None
+    ):
         raise ValueError("frozen tokenizer attestation digest or revision differs")
     attestation = TokenizerSnapshotAttestation(
         model_name=payload["model_name"],
@@ -515,7 +516,9 @@ def _attestation_from_manifest(path: Path) -> TokenizerSnapshotAttestation:
     )
 
 
-def load_tokenizer_attestation_manifest(path: str | os.PathLike[str]) -> TokenizerSnapshotAttestation:
+def load_tokenizer_attestation_manifest(
+    path: str | os.PathLike[str],
+) -> TokenizerSnapshotAttestation:
     """Load one frozen audit manifest without contacting the Hub."""
 
     return _attestation_from_manifest(Path(path))
@@ -532,16 +535,50 @@ def frozen_tokenizer_attestation_from_environment() -> TokenizerSnapshotAttestat
     return load_tokenizer_attestation_manifest(raw_path)
 
 
+def preflight_frozen_tokenizer_attestation(
+    *,
+    expected_model: str,
+    expected_revision: str,
+) -> TokenizerSnapshotAttestation:
+    """Validate the frozen tokenizer contract before CUDA or Hub access.
+
+    Scientific entry points call this before direct CUDA access, model loading,
+    or Hub access.  Source-attestation code may already have imported runtime
+    modules, but a missing, malformed, version-incompatible, or wrong-model
+    manifest must fail without allocating GPU memory and without a network
+    request.  ``require_frozen_tokenizer_attestation`` performs the second half
+    of the check after the tokenizer has been loaded.
+    """
+
+    expected = frozen_tokenizer_attestation_from_environment()
+    if expected is None:
+        raise ValueError(f"scientific runtime requires {TOKENIZER_ATTESTATION_MANIFEST_ENV}")
+    if (
+        expected.model_name != expected_model
+        or expected.requested_revision != expected_revision
+        or expected.observed_commit != expected_revision
+    ):
+        raise ValueError("frozen tokenizer manifest identity differs from the runtime")
+    if expected.transformers_version != importlib.metadata.version(
+        "transformers"
+    ) or expected.tokenizers_version != importlib.metadata.version("tokenizers"):
+        raise ValueError("tokenizer library versions differ from frozen manifest")
+    return expected
+
+
 def tokenizer_attestation_manifest_bytes(attestation: TokenizerSnapshotAttestation) -> bytes:
     """Serialize an audit manifest deterministically for pre-run freezing."""
 
-    return json.dumps(
-        attestation.as_dict(),
-        ensure_ascii=False,
-        allow_nan=False,
-        sort_keys=True,
-        indent=2,
-    ).encode("utf-8") + b"\n"
+    return (
+        json.dumps(
+            attestation.as_dict(),
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            indent=2,
+        ).encode("utf-8")
+        + b"\n"
+    )
 
 
 def validate_tokenizer_attestation_provenance(
@@ -585,9 +622,7 @@ def require_frozen_tokenizer_attestation(
         raise ValueError("loaded tokenizer has no snapshot attestation")
     expected = frozen_tokenizer_attestation_from_environment()
     if expected is None:
-        raise ValueError(
-            f"scientific runtime requires {TOKENIZER_ATTESTATION_MANIFEST_ENV}"
-        )
+        raise ValueError(f"scientific runtime requires {TOKENIZER_ATTESTATION_MANIFEST_ENV}")
     if attestation.source_manifest_sha256 is None:
         raise ValueError("loaded tokenizer attestation is not frozen-manifest-backed")
     if (

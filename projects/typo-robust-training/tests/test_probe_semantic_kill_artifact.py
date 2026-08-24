@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,7 @@ from safetensors.numpy import save_file
 from _tokenizer_attestation import tokenizer_attestation_provenance
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.probe import subspace_kill_artifacts as kill_artifacts
+from typo_robust_training.probe import artifacts as probe_artifacts
 from typo_robust_training.probe.artifacts import load_probe_transition_artifact
 from typo_robust_training.probe.attestation import RuntimeCheckoutAttestation
 from typo_robust_training.probe.subspace import (
@@ -89,9 +91,7 @@ def _parent_bundle(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
         tmp_path / "classes.json",
         {
             "schema_version": "typo-word-identity-classes/v1",
-            "classes": [
-                {"class_id": index, "label": label} for index, label in enumerate(labels)
-            ],
+            "classes": [{"class_id": index, "label": label} for index, label in enumerate(labels)],
         },
     )
     manifests: dict[str, dict[str, object]] = {}
@@ -132,9 +132,7 @@ def _parent_bundle(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
                                 "duplication",
                             )[repetition],
                             "edit_count": 1,
-                            "token_inflation_bucket": ("same", "minus-one", "plus-one")[
-                                repetition
-                            ],
+                            "token_inflation_bucket": ("same", "minus-one", "plus-one")[repetition],
                         }
                     )
                 rows.append(row)
@@ -324,9 +322,7 @@ def _parent_bundle(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
             "selection_metric": "largest-group-mean-paired-noise-penalty-drop/v2",
             "selection_rule": "min-argmax-over-layers-one-through-last/v1",
             "tie_break": "smallest-layer/v1",
-            "stability_rule": (
-                "selection-exact-and-validation-within-one-layer-for-both-seeds/v1"
-            ),
+            "stability_rule": ("selection-exact-and-validation-within-one-layer-for-both-seeds/v1"),
             "validation_rule": "group-bootstrap-95pct-lower-positive-for-both-seeds/v1",
             "bootstrap": {
                 "resamples": 10_000,
@@ -341,9 +337,32 @@ def _parent_bundle(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
     return files["artifact"], files
 
 
+@pytest.fixture(autouse=True)
+def _allow_exact_legacy_parent_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Let downstream tests use their deterministic pre-attestation fixture only."""
+
+    root = tmp_path / "eligibility-parent"
+    root.mkdir()
+    artifact_path, _files = _parent_bundle(root)
+    artifact = load_probe_transition_artifact(artifact_path)
+    monkeypatch.setattr(
+        probe_artifacts,
+        "_LEGACY_TOKENIZER_UNATTESTED_ALLOWLIST",
+        frozenset(
+            (*probe_artifacts._LEGACY_TOKENIZER_UNATTESTED_ALLOWLIST, artifact.artifact_sha256)
+        ),
+    )
+
+
 def _child_bundle(tmp_path: Path) -> tuple[Path, dict[str, Path], dict[str, object]]:
     parent_path, parent_files = _parent_bundle(tmp_path)
     parent = load_probe_transition_artifact(parent_path)
+    probe_artifacts._LEGACY_TOKENIZER_UNATTESTED_ALLOWLIST = frozenset(
+        (*probe_artifacts._LEGACY_TOKENIZER_UNATTESTED_ALLOWLIST, parent.artifact_sha256)
+    )
     files = dict(parent_files)
     cohort_rows: list[dict[str, object]] = []
     for index in range(200):
@@ -352,7 +371,9 @@ def _child_bundle(tmp_path: Path) -> tuple[Path, dict[str, Path], dict[str, obje
         clean = f"Independent diagnostic {index} contains {word} and enough continuation tokens."
         start = clean.index(word)
         operation = index % 3
-        typo_word = "m" + word[1:] if operation == 0 else word[1:] if operation == 1 else word[0] + word
+        typo_word = (
+            "m" + word[1:] if operation == 0 else word[1:] if operation == 1 else word[0] + word
+        )
         typo = clean[:start] + typo_word + clean[start + len(word) :]
         cohort_rows.append(
             {
@@ -497,9 +518,7 @@ def _child_bundle(tmp_path: Path) -> tuple[Path, dict[str, Path], dict[str, obje
         subspace_tensors.update(
             {
                 f"seed.{seed}.semantic_basis": semantic[seed].basis,
-                f"seed.{seed}.projected_class_weights": semantic[
-                    seed
-                ].projected_class_weights,
+                f"seed.{seed}.projected_class_weights": semantic[seed].projected_class_weights,
                 f"seed.{seed}.classifier_bias": semantic[seed].classifier_bias,
                 f"seed.{seed}.semantic_complement_basis": deterministic_complement_basis(
                     semantic[seed].basis, seed=202
@@ -647,6 +666,46 @@ def test_loader_rederives_bases_and_both_seed_gates_from_raw_kl(tmp_path: Path) 
     assert artifact.parent_probe_code_revision != artifact.kill_runtime_code_revision
     assert all(summary.passed for summary in artifact.summary_by_seed.values())
     assert artifact.artifact_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_loader_rejects_rehashed_tokenizer_drift_from_attested_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, files, payload = _child_bundle(tmp_path)
+    runtime = json.loads(files["runtime"].read_text())
+    runtime["tokenizer_snapshot_attestation"] = tokenizer_attestation_provenance(
+        runtime["model"],
+        runtime["loaded_tokenizer_revision"],
+        tokenizer_fingerprint_sha256="d" * 64,
+    )
+    _write(files["runtime"], runtime)
+    runtime_sha256 = _ref(files["runtime"])["sha256"]
+    payload["references"]["runtime_provenance"] = _ref(files["runtime"])
+    for seed in (42, 43):
+        score_path = files[f"kill-scores-{seed}"]
+        score = json.loads(score_path.read_text())
+        score["bindings"]["runtime_provenance_sha256"] = runtime_sha256
+        _write(score_path, score)
+        payload["references"]["scores_by_seed"][str(seed)] = _ref(score_path)
+    _write(path, payload)
+
+    legacy_parent = load_probe_transition_artifact(files["artifact"])
+    attested_parent = replace(
+        legacy_parent,
+        tokenizer_snapshot_attestation=tokenizer_attestation_provenance(
+            legacy_parent.model,
+            legacy_parent.model_revision,
+        ),
+    )
+    monkeypatch.setattr(
+        kill_artifacts,
+        "load_probe_transition_artifact",
+        lambda _path: attested_parent,
+    )
+
+    with pytest.raises(ValueError, match="tokenizer provenance differs from parent probe"):
+        _load_kill(path)
 
 
 def test_loader_rejects_random_basis_disguised_as_parent_semantics(tmp_path: Path) -> None:
@@ -819,9 +878,7 @@ class _PassingKillRuntime:
             "teacher_forced_offsets": list(protocol.readout_offsets),
         }
 
-    def scan_pair_all_seeds(
-        self, record: dict[str, object]
-    ) -> dict[int, SubspaceKillScoreRow]:
+    def scan_pair_all_seeds(self, record: dict[str, object]) -> dict[int, SubspaceKillScoreRow]:
         row = {
             "pair_id": record["pair_id"],
             "source_group_sha256": record["source_group_sha256"],
@@ -873,9 +930,7 @@ def test_runner_produces_self_contained_revalidated_evidence(
     assert all(summary.passed for summary in reloaded.summary_by_seed.values())
     shutil_source = files["weights-42"]
     shutil_source.unlink()
-    assert _load_kill(result.artifact_path).artifact_sha256 == (
-        reloaded.artifact_sha256
-    )
+    assert _load_kill(result.artifact_path).artifact_sha256 == (reloaded.artifact_sha256)
 
 
 def test_runner_api_makes_caller_supplied_pca_activations_impossible(tmp_path: Path) -> None:

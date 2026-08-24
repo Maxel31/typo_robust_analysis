@@ -382,6 +382,14 @@ class HuggingFaceRobustnessEvaluationRuntimeFactory:
         if not isinstance(patch_window, PatchWindow):
             raise TypeError("evaluation runtime factory patch window is invalid")
         self.code_revision, self.source_tree_sha256 = _checkout_source_attestation()
+        from typo_cot.models.tokenizer_attestation import (
+            preflight_frozen_tokenizer_attestation,
+        )
+
+        frozen_tokenizer_attestation = preflight_frozen_tokenizer_attestation(
+            expected_model=protocol.model,
+            expected_revision=protocol.model_revision,
+        )
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None and visible != gpu_id:
             raise ValueError(
@@ -423,6 +431,10 @@ class HuggingFaceRobustnessEvaluationRuntimeFactory:
             expected_model=protocol.model,
             expected_revision=protocol.model_revision,
         )
+        if self.tokenizer_snapshot_attestation.provenance_dict() != (
+            frozen_tokenizer_attestation.provenance_dict()
+        ):
+            raise ValueError("evaluation tokenizer attestation changed after preflight")
         self.layers = find_decoder_layers(base_model)
         if not patch_window.layers or patch_window.stop > len(self.layers):
             raise ValueError("evaluation patch window is outside the model")

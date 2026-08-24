@@ -153,6 +153,12 @@ class ModelWrapper:
         self.use_multi_gpu = use_multi_gpu
         self.revision = revision
 
+        if self.revision is not None and self.trust_remote_code:
+            # Scientific pinned loads must fail before the model can execute
+            # repository-provided code.  Rejecting only in the tokenizer path
+            # is too late because ``model`` is commonly accessed first.
+            raise ValueError("pinned scientific loads forbid trust_remote_code=True")
+
         self._model: PreTrainedModel | None = None
         self._tokenizer: PreTrainedTokenizer | None = None
         self._tokenizer_snapshot_attestation: TokenizerSnapshotAttestation | None = None

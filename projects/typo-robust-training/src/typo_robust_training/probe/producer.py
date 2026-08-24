@@ -1263,23 +1263,42 @@ def run_select_probe_transition(
     ):
         raise ValueError("probe activation provider identity or freeze contract differs")
     provider_provenance = dict(provider.provenance())
-    expected_provider_identity = {
-        "model": protocol.model,
-        "model_revision": protocol.model_revision,
-        "code_revision": protocol.code_revision,
-        "base_model_frozen": True,
-    }
-    if any(
-        provider_provenance.get(field) != value
-        for field, value in expected_provider_identity.items()
-    ):
-        raise ValueError("probe activation provider provenance identity differs")
+    if _is_polished_protocol(protocol):
+        from typo_robust_training.probe.artifacts import validate_probe_runtime_provenance
+
+        validate_probe_runtime_provenance(provider_provenance, protocol=protocol)
+    else:
+        expected_provider_identity = {
+            "model": protocol.model,
+            "model_revision": protocol.model_revision,
+            "code_revision": protocol.code_revision,
+            "base_model_frozen": True,
+        }
+        if any(
+            provider_provenance.get(field) != value
+            for field, value in expected_provider_identity.items()
+        ):
+            raise ValueError("probe activation provider provenance identity differs")
+        from typo_cot.models.tokenizer_attestation import (
+            validate_tokenizer_attestation_provenance,
+        )
+
+        validate_tokenizer_attestation_provenance(
+            provider_provenance.get("tokenizer_snapshot_attestation"),
+            expected_model=protocol.model,
+            expected_revision=protocol.model_revision,
+        )
     for role in ("selection", "validation"):
         for record in cohorts[role]:
             observed_bucket = provider.token_inflation_bucket(record)
             if observed_bucket != record.token_inflation_bucket:
                 raise ValueError("probe token inflation bucket differs from the runtime tokenizer")
     output_dir.mkdir(parents=True, exist_ok=True)
+    runtime_provenance_path = _addressed_json(
+        output_dir,
+        label="probe-runtime-provenance",
+        payload=provider_provenance,
+    )
     fit_activations, hidden_size = _activation_matrix(
         provider,
         cohorts["fit"],
@@ -1491,9 +1510,14 @@ def run_select_probe_transition(
     }
     if fit_diagnostics_path is not None:
         references["fit_diagnostics"] = _reference(fit_diagnostics_path, root=output_dir)
+    if _is_polished_protocol(protocol):
+        references["runtime_provenance"] = _reference(
+            runtime_provenance_path,
+            root=output_dir,
+        )
     artifact_payload = {
         "schema_version": (
-            "typo-denoising-probe-selection/v4"
+            "typo-denoising-probe-selection/v5"
             if _is_polished_protocol(protocol)
             else (
                 "typo-denoising-probe-selection/v3"
