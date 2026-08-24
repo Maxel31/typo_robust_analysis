@@ -110,6 +110,49 @@ def _run_freeze_evaluation(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_freeze_protected_split_registry(args: argparse.Namespace) -> int:
+    from typo_robust_training.data.protected_registry import (
+        ProtectedSplitOverlapError,
+        freeze_protected_split_registry,
+    )
+
+    try:
+        result = freeze_protected_split_registry(
+            inventory_path=args.inventory,
+            inventory_sha256=args.inventory_sha256,
+            output_dir=args.output_dir,
+        )
+    except ProtectedSplitOverlapError as exc:
+        print(f"freeze-protected-split-registry: error: {exc}", file=sys.stderr)
+        print(exc.audit_json, file=sys.stderr)
+        return 1
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"freeze-protected-split-registry: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"frozen protected split registry: {result.registry_path}")
+    print(f"producer record: {result.run_path}")
+    print(f"externally pin producer record SHA256: {result.producer_record_sha256}")
+    return 0
+
+
+def _run_verify_protected_split_registry(args: argparse.Namespace) -> int:
+    from typo_robust_training.data.protected_registry import (
+        load_protected_split_registry_bundle,
+    )
+
+    try:
+        result = load_protected_split_registry_bundle(
+            args.producer_run,
+            expected_producer_record_sha256=args.producer_record_sha256,
+        )
+    except (RuntimeError, ValueError) as exc:
+        print(f"verify-protected-split-registry: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"verified protected split registry: {result.registry_path}")
+    print(f"verified {result.input_records} protected input record(s)")
+    return 0
+
+
 def _run_freeze_tokenizer_attestation(args: argparse.Namespace) -> int:
     from typo_robust_training.tokenizer_freeze import freeze_tokenizer_attestation
 
@@ -776,6 +819,23 @@ def register_commands(
     freeze.add_argument("--exclude-data", required=True, type=Path)
     freeze.add_argument("--output-dir", required=True, type=Path)
     freeze.set_defaults(_typo_cot_plugin_handler=_run_freeze_evaluation)
+
+    protected = commands.add_parser(
+        "freeze-protected-split-registry",
+        help="Freeze five externally pinned JSONL tiers into a closed protected registry.",
+    )
+    protected.add_argument("--inventory", required=True, type=Path)
+    protected.add_argument("--inventory-sha256", required=True)
+    protected.add_argument("--output-dir", required=True, type=Path)
+    protected.set_defaults(_typo_cot_plugin_handler=_run_freeze_protected_split_registry)
+
+    protected_verify = commands.add_parser(
+        "verify-protected-split-registry",
+        help="Verify a frozen registry using its externally pinned producer-record hash.",
+    )
+    protected_verify.add_argument("--producer-run", required=True, type=Path)
+    protected_verify.add_argument("--producer-record-sha256", required=True)
+    protected_verify.set_defaults(_typo_cot_plugin_handler=_run_verify_protected_split_registry)
 
     calibration_v2 = commands.add_parser(
         "calibrate-evaluation-v2-severity",
