@@ -1162,18 +1162,10 @@ def test_cli_registers_every_probe_producer_input() -> None:
     args = parser.parse_args(
         [
             "select-probe-transition",
-            "--config",
-            "config.json",
-            "--class-inventory",
-            "classes.json",
-            "--fit-manifest",
-            "fit.json",
-            "--selection-manifest",
-            "selection.json",
-            "--validation-manifest",
-            "validation.json",
-            "--protected-registry",
-            "protected.json",
+            "--cohort-build-run",
+            "build-run.json",
+            "--cohort-build-run-sha256",
+            "a" * 64,
             "--gpu-id",
             "4",
             "--output-dir",
@@ -1182,11 +1174,7 @@ def test_cli_registers_every_probe_producer_input() -> None:
     )
 
     assert args.command == "select-probe-transition"
-    assert args.config == Path("config.json")
-    assert args.class_inventory == Path("classes.json")
-    assert args.fit_manifest == Path("fit.json")
-    assert args.selection_manifest == Path("selection.json")
-    assert args.validation_manifest == Path("validation.json")
-    assert args.protected_registry == Path("protected.json")
+    assert args.cohort_build_run == Path("build-run.json")
+    assert args.cohort_build_run_sha256 == "a" * 64
     assert args.gpu_id == "4"
     assert args.output_dir == Path("evidence")

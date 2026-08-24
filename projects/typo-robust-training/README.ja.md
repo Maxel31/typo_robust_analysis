@@ -11,6 +11,9 @@ checkpoint、実験結果は、固定評価protocolが主張を許すまでlocal
                   -> baseline/proposal/control training -> held-out evaluation
 ```
 
+Mistral用Linear Probeのmodel-output-free cohort構築契約は
+[こちら](docs/mistral_probe_transition_data_v1.ja.md)です。
+
 確証用targetは、汎用文章へのjoint Activation Patchingで選ぶmodel固有residual-stream windowです。
 選択にはmulti-token KL restorationだけを使い、downstream answer、clean-harm score、neuron/head
 screening、学習結果からtargetを変更しません。neuron/head localizationは提案手法ではなく、
