@@ -615,10 +615,7 @@ class ProtectedSplitOverlapError(ValueError):
     def audit_report(self) -> dict[str, object]:
         """Return a deterministic report containing hashes and source locations only."""
 
-        return {
-            "schema_version": OVERLAP_AUDIT_SCHEMA,
-            "collision_components": [component.as_dict() for component in self.components],
-        }
+        return _overlap_audit_payload(self.components)
 
     @property
     def audit_json(self) -> str:
@@ -639,9 +636,19 @@ class _RegistryBuild:
     tier_record_counts: Mapping[str, int]
     tier_unique_record_counts: Mapping[str, int]
     identity_sets: ProtectedSplitIdentitySets
+    overlap_components: tuple[ProtectedOverlapComponent, ...]
 
 
-def _build_registry(
+def _overlap_audit_payload(
+    components: tuple[ProtectedOverlapComponent, ...],
+) -> dict[str, object]:
+    return {
+        "schema_version": OVERLAP_AUDIT_SCHEMA,
+        "collision_components": [component.as_dict() for component in components],
+    }
+
+
+def _audit_protected_inputs(
     specs_and_paths: Sequence[tuple[ProtectedInputSpec, Path, str]],
     *,
     captured_inputs: Sequence[bytes] | None = None,
@@ -733,7 +740,7 @@ def _build_registry(
         if len(tiers) <= 1:
             continue
         nodes = component_nodes[root]
-        identities = tuple(
+        component_identities = tuple(
             ProtectedOverlapIdentity(kind=kind, sha256=digest)
             for kind, digest in sorted(node.split(":", 1) for node in nodes)
         )
@@ -751,27 +758,25 @@ def _build_registry(
         overlap_components.append(
             ProtectedOverlapComponent(
                 tiers=tuple(sorted(tiers, key=tier_order.__getitem__)),
-                identities=identities,
+                identities=component_identities,
                 occurrences=occurrences,
             )
         )
-    if overlap_components:
-        overlap_components.sort(
-            key=lambda component: (
-                component.tiers,
-                tuple((identity.kind, identity.sha256) for identity in component.identities),
-                tuple(
-                    (
-                        occurrence.tier,
-                        occurrence.source_relative_path,
-                        occurrence.line_number,
-                        occurrence.record_id,
-                    )
-                    for occurrence in component.occurrences
-                ),
-            )
+    overlap_components.sort(
+        key=lambda component: (
+            tuple(tier_order[tier] for tier in component.tiers),
+            tuple((identity.kind, identity.sha256) for identity in component.identities),
+            tuple(
+                (
+                    occurrence.tier,
+                    occurrence.source_relative_path,
+                    occurrence.line_number,
+                    occurrence.record_id,
+                )
+                for occurrence in component.occurrences
+            ),
         )
-        raise ProtectedSplitOverlapError(tuple(overlap_components))
+    )
     registries = [
         {
             "tier": tier,
@@ -799,7 +804,22 @@ def _build_registry(
                 *(identities[tier]["normalized_content_sha256"] for tier in TIERS)
             ),
         ),
+        overlap_components=tuple(overlap_components),
     )
+
+
+def _build_registry(
+    specs_and_paths: Sequence[tuple[ProtectedInputSpec, Path, str]],
+    *,
+    captured_inputs: Sequence[bytes] | None = None,
+) -> _RegistryBuild:
+    build = _audit_protected_inputs(
+        specs_and_paths,
+        captured_inputs=captured_inputs,
+    )
+    if build.overlap_components:
+        raise ProtectedSplitOverlapError(build.overlap_components)
+    return build
 
 
 @dataclass(frozen=True, slots=True)
