@@ -197,9 +197,7 @@ def factorial_group_balanced_accumulation_scales(
     return tuple(
         TrainingMicroStepScales(
             output=(
-                0.5 * output_count / clean_total
-                if is_noop
-                else 0.5 * output_count / noisy_total
+                0.5 * output_count / clean_total if is_noop else 0.5 * output_count / noisy_total
             ),
             state=0.0,
         )
@@ -684,6 +682,26 @@ def _optimizer_step_telemetry(
             float(row["weighted_state"]) * float(row["state_accumulation_scale"])
             for row in loss_rows
         )
+        if all(type(row.get("is_noop")) is bool for row in micro_rows):
+            # Preserve the exact within-group token weighting used by the
+            # backward objective, but divide out each group's assigned mass.
+            # These two diagnostic series make noisy-learning progress visible
+            # even when the mixed objective is dominated by normal batch noise.
+            for suffix, is_noop in (("clean", True), ("noisy", False)):
+                group = tuple(
+                    loss
+                    for row, loss in zip(micro_rows, loss_rows, strict=True)
+                    if row["is_noop"] is is_noop
+                )
+                group_mass = sum(float(row["output_accumulation_scale"]) for row in group)
+                if group and group_mass > 0.0:
+                    metrics[f"train/objective/output_{suffix}_mean"] = (
+                        sum(
+                            float(row["output"]) * float(row["output_accumulation_scale"])
+                            for row in group
+                        )
+                        / group_mass
+                    )
     telemetry = getattr(runtime, "telemetry", None)
     if callable(telemetry):
         values = telemetry()
@@ -788,9 +806,7 @@ def run_adapter_training(
         "probe-semantic-subspace-distillation",
     } | set(training_methods.PROBE_FACTORIAL_CONDITIONS):
         expected_type = {
-            "probe-transition-output-matching": (
-                training_methods.ProbeTransitionTrainingEvidence
-            ),
+            "probe-transition-output-matching": (training_methods.ProbeTransitionTrainingEvidence),
             "probe-transition-single-layer-state-distillation": (
                 training_methods.ProbeTransitionStateTrainingEvidence
             ),

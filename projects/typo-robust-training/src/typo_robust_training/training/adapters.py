@@ -11,9 +11,7 @@ from typing import Any
 from typo_robust_training.training.config import AdapterTrainingProtocol
 
 
-_DECODER_LAYER = re.compile(
-    r"(?:^|\.)(?:language_model|model)\.layers\.(\d+)(?:\.|$)"
-)
+_DECODER_LAYER = re.compile(r"(?:^|\.)(?:language_model|model)\.layers\.(\d+)(?:\.|$)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +91,19 @@ def attach_lora_adapters(
     from peft import LoraConfig, TaskType, get_peft_model
 
     modules = _modules(protocol.lora_target_modules)
+    layer_keyed_initialization = (
+        protocol.adapter_initialization_policy == "sha256-layer-keyed-kaiming-a-zero-b/v1"
+    )
+    if layer_keyed_initialization and (
+        isinstance(initialization_seed, bool)
+        or not isinstance(initialization_seed, int)
+        or initialization_seed < 0
+    ):
+        raise ValueError("layer-keyed LoRA initialization requires a non-negative seed")
+    if not layer_keyed_initialization and (
+        protocol.adapter_initialization_policy != "peft-default/v1"
+    ):
+        raise ValueError("LoRA initialization policy is unsupported")
     target_names = _decoder_target_module_names(
         model,
         decoder_layers=layers,
@@ -109,22 +120,36 @@ def attach_lora_adapters(
         task_type=TaskType.CAUSAL_LM,
         target_modules=list(target_names),
     )
-    adapted = get_peft_model(model, config)
-    if protocol.adapter_initialization_policy == "sha256-layer-keyed-kaiming-a-zero-b/v1":
-        if (
-            isinstance(initialization_seed, bool)
-            or not isinstance(initialization_seed, int)
-            or initialization_seed < 0
-        ):
-            raise ValueError("layer-keyed LoRA initialization requires a non-negative seed")
-        initialize_layer_keyed_lora(
-            adapted,
-            seed=initialization_seed,
-            expected_layers=layers,
-            expected_modules=modules,
-        )
-    elif protocol.adapter_initialization_policy != "peft-default/v1":
-        raise ValueError("LoRA initialization policy is unsupported")
+    # PEFT initializes every inserted adapter with the process-global RNG.
+    # Different factorial scopes insert different numbers of modules, so merely
+    # overwriting their final values with coordinate-keyed tensors would still
+    # leave a different RNG stream for the subsequent training computation.
+    # Preserve and restore both CPU and already-initialized CUDA RNG states for
+    # the frozen layer-keyed policy.  Legacy PEFT-default runs retain their
+    # historical RNG semantics.
+    import torch
+
+    cpu_rng_state = torch.get_rng_state() if layer_keyed_initialization else None
+    cuda_rng_states = (
+        torch.cuda.get_rng_state_all()
+        if layer_keyed_initialization and torch.cuda.is_initialized()
+        else None
+    )
+    try:
+        adapted = get_peft_model(model, config)
+        if layer_keyed_initialization:
+            assert isinstance(initialization_seed, int)  # validated above
+            initialize_layer_keyed_lora(
+                adapted,
+                seed=initialization_seed,
+                expected_layers=layers,
+                expected_modules=modules,
+            )
+    finally:
+        if cpu_rng_state is not None:
+            torch.set_rng_state(cpu_rng_state)
+        if cuda_rng_states is not None:
+            torch.cuda.set_rng_state_all(cuda_rng_states)
     if protocol.gradient_checkpointing:
         adapted.gradient_checkpointing_enable(
             gradient_checkpointing_kwargs={"use_reentrant": False}
@@ -142,8 +167,7 @@ def attach_lora_adapters(
 
 def _coordinate_seed(*, seed: int, layer: int, module: str, role: str) -> int:
     payload = (
-        "typo-robust-lora-init/v1"
-        f"\0seed={seed}\0layer={layer}\0module={module}\0role={role}"
+        f"typo-robust-lora-init/v1\0seed={seed}\0layer={layer}\0module={module}\0role={role}"
     ).encode("utf-8")
     return int.from_bytes(hashlib.sha256(payload).digest()[:8], "big") & ((1 << 63) - 1)
 
@@ -167,10 +191,7 @@ def initialize_layer_keyed_lora(
     layers = _layers(expected_layers)
     modules = _modules(expected_modules)
     expected = {
-        (layer, module, role)
-        for layer in layers
-        for module in modules
-        for role in ("A", "B")
+        (layer, module, role) for layer in layers for module in modules for role in ("A", "B")
     }
     observed: set[tuple[int, str, str]] = set()
     with torch.no_grad():

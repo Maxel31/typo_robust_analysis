@@ -292,7 +292,8 @@ def build_wandb_run_presentation(
     if state_gradient_ratio is not None:
         tags.append(f"state-gradient-ratio:{float(state_gradient_ratio):g}")
     if layer_label is not None:
-        notes = f"{notes} State layers: {layer_label}."
+        layer_role = "Adapter" if condition.startswith("factorial-") else "State"
+        notes = f"{notes} {layer_role} layers: {layer_label}."
     return WandbRunPresentation(
         name=" · ".join(parts),
         group=f"Cycle {cycle} · {model_name} · {budget_label}",
@@ -534,11 +535,7 @@ def start_wandb_training_tracker(
         run_id = metadata["run_id"]
         if not isinstance(run_id, str) or not run_id:
             raise ValueError("W&B run ID is invalid")
-        intent_only = (
-            status == "initializing"
-            and prior_step == 0
-            and metadata.get("url") is None
-        )
+        intent_only = status == "initializing" and prior_step == 0 and metadata.get("url") is None
         init_resume = {"id": run_id, "resume": "allow" if intent_only else "must"}
         last_logged_optimizer_step = prior_step
     else:

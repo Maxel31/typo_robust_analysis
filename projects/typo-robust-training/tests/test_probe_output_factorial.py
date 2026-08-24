@@ -5,12 +5,14 @@ import re
 from collections import deque
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
 from transformers import Gemma3ForCausalLM, Gemma3TextConfig
 
 from typo_robust_training.data.records import TypoEdit
+from typo_robust_training.evaluation.checkpoints import _validate_factorial_runtime
 from typo_robust_training.training.adapters import attach_lora_adapters
 from typo_robust_training.training.config import load_adapter_training_config
 from typo_robust_training.training.encoding import (
@@ -27,8 +29,10 @@ from typo_robust_training.training.methods import (
 from typo_robust_training.training.pairs import TrainingPair, UnusableTrainingPairError
 from typo_robust_training.training.runtime import HuggingFaceAdapterTrainingRuntime
 from typo_robust_training.training.runner import (
+    _optimizer_step_telemetry,
     factorial_group_balanced_accumulation_scales,
 )
+from typo_robust_training.training.tracking import build_wandb_run_presentation
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -110,10 +114,13 @@ def test_horizon_scope_never_horizonizes_clean_rows() -> None:
     encoding = encode_training_pair(_clean_pair(), tokenizer=_WordTokenizer(), max_length=64)
 
     assert encoding.downstream_output_logit_pairs == ()
-    assert output_logit_pairs_for_scope(
-        encoding,
-        output_scope=EDIT_DOWNSTREAM_OUTPUT_SCOPE,
-    ) == encoding.output_logit_pairs
+    assert (
+        output_logit_pairs_for_scope(
+            encoding,
+            output_scope=EDIT_DOWNSTREAM_OUTPUT_SCOPE,
+        )
+        == encoding.output_logit_pairs
+    )
 
 
 def test_multiple_edit_horizons_are_deduplicated_as_one_union() -> None:
@@ -142,11 +149,11 @@ def test_multiple_edit_horizons_are_deduplicated_as_one_union() -> None:
         encoding,
         output_scope=EDIT_DOWNSTREAM_OUTPUT_SCOPE,
     )
-    all_aligned_targets = {typo_logit + 1 for _clean_logit, typo_logit in encoding.output_logit_pairs}
+    all_aligned_targets = {
+        typo_logit + 1 for _clean_logit, typo_logit in encoding.output_logit_pairs
+    }
     expected = {
-        edit + offset
-        for edit in encoding.typo_edit_positions
-        for offset in range(2, 17)
+        edit + offset for edit in encoding.typo_edit_positions for offset in range(2, 17)
     } & all_aligned_targets
 
     assert {typo_logit + 1 for _clean_logit, typo_logit in selected} == expected
@@ -231,8 +238,33 @@ def test_count_matched_random_freeze_is_reproducible_distinct_and_same_size() ->
 
     assert first == second
     assert first == (
-        1, 2, 3, 5, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20,
-        22, 23, 24, 25, 26, 27, 29, 30, 31, 32, 33,
+        1,
+        2,
+        3,
+        5,
+        8,
+        9,
+        10,
+        11,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        29,
+        30,
+        31,
+        32,
+        33,
     )
     assert len(first) == len(tuple(range(7, 34)))
     assert first != tuple(range(7, 34))
@@ -307,14 +339,8 @@ def test_factorial_materializer_changes_only_the_two_axes_and_random_control(
             if key not in {"layer_scope", "layer_policy"}
         }
         assert {
-            key: value
-            for key, value in payload["objective"].items()
-            if key != "output_scope"
-        } == {
-            key: value
-            for key, value in reference["objective"].items()
-            if key != "output_scope"
-        }
+            key: value for key, value in payload["objective"].items() if key != "output_scope"
+        } == {key: value for key, value in reference["objective"].items() if key != "output_scope"}
 
 
 def _tiny_model() -> Gemma3ForCausalLM:
@@ -364,9 +390,7 @@ def test_shared_lora_coordinates_have_identical_initial_values_across_arm_scopes
         suffix_values = _layer_parameter_map(suffix, layer=layer)
         all_values = _layer_parameter_map(all_layers, layer=layer)
         assert suffix_values.keys() == all_values.keys()
-        assert all(
-            torch.equal(suffix_values[name], all_values[name]) for name in suffix_values
-        )
+        assert all(torch.equal(suffix_values[name], all_values[name]) for name in suffix_values)
     assert any(
         torch.count_nonzero(value)
         for name, value in _layer_parameter_map(suffix, layer=1).items()
@@ -377,8 +401,122 @@ def test_shared_lora_coordinates_have_identical_initial_values_across_arm_scopes
     )
     seed42 = _layer_parameter_map(suffix, layer=1)
     seed43 = _layer_parameter_map(different_seed, layer=1)
-    assert any(
-        not torch.equal(seed42[name], seed43[name])
-        for name in seed42
-        if ".lora_A." in name
+    assert any(not torch.equal(seed42[name], seed43[name]) for name in seed42 if ".lora_A." in name)
+
+
+def test_layer_keyed_adapter_insertion_preserves_the_training_rng_stream() -> None:
+    protocol = replace(
+        load_adapter_training_config(LEGACY_BOUND),
+        lora_rank=2,
+        lora_alpha=4.0,
+        gradient_checkpointing=False,
+        adapter_initialization_policy="sha256-layer-keyed-kaiming-a-zero-b/v1",
     )
+
+    def attach_and_read_rng(layers: tuple[int, ...]) -> tuple[torch.Tensor, torch.Tensor]:
+        torch.manual_seed(777)
+        model = _tiny_model()
+        torch.manual_seed(999)
+        before = torch.get_rng_state().clone()
+        attach_lora_adapters(
+            model,
+            protocol=protocol,
+            decoder_layers=layers,
+            initialization_seed=42,
+        )
+        return before, torch.get_rng_state().clone()
+
+    suffix_before, suffix_after = attach_and_read_rng((1, 2))
+    all_before, all_after = attach_and_read_rng((0, 1, 2))
+
+    assert torch.equal(suffix_before, suffix_after)
+    assert torch.equal(all_before, all_after)
+    assert torch.equal(suffix_after, all_after)
+
+
+def test_factorial_telemetry_separates_clean_and_noisy_weighted_output_means() -> None:
+    rows: list[dict[str, object]] = []
+    for is_noop, output in ((True, 2.0), (False, 10.0), (True, 4.0), (False, 20.0)):
+        rows.append(
+            {
+                "student_tokens": 512 if is_noop else 16,
+                "edit_count": 0 if is_noop else 1,
+                "is_noop": is_noop,
+                "total_loss": output,
+                "losses": {
+                    "output": output,
+                    "state": 0.0,
+                    "weighted_state": 0.0,
+                    "output_accumulation_scale": 0.25,
+                    "state_accumulation_scale": 0.0,
+                    "backward_contribution": output * 0.25,
+                },
+            }
+        )
+
+    metrics = _optimizer_step_telemetry(
+        rows,
+        optimizer_step=1,
+        micro_steps=4,
+        cumulative_student_tokens=1056,
+        gradient_norm=0.5,
+        learning_rate=1e-4,
+        elapsed_seconds=1.0,
+        runtime=SimpleNamespace(telemetry=lambda: {}),
+    )
+
+    assert metrics["train/objective/output_clean_mean"] == pytest.approx(3.0)
+    assert metrics["train/objective/output_noisy_mean"] == pytest.approx(15.0)
+    assert metrics["train/objective/output"] == pytest.approx(9.0)
+
+
+def test_factorial_wandb_presentation_calls_trainable_coordinates_adapter_layers() -> None:
+    presentation = build_wandb_run_presentation(
+        condition="factorial-probe-suffix-downstream-horizon",
+        schema_version="robustness-adapter-training-config/v7",
+        model="google/gemma-3-4b-it",
+        seed=42,
+        max_optimizer_steps=10_000,
+        max_student_tokens=10_000_000,
+        state_gradient_ratio=None,
+        state_layers=tuple(range(7, 34)),
+    )
+
+    assert "Adapter layers: L7–33." in presentation.notes
+    assert "State layers:" not in presentation.notes
+    assert "role:proposed" in presentation.tags
+
+
+def _factorial_runtime_payload(
+    *, adapter_layers: list[int], output_scope: str
+) -> dict[str, object]:
+    return {
+        "decoder_layers": 34,
+        "adapter_layers": adapter_layers,
+        "output_scope": output_scope,
+        "adapter_initialization_policy": "sha256-layer-keyed-kaiming-a-zero-b/v1",
+        "state_layers": [],
+        "state_weight": 0.0,
+        "state_calibration": None,
+    }
+
+
+def test_evaluation_binds_factorial_label_to_actual_runtime_axes() -> None:
+    condition = "factorial-probe-suffix-downstream-horizon"
+    valid = _factorial_runtime_payload(
+        adapter_layers=list(range(7, 34)),
+        output_scope=EDIT_DOWNSTREAM_OUTPUT_SCOPE,
+    )
+    _validate_factorial_runtime(condition, valid)
+
+    wrong_horizon = dict(valid, output_scope="aligned-non-edited-next-token/v1")
+    with pytest.raises(ValueError, match="objective or scope"):
+        _validate_factorial_runtime(condition, wrong_horizon)
+
+    wrong_layers = dict(valid, adapter_layers=[7, 9, *range(10, 34)])
+    with pytest.raises(ValueError, match="adapter layers differ"):
+        _validate_factorial_runtime(condition, wrong_layers)
+
+    wrong_initialization = dict(valid, adapter_initialization_policy="peft-default/v1")
+    with pytest.raises(ValueError, match="objective or scope"):
+        _validate_factorial_runtime(condition, wrong_initialization)
