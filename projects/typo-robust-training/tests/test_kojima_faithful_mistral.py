@@ -19,6 +19,7 @@ from typo_robust_training.training.adapters import (
 )
 from typo_robust_training.training.config import (
     is_kojima_faithful_protocol,
+    is_probe_factorial_protocol,
     load_adapter_training_config,
 )
 from typo_robust_training.training.losses import (
@@ -30,7 +31,10 @@ from typo_robust_training.training.runner import (
     _load_protocol_training_bundle,
     validate_micro_step_student_tokens,
 )
-from typo_robust_training.training.runtime import resolve_attention_head_dim
+from typo_robust_training.training.runtime import (
+    HuggingFaceAdapterTrainingRuntime,
+    resolve_attention_head_dim,
+)
 from typo_robust_training.training.tracking import build_wandb_run_presentation
 from typo_robust_training.training.step import _output_matching_loss
 
@@ -126,8 +130,8 @@ def test_factorial_v7_keeps_generic_bundle_and_kl_runtime(
 ) -> None:
     factorial_v7 = SimpleNamespace(
         schema_version="robustness-adapter-training-config/v7",
-        condition="state-free-factorial-output-matching",
-        method_identity="state-free-factorial-output-matching/v1",
+        condition="factorial-probe-suffix-downstream-horizon",
+        method_identity="factorial-probe-suffix-downstream-horizon/v1",
     )
     faithful = SimpleNamespace(
         schema_version="robustness-adapter-training-config/v7",
@@ -165,6 +169,67 @@ def test_factorial_v7_keeps_generic_bundle_and_kl_runtime(
     assert calls == ["generic"]
     assert _output_matching_loss(factorial_v7) is aligned_output_kl  # type: ignore[arg-type]
     assert _output_matching_loss(faithful) is aligned_soft_cross_entropy  # type: ignore[arg-type]
+
+
+def test_shared_v7_encoding_routes_by_condition_not_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    sentinel = object()
+    pair = SimpleNamespace(is_noop=False)
+    factorial = SimpleNamespace(
+        schema_version="robustness-adapter-training-config/v7",
+        condition="factorial-probe-suffix-downstream-horizon",
+        max_sequence_length=512,
+        loss_weights={"answer": 0.0},
+    )
+    faithful = SimpleNamespace(
+        schema_version="robustness-adapter-training-config/v7",
+        condition="kojima-faithful-output-matching",
+    )
+    generic_calls: list[dict[str, object]] = []
+    faithful_calls: list[object] = []
+
+    def fake_generic(candidate: object, **kwargs: object) -> object:
+        assert candidate is pair
+        generic_calls.append(kwargs)
+        return sentinel
+
+    def fake_faithful(candidate: object, *, tokenizer: object) -> object:
+        assert candidate is pair
+        faithful_calls.append(tokenizer)
+        return sentinel
+
+    monkeypatch.setattr(
+        "typo_robust_training.training.runtime.encode_training_pair",
+        fake_generic,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.training.runtime.encode_kojima_faithful_pair",
+        fake_faithful,
+    )
+    tokenizer = object()
+    factorial_runtime = SimpleNamespace(protocol=factorial, tokenizer=tokenizer)
+    assert is_probe_factorial_protocol(factorial)  # type: ignore[arg-type]
+    assert HuggingFaceAdapterTrainingRuntime._encode_pair(  # type: ignore[arg-type]
+        factorial_runtime,
+        pair,
+    ) is sentinel
+    assert generic_calls == [
+        {
+            "tokenizer": tokenizer,
+            "max_length": 512,
+            "require_answer_targets": False,
+            "require_all_edits_visible": True,
+            "require_downstream_targets": True,
+        }
+    ]
+    assert faithful_calls == []
+
+    faithful_runtime = SimpleNamespace(protocol=faithful, tokenizer=tokenizer)
+    assert not is_probe_factorial_protocol(faithful)  # type: ignore[arg-type]
+    assert HuggingFaceAdapterTrainingRuntime._encode_pair(  # type: ignore[arg-type]
+        faithful_runtime,
+        pair,
+    ) is sentinel
+    assert faithful_calls == [tokenizer]
 
 
 @pytest.mark.parametrize(

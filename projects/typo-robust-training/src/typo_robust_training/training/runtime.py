@@ -28,6 +28,7 @@ from typo_robust_training.training.adapters import (
 from typo_robust_training.training.config import (
     AdapterTrainingProtocol,
     is_kojima_faithful_protocol,
+    is_probe_factorial_protocol,
 )
 from typo_robust_training.training.encoding import (
     PairedEncoding,
@@ -1064,7 +1065,7 @@ class HuggingFaceAdapterTrainingRuntime:
             require_answer_targets=self.protocol.loss_weights["answer"] > 0.0,
             require_all_edits_visible=not self.protocol.schema_version.endswith("/v1"),
             require_downstream_targets=(
-                self.protocol.schema_version.endswith("/v7") and not pair.is_noop
+                is_probe_factorial_protocol(self.protocol) and not pair.is_noop
             ),
         )
 

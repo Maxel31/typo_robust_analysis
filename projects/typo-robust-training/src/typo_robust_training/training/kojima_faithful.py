@@ -88,7 +88,7 @@ def _reproduction_departure() -> dict[str, object]:
             "resolution": SKIP_POLICY,
             "semantic_effect": (
                 "unusable attempts advance the frozen source cursor but do not consume "
-                "a micro-step or token; each update contains 16 usable examples"
+                "a micro-step or token; each update contains 8 usable examples"
             ),
         },
         "dependency_stack": {
