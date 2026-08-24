@@ -1095,9 +1095,9 @@ def load_probe_transition_data_bundle(
         raise ValueError("probe cohort build-run manifest must be UTF-8") from exc
     if not isinstance(payload, dict):
         raise ValueError("probe cohort build-run manifest must contain one object")
-    canonical_raw = (
-        json.dumps(payload, sort_keys=True, indent=2, allow_nan=False) + "\n"
-    ).encode("utf-8")
+    canonical_raw = (json.dumps(payload, sort_keys=True, indent=2, allow_nan=False) + "\n").encode(
+        "utf-8"
+    )
     if raw != canonical_raw:
         raise ValueError("probe cohort build-run manifest must be canonical JSON")
     self_hash = payload.get("self_hash")
@@ -1154,8 +1154,7 @@ def load_probe_transition_data_bundle(
             "tokenizer_snapshot_attestation",
             "model_outputs_observed",
         }
-        or token_counter.get("provider")
-        != "attested-tokenizer-only-inflation-counter/v1"
+        or token_counter.get("provider") != "attested-tokenizer-only-inflation-counter/v1"
         or token_counter.get("model_outputs_observed") is not False
         or not isinstance(tokenizer, Mapping)
         or set(tokenizer)
@@ -1202,7 +1201,10 @@ def load_probe_transition_data_bundle(
         )
         if artifact_path.parent != resolved_run.parent:
             raise ValueError("probe cohort artifact escaped its frozen bundle")
-        if artifact_path.stat().st_size != expected_bytes or sha256_file(artifact_path) != expected_sha:
+        if (
+            artifact_path.stat().st_size != expected_bytes
+            or sha256_file(artifact_path) != expected_sha
+        ):
             raise ValueError("probe cohort artifact differs from the frozen build-run")
         resolved_artifacts[name] = artifact_path
 
@@ -1349,9 +1351,7 @@ def run_build_probe_transition_data(
         raise ValueError(
             "probe cohort token counter must attest that no model outputs were observed"
         )
-    if provenance.get("tokenizer_snapshot_attestation") != dict(
-        tokenizer_binding.provenance
-    ):
+    if provenance.get("tokenizer_snapshot_attestation") != dict(tokenizer_binding.provenance):
         raise ValueError("probe cohort token counter differs from the pinned tokenizer freeze")
     with_variants = tuple(
         _attach_variants(candidate, protocol=protocol, counter=token_counter)

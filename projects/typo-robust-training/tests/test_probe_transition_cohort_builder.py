@@ -289,9 +289,7 @@ def test_builder_emits_existing_producer_schemas_without_model_outputs(tmp_path:
     run = json.loads(result.run_path.read_text(encoding="utf-8"))
     assert run["model_outputs_observed"] is False
     assert run["token_counter"]["model_outputs_observed"] is False
-    assert run["tokenizer"]["freeze_run_sha256"] == _sha(
-        "tokenizer-shared-externally-pinned-run"
-    )
+    assert run["tokenizer"]["freeze_run_sha256"] == _sha("tokenizer-shared-externally-pinned-run")
     assert (
         run["source"]["manifest_sha256"]
         == hashlib.sha256((tmp_path / "clean-sources.jsonl").read_bytes()).hexdigest()
