@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import deque
 from dataclasses import replace
 from pathlib import Path
 
@@ -25,6 +26,9 @@ from typo_robust_training.training.methods import (
 )
 from typo_robust_training.training.pairs import TrainingPair, UnusableTrainingPairError
 from typo_robust_training.training.runtime import HuggingFaceAdapterTrainingRuntime
+from typo_robust_training.training.runner import (
+    factorial_group_balanced_accumulation_scales,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -159,6 +163,68 @@ def test_noisy_empty_horizon_is_rejected_instead_of_becoming_a_zero_loss_row() -
         )
 
 
+def test_factorial_accumulation_balances_clean_and_noisy_groups_not_target_counts() -> None:
+    scales = factorial_group_balanced_accumulation_scales(
+        output_token_counts=(511, 15) * 16,
+        is_noop_rows=(True, False) * 16,
+    )
+
+    assert sum(scale.output for scale in scales[0::2]) == pytest.approx(0.5)
+    assert sum(scale.output for scale in scales[1::2]) == pytest.approx(0.5)
+    assert sum(scale.output for scale in scales) == pytest.approx(1.0)
+    assert all(scale.state == 0.0 for scale in scales)
+
+
+@pytest.mark.parametrize(
+    ("counts", "groups", "message"),
+    [
+        ((511, 511), (True, True), "alternate clean and noisy"),
+        ((15, 15), (False, False), "alternate clean and noisy"),
+        ((511,), (True,), "exact 1:1"),
+        ((15,), (False,), "alternate clean and noisy"),
+        ((511, 15), (False, True), "alternate clean and noisy"),
+    ],
+)
+def test_factorial_accumulation_rejects_missing_or_non_alternating_groups(
+    counts: tuple[int, ...],
+    groups: tuple[bool, ...],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        factorial_group_balanced_accumulation_scales(
+            output_token_counts=counts,
+            is_noop_rows=groups,
+        )
+
+
+def test_group_balancing_does_not_change_non_factorial_output_matching() -> None:
+    protocol = replace(
+        load_adapter_training_config(LEGACY_BOUND),
+        gradient_accumulation_steps=2,
+    )
+    runtime = object.__new__(HuggingFaceAdapterTrainingRuntime)
+    runtime.protocol = protocol
+    runtime.tokenizer = _WordTokenizer()
+    runtime._prepared_encodings = deque()
+    pairs = (_clean_pair(), _noisy_pair())
+    counts = tuple(
+        len(
+            output_logit_pairs_for_scope(
+                runtime._encode_pair(pair),
+                output_scope=protocol.output_scope,
+            )
+        )
+        for pair in pairs
+    )
+
+    scales = runtime.prepare_accumulation(pairs)
+
+    assert counts[0] != counts[1]
+    assert [scale.output for scale in scales] == pytest.approx(
+        [count / sum(counts) for count in counts]
+    )
+
+
 def test_count_matched_random_freeze_is_reproducible_distinct_and_same_size() -> None:
     first = count_matched_random_layers(decoder_layers=34, selected_transition_layer=7)
     second = count_matched_random_layers(decoder_layers=34, selected_transition_layer=7)
@@ -208,8 +274,20 @@ def test_factorial_materializer_changes_only_the_two_axes_and_random_control(
         runtime = object.__new__(HuggingFaceAdapterTrainingRuntime)
         runtime.protocol = protocol
         runtime.tokenizer = _WordTokenizer()
+        runtime._prepared_encodings = deque()
         with pytest.raises(UnusableTrainingPairError, match="no aligned downstream"):
             runtime._encode_pair(_noisy_pair(trailing_words=1))
+        pairs = tuple(
+            pair
+            for _ in range(protocol.gradient_accumulation_steps // 2)
+            for pair in (_clean_pair(), _noisy_pair())
+        )
+        scales = runtime.prepare_accumulation(pairs)
+        assert sum(scale.output for scale in scales[0::2]) == pytest.approx(0.5)
+        assert sum(scale.output for scale in scales[1::2]) == pytest.approx(0.5)
+        runtime._prepared_encodings.clear()
+        with pytest.raises(ValueError, match="prepared accumulation size differs"):
+            runtime.prepare_accumulation(pairs[:-1])
     payloads = {
         condition: json.loads((tmp_path / "arms" / f"{condition}.json").read_text())
         for condition in PROBE_FACTORIAL_CONDITIONS

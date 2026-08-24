@@ -153,6 +153,60 @@ def normalized_accumulation_scales(
     )
 
 
+def factorial_group_balanced_accumulation_scales(
+    *,
+    output_token_counts: Sequence[int],
+    is_noop_rows: Sequence[bool],
+) -> tuple[TrainingMicroStepScales, ...]:
+    """Give clean and noisy factorial targets exactly one half of one update.
+
+    The horizon arms deliberately expose far fewer noisy targets than clean
+    targets.  A single token denominator would therefore turn the frozen 1:1
+    document mixture into an almost entirely clean objective.  Normalize
+    selected targets within each row group, then assign the two preregistered
+    groups equal mass.  The one-half constants are implied by the frozen 1:1
+    pairing policy and are not tunable method coefficients.
+    """
+
+    output_counts = tuple(output_token_counts)
+    noop_rows = tuple(is_noop_rows)
+    if not output_counts or len(output_counts) != len(noop_rows):
+        raise ValueError("factorial accumulation counts and row groups differ")
+    if any(
+        isinstance(count, bool) or not isinstance(count, int) or count <= 0
+        for count in output_counts
+    ):
+        raise ValueError("each factorial accumulation row needs output supervision")
+    if any(type(is_noop) is not bool for is_noop in noop_rows):
+        raise ValueError("factorial accumulation row groups must be boolean")
+    expected_noop_rows = tuple(index % 2 == 0 for index in range(len(noop_rows)))
+    if noop_rows != expected_noop_rows:
+        raise ValueError("factorial accumulation must alternate clean and noisy rows")
+    clean_count = sum(noop_rows)
+    noisy_count = len(noop_rows) - clean_count
+    if clean_count == 0 or noisy_count == 0 or clean_count != noisy_count:
+        raise ValueError("factorial accumulation requires an exact 1:1 clean/noisy mixture")
+    clean_total = sum(
+        count for count, is_noop in zip(output_counts, noop_rows, strict=True) if is_noop
+    )
+    noisy_total = sum(
+        count for count, is_noop in zip(output_counts, noop_rows, strict=True) if not is_noop
+    )
+    if clean_total <= 0 or noisy_total <= 0:  # Defensive: positive rows imply this.
+        raise ValueError("factorial accumulation is missing one target group")
+    return tuple(
+        TrainingMicroStepScales(
+            output=(
+                0.5 * output_count / clean_total
+                if is_noop
+                else 0.5 * output_count / noisy_total
+            ),
+            state=0.0,
+        )
+        for output_count, is_noop in zip(output_counts, noop_rows, strict=True)
+    )
+
+
 class AdapterTrainingRuntime(Protocol):
     def train_micro_step(
         self,

@@ -46,6 +46,7 @@ from typo_robust_training.training.methods import (
 )
 from typo_robust_training.training.pairs import TrainingPair, UnusableTrainingPairError
 from typo_robust_training.training.runner import (
+    factorial_group_balanced_accumulation_scales,
     TrainingMicroStepResult,
     TrainingMicroStepScales,
     normalized_accumulation_scales,
@@ -1086,21 +1087,31 @@ class HuggingFaceAdapterTrainingRuntime:
             raise ValueError("prepared accumulation size differs from the config")
         encodings = tuple(self._encode_pair(pair) for pair in rows)
         state_active = self.protocol.loss_weights["state"] > 0.0
-        scales = normalized_accumulation_scales(
-            output_token_counts=tuple(
-                len(
-                    output_logit_pairs_for_scope(
-                        encoding,
-                        output_scope=self.protocol.output_scope,
-                    )
+        output_token_counts = tuple(
+            len(
+                output_logit_pairs_for_scope(
+                    encoding,
+                    output_scope=self.protocol.output_scope,
                 )
-                for encoding in encodings
-            ),
-            state_coordinate_counts=tuple(
-                len(encoding.clean_edit_positions) if state_active else 0 for encoding in encodings
-            ),
-            state_active=state_active,
+            )
+            for encoding in encodings
         )
+        if self.protocol.condition in PROBE_FACTORIAL_CONDITIONS:
+            if state_active:
+                raise ValueError("probe-factorial accumulation cannot contain state supervision")
+            scales = factorial_group_balanced_accumulation_scales(
+                output_token_counts=output_token_counts,
+                is_noop_rows=tuple(encoding.is_noop for encoding in encodings),
+            )
+        else:
+            scales = normalized_accumulation_scales(
+                output_token_counts=output_token_counts,
+                state_coordinate_counts=tuple(
+                    len(encoding.clean_edit_positions) if state_active else 0
+                    for encoding in encodings
+                ),
+                state_active=state_active,
+            )
         self._prepared_encodings.extend(zip(rows, encodings, strict=True))
         return scales
 
