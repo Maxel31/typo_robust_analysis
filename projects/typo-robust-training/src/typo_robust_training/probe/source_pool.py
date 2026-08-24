@@ -43,7 +43,10 @@ from typo_robust_training.probe.cohort_builder import (
     probe_source_group_sha256,
 )
 from typo_robust_training.training.filesystem import (
+    DirectoryTreeAttestation,
+    attest_directory_tree_at,
     publish_directory_noreplace,
+    quarantine_directory_at,
     reject_path_symlink_components,
 )
 from typo_robust_training.training.pairs import TrainingSource
@@ -631,6 +634,7 @@ class ProbeSourcePoolFreezeResult:
 
 @dataclass(frozen=True, slots=True)
 class _PublicationBindings:
+    output_parent_descriptor: int
     parquet_path: Path
     parquet_descriptor: int
     parquet_identity: os.stat_result
@@ -646,7 +650,7 @@ class _PublicationBindings:
     staging_run_path: Path
     staging_run_sha256: str
     staging_root_identity: tuple[int, int, int, int, int, int]
-    staging_tree_sha256: str
+    staging_tree_attestation: DirectoryTreeAttestation
 
 
 def _publish_bundle(
@@ -707,15 +711,44 @@ def _publish_bundle(
         expected_identity=bindings.staging_root_identity,
         label="probe source pool staging root",
     )
-    if sha256_tree(temporary) != bindings.staging_tree_sha256:
-        raise ValueError("probe source pool staging tree changed before atomic publication")
 
     publish_directory_noreplace(
         temporary,
         target,
         expected_parent_identity=expected_parent_identity,
         expected_staged_identity=bindings.staging_root_identity[:2],
+        expected_tree_attestation=bindings.staging_tree_attestation,
     )
+    try:
+        published = load_probe_source_pool_bundle(
+            target / _RUN_FILENAME,
+            expected_run_sha256=bindings.staging_run_sha256,
+            expected_code_revision=bindings.code_revision,
+        )
+        if (
+            published.run_path != target / _RUN_FILENAME
+            or published.run_sha256 != bindings.staging_run_sha256
+        ):
+            raise ValueError("published probe source pool attestation differs")
+    except Exception as exc:
+        try:
+            quarantine_name = quarantine_directory_at(
+                bindings.output_parent_descriptor,
+                target.name,
+                expected_parent_identity=expected_parent_identity,
+                expected_directory_identity=bindings.staging_root_identity[:2],
+            )
+        except Exception as quarantine_exc:
+            raise RuntimeError(
+                "invalid published probe source pool could not be quarantined"
+            ) from quarantine_exc
+        try:
+            shutil.rmtree(quarantine_name, dir_fd=bindings.output_parent_descriptor)
+        except Exception as cleanup_exc:
+            raise RuntimeError(
+                f"invalid probe source pool remains quarantined as {quarantine_name}"
+            ) from cleanup_exc
+        raise ValueError("invalid published probe source pool was removed") from exc
 
 
 def _load_protected_exclusion_bundle(
@@ -935,7 +968,12 @@ def freeze_probe_source_pool(
         payload["record_sha256"] = run_sha
         staging_run_path = temporary / _RUN_FILENAME
         staging_run_path.write_bytes(_pretty_bytes(payload))
+        staging_root_identity = _directory_identity(
+            temporary,
+            label="probe source pool staging root",
+        )
         publication_bindings = _PublicationBindings(
+            output_parent_descriptor=output_parent_descriptor,
             parquet_path=parquet,
             parquet_descriptor=parquet_descriptor,
             parquet_identity=parquet_identity,
@@ -953,11 +991,12 @@ def freeze_probe_source_pool(
             protected_tree_sha256=str(artifacts["protected_exclusion_bundle"]["tree_sha256"]),
             staging_run_path=staging_run_path,
             staging_run_sha256=run_sha,
-            staging_root_identity=_directory_identity(
-                temporary,
-                label="probe source pool staging root",
+            staging_root_identity=staging_root_identity,
+            staging_tree_attestation=attest_directory_tree_at(
+                output_parent_descriptor,
+                temporary.name,
+                expected_root_identity=staging_root_identity[:2],
             ),
-            staging_tree_sha256=sha256_tree(temporary),
         )
         _publish_bundle(
             temporary,

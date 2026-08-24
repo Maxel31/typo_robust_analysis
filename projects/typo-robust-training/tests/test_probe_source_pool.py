@@ -560,7 +560,7 @@ def test_final_tree_binding_rejects_mutation_after_offline_replay(
         return result
 
     monkeypatch.setattr(source_pool, "load_probe_source_pool_bundle", load_then_mutate)
-    with pytest.raises(ValueError, match="staging tree changed"):
+    with pytest.raises(ValueError, match="tree changed"):
         freeze_probe_source_pool(config)
     assert not config.output_dir.exists()
 
@@ -582,6 +582,7 @@ def test_atomic_rename_rejects_staging_root_inode_substitution(
         *,
         expected_parent_identity: tuple[int, int] | None = None,
         expected_staged_identity: tuple[int, int] | None = None,
+        expected_tree_attestation: source_pool.DirectoryTreeAttestation | None = None,
     ) -> None:
         moved = staged.with_name(f"{staged.name}.moved")
         staged.rename(moved)
@@ -592,6 +593,7 @@ def test_atomic_rename_rejects_staging_root_inode_substitution(
                 output,
                 expected_parent_identity=expected_parent_identity,
                 expected_staged_identity=expected_staged_identity,
+                expected_tree_attestation=expected_tree_attestation,
             )
         finally:
             if staged.exists():
@@ -603,6 +605,146 @@ def test_atomic_rename_rejects_staging_root_inode_substitution(
     with pytest.raises(ValueError, match="source changed"):
         freeze_probe_source_pool(config)
     assert not config.output_dir.exists()
+
+
+def test_atomic_rename_rejects_file_mutation_inside_publication_wrapper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A file write must not slip between the outer final hash and rename."""
+
+    config = _config(
+        tmp_path,
+        monkeypatch,
+        rows=(_row("a", "Enough source text for one row."),),
+    )
+    original = source_pool.publish_directory_noreplace
+
+    def mutate_file_then_rename(
+        staged: Path,
+        output: Path,
+        *,
+        expected_parent_identity: tuple[int, int] | None = None,
+        expected_staged_identity: tuple[int, int] | None = None,
+        expected_tree_attestation: source_pool.DirectoryTreeAttestation | None = None,
+    ) -> None:
+        source = staged / source_pool._SOURCE_FILENAME
+        source.write_bytes(source.read_bytes().replace(b"Enough", b"BROKEN"))
+        original(
+            staged,
+            output,
+            expected_parent_identity=expected_parent_identity,
+            expected_staged_identity=expected_staged_identity,
+            expected_tree_attestation=expected_tree_attestation,
+        )
+
+    monkeypatch.setattr(source_pool, "publish_directory_noreplace", mutate_file_then_rename)
+    with pytest.raises(ValueError, match="tree changed"):
+        freeze_probe_source_pool(config)
+    assert not config.output_dir.exists()
+
+
+def test_atomic_rename_rejects_unattested_nested_empty_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Closed-world inventory includes empty directories, unlike a file-only digest."""
+
+    config = _config(
+        tmp_path,
+        monkeypatch,
+        rows=(_row("a", "Enough source text for one row."),),
+    )
+    original = source_pool.load_probe_source_pool_bundle
+
+    def load_then_add_directory(*args: object, **kwargs: object) -> ProbeSourcePoolFreezeResult:
+        result = original(*args, **kwargs)
+        nested = result.protected_exclusion_path.parent / "inputs" / "unattested-empty"
+        nested.mkdir()
+        return result
+
+    monkeypatch.setattr(source_pool, "load_probe_source_pool_bundle", load_then_add_directory)
+    with pytest.raises(ValueError, match="tree changed"):
+        freeze_probe_source_pool(config)
+    assert not config.output_dir.exists()
+
+
+@pytest.mark.parametrize("attack", ["symlink", "fifo", "hardlink"])
+def test_atomic_rename_rejects_unattested_nonregular_or_hardlinked_nodes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    attack: str,
+) -> None:
+    config = _config(
+        tmp_path,
+        monkeypatch,
+        rows=(_row("a", "Enough source text for one row."),),
+    )
+    original = source_pool.publish_directory_noreplace
+
+    def inject_then_rename(
+        staged: Path,
+        output: Path,
+        *,
+        expected_parent_identity: tuple[int, int] | None = None,
+        expected_staged_identity: tuple[int, int] | None = None,
+        expected_tree_attestation: source_pool.DirectoryTreeAttestation | None = None,
+    ) -> None:
+        injected = staged / "unattested-node"
+        if attack == "symlink":
+            injected.symlink_to(staged / source_pool._SOURCE_FILENAME)
+        elif attack == "fifo":
+            os.mkfifo(injected)
+        else:
+            os.link(staged / source_pool._SOURCE_FILENAME, injected)
+        original(
+            staged,
+            output,
+            expected_parent_identity=expected_parent_identity,
+            expected_staged_identity=expected_staged_identity,
+            expected_tree_attestation=expected_tree_attestation,
+        )
+
+    monkeypatch.setattr(source_pool, "publish_directory_noreplace", inject_then_rename)
+    with pytest.raises(ValueError, match="hard-linked|symlink|special"):
+        freeze_probe_source_pool(config)
+    assert not config.output_dir.exists()
+
+
+def test_post_rename_loader_quarantines_mutation_before_success_return(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(
+        tmp_path,
+        monkeypatch,
+        rows=(_row("a", "Enough source text for one row."),),
+    )
+    original = source_pool.publish_directory_noreplace
+
+    def publish_then_mutate(
+        staged: Path,
+        output: Path,
+        *,
+        expected_parent_identity: tuple[int, int] | None = None,
+        expected_staged_identity: tuple[int, int] | None = None,
+        expected_tree_attestation: source_pool.DirectoryTreeAttestation | None = None,
+    ) -> None:
+        original(
+            staged,
+            output,
+            expected_parent_identity=expected_parent_identity,
+            expected_staged_identity=expected_staged_identity,
+            expected_tree_attestation=expected_tree_attestation,
+        )
+        source = output / source_pool._SOURCE_FILENAME
+        source.write_bytes(source.read_bytes().replace(b"Enough", b"BROKEN"))
+
+    monkeypatch.setattr(source_pool, "publish_directory_noreplace", publish_then_mutate)
+    with pytest.raises(ValueError, match="was removed"):
+        freeze_probe_source_pool(config)
+    assert not config.output_dir.exists()
+    assert not list(tmp_path.glob(f".{config.output_dir.name}.invalid-*"))
 
 
 def test_publish_rejects_output_parent_inode_substitution(
