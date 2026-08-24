@@ -25,7 +25,10 @@ from typo_robust_training.training.adapters import (
     attach_lora_adapters,
     trainable_parameter_report,
 )
-from typo_robust_training.training.config import AdapterTrainingProtocol
+from typo_robust_training.training.config import (
+    AdapterTrainingProtocol,
+    is_kojima_faithful_protocol,
+)
 from typo_robust_training.training.encoding import (
     PairedEncoding,
     encode_training_pair,
@@ -45,6 +48,10 @@ from typo_robust_training.training.methods import (
     resolve_training_method,
 )
 from typo_robust_training.training.pairs import TrainingPair, UnusableTrainingPairError
+from typo_robust_training.training.kojima_faithful import (
+    UnusableKojimaFaithfulPairError,
+    encode_kojima_faithful_pair,
+)
 from typo_robust_training.training.runner import (
     factorial_group_balanced_accumulation_scales,
     TrainingMicroStepResult,
@@ -1048,6 +1055,8 @@ class HuggingFaceAdapterTrainingRuntime:
         torch.cuda.reset_peak_memory_stats()
 
     def _encode_pair(self, pair: TrainingPair) -> PairedEncoding:
+        if is_kojima_faithful_protocol(self.protocol):
+            return encode_kojima_faithful_pair(pair, tokenizer=self.tokenizer)
         return encode_training_pair(
             pair,
             tokenizer=self.tokenizer,
@@ -1064,7 +1073,7 @@ class HuggingFaceAdapterTrainingRuntime:
 
         try:
             self._encode_pair(pair)
-        except UnusableTrainingPairError:
+        except (UnusableTrainingPairError, UnusableKojimaFaithfulPairError):
             return False
         return True
 
@@ -1108,7 +1117,11 @@ class HuggingFaceAdapterTrainingRuntime:
         else:
             encoding = self._encode_pair(pair)
         return compute_training_step(
-            teacher=self.teacher,
+            teacher=(
+                self.student
+                if is_kojima_faithful_protocol(self.protocol)
+                else self.teacher
+            ),
             student=self.student,
             encoding=encoding,
             protocol=self.protocol,
@@ -1119,6 +1132,7 @@ class HuggingFaceAdapterTrainingRuntime:
             semantic_basis=self.semantic_basis,
             semantic_projected_class_weights=self.semantic_projected_class_weights,
             semantic_classifier_bias=self.semantic_classifier_bias,
+            teacher_adapter_disabled=is_kojima_faithful_protocol(self.protocol),
         )
 
     def prepare_accumulation(
@@ -1794,6 +1808,11 @@ class HuggingFaceAdapterTrainingRuntime:
             "trainable_parameters": self.parameter_report.trainable_parameters,
             "total_parameters": self.parameter_report.total_parameters,
             "attention_head_dim": self.attention_head_dim,
+            "training_teacher_mode": (
+                "same-student-model-with-adapter-disabled"
+                if is_kojima_faithful_protocol(self.protocol)
+                else "separate-frozen-clean-model"
+            ),
             "teacher_frozen": True,
             "student_base_frozen": True,
         }

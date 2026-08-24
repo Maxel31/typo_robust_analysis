@@ -57,6 +57,7 @@ CORE_COMMANDS = frozenset(
 
 TRAINING_PLUGIN_COMMANDS = frozenset(
     {
+        "prepare-kojima-faithful-data",
         "build-robustness-training-data",
         "build-sae-clean-corpus",
         "calibrate-sparse-autoencoder-l1",
@@ -228,7 +229,7 @@ def test_real_cli_registers_the_exact_core_and_training_plugin_commands() -> Non
     assert CORE_COMMANDS.isdisjoint(TRAINING_PLUGIN_COMMANDS)
     assert combined_commands - plugin_commands == CORE_COMMANDS
     assert combined_commands == CORE_COMMANDS | TRAINING_PLUGIN_COMMANDS
-    assert len(combined_commands) == 63
+    assert len(combined_commands) == 64
 
 
 @pytest.mark.parametrize("readme_name", ["README.md", "README.ja.md"])

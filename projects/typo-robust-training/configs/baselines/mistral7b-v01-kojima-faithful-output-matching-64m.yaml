@@ -15,8 +15,11 @@
     "answer_format": "no-hard-answer-target/v1",
     "pairing_policy": "kojima-50pct-clean-document-noise/v1",
     "training_corpus": "HuggingFaceFW/fineweb",
+    "training_corpus_revision": "9bb295ddab0e05d785b879661af7260fed5140fc",
     "training_corpus_data_file": "sample/10BT/000_00000.parquet",
-    "packing_policy": "bos-separated-documents-overfill-500-truncate/v1"
+    "packing_policy": "kojima-bos-overfill500-canonicalize-truncate8192/v2",
+    "data_runtime_policy": "hash-attested-8800-attempt-skip-replace-stream/v2",
+    "upstream_code_revision": "4cb90b28e9f6976046a6e93aec2dcab27e76555d"
   },
   "adapter": {
     "method": "lora",
@@ -53,7 +56,9 @@
     "max_grad_norm": 1.0,
     "checkpoint_every_optimizer_steps": 250,
     "log_every_micro_steps": 1,
-    "seed_inventory": [1],
+    "seed_inventory": [1, 42, 43, 44],
+    "public_anchor_seed": 1,
+    "matched_replication_seeds": [42, 43, 44],
     "resume_contract": "exact-next-sample-and-rng/v1"
   },
   "objective": {

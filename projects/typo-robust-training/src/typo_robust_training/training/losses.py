@@ -106,6 +106,58 @@ def aligned_output_kl(
     )
 
 
+def aligned_soft_cross_entropy(
+    teacher_logits: Any,
+    student_logits: Any,
+    *,
+    logit_pairs: Sequence[tuple[int, int]],
+    temperature: float,
+) -> Any:
+    """Mean public-Kojima soft-label CE on aligned causal coordinates.
+
+    Unlike forward KL this retains the teacher entropy constant in telemetry.
+    Its gradient is otherwise identical.  Accumulation weighting is performed
+    by the runner from each example's exact valid-target count, reproducing the
+    upstream summed CE divided by total valid targets.
+    """
+
+    import torch
+
+    teacher = _logits(teacher_logits, field="teacher logits").detach()
+    student = _logits(student_logits, field="student logits")
+    if int(teacher.shape[2]) != int(student.shape[2]):
+        raise ValueError("teacher and student vocabularies differ")
+    if not math.isfinite(float(temperature)) or float(temperature) <= 0.0:
+        raise ValueError("distillation temperature must be positive")
+    pairs = tuple(logit_pairs)
+    if not pairs:
+        raise ValueError("soft-label CE requires aligned logit pairs")
+    clean_positions: list[int] = []
+    typo_positions: list[int] = []
+    for clean_position, typo_position in pairs:
+        if (
+            isinstance(clean_position, bool)
+            or not isinstance(clean_position, int)
+            or not 0 <= clean_position < int(teacher.shape[1])
+            or isinstance(typo_position, bool)
+            or not isinstance(typo_position, int)
+            or not 0 <= typo_position < int(student.shape[1])
+        ):
+            raise ValueError("soft-label CE contains an invalid causal coordinate")
+        clean_positions.append(clean_position)
+        typo_positions.append(typo_position)
+    scale = float(temperature)
+    teacher_probability = torch.softmax(
+        teacher[0, clean_positions, :].float() / scale,
+        dim=-1,
+    )
+    student_log = torch.log_softmax(
+        student[0, typo_positions, :].float() / scale,
+        dim=-1,
+    )
+    return -(teacher_probability * student_log).sum(dim=-1).mean() * (scale**2)
+
+
 def normalized_component_state_loss(
     teacher: Mapping[ComponentRef, Any],
     student: Mapping[ComponentRef, Any],

@@ -17,13 +17,22 @@ from typo_robust_training.training.adapters import (
     attach_lora_adapters,
     trainable_parameter_report,
 )
-from typo_robust_training.training.config import load_adapter_training_config
+from typo_robust_training.training.config import (
+    is_kojima_faithful_protocol,
+    load_adapter_training_config,
+)
+from typo_robust_training.training.losses import (
+    aligned_output_kl,
+    aligned_soft_cross_entropy,
+)
 from typo_robust_training.training.runner import (
     TrainingMicroStepResult,
+    _load_protocol_training_bundle,
     validate_micro_step_student_tokens,
 )
 from typo_robust_training.training.runtime import resolve_attention_head_dim
 from typo_robust_training.training.tracking import build_wandb_run_presentation
+from typo_robust_training.training.step import _output_matching_loss
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -76,14 +85,21 @@ def test_faithful_protocol_freezes_model_data_capacity_and_budget() -> None:
     assert protocol.model_revision == "7231864981174d9bee8c7687c24c8344414eae6b"
     assert protocol.decoder_layers == 32
     assert protocol.training_corpus == "HuggingFaceFW/fineweb"
+    assert (
+        protocol.training_corpus_revision
+        == "9bb295ddab0e05d785b879661af7260fed5140fc"
+    )
     assert protocol.training_corpus_data_file == "sample/10BT/000_00000.parquet"
-    assert protocol.packing_policy == "bos-separated-documents-overfill-500-truncate/v1"
+    assert protocol.packing_policy == "kojima-bos-overfill500-canonicalize-truncate8192/v2"
+    assert protocol.data_runtime_policy == "hash-attested-8800-attempt-skip-replace-stream/v2"
     assert protocol.max_sequence_length == 8192
     assert protocol.micro_batch_size == 1
     assert protocol.gradient_accumulation_steps == 8
     assert protocol.max_optimizer_steps == 1000
     assert protocol.max_student_tokens == 65_536_000
-    assert protocol.seed_inventory == (1,)
+    assert protocol.seed_inventory == (1, 42, 43, 44)
+    assert protocol.public_anchor_seed == 1
+    assert protocol.matched_replication_seeds == (42, 43, 44)
     assert protocol.lora_target_modules == (
         "embed_tokens",
         "q_proj",
@@ -102,6 +118,53 @@ def test_faithful_protocol_freezes_model_data_capacity_and_budget() -> None:
         * protocol.max_optimizer_steps
         == protocol.max_student_tokens
     )
+
+
+def test_factorial_v7_keeps_generic_bundle_and_kl_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    factorial_v7 = SimpleNamespace(
+        schema_version="robustness-adapter-training-config/v7",
+        condition="state-free-factorial-output-matching",
+        method_identity="state-free-factorial-output-matching/v1",
+    )
+    faithful = SimpleNamespace(
+        schema_version="robustness-adapter-training-config/v7",
+        condition="kojima-faithful-output-matching",
+        method_identity="kojima-faithful-output-matching/v1",
+    )
+    generic_bundle = object()
+    calls: list[str] = []
+
+    def generic_loader(root: Path, *, protocol: object, seed: int) -> object:
+        assert root == tmp_path
+        assert protocol is factorial_v7
+        assert seed == 42
+        calls.append("generic")
+        return generic_bundle
+
+    def faithful_loader(root: Path, *, seed: int) -> object:
+        del root, seed
+        raise AssertionError("factorial v7 was misrouted into Kojima packing")
+
+    monkeypatch.setattr(
+        "typo_robust_training.training.runner.load_training_data_bundle",
+        generic_loader,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.training.runner.load_kojima_faithful_data_bundle",
+        faithful_loader,
+    )
+    assert not is_kojima_faithful_protocol(factorial_v7)  # type: ignore[arg-type]
+    assert _load_protocol_training_bundle(  # type: ignore[arg-type]
+        factorial_v7,
+        root=tmp_path,
+        seed=42,
+    ) is generic_bundle
+    assert calls == ["generic"]
+    assert _output_matching_loss(factorial_v7) is aligned_output_kl  # type: ignore[arg-type]
+    assert _output_matching_loss(faithful) is aligned_soft_cross_entropy  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -325,3 +388,18 @@ def test_faithful_command_and_presentation_are_not_named_kojima_inspired() -> No
     assert set(faithful.tags).isdisjoint(
         tag for tag in inspired.tags if tag.startswith("arm:")
     )
+    assert "seed-role:public-anchor" in faithful.tags
+    assert "reproduction:hash-attested-faithful" in faithful.tags
+    assert "bit-exact:false" in faithful.tags
+    replication = build_wandb_run_presentation(
+        condition="kojima-faithful-output-matching",
+        schema_version="robustness-adapter-training-config/v7",
+        model="mistralai/Mistral-7B-v0.1",
+        seed=42,
+        max_optimizer_steps=1000,
+        max_student_tokens=65_536_000,
+        state_gradient_ratio=None,
+        state_layers=(),
+    )
+    assert "seed-role:matched-replication" in replication.tags
+    assert "matched-inference:true" in replication.tags

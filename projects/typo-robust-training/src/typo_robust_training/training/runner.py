@@ -25,11 +25,18 @@ from typo_robust_training.training.checkpoint import (
 )
 from typo_robust_training.training.config import (
     AdapterTrainingProtocol,
+    is_kojima_faithful_protocol,
     load_adapter_training_config,
 )
 from typo_robust_training.training.data import (
     TrainingDataBundle,
     load_training_data_bundle,
+)
+from typo_robust_training.training.kojima_faithful import (
+    PACKED_EXAMPLES,
+    TARGET_USABLE_EXAMPLES,
+    KojimaFaithfulDataBundle,
+    load_kojima_faithful_data_bundle,
 )
 from typo_robust_training.training.evidence import (
     LocalizationEvidence,
@@ -216,7 +223,7 @@ def validate_micro_step_student_tokens(
     if not isinstance(result, TrainingMicroStepResult):
         raise TypeError("micro-step token validation requires TrainingMicroStepResult")
     if (
-        protocol.packing_policy == "bos-separated-documents-overfill-500-truncate/v1"
+        is_kojima_faithful_protocol(protocol)
         and result.student_tokens != protocol.max_sequence_length
     ):
         raise ValueError(
@@ -404,7 +411,7 @@ def _forced_noop(protocol: AdapterTrainingProtocol, *, micro_step: int) -> bool 
 
 def _state_calibration_pairs(
     *,
-    bundle: TrainingDataBundle,
+    bundle: TrainingDataBundle | KojimaFaithfulDataBundle,
     protocol: AdapterTrainingProtocol,
     seed: int,
     runtime: AdapterTrainingRuntime,
@@ -511,7 +518,7 @@ def _materialize_usable_pair(
 
 def _next_usable_training_pair(
     *,
-    bundle: TrainingDataBundle,
+    bundle: TrainingDataBundle | KojimaFaithfulDataBundle,
     cursor: TrainingCursor,
     seed: int,
     protocol: AdapterTrainingProtocol,
@@ -519,6 +526,38 @@ def _next_usable_training_pair(
     order_cache: EpochSourceOrderCache | None = None,
 ) -> tuple[TrainingPair, int, TrainingCursor]:
     """Advance past unusable sources without consuming a training micro-step."""
+
+    if is_kojima_faithful_protocol(protocol):
+        if not isinstance(bundle, KojimaFaithfulDataBundle):
+            raise TypeError("Kojima-faithful training requires its packed FineWeb bundle")
+        if cursor.epoch != 0 or cursor.source_index >= len(bundle.sources):
+            raise ValueError("Kojima-faithful packed attempt stream exhausted or repeated")
+        pair_is_usable = getattr(runtime, "pair_is_usable", None)
+        if not callable(pair_is_usable):
+            raise TypeError("Kojima-faithful runtime cannot validate aligned target counts")
+        source_index = cursor.source_index
+        while source_index < len(bundle.sources):
+            source = bundle.sources[source_index]
+            pair = bundle.generator.materialize(source, epoch=0)
+            source_index += 1
+            next_epoch = int(source_index == len(bundle.sources))
+            next_source_index = 0 if next_epoch else source_index
+            if not pair_is_usable(pair):
+                continue
+            return (
+                pair,
+                0,
+                TrainingCursor(
+                    epoch=next_epoch,
+                    source_index=next_source_index,
+                    micro_steps=cursor.micro_steps + 1,
+                    optimizer_steps=cursor.optimizer_steps,
+                    student_tokens=cursor.student_tokens,
+                ),
+            )
+        raise ValueError(
+            "Kojima-faithful packed attempt stream exhausted before the next usable pair"
+        )
 
     source_cursor = cursor
     for _attempt in range(len(bundle.sources)):
@@ -540,6 +579,19 @@ def _next_usable_training_pair(
             return pair, epoch, next_cursor
         source_cursor = replace(next_cursor, micro_steps=cursor.micro_steps)
     raise ValueError("training source inventory contains no usable pair for this micro-step")
+
+
+def _load_protocol_training_bundle(
+    protocol: AdapterTrainingProtocol,
+    *,
+    root: Path,
+    seed: int,
+) -> TrainingDataBundle | KojimaFaithfulDataBundle:
+    """Keep shared-schema factorial arms on the generic frozen-data path."""
+
+    if is_kojima_faithful_protocol(protocol):
+        return load_kojima_faithful_data_bundle(root, seed=seed)
+    return load_training_data_bundle(root, protocol=protocol, seed=seed)
 
 
 def _monitor_violation_streak(
@@ -744,7 +796,7 @@ def run_adapter_training(
     config: AdapterTrainingRunConfig,
     *,
     runtime: AdapterTrainingRuntime | None = None,
-    data_bundle: TrainingDataBundle | None = None,
+    data_bundle: TrainingDataBundle | KojimaFaithfulDataBundle | None = None,
     evidence: (
         LocalizationEvidence
         | ResidualStateEvidence
@@ -768,11 +820,27 @@ def run_adapter_training(
         raise ValueError("--gpu-id must name one physical GPU")
     if config.wandb_project is None and config.wandb_entity is not None:
         raise ValueError("W&B entity requires a W&B project")
-    bundle = data_bundle or load_training_data_bundle(
-        config.training_data_dir,
-        protocol=protocol,
+    bundle = data_bundle or _load_protocol_training_bundle(
+        protocol,
+        root=config.training_data_dir,
         seed=config.seed,
     )
+    if is_kojima_faithful_protocol(protocol):
+        if not isinstance(bundle, KojimaFaithfulDataBundle):
+            raise TypeError("Kojima-faithful training cannot consume the generic data bundle")
+        if (
+            protocol.training_corpus_revision != bundle.source_revision
+            or protocol.packing_policy != bundle.packing_policy
+            or config.seed != bundle.seed
+            or len(bundle.sources) != PACKED_EXAMPLES
+            or bundle.packed_attempts != PACKED_EXAMPLES
+            or bundle.target_usable_examples != TARGET_USABLE_EXAMPLES
+            or bundle.target_usable_examples * protocol.max_sequence_length
+            != protocol.max_student_tokens
+        ):
+            raise ValueError("Kojima-faithful data/config provenance differs")
+    elif not isinstance(bundle, TrainingDataBundle):
+        raise TypeError("factorial training cannot consume the Kojima packed stream")
     monitor_records: tuple[object, ...] = ()
     monitor_protocol_sha: str | None = None
     monitor_data_sha: str | None = None
@@ -977,7 +1045,11 @@ def run_adapter_training(
             )
         else:
             runtime.load_state(checkpoint.state_path)
-    order_cache = EpochSourceOrderCache(bundle.sources, seed=config.seed)
+    order_cache = (
+        None
+        if isinstance(bundle, KojimaFaithfulDataBundle)
+        else EpochSourceOrderCache(bundle.sources, seed=config.seed)
+    )
     provenance = dict(runtime.provenance())
     started_at = _now()
     run_base: dict[str, object] = {
@@ -995,6 +1067,14 @@ def run_adapter_training(
             else {}
         ),
         "seed": config.seed,
+        "seed_role": (
+            "public-anchor"
+            if protocol.public_anchor_seed == config.seed
+            else "matched-replication"
+            if config.seed in protocol.matched_replication_seeds
+            else "factorial"
+        ),
+        "matched_inference_eligible": config.seed in protocol.matched_replication_seeds,
         "gpu_id": config.gpu_id,
         "resume": config.resume,
         "python": platform.python_version(),
@@ -1016,6 +1096,21 @@ def run_adapter_training(
             }
         ),
     }
+    if isinstance(bundle, KojimaFaithfulDataBundle):
+        run_base["reproduction"] = {
+            "identity": "Kojima-public-code-faithful-with-attested-departures/v1",
+            "bit_exact": False,
+            "upstream_code_revision": protocol.upstream_code_revision,
+            "fineweb_revision": bundle.source_revision,
+            "fineweb_file_sha256": bundle.source_file_sha256,
+            "source_order_sha256": bundle.source_order_sha256,
+            "packed_attempts": bundle.packed_attempts,
+            "target_usable_examples": bundle.target_usable_examples,
+            "departures": [
+                "pinned-project-torch-row-order",
+                "skip-and-replace-before-usable-accumulation",
+            ],
+        }
     _write_json(run_path, {**run_base, "status": "running", "started_at": started_at})
     tracking_finished = False
     try:

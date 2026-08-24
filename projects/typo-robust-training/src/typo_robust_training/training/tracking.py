@@ -294,6 +294,22 @@ def build_wandb_run_presentation(
         f"model:{model.rsplit('/', 1)[-1].lower()}",
         budget_tag,
     ]
+    if condition == "kojima-faithful-output-matching":
+        tags.extend(
+            (
+                "reproduction:hash-attested-faithful",
+                "bit-exact:false",
+                "data:fineweb-pinned-packed-attempts",
+            )
+        )
+        if seed == 1:
+            parts.append("public anchor")
+            tags.extend(("seed-role:public-anchor", "matched-inference:false"))
+        elif seed in {42, 43, 44}:
+            parts.append("matched replication")
+            tags.extend(("seed-role:matched-replication", "matched-inference:true"))
+        else:
+            raise ValueError("Kojima-faithful W&B seed has no preregistered role")
     if cycle == 1:
         # Preserve the historical condition identity even though legacy runs
         # intentionally share one broad presentation arm.

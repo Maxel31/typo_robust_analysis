@@ -76,8 +76,11 @@ _SEQUENCE = {
 _SEQUENCE_V2 = _SEQUENCE | {"pairing_policy"}
 _SEQUENCE_V7 = _SEQUENCE_V2 | {
     "training_corpus",
+    "training_corpus_revision",
     "training_corpus_data_file",
     "packing_policy",
+    "data_runtime_policy",
+    "upstream_code_revision",
 }
 _ADAPTER = {
     "method",
@@ -108,6 +111,10 @@ _OPTIMIZATION = {
     "resume_contract",
 }
 _OPTIMIZATION_V3 = _OPTIMIZATION | {"max_student_tokens"}
+_OPTIMIZATION_V7 = _OPTIMIZATION_V3 | {
+    "public_anchor_seed",
+    "matched_replication_seeds",
+}
 _OBJECTIVE = {
     "weights",
     "state_scope",
@@ -138,8 +145,13 @@ _KOJIMA_FROZEN_SECTIONS: Mapping[str, object] = {
         "answer_format": "no-hard-answer-target/v1",
         "pairing_policy": "kojima-50pct-clean-document-noise/v1",
         "training_corpus": "HuggingFaceFW/fineweb",
+        "training_corpus_revision": "9bb295ddab0e05d785b879661af7260fed5140fc",
         "training_corpus_data_file": "sample/10BT/000_00000.parquet",
-        "packing_policy": "bos-separated-documents-overfill-500-truncate/v1",
+        "packing_policy": "kojima-bos-overfill500-canonicalize-truncate8192/v2",
+        "data_runtime_policy": (
+            "hash-attested-8800-attempt-skip-replace-stream/v2"
+        ),
+        "upstream_code_revision": "4cb90b28e9f6976046a6e93aec2dcab27e76555d",
     },
     "adapter": {
         "method": "lora",
@@ -166,7 +178,9 @@ _KOJIMA_FROZEN_SECTIONS: Mapping[str, object] = {
         "max_grad_norm": 1.0,
         "checkpoint_every_optimizer_steps": 250,
         "log_every_micro_steps": 1,
-        "seed_inventory": [1],
+        "seed_inventory": [1, 42, 43, 44],
+        "public_anchor_seed": 1,
+        "matched_replication_seeds": [42, 43, 44],
         "resume_contract": "exact-next-sample-and-rng/v1",
     },
     "objective": {
@@ -361,8 +375,11 @@ class AdapterTrainingProtocol:
     answer_format: str
     pairing_policy: str
     training_corpus: str | None
+    training_corpus_revision: str | None
     training_corpus_data_file: str | None
     packing_policy: str | None
+    data_runtime_policy: str | None
+    upstream_code_revision: str | None
     adapter_method: str
     lora_rank: int
     lora_alpha: float
@@ -387,6 +404,8 @@ class AdapterTrainingProtocol:
     checkpoint_every_optimizer_steps: int
     log_every_micro_steps: int
     seed_inventory: tuple[int, ...]
+    public_anchor_seed: int | None
+    matched_replication_seeds: tuple[int, ...]
     resume_contract: str
     loss_weights: Mapping[str, float]
     state_scope: str
@@ -401,6 +420,23 @@ class AdapterTrainingProtocol:
     state_window_policy: str
     expected_method_evidence_sha256: str | None
     config_sha256: str
+
+
+def is_kojima_faithful_protocol(protocol: AdapterTrainingProtocol) -> bool:
+    """Select the faithful runtime by method identity, never by schema version.
+
+    Schema ``v7`` is shared with state-free factorial arms in the integrated
+    experiment tree.  Treating the schema as a method selector would silently
+    replace their group-balanced data/KL path with the public-reproduction path.
+    """
+
+    return getattr(protocol, "condition", None) == _KOJIMA_CONDITION
+
+
+def is_probe_factorial_protocol(protocol: AdapterTrainingProtocol) -> bool:
+    """Select the state-free factorial runtime only by its named condition."""
+
+    return getattr(protocol, "condition", None) in _FACTORIAL_CONDITIONS
 
 
 def _validate_condition(
@@ -843,7 +879,9 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         root["optimization"],
         field="optimization",
         fields=(
-            _OPTIMIZATION_V3
+            _OPTIMIZATION_V7
+            if is_kojima
+            else _OPTIMIZATION_V3
             if schema_version.endswith(("/v3", "/v4", "/v5", "/v6", "/v7"))
             else _OPTIMIZATION
         ),
@@ -865,11 +903,37 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     seeds = tuple(
         _integer(value, field="optimization.seed_inventory", minimum=0) for value in seeds_raw
     )
-    expected_seeds = (1,) if is_kojima else (42, 43, 44)
+    expected_seeds = (1, 42, 43, 44) if is_kojima else (42, 43, 44)
     if seeds != expected_seeds:
         raise ValueError(
             "optimization.seed_inventory differs from the frozen seed inventory"
         )
+    public_anchor_seed: int | None = None
+    matched_replication_seeds: tuple[int, ...] = ()
+    if is_kojima:
+        public_anchor_seed = _integer(
+            optimization["public_anchor_seed"],
+            field="optimization.public_anchor_seed",
+            minimum=0,
+        )
+        matched_raw = optimization["matched_replication_seeds"]
+        if not isinstance(matched_raw, list):
+            raise ValueError("optimization.matched_replication_seeds must be a list")
+        matched_replication_seeds = tuple(
+            _integer(
+                value,
+                field="optimization.matched_replication_seeds",
+                minimum=0,
+            )
+            for value in matched_raw
+        )
+        if (
+            public_anchor_seed != 1
+            or matched_replication_seeds != (42, 43, 44)
+            or public_anchor_seed in matched_replication_seeds
+            or set(seeds) != {public_anchor_seed, *matched_replication_seeds}
+        ):
+            raise ValueError("Kojima anchor/matched seed roles differ")
     warmup = _number(optimization["warmup_ratio"], field="optimization.warmup_ratio")
     if warmup > 1.0:
         raise ValueError("optimization.warmup_ratio must be at most one")
@@ -1080,6 +1144,11 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         training_corpus=(
             str(sequence["training_corpus"]) if is_kojima else None
         ),
+        training_corpus_revision=(
+            str(sequence["training_corpus_revision"])
+            if is_kojima
+            else None
+        ),
         training_corpus_data_file=(
             str(sequence["training_corpus_data_file"])
             if is_kojima
@@ -1087,6 +1156,16 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         ),
         packing_policy=(
             str(sequence["packing_policy"]) if is_kojima else None
+        ),
+        data_runtime_policy=(
+            str(sequence["data_runtime_policy"])
+            if is_kojima
+            else None
+        ),
+        upstream_code_revision=(
+            str(sequence["upstream_code_revision"])
+            if is_kojima
+            else None
         ),
         adapter_method="lora",
         lora_rank=lora_rank,
@@ -1124,6 +1203,8 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
             minimum=1,
         ),
         seed_inventory=seeds,
+        public_anchor_seed=public_anchor_seed,
+        matched_replication_seeds=matched_replication_seeds,
         resume_contract=str(optimization["resume_contract"]),
         loss_weights=weights,
         state_scope=state_scope,
@@ -1143,4 +1224,9 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     )
 
 
-__all__ = ["AdapterTrainingProtocol", "load_adapter_training_config"]
+__all__ = [
+    "AdapterTrainingProtocol",
+    "is_kojima_faithful_protocol",
+    "is_probe_factorial_protocol",
+    "load_adapter_training_config",
+]
