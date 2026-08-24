@@ -423,6 +423,7 @@ def test_atomic_publish_does_not_clobber_a_racing_output(
         target: Path,
         *,
         expected_parent_identity: tuple[int, int],
+        bindings: source_pool._PublicationBindings,
     ) -> None:
         target.mkdir()
         (target / "owned").write_text("keep")
@@ -430,6 +431,7 @@ def test_atomic_publish_does_not_clobber_a_racing_output(
             temporary,
             target,
             expected_parent_identity=expected_parent_identity,
+            bindings=bindings,
         )
 
     monkeypatch.setattr(source_pool, "_publish_bundle", race)
@@ -455,8 +457,10 @@ def test_publish_failure_removes_the_complete_staging_bundle(
         _target: Path,
         *,
         expected_parent_identity: tuple[int, int],
+        bindings: source_pool._PublicationBindings,
     ) -> None:
         assert expected_parent_identity
+        assert bindings.staging_run_sha256
         raise RuntimeError("simulated atomic publication failure")
 
     monkeypatch.setattr(source_pool, "_publish_bundle", fail)
@@ -464,6 +468,141 @@ def test_publish_failure_removes_the_complete_staging_bundle(
         freeze_probe_source_pool(config)
     assert not config.output_dir.exists()
     assert not list(tmp_path.glob(f".{config.output_dir.name}.*"))
+
+
+@pytest.mark.parametrize("attack", ["source", "protected", "parquet"])
+def test_freezer_never_publishes_staging_or_input_mutated_before_final_attestation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    attack: str,
+) -> None:
+    """Prove final validation is adjacent to atomic publication."""
+
+    config = _config(
+        tmp_path,
+        monkeypatch,
+        rows=(_row("a", "Enough source text for one row."),),
+    )
+    original = source_pool._publish_bundle
+
+    def mutate_then_publish(
+        temporary: Path,
+        target: Path,
+        *,
+        expected_parent_identity: tuple[int, int],
+        bindings: source_pool._PublicationBindings,
+    ) -> None:
+        if attack == "source":
+            source = temporary / source_pool._SOURCE_FILENAME
+            source.write_bytes(source.read_bytes().replace(b"Enough", b"BROKEN"))
+        elif attack == "protected":
+            denylist = bindings.protected_root / "denylist.json"
+            denylist.write_bytes(
+                denylist.read_bytes().replace(b'"schema_version"', b'"schema_Xersion"', 1)
+            )
+        else:
+            config.parquet_path.write_bytes(b"changed-before-final-attestation")
+        original(
+            temporary,
+            target,
+            expected_parent_identity=expected_parent_identity,
+            bindings=bindings,
+        )
+
+    monkeypatch.setattr(source_pool, "_publish_bundle", mutate_then_publish)
+    with pytest.raises(ValueError):
+        freeze_probe_source_pool(config)
+    assert not config.output_dir.exists()
+    assert not list(tmp_path.glob(f".{config.output_dir.name}.*"))
+
+
+def test_freezer_rechecks_checkout_immediately_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(
+        tmp_path,
+        monkeypatch,
+        rows=(_row("a", "Enough source text for one row."),),
+    )
+    calls = 0
+
+    def attest(revision: str) -> _Checkout:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ValueError("simulated dirty checkout before publication")
+        return _Checkout(revision)
+
+    monkeypatch.setattr(source_pool, "attest_runtime_checkout", attest)
+    with pytest.raises(ValueError, match="dirty checkout"):
+        freeze_probe_source_pool(config)
+    assert calls == 2
+    assert not config.output_dir.exists()
+
+
+def test_final_tree_binding_rejects_mutation_after_offline_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(
+        tmp_path,
+        monkeypatch,
+        rows=(_row("a", "Enough source text for one row."),),
+    )
+    original = source_pool.load_probe_source_pool_bundle
+
+    def load_then_mutate(*args: object, **kwargs: object) -> ProbeSourcePoolFreezeResult:
+        result = original(*args, **kwargs)
+        result.source_manifest_path.write_bytes(
+            result.source_manifest_path.read_bytes().replace(b"Enough", b"BROKEN")
+        )
+        return result
+
+    monkeypatch.setattr(source_pool, "load_probe_source_pool_bundle", load_then_mutate)
+    with pytest.raises(ValueError, match="staging tree changed"):
+        freeze_probe_source_pool(config)
+    assert not config.output_dir.exists()
+
+
+def test_atomic_rename_rejects_staging_root_inode_substitution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(
+        tmp_path,
+        monkeypatch,
+        rows=(_row("a", "Enough source text for one row."),),
+    )
+    original = source_pool.publish_directory_noreplace
+
+    def substitute(
+        staged: Path,
+        output: Path,
+        *,
+        expected_parent_identity: tuple[int, int] | None = None,
+        expected_staged_identity: tuple[int, int] | None = None,
+    ) -> None:
+        moved = staged.with_name(f"{staged.name}.moved")
+        staged.rename(moved)
+        staged.mkdir()
+        try:
+            original(
+                staged,
+                output,
+                expected_parent_identity=expected_parent_identity,
+                expected_staged_identity=expected_staged_identity,
+            )
+        finally:
+            if staged.exists():
+                staged.rmdir()
+            if moved.exists():
+                moved.rename(staged)
+
+    monkeypatch.setattr(source_pool, "publish_directory_noreplace", substitute)
+    with pytest.raises(ValueError, match="source changed"):
+        freeze_probe_source_pool(config)
+    assert not config.output_dir.exists()
 
 
 def test_publish_rejects_output_parent_inode_substitution(
@@ -483,6 +622,7 @@ def test_publish_rejects_output_parent_inode_substitution(
         target: Path,
         *,
         expected_parent_identity: tuple[int, int],
+        bindings: source_pool._PublicationBindings,
     ) -> None:
         moved = target.parent.with_name("publication-moved")
         target.parent.rename(moved)
@@ -491,6 +631,7 @@ def test_publish_rejects_output_parent_inode_substitution(
             temporary,
             target,
             expected_parent_identity=expected_parent_identity,
+            bindings=bindings,
         )
 
     monkeypatch.setattr(source_pool, "_publish_bundle", substitute)

@@ -34,7 +34,10 @@ from typo_robust_training.data.protected_registry import ProtectedSplitIdentityS
 from typo_robust_training.data.records import CleanRecord, record_id_for
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.integrity import sha256_file, sha256_tree
-from typo_robust_training.probe.attestation import attest_runtime_checkout
+from typo_robust_training.probe.attestation import (
+    RuntimeCheckoutAttestation,
+    attest_runtime_checkout,
+)
 from typo_robust_training.probe.cohort_builder import (
     probe_parent_source_sha256,
     probe_source_group_sha256,
@@ -238,6 +241,27 @@ def _read_regular_bytes(path: Path, *, label: str) -> bytes:
         return raw
     finally:
         os.close(descriptor)
+
+
+def _directory_identity(path: Path, *, label: str) -> tuple[int, int, int, int, int, int]:
+    reject_path_symlink_components(path, artifact=label)
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise ValueError(f"{label} must be one directory") from exc
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise ValueError(f"{label} must be one directory")
+    return _identity(metadata)
+
+
+def _assert_directory_unchanged(
+    path: Path,
+    *,
+    expected_identity: tuple[int, int, int, int, int, int],
+    label: str,
+) -> None:
+    if _directory_identity(path, label=label) != expected_identity:
+        raise ValueError(f"{label} changed before atomic publication")
 
 
 def _output_path(path: Path) -> tuple[Path, int, tuple[int, int]]:
@@ -605,18 +629,92 @@ class ProbeSourcePoolFreezeResult:
     duplicate_records_removed: int
 
 
+@dataclass(frozen=True, slots=True)
+class _PublicationBindings:
+    parquet_path: Path
+    parquet_descriptor: int
+    parquet_identity: os.stat_result
+    parquet_sha256: str
+    checkout: RuntimeCheckoutAttestation
+    code_revision: str
+    protected_root: Path
+    protected_run_path: Path
+    protected_producer_sha256: str
+    protected_identity_sets: ProtectedSplitIdentitySets
+    protected_root_identity: tuple[int, int, int, int, int, int]
+    protected_tree_sha256: str
+    staging_run_path: Path
+    staging_run_sha256: str
+    staging_root_identity: tuple[int, int, int, int, int, int]
+    staging_tree_sha256: str
+
+
 def _publish_bundle(
     temporary: Path,
     target: Path,
     *,
     expected_parent_identity: tuple[int, int],
+    bindings: _PublicationBindings,
 ) -> None:
-    """Publish the already validated closed-world directory in one operation."""
+    """Reattest every input and the staged bundle, then publish immediately."""
+
+    if temporary != bindings.staging_run_path.parent:
+        raise ValueError("probe source pool staging publication path differs")
+    _assert_output_parent(target, expected_parent_identity)
+    _assert_directory_unchanged(
+        temporary,
+        expected_identity=bindings.staging_root_identity,
+        label="probe source pool staging root",
+    )
+    protected = _load_protected_exclusion_bundle(
+        bindings.protected_run_path,
+        expected_producer_record_sha256=bindings.protected_producer_sha256,
+    )
+    if (
+        protected.root != bindings.protected_root
+        or protected.identity_sets != bindings.protected_identity_sets
+        or protected.producer_record_sha256 != bindings.protected_producer_sha256
+    ):
+        raise ValueError("protected exclusion bundle changed before atomic publication")
+    verified = load_probe_source_pool_bundle(
+        bindings.staging_run_path,
+        expected_run_sha256=bindings.staging_run_sha256,
+        expected_code_revision=bindings.code_revision,
+    )
+    if (
+        verified.run_path != bindings.staging_run_path
+        or verified.run_sha256 != bindings.staging_run_sha256
+    ):
+        raise ValueError("probe source pool staging attestation differs")
+    _assert_descriptor_unchanged(
+        bindings.parquet_path,
+        bindings.parquet_descriptor,
+        expected_sha256=bindings.parquet_sha256,
+        expected_identity=bindings.parquet_identity,
+        label="FineWeb-Edu parquet shard",
+    )
+    if attest_runtime_checkout(bindings.code_revision) != bindings.checkout:
+        raise ValueError("probe source pool checkout changed before atomic publication")
+    _assert_directory_unchanged(
+        bindings.protected_root,
+        expected_identity=bindings.protected_root_identity,
+        label="protected exclusion staging root",
+    )
+    if sha256_tree(bindings.protected_root) != bindings.protected_tree_sha256:
+        raise ValueError("protected exclusion bundle changed before atomic publication")
+    _assert_directory_unchanged(
+        temporary,
+        expected_identity=bindings.staging_root_identity,
+        label="probe source pool staging root",
+    )
+    if sha256_tree(temporary) != bindings.staging_tree_sha256:
+        raise ValueError("probe source pool staging tree changed before atomic publication")
 
     publish_directory_noreplace(
         temporary,
         target,
         expected_parent_identity=expected_parent_identity,
+        expected_staged_identity=bindings.staging_root_identity[:2],
     )
 
 
@@ -835,16 +933,37 @@ def freeze_probe_source_pool(
         }
         run_sha = _record_sha256(payload)
         payload["record_sha256"] = run_sha
-        (temporary / _RUN_FILENAME).write_bytes(_pretty_bytes(payload))
-        load_probe_source_pool_bundle(
-            temporary / _RUN_FILENAME,
-            expected_run_sha256=run_sha,
-            expected_code_revision=config.code_revision,
+        staging_run_path = temporary / _RUN_FILENAME
+        staging_run_path.write_bytes(_pretty_bytes(payload))
+        publication_bindings = _PublicationBindings(
+            parquet_path=parquet,
+            parquet_descriptor=parquet_descriptor,
+            parquet_identity=parquet_identity,
+            parquet_sha256=config.parquet_sha256,
+            checkout=checkout,
+            code_revision=config.code_revision,
+            protected_root=protected.root,
+            protected_run_path=protected.run_path,
+            protected_producer_sha256=protected.producer_record_sha256,
+            protected_identity_sets=protected.identity_sets,
+            protected_root_identity=_directory_identity(
+                protected.root,
+                label="protected exclusion staging root",
+            ),
+            protected_tree_sha256=str(artifacts["protected_exclusion_bundle"]["tree_sha256"]),
+            staging_run_path=staging_run_path,
+            staging_run_sha256=run_sha,
+            staging_root_identity=_directory_identity(
+                temporary,
+                label="probe source pool staging root",
+            ),
+            staging_tree_sha256=sha256_tree(temporary),
         )
         _publish_bundle(
             temporary,
             target,
             expected_parent_identity=output_parent_identity,
+            bindings=publication_bindings,
         )
         published = True
         return ProbeSourcePoolFreezeResult(

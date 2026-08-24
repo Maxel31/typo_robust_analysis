@@ -41,7 +41,10 @@ typo-cot freeze-probe-source-pool \
   --output-dir /absolute/new/path/mistral-probe-source-pool-v1
 ```
 
-output directory全体を1回の`RENAME_NOREPLACE`で公開する。成果物は次の通りである。
+output directory全体を1回の`RENAME_NOREPLACE`で公開する。rename直前に、pinned Parquet
+descriptor、live checkout、copied denylistのpublic typed replay、生成済みproducer record SHAと
+code revisionを使ったstaging bundleのoffline replayを再実行する。最後にprotected/staging treeと
+directory inodeを再照合し、そのstaging inodeだけをno-replace publishする。成果物は次の通りである。
 
 - `probe_source_pool.jsonl`: `robustness-clean-record/v1` のclean source pool
 - `probe_source_pool_decisions.jsonl`: parquet全行の検証済みsource record、3 identity、

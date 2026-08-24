@@ -36,6 +36,7 @@ def publish_directory_noreplace(
     output: Path,
     *,
     expected_parent_identity: tuple[int, int] | None = None,
+    expected_staged_identity: tuple[int, int] | None = None,
 ) -> None:
     """Atomically publish one sibling directory without replacing an existing path."""
 
@@ -70,6 +71,15 @@ def publish_directory_noreplace(
         staged_metadata = os.stat(source.name, dir_fd=parent_descriptor, follow_symlinks=False)
         if not stat.S_ISDIR(staged_metadata.st_mode):
             raise ValueError("staged publication source must be one directory")
+        if (
+            expected_staged_identity is not None
+            and (
+                staged_metadata.st_dev,
+                staged_metadata.st_ino,
+            )
+            != expected_staged_identity
+        ):
+            raise ValueError("staged publication source changed before rename")
         result = renameat2(
             parent_descriptor,
             os.fsencode(source.name),
@@ -88,9 +98,9 @@ def publish_directory_noreplace(
             follow_symlinks=False,
         )
         visible_metadata = target.lstat()
-        if (published_metadata.st_dev, published_metadata.st_ino) != (
-            visible_metadata.st_dev,
-            visible_metadata.st_ino,
+        published_identity = (published_metadata.st_dev, published_metadata.st_ino)
+        if published_identity != (visible_metadata.st_dev, visible_metadata.st_ino) or (
+            expected_staged_identity is not None and published_identity != expected_staged_identity
         ):
             raise RuntimeError("atomic publication parent changed during rename")
     finally:
