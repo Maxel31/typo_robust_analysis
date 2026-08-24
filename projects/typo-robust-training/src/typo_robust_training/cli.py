@@ -153,6 +153,45 @@ def _run_verify_protected_split_registry(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_freeze_protected_exclusion_denylist(args: argparse.Namespace) -> int:
+    from typo_robust_training.data.protected_denylist import (
+        freeze_protected_exclusion_denylist,
+    )
+
+    try:
+        result = freeze_protected_exclusion_denylist(
+            inventory_path=args.inventory,
+            inventory_sha256=args.inventory_sha256,
+            output_dir=args.output_dir,
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"freeze-protected-exclusion-denylist: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"frozen protected exclusion denylist: {result.denylist_path}")
+    print(f"body-free overlap audit: {result.overlap_audit_path}")
+    print(f"producer record: {result.run_path}")
+    print(f"externally pin producer record SHA256: {result.producer_record_sha256}")
+    return 0
+
+
+def _run_verify_protected_exclusion_denylist(args: argparse.Namespace) -> int:
+    from typo_robust_training.data.protected_denylist import (
+        load_protected_exclusion_denylist_bundle,
+    )
+
+    try:
+        result = load_protected_exclusion_denylist_bundle(
+            args.producer_run,
+            expected_producer_record_sha256=args.producer_record_sha256,
+        )
+    except (RuntimeError, ValueError) as exc:
+        print(f"verify-protected-exclusion-denylist: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"verified protected exclusion denylist: {result.denylist_path}")
+    print(f"verified {result.input_records} historical protected record(s)")
+    return 0
+
+
 def _run_freeze_tokenizer_attestation(args: argparse.Namespace) -> int:
     from typo_robust_training.tokenizer_freeze import freeze_tokenizer_attestation
 
@@ -836,6 +875,23 @@ def register_commands(
     protected_verify.add_argument("--producer-run", required=True, type=Path)
     protected_verify.add_argument("--producer-record-sha256", required=True)
     protected_verify.set_defaults(_typo_cot_plugin_handler=_run_verify_protected_split_registry)
+
+    exclusion = commands.add_parser(
+        "freeze-protected-exclusion-denylist",
+        help="Freeze overlapping historical tiers into an exclusion-only identity bundle.",
+    )
+    exclusion.add_argument("--inventory", required=True, type=Path)
+    exclusion.add_argument("--inventory-sha256", required=True)
+    exclusion.add_argument("--output-dir", required=True, type=Path)
+    exclusion.set_defaults(_typo_cot_plugin_handler=_run_freeze_protected_exclusion_denylist)
+
+    exclusion_verify = commands.add_parser(
+        "verify-protected-exclusion-denylist",
+        help="Verify an exclusion-only bundle using its externally pinned producer hash.",
+    )
+    exclusion_verify.add_argument("--producer-run", required=True, type=Path)
+    exclusion_verify.add_argument("--producer-record-sha256", required=True)
+    exclusion_verify.set_defaults(_typo_cot_plugin_handler=_run_verify_protected_exclusion_denylist)
 
     calibration_v2 = commands.add_parser(
         "calibrate-evaluation-v2-severity",
