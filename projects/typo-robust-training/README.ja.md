@@ -13,6 +13,8 @@ checkpoint、実験結果は、固定評価protocolが主張を許すまでlocal
 
 Mistral用Linear Probeのmodel-output-free cohort構築契約は
 [こちら](docs/mistral_probe_transition_data_v1.ja.md)です。
+学習・localization・評価の既存JSONLを漏洩防止registryへ変換する手順は
+[protected split registry freezer](docs/protected_split_registry_freezer_v1.ja.md)に固定しています。
 
 確証用targetは、汎用文章へのjoint Activation Patchingで選ぶmodel固有residual-stream windowです。
 選択にはmulti-token KL restorationだけを使い、downstream answer、clean-harm score、neuron/head

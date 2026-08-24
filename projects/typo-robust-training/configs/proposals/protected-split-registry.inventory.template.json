@@ -1,0 +1,60 @@
+{
+  "schema_version": "typo-protected-split-inventory/v1",
+  "tiers": [
+    {
+      "inputs": [
+        {
+          "accepted_schema": "robustness-clean-record/v1",
+          "relative_path": "manifests/training.jsonl",
+          "role": "train",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "tier": "training"
+    },
+    {
+      "inputs": [
+        {
+          "accepted_schema": "robustness-fixed-typo-pair/v1",
+          "relative_path": "manifests/localization.jsonl",
+          "role": "diagnostic",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "tier": "localization"
+    },
+    {
+      "inputs": [
+        {
+          "accepted_schema": "robustness-fixed-typo-pair/v1",
+          "relative_path": "manifests/tune.jsonl",
+          "role": "tune",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "tier": "tune"
+    },
+    {
+      "inputs": [
+        {
+          "accepted_schema": "robustness-fixed-typo-pair/v1",
+          "relative_path": "manifests/pre-pr.jsonl",
+          "role": "pre_pr_gate",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "tier": "pre-pr"
+    },
+    {
+      "inputs": [
+        {
+          "accepted_schema": "robustness-fixed-typo-pair/v1",
+          "relative_path": "manifests/sealed.jsonl",
+          "role": "final_test",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ],
+      "tier": "sealed"
+    }
+  ]
+}
