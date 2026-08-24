@@ -156,7 +156,7 @@ def _fixture_inventory(
                     {
                         "relative_path": f"manifests/{tier}.jsonl",
                         "sha256": _digest(path),
-                        "accepted_schema": default_schemas[tier],
+                        "accepted_schemas": [default_schemas[tier]],
                         "role": roles[tier],
                     }
                 ],
@@ -207,6 +207,11 @@ def test_freeze_and_external_hash_verification_round_trip(tmp_path: Path) -> Non
     )
     assert bundle.registry_path == result.registry_path
     assert len(bundle.input_paths) == 5
+    assert len(bundle.identity_sets.source_group_sha256) == 5
+    assert len(bundle.identity_sets.parent_source_sha256) == 5
+    assert len(bundle.identity_sets.normalized_content_sha256) == 8
+    with pytest.raises(AttributeError):
+        bundle.identity_sets.source_group_sha256.add("0" * 64)  # type: ignore[attr-defined]
 
 
 def test_pair_registers_both_clean_and_typo_full_texts(tmp_path: Path) -> None:
@@ -276,6 +281,75 @@ def test_same_tier_fixed_variants_may_share_one_parent_source(tmp_path: Path) ->
     run = json.loads(result.run_path.read_text())
     assert run["output"]["tier_record_counts"]["sealed"] == 2
     assert run["output"]["tier_unique_record_counts"]["sealed"] == 2
+
+
+def test_one_input_accepts_declared_mixed_real_schemas_and_rejects_an_undeclared_row(
+    tmp_path: Path,
+) -> None:
+    inventory, _, paths, rows = _fixture_inventory(tmp_path)
+    corpus = rows["pre-pr"][0]
+    natural = _common(
+        schema="robustness-natural-pair/v1",
+        role="pre_pr_gate",
+        index=91,
+        text="A real natural typo pair in the mixed evaluation corpus.",
+    )
+    _write_jsonl(paths["pre-pr"], [corpus, natural])
+    payload = json.loads(inventory.read_text())
+    input_record = payload["tiers"][3]["inputs"][0]
+    input_record["accepted_schemas"] = [
+        "robustness-evaluation-corpus-record/v1",
+        "robustness-natural-pair/v1",
+    ]
+    input_record["sha256"] = _digest(paths["pre-pr"])
+    inventory.write_bytes(_canonical(payload))
+    result = freeze_protected_split_registry(
+        inventory_path=inventory,
+        inventory_sha256=_digest(inventory),
+        output_dir=tmp_path / "accepted",
+    )
+    run = json.loads(result.run_path.read_text())
+    assert run["output"]["tier_record_counts"]["pre-pr"] == 2
+
+    undeclared = _common(
+        schema="robustness-fixed-typo-pair/v1",
+        role="pre_pr_gate",
+        index=92,
+        text="An undeclared third schema must fail closed.",
+    )
+    _write_jsonl(paths["pre-pr"], [corpus, natural, undeclared])
+    input_record["sha256"] = _digest(paths["pre-pr"])
+    inventory.write_bytes(_canonical(payload))
+    with pytest.raises(ValueError, match="schema differs from the inventory"):
+        freeze_protected_split_registry(
+            inventory_path=inventory,
+            inventory_sha256=_digest(inventory),
+            output_dir=tmp_path / "undeclared",
+        )
+
+
+@pytest.mark.parametrize(
+    "schemas",
+    (
+        [],
+        ["robustness-natural-pair/v1", "robustness-natural-pair/v1"],
+        ["robustness-natural-pair/v1", "robustness-clean-record/v1"],
+    ),
+)
+def test_inventory_schema_allowlist_must_be_nonempty_unique_and_canonical(
+    tmp_path: Path,
+    schemas: list[str],
+) -> None:
+    inventory, _, _, _ = _fixture_inventory(tmp_path)
+    payload = json.loads(inventory.read_text())
+    payload["tiers"][0]["inputs"][0]["accepted_schemas"] = schemas
+    inventory.write_bytes(_canonical(payload))
+    with pytest.raises(ValueError, match="accepted_schemas"):
+        freeze_protected_split_registry(
+            inventory_path=inventory,
+            inventory_sha256=_digest(inventory),
+            output_dir=tmp_path / "output",
+        )
 
 
 def test_same_tier_exact_duplicates_dedupe_but_conflicts_fail(tmp_path: Path) -> None:
@@ -416,6 +490,44 @@ def test_source_tree_symlinks_are_rejected(tmp_path: Path, attack: str) -> None:
         )
 
 
+@pytest.mark.parametrize("attack", ["inventory", "input", "bundle"])
+def test_hardlink_substitution_is_rejected(tmp_path: Path, attack: str) -> None:
+    inventory, inventory_sha, paths, _ = _fixture_inventory(tmp_path)
+    if attack == "inventory":
+        alias = tmp_path / "inventory-hardlink.json"
+        alias.hardlink_to(inventory)
+        with pytest.raises(ValueError, match="hard-linked"):
+            freeze_protected_split_registry(
+                inventory_path=inventory,
+                inventory_sha256=inventory_sha,
+                output_dir=tmp_path / "output",
+            )
+    elif attack == "input":
+        alias = tmp_path / "training-hardlink.jsonl"
+        alias.hardlink_to(paths["training"])
+        with pytest.raises(ValueError, match="hard-linked"):
+            freeze_protected_split_registry(
+                inventory_path=inventory,
+                inventory_sha256=inventory_sha,
+                output_dir=tmp_path / "output",
+            )
+    else:
+        result = freeze_protected_split_registry(
+            inventory_path=inventory,
+            inventory_sha256=inventory_sha,
+            output_dir=tmp_path / "output",
+        )
+        run = json.loads(result.run_path.read_text())
+        copied = result.root / run["inputs"][0]["copied_relative_path"]
+        alias = tmp_path / "bundle-hardlink.jsonl"
+        alias.hardlink_to(copied)
+        with pytest.raises(ValueError, match="hard-linked"):
+            load_protected_split_registry_bundle(
+                result.run_path,
+                expected_producer_record_sha256=result.producer_record_sha256,
+            )
+
+
 def test_inventory_rejects_traversal_unknown_schema_and_wrong_external_hash(tmp_path: Path) -> None:
     inventory, inventory_sha, _, _ = _fixture_inventory(tmp_path)
     with pytest.raises(ValueError, match="external SHA-256"):
@@ -434,9 +546,9 @@ def test_inventory_rejects_traversal_unknown_schema_and_wrong_external_hash(tmp_
             output_dir=tmp_path / "traversal",
         )
     payload["tiers"][0]["inputs"][0]["relative_path"] = "manifests/training.jsonl"
-    payload["tiers"][0]["inputs"][0]["accepted_schema"] = "unknown/v1"
+    payload["tiers"][0]["inputs"][0]["accepted_schemas"] = ["unknown/v1"]
     inventory.write_bytes(_canonical(payload))
-    with pytest.raises(ValueError, match="unsupported"):
+    with pytest.raises(ValueError, match="supported"):
         freeze_protected_split_registry(
             inventory_path=inventory,
             inventory_sha256=_digest(inventory),
@@ -486,6 +598,7 @@ def test_duplicate_json_key_missing_field_utf8_and_newline_are_rejected(tmp_path
         (b"\xff\n", "UTF-8", "utf8"),
         (original.encode(), "final LF", "newline"),
         (original.encode() + b"\r\n", "LF, never CR", "crlf"),
+        (original.encode() + b"\n\n", "blank lines", "blank-line"),
     ):
         paths["training"].write_bytes(raw)
         payload["tiers"][0]["inputs"][0]["sha256"] = _digest(paths["training"])
@@ -571,6 +684,20 @@ def test_preexisting_output_is_preserved(tmp_path: Path) -> None:
     assert sentinel.read_text() == "do not replace"
 
 
+def test_atomic_noreplace_publish_preserves_a_race_winner(tmp_path: Path) -> None:
+    staging = tmp_path / ".published.staging"
+    staging.mkdir()
+    (staging / "new").write_text("new")
+    target = tmp_path / "published"
+    target.mkdir()
+    sentinel = target / "sentinel"
+    sentinel.write_text("race winner")
+    with pytest.raises(FileExistsError, match="appeared before publish"):
+        registry_module._publish_directory_noreplace(staging, target)  # noqa: SLF001
+    assert sentinel.read_text() == "race winner"
+    assert (staging / "new").read_text() == "new"
+
+
 def test_loader_rejects_input_substitution_and_bundle_symlink(tmp_path: Path) -> None:
     result, _ = _freeze(tmp_path)
     run = json.loads(result.run_path.read_text())
@@ -593,6 +720,34 @@ def test_loader_rejects_input_substitution_and_bundle_symlink(tmp_path: Path) ->
         load_protected_split_registry_bundle(
             result2.run_path,
             expected_producer_record_sha256=result2.producer_record_sha256,
+        )
+
+
+def test_loader_detects_input_toctou_after_capturing_pinned_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, _ = _freeze(tmp_path)
+    run = json.loads(result.run_path.read_text())
+    copied = result.root / run["inputs"][0]["copied_relative_path"]
+    original_read = registry_module._read_regular_bytes  # noqa: SLF001
+    attacked = False
+
+    def mutate_after_read(path: Path, *, label: str) -> bytes:
+        nonlocal attacked
+        raw = original_read(path, label=label)
+        if path == copied and label == "protected input copy" and not attacked:
+            attacked = True
+            row = json.loads(raw.decode().strip())
+            row["metadata"]["attacker"] = True
+            _write_jsonl(copied, [row])
+        return raw
+
+    monkeypatch.setattr(registry_module, "_read_regular_bytes", mutate_after_read)
+    with pytest.raises(ValueError, match="changed during verification"):
+        load_protected_split_registry_bundle(
+            result.run_path,
+            expected_producer_record_sha256=result.producer_record_sha256,
         )
 
 
@@ -660,7 +815,7 @@ def test_external_producer_hash_defeats_source_copy_and_adjacent_hash_forgery(
     ("field", "value", "message"),
     (
         ("tier", "invented", "input tier differs"),
-        ("accepted_schema", "invented/v1", "input schema differs"),
+        ("accepted_schemas", ["invented/v1"], "input schemas differ"),
     ),
 )
 def test_loader_rejects_resigned_unknown_input_contract(

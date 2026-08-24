@@ -4,7 +4,9 @@
     {
       "inputs": [
         {
-          "accepted_schema": "robustness-clean-record/v1",
+          "accepted_schemas": [
+            "robustness-clean-record/v1"
+          ],
           "relative_path": "manifests/training.jsonl",
           "role": "train",
           "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
@@ -15,7 +17,9 @@
     {
       "inputs": [
         {
-          "accepted_schema": "robustness-fixed-typo-pair/v1",
+          "accepted_schemas": [
+            "robustness-fixed-typo-pair/v1"
+          ],
           "relative_path": "manifests/localization.jsonl",
           "role": "diagnostic",
           "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
@@ -26,7 +30,9 @@
     {
       "inputs": [
         {
-          "accepted_schema": "robustness-fixed-typo-pair/v1",
+          "accepted_schemas": [
+            "robustness-fixed-typo-pair/v1"
+          ],
           "relative_path": "manifests/tune.jsonl",
           "role": "tune",
           "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
@@ -37,7 +43,10 @@
     {
       "inputs": [
         {
-          "accepted_schema": "robustness-fixed-typo-pair/v1",
+          "accepted_schemas": [
+            "robustness-evaluation-corpus-record/v1",
+            "robustness-natural-pair/v1"
+          ],
           "relative_path": "manifests/pre-pr.jsonl",
           "role": "pre_pr_gate",
           "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
@@ -48,7 +57,10 @@
     {
       "inputs": [
         {
-          "accepted_schema": "robustness-fixed-typo-pair/v1",
+          "accepted_schemas": [
+            "robustness-evaluation-corpus-record/v1",
+            "robustness-natural-pair/v1"
+          ],
           "relative_path": "manifests/sealed.jsonl",
           "role": "final_test",
           "sha256": "0000000000000000000000000000000000000000000000000000000000000000"

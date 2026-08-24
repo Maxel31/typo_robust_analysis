@@ -8,6 +8,8 @@ replays every input validation before returning the registry.
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import hashlib
 import json
 import os
@@ -36,21 +38,20 @@ INVENTORY_SCHEMA = "typo-protected-split-inventory/v1"
 REGISTRY_SCHEMA = "typo-protected-split-registry/v1"
 PRODUCER_SCHEMA = "freeze-protected-split-registry-run/v1"
 TIERS = ("training", "localization", "tune", "pre-pr", "sealed")
-ALLOWED_RECORD_SCHEMAS = frozenset(
-    {
-        "robustness-clean-record/v1",
-        "robustness-fixed-typo-pair/v1",
-        "robustness-natural-pair/v1",
-        "robustness-evaluation-corpus-record/v1",
-    }
+_RECORD_SCHEMA_ORDER = (
+    "robustness-clean-record/v1",
+    "robustness-evaluation-corpus-record/v1",
+    "robustness-fixed-typo-pair/v1",
+    "robustness-natural-pair/v1",
 )
+ALLOWED_RECORD_SCHEMAS = frozenset(_RECORD_SCHEMA_ORDER)
 
 _REVISION = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 _GIT_OBJECT = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _INVENTORY_TOP = {"schema_version", "tiers"}
 _TIER_FIELDS = {"tier", "inputs"}
-_INPUT_FIELDS = {"relative_path", "sha256", "accepted_schema", "role"}
+_INPUT_FIELDS = {"relative_path", "sha256", "accepted_schemas", "role"}
 _RUN_FILENAME = "freeze_protected_split_registry_run.json"
 _REGISTRY_FILENAME = "registry.json"
 _INVENTORY_FILENAME = "inventory.json"
@@ -122,11 +123,13 @@ def _regular_file(path: Path, *, label: str) -> Path:
     absolute = _lexical_absolute(path)
     _reject_symlink_components(absolute, label=label)
     try:
-        mode = absolute.lstat().st_mode
+        metadata = absolute.lstat()
     except FileNotFoundError as exc:
         raise ValueError(f"{label} does not exist: {absolute}") from exc
-    if not stat.S_ISREG(mode):
+    if not stat.S_ISREG(metadata.st_mode):
         raise ValueError(f"{label} must be one regular file: {absolute}")
+    if metadata.st_nlink != 1:
+        raise ValueError(f"{label} must not be hard-linked: {absolute}")
     return absolute
 
 
@@ -136,23 +139,29 @@ def _read_regular_bytes(path: Path, *, label: str) -> bytes:
     descriptor = os.open(regular, flags)
     try:
         opened = os.fstat(descriptor)
-        if not stat.S_ISREG(opened.st_mode):
-            raise ValueError(f"{label} changed away from a regular file")
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+            raise ValueError(f"{label} changed away from one unlinked regular file")
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
             raw = handle.read()
         after = os.fstat(descriptor)
         current = regular.lstat()
         if (
-            opened.st_dev,
-            opened.st_ino,
-            opened.st_size,
-            opened.st_mtime_ns,
-        ) != (
-            after.st_dev,
-            after.st_ino,
-            after.st_size,
-            after.st_mtime_ns,
-        ) or (after.st_dev, after.st_ino) != (current.st_dev, current.st_ino):
+            after.st_nlink != 1
+            or current.st_nlink != 1
+            or (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+                opened.st_mtime_ns,
+            )
+            != (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+            )
+            or (after.st_dev, after.st_ino) != (current.st_dev, current.st_ino)
+        ):
             raise ValueError(f"{label} changed while it was being read")
         return raw
     finally:
@@ -209,7 +218,7 @@ class ProtectedInputSpec:
     tier: str
     relative_path: str
     sha256: str
-    accepted_schema: str
+    accepted_schemas: tuple[str, ...]
     role: str
 
 
@@ -284,15 +293,24 @@ def _decode_inventory(raw: bytes, *, context: str) -> tuple[ProtectedInputSpec, 
             if relative in observed_paths:
                 raise ValueError("protected split inventory input paths must be unique")
             observed_paths.add(relative)
-            schema = _text(item.get("accepted_schema"), field="accepted schema")
-            if schema not in ALLOWED_RECORD_SCHEMAS:
-                raise ValueError("protected input accepted_schema is unsupported")
+            raw_schemas = item.get("accepted_schemas")
+            if not isinstance(raw_schemas, list) or not raw_schemas:
+                raise ValueError("protected input accepted_schemas must be a non-empty list")
+            schemas = tuple(_text(schema, field="accepted schema") for schema in raw_schemas)
+            if (
+                len(set(schemas)) != len(schemas)
+                or schemas != tuple(sorted(schemas))
+                or any(schema not in ALLOWED_RECORD_SCHEMAS for schema in schemas)
+            ):
+                raise ValueError(
+                    "protected input accepted_schemas must be unique, supported, and canonical"
+                )
             inputs.append(
                 ProtectedInputSpec(
                     tier=tier,
                     relative_path=relative,
                     sha256=_sha(item.get("sha256"), field="protected input SHA-256"),
-                    accepted_schema=schema,
+                    accepted_schemas=schemas,
                     role=_text(item.get("role"), field="protected input role"),
                 )
             )
@@ -359,7 +377,8 @@ def _record_identity(
 ) -> _RecordIdentity:
     if not isinstance(value, Mapping):
         raise ValueError(f"{context} must contain one JSON object")
-    if value.get("schema_version") != spec.accepted_schema:
+    schema = value.get("schema_version")
+    if schema not in spec.accepted_schemas:
         raise ValueError(f"{context} schema differs from the inventory")
     if value.get("split") != spec.role:
         raise ValueError(f"{context} role differs from the inventory")
@@ -375,7 +394,7 @@ def _record_identity(
         source_revision=revision,
         source_id=source_id,
     )
-    if spec.accepted_schema == "robustness-fixed-typo-pair/v1":
+    if schema == "robustness-fixed-typo-pair/v1":
         valid_record_ids = {parent_record_id}
         if record_id != parent_record_id:
             valid_record_ids.add(
@@ -391,7 +410,6 @@ def _record_identity(
     elif record_id != parent_record_id:
         raise ValueError(f"{context}.record_id differs from the source identity")
 
-    schema = spec.accepted_schema
     if schema in {
         "robustness-clean-record/v1",
         "robustness-evaluation-corpus-record/v1",
@@ -453,8 +471,12 @@ def _record_identity(
     )
 
 
-def _jsonl_records(path: Path, *, spec: ProtectedInputSpec) -> tuple[_RecordIdentity, ...]:
-    raw = _read_regular_bytes(path, label="protected JSONL input")
+def _jsonl_records_from_raw(
+    raw: bytes,
+    *,
+    path: Path,
+    spec: ProtectedInputSpec,
+) -> tuple[_RecordIdentity, ...]:
     if b"\r" in raw:
         raise ValueError("protected JSONL input must use LF, never CR or CRLF")
     try:
@@ -472,6 +494,14 @@ def _jsonl_records(path: Path, *, spec: ProtectedInputSpec) -> tuple[_RecordIden
         value = strict_loads(line, context=context)
         records.append(_record_identity(value, spec=spec, context=context))
     return tuple(records)
+
+
+def _jsonl_records(path: Path, *, spec: ProtectedInputSpec) -> tuple[_RecordIdentity, ...]:
+    return _jsonl_records_from_raw(
+        _read_regular_bytes(path, label="protected JSONL input"),
+        path=path,
+        spec=spec,
+    )
 
 
 class _UnionFind:
@@ -506,16 +536,30 @@ class _InputAudit:
 
 
 @dataclass(frozen=True, slots=True)
+class ProtectedSplitIdentitySets:
+    """Immutable union of every identity in the five verified tiers."""
+
+    source_group_sha256: frozenset[str]
+    parent_source_sha256: frozenset[str]
+    normalized_content_sha256: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
 class _RegistryBuild:
     payload: Mapping[str, object]
     audits: tuple[_InputAudit, ...]
     tier_record_counts: Mapping[str, int]
     tier_unique_record_counts: Mapping[str, int]
+    identity_sets: ProtectedSplitIdentitySets
 
 
 def _build_registry(
     specs_and_paths: Sequence[tuple[ProtectedInputSpec, Path, str]],
+    *,
+    captured_inputs: Sequence[bytes] | None = None,
 ) -> _RegistryBuild:
+    if captured_inputs is not None and len(captured_inputs) != len(specs_and_paths):
+        raise ValueError("captured protected input inventory differs")
     identities: dict[str, dict[str, set[str]]] = {
         tier: {
             "source_group_sha256": set(),
@@ -530,8 +574,16 @@ def _build_registry(
     exact_by_tier: dict[str, set[str]] = {tier: set() for tier in TIERS}
     tier_records = {tier: 0 for tier in TIERS}
     audits: list[_InputAudit] = []
-    for spec, path, copied_relative in specs_and_paths:
-        records = _jsonl_records(path, spec=spec)
+    for index, (spec, path, copied_relative) in enumerate(specs_and_paths):
+        records = (
+            _jsonl_records(path, spec=spec)
+            if captured_inputs is None
+            else _jsonl_records_from_raw(
+                captured_inputs[index],
+                path=path,
+                spec=spec,
+            )
+        )
         unique_in_file: set[str] = set()
         for record in records:
             tier_records[spec.tier] += 1
@@ -590,6 +642,17 @@ def _build_registry(
         audits=tuple(audits),
         tier_record_counts=tier_records,
         tier_unique_record_counts={tier: len(exact_by_tier[tier]) for tier in TIERS},
+        identity_sets=ProtectedSplitIdentitySets(
+            source_group_sha256=frozenset().union(
+                *(identities[tier]["source_group_sha256"] for tier in TIERS)
+            ),
+            parent_source_sha256=frozenset().union(
+                *(identities[tier]["parent_source_sha256"] for tier in TIERS)
+            ),
+            normalized_content_sha256=frozenset().union(
+                *(identities[tier]["normalized_content_sha256"] for tier in TIERS)
+            ),
+        ),
     )
 
 
@@ -653,6 +716,62 @@ def _new_output_target(path: Path) -> Path:
     return target
 
 
+def _publish_directory_noreplace(source: Path, target: Path) -> None:
+    """Atomically publish one sibling directory without replacing a race winner."""
+
+    if source.parent != target.parent:
+        raise ValueError("protected registry staging directory must be a target sibling")
+    parent = target.parent
+    _reject_symlink_components(parent, label="protected registry output parent")
+    parent_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    parent_fd = os.open(parent, parent_flags)
+    try:
+        opened_parent = os.fstat(parent_fd)
+        current_parent = parent.lstat()
+        if not stat.S_ISDIR(opened_parent.st_mode) or (
+            opened_parent.st_dev,
+            opened_parent.st_ino,
+        ) != (current_parent.st_dev, current_parent.st_ino):
+            raise ValueError("protected registry output parent changed before publication")
+        libc = ctypes.CDLL(None, use_errno=True)
+        renameat2 = getattr(libc, "renameat2", None)
+        if renameat2 is None:
+            raise RuntimeError("atomic no-replace directory publication is unavailable")
+        renameat2.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        renameat2.restype = ctypes.c_int
+        rename_noreplace = 1
+        if (
+            renameat2(
+                parent_fd,
+                os.fsencode(source.name),
+                parent_fd,
+                os.fsencode(target.name),
+                rename_noreplace,
+            )
+            != 0
+        ):
+            error = ctypes.get_errno()
+            if error == errno.EEXIST:
+                raise FileExistsError(
+                    f"protected registry output appeared before publish: {target}"
+                )
+            raise OSError(error, os.strerror(error), target)
+        current_parent = parent.lstat()
+        if (opened_parent.st_dev, opened_parent.st_ino) != (
+            current_parent.st_dev,
+            current_parent.st_ino,
+        ):
+            raise ValueError("protected registry output parent changed during publication")
+    finally:
+        os.close(parent_fd)
+
+
 def _before_final_rehash() -> None:
     """Private test seam for simulating a source mutation before publication."""
 
@@ -676,6 +795,7 @@ class ProtectedSplitRegistryBundle:
     run_path: Path
     producer_record_sha256: str
     input_records: int
+    identity_sets: ProtectedSplitIdentitySets
 
 
 def _input_copy_name(index: int, spec: ProtectedInputSpec) -> str:
@@ -695,7 +815,7 @@ def _run_payload(
         {
             "tier": audit.spec.tier,
             "role": audit.spec.role,
-            "accepted_schema": audit.spec.accepted_schema,
+            "accepted_schemas": list(audit.spec.accepted_schemas),
             "source_relative_path": audit.spec.relative_path,
             "copied_relative_path": audit.copied_relative_path,
             "expected_sha256": audit.spec.sha256,
@@ -810,9 +930,7 @@ def freeze_protected_split_registry(
                 != audit.spec.sha256
             ):
                 raise ValueError("protected JSONL input changed before publication")
-        if os.path.lexists(target):
-            raise FileExistsError(f"protected registry output appeared before publish: {target}")
-        temporary.rename(target)
+        _publish_directory_noreplace(temporary, target)
     except BaseException:
         shutil.rmtree(temporary, ignore_errors=True)
         raise
@@ -837,8 +955,11 @@ def _closed_bundle_files(root: Path, expected: set[str]) -> None:
                 raise ValueError("protected registry bundle contains an unexpected directory")
         for filename in filenames:
             path = Path(current) / filename
-            if not stat.S_ISREG(path.lstat().st_mode):
-                raise ValueError("protected registry bundle contains a non-regular artifact")
+            metadata = path.lstat()
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise ValueError(
+                    "protected registry bundle contains a non-regular or hard-linked artifact"
+                )
             observed.add((relative_current / filename).as_posix())
     if observed != expected:
         raise ValueError("protected registry bundle file inventory differs")
@@ -930,6 +1051,7 @@ def load_protected_split_registry_bundle(
     if not isinstance(inputs, list) or not inputs:
         raise ValueError("protected registry producer input inventory differs")
     input_paths: list[Path] = []
+    captured_inputs: list[bytes] = []
     expected_files = {_RUN_FILENAME, _REGISTRY_FILENAME, _INVENTORY_FILENAME}
     run_specs: list[ProtectedInputSpec] = []
     run_records: list[Mapping[str, object]] = []
@@ -937,7 +1059,7 @@ def load_protected_split_registry_bundle(
         if not isinstance(record, Mapping) or set(record) != {
             "tier",
             "role",
-            "accepted_schema",
+            "accepted_schemas",
             "source_relative_path",
             "copied_relative_path",
             "expected_sha256",
@@ -947,6 +1069,16 @@ def load_protected_split_registry_bundle(
             "unique_records",
         }:
             raise ValueError("protected registry producer input record fields differ")
+        raw_schemas = record.get("accepted_schemas")
+        if not isinstance(raw_schemas, list) or not raw_schemas:
+            raise ValueError("protected registry producer input schemas differ")
+        schemas = tuple(_text(schema, field="producer input schema") for schema in raw_schemas)
+        if (
+            len(set(schemas)) != len(schemas)
+            or schemas != tuple(sorted(schemas))
+            or any(schema not in ALLOWED_RECORD_SCHEMAS for schema in schemas)
+        ):
+            raise ValueError("protected registry producer input schemas differ")
         spec = ProtectedInputSpec(
             tier=_text(record.get("tier"), field="producer input tier"),
             relative_path=_relative_path(
@@ -954,16 +1086,11 @@ def load_protected_split_registry_bundle(
                 field="producer input source path",
             ),
             sha256=_sha(record.get("expected_sha256"), field="producer input expected hash"),
-            accepted_schema=_text(
-                record.get("accepted_schema"),
-                field="producer input schema",
-            ),
+            accepted_schemas=schemas,
             role=_text(record.get("role"), field="producer input role"),
         )
         if spec.tier not in TIERS:
             raise ValueError("protected registry producer input tier differs")
-        if spec.accepted_schema not in ALLOWED_RECORD_SCHEMAS:
-            raise ValueError("protected registry producer input schema differs")
         copied_relative = _relative_path(
             record.get("copied_relative_path"),
             field="producer input copied path",
@@ -976,9 +1103,14 @@ def load_protected_split_registry_bundle(
         _positive_integer(record.get("records"), field="producer input records")
         _positive_integer(record.get("unique_records"), field="producer unique records")
         path = _regular_file(run_path.parent / copied_relative, label="protected input copy")
-        if path.stat().st_size != record["bytes"] or sha256_file(path) != spec.sha256:
+        raw_input = _read_regular_bytes(path, label="protected input copy")
+        if (
+            len(raw_input) != record["bytes"]
+            or hashlib.sha256(raw_input).hexdigest() != spec.sha256
+        ):
             raise ValueError("protected registry copied input bytes differ")
         input_paths.append(path)
+        captured_inputs.append(raw_input)
         expected_files.add(copied_relative)
         run_specs.append(spec)
         run_records.append(record)
@@ -987,15 +1119,15 @@ def load_protected_split_registry_bundle(
         run_path.parent / _INVENTORY_FILENAME,
         label="protected registry inventory copy",
     )
-    if (
-        inventory_path.stat().st_size != inventory_bytes
-        or sha256_file(inventory_path) != inventory_sha
-    ):
-        raise ValueError("protected registry inventory copy bytes differ")
     inventory_raw = _read_regular_bytes(
         inventory_path,
         label="protected registry inventory copy",
     )
+    if (
+        len(inventory_raw) != inventory_bytes
+        or hashlib.sha256(inventory_raw).hexdigest() != inventory_sha
+    ):
+        raise ValueError("protected registry inventory copy bytes differ")
     inventory = ProtectedSplitInventory(
         root=run_path.parent,
         path=inventory_path,
@@ -1010,7 +1142,8 @@ def load_protected_split_registry_bundle(
         tuple(
             (spec, path, str(record["copied_relative_path"]))
             for spec, path, record in zip(run_specs, input_paths, run_records, strict=True)
-        )
+        ),
+        captured_inputs=tuple(captured_inputs),
     )
     for audit, record in zip(build.audits, run_records, strict=True):
         if audit.records != record["records"] or audit.unique_records != record["unique_records"]:
@@ -1047,6 +1180,22 @@ def load_protected_split_registry_bundle(
     )["output"]
     if dict(output) != expected_output:
         raise ValueError("protected registry producer output accounting differs")
+    for path, captured in zip(input_paths, captured_inputs, strict=True):
+        if _read_regular_bytes(path, label="protected input copy") != captured:
+            raise ValueError("protected registry copied input changed during verification")
+    if (
+        _read_regular_bytes(inventory_path, label="protected registry inventory copy")
+        != inventory_raw
+        or _read_regular_bytes(registry_path, label="protected split registry") != registry_raw
+    ):
+        raise ValueError("protected registry bundle changed during verification")
+    _, final_run = _load_canonical_run(
+        run_path,
+        expected_producer_record_sha256=expected_producer_record_sha256,
+    )
+    if dict(final_run) != dict(run):
+        raise ValueError("protected registry producer record changed during verification")
+    _closed_bundle_files(run_path.parent, expected_files)
     return ProtectedSplitRegistryBundle(
         root=run_path.parent,
         registry_path=registry_path,
@@ -1055,6 +1204,7 @@ def load_protected_split_registry_bundle(
         run_path=run_path,
         producer_record_sha256=expected_producer_record_sha256,
         input_records=sum(build.tier_record_counts.values()),
+        identity_sets=build.identity_sets,
     )
 
 
@@ -1064,6 +1214,7 @@ __all__ = [
     "PRODUCER_SCHEMA",
     "ProtectedSplitRegistryBundle",
     "ProtectedSplitRegistryFreezeResult",
+    "ProtectedSplitIdentitySets",
     "REGISTRY_SCHEMA",
     "TIERS",
     "freeze_protected_split_registry",
