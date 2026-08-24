@@ -17,6 +17,7 @@ from typo_robust_training.probe.artifacts import (
     ProbeFitRecord,
     ProbeTransitionArtifact,
     load_probe_transition_artifact,
+    require_probe_artifact_child_eligibility,
 )
 from typo_robust_training.probe.attestation import (
     RuntimeCheckoutAttestation,
@@ -322,6 +323,7 @@ def run_semantic_subspace_kill_test(
 
     protocol = load_semantic_subspace_kill_config(config.config_path)
     parent = load_probe_transition_artifact(config.parent_probe_artifact_path)
+    require_probe_artifact_child_eligibility(parent)
     if parent.artifact_sha256 != protocol.parent_artifact_sha256:
         raise ValueError("semantic kill parent artifact differs from preregistration")
     if sha256_file(config.cohort_manifest_path) != protocol.cohort_sha256:

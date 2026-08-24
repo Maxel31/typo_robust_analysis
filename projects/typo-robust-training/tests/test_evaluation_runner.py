@@ -9,7 +9,12 @@ from pathlib import Path
 from types import MappingProxyType
 
 import pytest
+from typo_cot.models.tokenizer_attestation import TOKENIZER_ATTESTATION_MANIFEST_ENV
 
+from _tokenizer_attestation import (
+    tokenizer_attestation_provenance,
+    write_tokenizer_attestation_manifest,
+)
 from typo_robust_training.data.records import TypoEdit
 from typo_robust_training.evaluation.checkpoints import AdapterDescriptor, PatchWindow
 from typo_robust_training.evaluation.config import load_robustness_evaluation_config
@@ -40,6 +45,21 @@ CONFIG = PROJECT_ROOT / "configs/gemma4b-evaluation.yaml"
 STUDY = PROJECT_ROOT / "configs/robustness-evaluation-v1.yaml"
 EXPECTED_CODE_REVISION = "a" * 40
 EXPECTED_SOURCE_TREE_SHA256 = "b" * 64
+
+
+@pytest.fixture(autouse=True)
+def _frozen_tokenizer_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    protocol = load_robustness_evaluation_config(CONFIG)
+    path = tmp_path / "tokenizer-attestation.json"
+    write_tokenizer_attestation_manifest(
+        path,
+        model=protocol.model,
+        revision=protocol.model_revision,
+    )
+    monkeypatch.setenv(TOKENIZER_ATTESTATION_MANIFEST_ENV, str(path))
 
 
 def _pair(index: int) -> EvaluationPair:
@@ -133,6 +153,11 @@ def _corpus_bundle(root: Path) -> EvaluationCorpusBundle:
 
 
 def _descriptors(root: Path) -> tuple[AdapterDescriptor, ...]:
+    protocol = load_robustness_evaluation_config(CONFIG)
+    tokenizer_attestation = tokenizer_attestation_provenance(
+        protocol.model,
+        protocol.model_revision,
+    )
     return tuple(
         AdapterDescriptor(
             path=root / f"seed-{seed}" / "adapter",
@@ -143,6 +168,7 @@ def _descriptors(root: Path) -> tuple[AdapterDescriptor, ...]:
             data_identity_sha256="c" * 64,
             localization_sha256="f" * 64,
             adapter_sha256=f"{seed:064x}",
+            tokenizer_snapshot_attestation=tokenizer_attestation,
         )
         for seed in (42, 43, 44)
     )
@@ -154,6 +180,11 @@ def _v4_descriptors(
     condition: str = "probe-transition-output-matching",
     evidence_sha256: str = "8" * 64,
 ) -> tuple[AdapterDescriptor, ...]:
+    protocol = load_robustness_evaluation_config(CONFIG)
+    tokenizer_attestation = tokenizer_attestation_provenance(
+        protocol.model,
+        protocol.model_revision,
+    )
     return tuple(
         AdapterDescriptor(
             path=root / f"seed-{seed}" / "adapter",
@@ -165,6 +196,7 @@ def _v4_descriptors(
             localization_sha256=None,
             adapter_sha256=f"{seed:064x}",
             method_evidence_sha256=evidence_sha256,
+            tokenizer_snapshot_attestation=tokenizer_attestation,
         )
         for seed in (42, 43, 44)
     )
@@ -202,6 +234,10 @@ def _completed_adapter(
         "teacher_revision": protocol.model_revision,
         "student_revision": protocol.model_revision,
         "tokenizer_revision": protocol.model_revision,
+        "tokenizer_snapshot_attestation": tokenizer_attestation_provenance(
+            protocol.model,
+            protocol.model_revision,
+        ),
         "code_revision": "f" * 40,
         "condition": condition,
         "seed": seed,
@@ -412,6 +448,10 @@ def _production_runtime_provenance(
         "requested_revision": protocol.model_revision,
         "model_revision": protocol.model_revision,
         "tokenizer_revision": protocol.model_revision,
+        "tokenizer_snapshot_attestation": tokenizer_attestation_provenance(
+            protocol.model,
+            protocol.model_revision,
+        ),
         "code_revision": EXPECTED_CODE_REVISION,
         "source_tree_sha256": EXPECTED_SOURCE_TREE_SHA256,
         "condition": condition,
@@ -577,6 +617,27 @@ def test_production_runtime_loader_binds_adapter_and_method_evidence() -> None:
             )
 
 
+def test_evaluator_rejects_adapter_trained_with_different_tokenizer_snapshot() -> None:
+    protocol = load_robustness_evaluation_config(CONFIG)
+    descriptor = _descriptors(Path("/tmp/identity-only"))[0]
+    mismatched_attestation = dict(descriptor.tokenizer_snapshot_attestation or {})
+    mismatched_attestation["manifest_file_sha256"] = "f" * 64
+    descriptor = replace(
+        descriptor,
+        tokenizer_snapshot_attestation=mismatched_attestation,
+    )
+    provenance = _descriptor_runtime_provenance(descriptor)
+
+    with pytest.raises(ValueError, match="tokenizer provenance differs"):
+        _validate_production_runtime_provenance(
+            provenance,
+            protocol=protocol,
+            descriptor=descriptor,
+            expected_code_revision=EXPECTED_CODE_REVISION,
+            expected_source_tree_sha256=EXPECTED_SOURCE_TREE_SHA256,
+        )
+
+
 def test_runner_rejects_legacy_evaluation_data_without_frozen_registry(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="requires a frozen evaluation registry"):
         run_robustness_evaluation(
@@ -585,7 +646,7 @@ def test_runner_rejects_legacy_evaluation_data_without_frozen_registry(tmp_path:
         )
 
 
-def test_method_evidence_is_bound_into_evaluation_identity_without_changing_legacy(
+def test_method_and_tokenizer_evidence_are_bound_into_evaluation_identity(
     tmp_path: Path,
 ) -> None:
     protocol = load_robustness_evaluation_config(CONFIG)
@@ -612,6 +673,12 @@ def test_method_evidence_is_bound_into_evaluation_identity_without_changing_lega
                 "training_data_sha256": item.training_data_sha256,
                 "data_identity_sha256": item.data_identity_sha256,
                 "localization_sha256": item.localization_sha256,
+                "tokenizer_attestation_sha256": item.tokenizer_snapshot_attestation[
+                    "attestation_sha256"
+                ],
+                "tokenizer_manifest_sha256": item.tokenizer_snapshot_attestation[
+                    "manifest_file_sha256"
+                ],
             }
             for item in sorted(_descriptors(tmp_path), key=lambda item: item.condition_id)
         ],
@@ -625,7 +692,7 @@ def test_method_evidence_is_bound_into_evaluation_identity_without_changing_lega
         ).encode("utf-8")
     ).hexdigest()
     assert legacy == expected_legacy
-    # Adding the optional field with null must not perturb a historical binding.
+    # Adding the optional method field with null must not perturb the binding.
     explicit_legacy = tuple(
         replace(item, method_evidence_sha256=None) for item in _descriptors(tmp_path)
     )

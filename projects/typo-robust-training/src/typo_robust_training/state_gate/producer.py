@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Protocol
 
 from typo_robust_training.probe import load_probe_transition_artifact
+from typo_robust_training.probe.artifacts import require_probe_artifact_child_eligibility
 from typo_robust_training.state_gate.artifacts import (
     SingleLayerGateArtifact,
     SingleLayerGateRecord,
@@ -98,6 +99,7 @@ def produce_single_layer_gate_artifact(
         raise ValueError("single-layer gate inputs must be regular files, not symlinks")
     protocol = load_single_layer_gate_config(Path(config_path))
     parent = load_probe_transition_artifact(Path(parent_probe_artifact_path))
+    require_probe_artifact_child_eligibility(parent)
     if (
         (parent.model, parent.model_revision, parent.decoder_layers)
         != (protocol.model, protocol.model_revision, protocol.decoder_layers)
@@ -125,6 +127,10 @@ def produce_single_layer_gate_artifact(
     if observed_plan != dict(expected_plan):
         raise ValueError("single-layer gate donor plan differs from deterministic derivation")
     runtime_value = json.loads(Path(runtime_manifest_path).read_text(encoding="utf-8"))
+    if parent.tokenizer_snapshot_attestation is not None and runtime_value.get(
+        "tokenizer_snapshot_attestation"
+    ) != parent.tokenizer_snapshot_attestation:
+        raise ValueError("single-layer gate tokenizer provenance differs from parent probe")
     if (
         provider.model_id != protocol.model
         or provider.model_revision != protocol.model_revision

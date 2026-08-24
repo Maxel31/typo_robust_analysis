@@ -421,19 +421,17 @@ def test_artifact_loader_rejects_incomplete_or_imbalanced_operation_strata(
         )
 
 
-def test_training_consumer_loads_the_real_validated_artifact_bundle(tmp_path: Path) -> None:
+def test_training_consumer_rejects_unattested_legacy_artifact_bundle(
+    tmp_path: Path,
+) -> None:
     artifact_path, _payload, _files = _bundle(tmp_path)
-    validated = load_probe_transition_artifact(artifact_path)
-
-    evidence = load_probe_transition_training_evidence(
-        artifact_path,
-        model="google/gemma-3-4b-it",
-        model_revision="a" * 40,
-        decoder_layers=5,
-    )
-
-    assert evidence.selected_transition_layer == validated.selected_transition_layer
-    assert evidence.evidence_sha256 == validated.artifact_sha256
+    with pytest.raises(ValueError, match="lacks tokenizer provenance"):
+        load_probe_transition_training_evidence(
+            artifact_path,
+            model="google/gemma-3-4b-it",
+            model_revision="a" * 40,
+            decoder_layers=5,
+        )
 
 
 def test_artifact_rejects_unresolved_or_mutated_reference(tmp_path: Path) -> None:

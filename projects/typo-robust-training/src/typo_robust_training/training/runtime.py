@@ -150,11 +150,15 @@ def _calibration_replay_matches(stored: object, replayed: object) -> bool:
         and isinstance(stored, (int, float))
         and isinstance(replayed, (int, float))
     ):
-        return math.isfinite(float(stored)) and math.isfinite(float(replayed)) and math.isclose(
-            float(stored),
-            float(replayed),
-            rel_tol=_CALIBRATION_REPLAY_REL_TOLERANCE,
-            abs_tol=_CALIBRATION_REPLAY_ABS_TOLERANCE,
+        return (
+            math.isfinite(float(stored))
+            and math.isfinite(float(replayed))
+            and math.isclose(
+                float(stored),
+                float(replayed),
+                rel_tol=_CALIBRATION_REPLAY_REL_TOLERANCE,
+                abs_tol=_CALIBRATION_REPLAY_ABS_TOLERANCE,
+            )
         )
     return type(stored) is type(replayed) and stored == replayed
 
@@ -253,6 +257,8 @@ def _validated_resume_state_calibration(
     ):
         raise ValueError("adapter runtime checkpoint calibration differs")
     return weight, row
+
+
 _ADAPTER_SCOPE_SCHEMA = "decoder-lora-optimizer-scope/v1"
 _STATE_CALIBRATION_SCHEMA = "state-gradient-calibration/v3"
 _STATE_CALIBRATION_REPLAY_REL_TOL = 1e-6
@@ -286,11 +292,7 @@ def _positive_finite_number(value: object, *, field: str) -> float:
 
 
 def _positive_finite_vector(value: object, *, field: str, length: int) -> tuple[float, ...]:
-    if (
-        not isinstance(value, Sequence)
-        or isinstance(value, (str, bytes))
-        or len(value) != length
-    ):
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)) or len(value) != length:
         raise ValueError(f"adapter runtime checkpoint {field} differs")
     return tuple(_positive_finite_number(item, field=field) for item in value)
 
@@ -364,7 +366,9 @@ def _validate_priority_b_calibration(
         calibration["state_weight"],
         field="calibration state weight",
     )
-    if not math.isclose(stored_weight, derived_weight, rel_tol=1e-12, abs_tol=1e-12) or not math.isclose(
+    if not math.isclose(
+        stored_weight, derived_weight, rel_tol=1e-12, abs_tol=1e-12
+    ) or not math.isclose(
         calibration_weight,
         derived_weight,
         rel_tol=1e-12,
@@ -626,9 +630,7 @@ def _resolve_probe_transition_runtime_method(
 
     expected_types = {
         "probe-transition-output-matching": ProbeTransitionTrainingEvidence,
-        "probe-transition-single-layer-state-distillation": (
-            ProbeTransitionStateTrainingEvidence
-        ),
+        "probe-transition-single-layer-state-distillation": (ProbeTransitionStateTrainingEvidence),
         "probe-semantic-subspace-distillation": ProbeSemanticSubspaceTrainingEvidence,
     }
     expected_type = expected_types.get(protocol.condition)
@@ -679,8 +681,7 @@ def _resolve_probe_transition_runtime_method(
             or resolved.state_layers != (evidence.selected_transition_layer,)
             or resolved.state_target
             != "complete-decoder-block-residual-output-at-edited-word-final/v1"
-            or protocol.state_scope
-            != "probe-transition-single-layer-edited-word-final-token/v1"
+            or protocol.state_scope != "probe-transition-single-layer-edited-word-final-token/v1"
             or protocol.state_distance != "cosine-residual/v1"
             or protocol.state_gradient_ratio != 0.05
             or protocol.calibration_micro_batches != 8
@@ -736,6 +737,27 @@ class HuggingFaceAdapterTrainingRuntime:
             raise ValueError("training runtime seed is outside the frozen inventory")
         resolved_method = _resolve_probe_transition_runtime_method(protocol, evidence)
         self.code_revision, self.source_tree_sha256 = _checkout_source_attestation()
+        from typo_cot.models.tokenizer_attestation import (
+            preflight_frozen_tokenizer_attestation,
+        )
+
+        frozen_tokenizer_attestation = preflight_frozen_tokenizer_attestation(
+            expected_model=protocol.model,
+            expected_revision=protocol.model_revision,
+        )
+        if isinstance(
+            evidence,
+            (
+                ProbeTransitionTrainingEvidence,
+                ProbeTransitionStateTrainingEvidence,
+                ProbeSemanticSubspaceTrainingEvidence,
+            ),
+        ):
+            inherited = evidence.tokenizer_snapshot_attestation
+            if inherited is not None and dict(inherited) != (
+                frozen_tokenizer_attestation.provenance_dict()
+            ):
+                raise ValueError("probe evidence tokenizer provenance differs from training")
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None and visible != gpu_id:
             raise ValueError(
@@ -753,6 +775,7 @@ class HuggingFaceAdapterTrainingRuntime:
             get_cosine_schedule_with_warmup,
         )
         from typo_cot.experiments.layerwise_kl_patching.patching import find_decoder_layers
+        from typo_cot.models.tokenizer_attestation import require_frozen_tokenizer_attestation
         from typo_cot.models.wrapper import create_model_wrapper
 
         self.protocol = protocol
@@ -780,6 +803,11 @@ class HuggingFaceAdapterTrainingRuntime:
                 role="teacher",
             )
         )
+        teacher_tokenizer_attestation = require_frozen_tokenizer_attestation(
+            self.teacher_wrapper,
+            expected_model=protocol.model,
+            expected_revision=protocol.model_revision,
+        )
         self.teacher.eval()
         self.teacher.requires_grad_(False)
         self.student_wrapper = create_model_wrapper(
@@ -797,8 +825,22 @@ class HuggingFaceAdapterTrainingRuntime:
                 role="student",
             )
         )
+        student_tokenizer_attestation = require_frozen_tokenizer_attestation(
+            self.student_wrapper,
+            expected_model=protocol.model,
+            expected_revision=protocol.model_revision,
+        )
         if teacher_tokenizer_revision != student_tokenizer_revision:
             raise ValueError("teacher and student tokenizer revisions differ")
+        if teacher_tokenizer_attestation.provenance_dict() != (
+            student_tokenizer_attestation.provenance_dict()
+        ):
+            raise ValueError("teacher and student tokenizer attestations differ")
+        if student_tokenizer_attestation.provenance_dict() != (
+            frozen_tokenizer_attestation.provenance_dict()
+        ):
+            raise ValueError("training tokenizer attestation changed after preflight")
+        self.tokenizer_snapshot_attestation = student_tokenizer_attestation
         self.tokenizer_revision = student_tokenizer_revision
         base_layers = find_decoder_layers(student_base)
         self.num_decoder_layers = len(base_layers)
@@ -846,9 +888,7 @@ class HuggingFaceAdapterTrainingRuntime:
             "all-layers-edited-word-final-tokens",
             "probe-transition-single-layer-edited-word-final-token/v1",
         }
-        semantic_scope = (
-            protocol.state_scope == "probe-semantic-subspace-edited-word-final-token"
-        )
+        semantic_scope = protocol.state_scope == "probe-semantic-subspace-edited-word-final-token"
         if (residual_scope or semantic_scope) != bool(self.state_layers):
             raise ValueError("residual state layers differ from the training objective")
         self.student = attach_lora_adapters(
@@ -1623,6 +1663,9 @@ class HuggingFaceAdapterTrainingRuntime:
             "teacher_revision": self.teacher_revision,
             "student_revision": self.student_revision,
             "tokenizer_revision": self.tokenizer_revision,
+            "tokenizer_snapshot_attestation": (
+                self.tokenizer_snapshot_attestation.provenance_dict()
+            ),
             "code_revision": self.code_revision,
             "source_tree_sha256": self.source_tree_sha256,
             "condition": self.protocol.condition,

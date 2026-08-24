@@ -22,6 +22,7 @@ from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.probe.artifacts import (
     ProbeTransitionArtifact,
     load_probe_transition_artifact,
+    require_probe_artifact_child_eligibility,
 )
 from typo_robust_training.probe.attestation import (
     RuntimeCheckoutAttestation,
@@ -455,14 +456,30 @@ def _validate_runtime(
     parent: ProbeTransitionArtifact,
     checkout_attestation: RuntimeCheckoutAttestation,
     pca_activations_sha256: str,
-) -> None:
+) -> Mapping[str, object]:
     payload = _json(path, field="semantic kill runtime provenance")
+    from typo_cot.models.tokenizer_attestation import (
+        validate_tokenizer_attestation_provenance,
+    )
+
+    tokenizer_attestation = payload.get("tokenizer_snapshot_attestation")
+    validated_attestation = validate_tokenizer_attestation_provenance(
+        tokenizer_attestation,
+        expected_model=protocol.model,
+        expected_revision=protocol.model_revision,
+    )
+    if (
+        parent.tokenizer_snapshot_attestation is not None
+        and dict(parent.tokenizer_snapshot_attestation) != validated_attestation.provenance_dict()
+    ):
+        raise ValueError("semantic kill tokenizer provenance differs from parent probe")
     expected = {
         "schema_version": "probe-semantic-subspace-kill-runtime/v2",
         "runtime": "HuggingFaceSemanticSubspaceKillRuntime/v2",
         "model": protocol.model,
         "loaded_model_revision": protocol.model_revision,
         "loaded_tokenizer_revision": protocol.model_revision,
+        "tokenizer_snapshot_attestation": tokenizer_attestation,
         "parent_probe_code_revision": protocol.parent_probe_code_revision,
         "kill_runtime_code_revision": protocol.kill_runtime_code_revision,
         "checkout_attestation": checkout_attestation.as_dict(),
@@ -477,6 +494,7 @@ def _validate_runtime(
     }
     if dict(payload) != expected:
         raise ValueError("semantic kill runtime provenance differs")
+    return MappingProxyType(validated_attestation.provenance_dict())
 
 
 def _load_scores(
@@ -560,6 +578,7 @@ class SemanticSubspaceKillArtifact:
     semantic_subspace: SemanticProbeSubspace
     summary_by_seed: Mapping[int, SemanticSubspaceKillSummary]
     artifact_sha256: str
+    tokenizer_snapshot_attestation: Mapping[str, object]
 
     @property
     def suffix_layers(self) -> tuple[int, ...]:
@@ -622,6 +641,7 @@ def load_semantic_subspace_kill_artifact(
         references["parent_probe_artifact"], root=root, field="parent probe artifact"
     )
     parent = load_probe_transition_artifact(parent_path)
+    require_probe_artifact_child_eligibility(parent)
     if parent_hash != parent.artifact_sha256 or parent_hash != protocol.parent_artifact_sha256:
         raise ValueError("semantic kill parent artifact binding differs")
     identity = {
@@ -681,7 +701,7 @@ def load_semantic_subspace_kill_artifact(
     runtime_path, runtime_hash = _reference(
         references["runtime_provenance"], root=root, field="kill runtime"
     )
-    _validate_runtime(
+    tokenizer_snapshot_attestation = _validate_runtime(
         runtime_path,
         protocol=protocol,
         parent=parent,
@@ -755,6 +775,7 @@ def load_semantic_subspace_kill_artifact(
         semantic_subspace=semantic[protocol.primary_probe_seed],
         summary_by_seed=MappingProxyType(summaries),
         artifact_sha256=hashlib.sha256(raw).hexdigest(),
+        tokenizer_snapshot_attestation=tokenizer_snapshot_attestation,
     )
 
 

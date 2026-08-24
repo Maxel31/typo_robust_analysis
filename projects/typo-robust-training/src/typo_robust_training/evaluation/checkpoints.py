@@ -57,6 +57,7 @@ class AdapterDescriptor:
     localization_sha256: str | None
     adapter_sha256: str
     method_evidence_sha256: str | None = None
+    tokenizer_snapshot_attestation: Mapping[str, object] | None = None
 
     @property
     def condition_id(self) -> str:
@@ -125,29 +126,32 @@ def load_adapter_descriptors(
             "student_base_frozen": True,
         }
         runtime_version = runtime.get("runtime")
-        if runtime_version not in {
-            "HuggingFaceAdapterTrainingRuntime/v1",
-            "HuggingFaceAdapterTrainingRuntime/v2",
-        } or any(runtime.get(field) != value for field, value in expected_runtime.items()):
-            raise ValueError("evaluation adapter runtime identity differs")
-        if condition in METHOD_EVIDENCE_CONDITIONS and (
-            runtime_version != "HuggingFaceAdapterTrainingRuntime/v2"
+        if runtime_version != "HuggingFaceAdapterTrainingRuntime/v2" or any(
+            runtime.get(field) != value for field, value in expected_runtime.items()
         ):
-            raise ValueError("evaluation v4 adapter requires runtime provenance v2")
-        if runtime_version == "HuggingFaceAdapterTrainingRuntime/v2":
-            actual_revision_fields = (
-                "teacher_revision",
-                "student_revision",
-                "tokenizer_revision",
-            )
-            if any(
-                runtime.get(field) != protocol.model_revision
-                for field in actual_revision_fields
-            ):
-                raise ValueError("evaluation adapter actual runtime revision differs")
-            code_revision = runtime.get("code_revision")
-            if not isinstance(code_revision, str) or _REVISION40.fullmatch(code_revision) is None:
-                raise ValueError("evaluation adapter code revision is not attested")
+            raise ValueError("evaluation adapter runtime identity differs")
+        actual_revision_fields = (
+            "teacher_revision",
+            "student_revision",
+            "tokenizer_revision",
+        )
+        if any(
+            runtime.get(field) != protocol.model_revision
+            for field in actual_revision_fields
+        ):
+            raise ValueError("evaluation adapter actual runtime revision differs")
+        code_revision = runtime.get("code_revision")
+        if not isinstance(code_revision, str) or _REVISION40.fullmatch(code_revision) is None:
+            raise ValueError("evaluation adapter code revision is not attested")
+        from typo_cot.models.tokenizer_attestation import (
+            validate_tokenizer_attestation_provenance,
+        )
+
+        tokenizer_attestation = validate_tokenizer_attestation_provenance(
+            runtime.get("tokenizer_snapshot_attestation"),
+            expected_model=protocol.model,
+            expected_revision=protocol.model_revision,
+        ).provenance_dict()
         adapter_config = _object(path / "adapter_config.json", artifact="PEFT adapter config")
         if (
             adapter_config.get("base_model_name_or_path") != protocol.model
@@ -211,6 +215,7 @@ def load_adapter_descriptors(
                 localization_sha256=localization,
                 adapter_sha256=adapter_sha256,
                 method_evidence_sha256=method_evidence,
+                tokenizer_snapshot_attestation=tokenizer_attestation,
             )
         )
     identities = [descriptor.condition_id for descriptor in descriptors]

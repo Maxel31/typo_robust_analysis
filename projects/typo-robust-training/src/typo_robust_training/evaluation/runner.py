@@ -176,6 +176,19 @@ def _validate_production_runtime_provenance(
         or provenance.get("source_tree_sha256") != expected_source_tree_sha256
     ):
         raise ValueError("evaluation runtime source provenance differs")
+    from typo_cot.models.tokenizer_attestation import (
+        frozen_tokenizer_attestation_from_environment,
+    )
+
+    frozen = frozen_tokenizer_attestation_from_environment()
+    if frozen is None or provenance.get("tokenizer_snapshot_attestation") != (
+        frozen.provenance_dict()
+    ):
+        raise ValueError("evaluation runtime tokenizer attestation differs")
+    if descriptor is not None and provenance.get(
+        "tokenizer_snapshot_attestation"
+    ) != descriptor.tokenizer_snapshot_attestation:
+        raise ValueError("evaluation tokenizer provenance differs from adapter training")
 
 
 def _validate_production_runtime_inventory(
@@ -224,6 +237,9 @@ def _experiment_binding(
     )
     adapters = []
     for descriptor in sorted(descriptors, key=lambda item: item.condition_id):
+        tokenizer_attestation = descriptor.tokenizer_snapshot_attestation
+        if not isinstance(tokenizer_attestation, Mapping):
+            raise ValueError("evaluation adapter lacks tokenizer provenance")
         adapter = {
             "condition_id": descriptor.condition_id,
             "adapter_sha256": descriptor.adapter_sha256,
@@ -231,6 +247,8 @@ def _experiment_binding(
             "training_data_sha256": descriptor.training_data_sha256,
             "data_identity_sha256": descriptor.data_identity_sha256,
             "localization_sha256": descriptor.localization_sha256,
+            "tokenizer_attestation_sha256": tokenizer_attestation["attestation_sha256"],
+            "tokenizer_manifest_sha256": tokenizer_attestation["manifest_file_sha256"],
         }
         if has_method_evidence:
             adapter["method_evidence_sha256"] = descriptor.method_evidence_sha256

@@ -11,6 +11,11 @@ import pytest
 import torch
 from transformers import Gemma3ForCausalLM, Gemma3TextConfig
 
+from _tokenizer_attestation import (
+    frozen_tokenizer_attestation,
+    tokenizer_attestation_provenance,
+)
+
 from typo_robust_training.cli import register_commands
 from typo_robust_training.evaluation.checkpoints import load_adapter_descriptors
 from typo_robust_training.training.adapters import attach_lora_adapters
@@ -65,6 +70,10 @@ def _evidence(*, transition: int = 7, digest: str = "a" * 64):
         selected_transition_layer=transition,
         parent_probe_artifact_sha256="b" * 64,
         evidence_sha256=digest,
+        tokenizer_snapshot_attestation=tokenizer_attestation_provenance(
+            "google/gemma-3-4b-it",
+            "093f9f388b31de276ce2de164bdc2081324b9767",
+        ),
     )
 
 
@@ -188,9 +197,7 @@ def _resume_state(
             "seed": 42,
             "state_weight": state_weight,
             "state_calibration": (
-                _calibration(state_weight=state_weight)
-                if calibration is None
-                else calibration
+                _calibration(state_weight=state_weight) if calibration is None else calibration
             ),
         },
         path,
@@ -362,6 +369,10 @@ def test_state_runtime_provenance_binds_gate_evidence(
     runtime.teacher_revision = runtime.protocol.model_revision
     runtime.student_revision = runtime.protocol.model_revision
     runtime.tokenizer_revision = runtime.protocol.model_revision
+    runtime.tokenizer_snapshot_attestation = frozen_tokenizer_attestation(
+        runtime.protocol.model,
+        runtime.protocol.model_revision,
+    )[1]
     runtime.code_revision = "f" * 40
     runtime.source_tree_sha256 = "e" * 64
     runtime.seed = 42
@@ -383,6 +394,41 @@ def test_state_runtime_provenance_binds_gate_evidence(
     provenance = runtime.provenance()
 
     assert provenance["method_evidence_sha256"] == "a" * 64
+
+
+def test_state_runtime_rejects_evidence_tokenizer_drift_before_cuda(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from typo_cot.models import tokenizer_attestation as tokenizer_module
+
+    protocol = load_adapter_training_config(_bound(tmp_path))
+    frozen = frozen_tokenizer_attestation(protocol.model, protocol.model_revision)[1]
+    evidence = replace(
+        _evidence(),
+        tokenizer_snapshot_attestation=tokenizer_attestation_provenance(
+            protocol.model,
+            protocol.model_revision,
+            tokenizer_fingerprint_sha256="d" * 64,
+        ),
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.training.runtime._checkout_source_attestation",
+        lambda: ("f" * 40, "e" * 64),
+    )
+    monkeypatch.setattr(
+        tokenizer_module,
+        "preflight_frozen_tokenizer_attestation",
+        lambda **_kwargs: frozen,
+    )
+
+    with pytest.raises(ValueError, match="tokenizer provenance differs from training"):
+        HuggingFaceAdapterTrainingRuntime(
+            protocol=protocol,
+            seed=42,
+            gpu_id="0",
+            evidence=evidence,
+        )
 
 
 def test_evaluation_requires_exact_priority_b_run_runtime_provenance(tmp_path: Path) -> None:
@@ -565,8 +611,12 @@ def test_state_gradient_reaches_transition_lora_but_not_teacher_or_lower_layer(
         if ".layers.1." in name and "lora_" in name
     ]
     assert transition_grads
-    assert any(gradient is not None and torch.count_nonzero(gradient) for gradient in transition_grads)
-    assert not any(".layers.0." in name and "lora_" in name for name, _ in student.named_parameters())
+    assert any(
+        gradient is not None and torch.count_nonzero(gradient) for gradient in transition_grads
+    )
+    assert not any(
+        ".layers.0." in name and "lora_" in name for name, _ in student.named_parameters()
+    )
     assert all(parameter.grad is None for parameter in teacher.parameters())
 
 
@@ -576,13 +626,20 @@ def test_cli_exposes_only_explicit_gate_for_state_training() -> None:
     args = parser.parse_args(
         [
             "train-probe-transition-single-layer-state-distillation",
-            "--config", "config.json",
-            "--training-data", "data",
-            "--state-gate", "gate.json",
-            "--seed", "42",
-            "--gpu-id", "0",
-            "--wandb-project", "project",
-            "--output-dir", "output",
+            "--config",
+            "config.json",
+            "--training-data",
+            "data",
+            "--state-gate",
+            "gate.json",
+            "--seed",
+            "42",
+            "--gpu-id",
+            "0",
+            "--wandb-project",
+            "project",
+            "--output-dir",
+            "output",
         ]
     )
     assert args._training_condition == "probe-transition-single-layer-state-distillation"

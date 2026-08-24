@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from _tokenizer_attestation import tokenizer_attestation_provenance
 from typo_robust_training.cli import register_commands
 from typo_robust_training.training.config import load_adapter_training_config
 from typo_robust_training.training.methods import (
@@ -39,6 +40,7 @@ def _evidence(*, digest: str = "a" * 64) -> ProbeSemanticSubspaceTrainingEvidenc
         projected_class_weights=np.ones((20, 16), dtype=np.float64),
         classifier_bias=np.zeros(20, dtype=np.float64),
         evidence_sha256=digest,
+        tokenizer_snapshot_attestation=tokenizer_attestation_provenance(MODEL, REVISION),
     )
 
 
@@ -174,9 +176,9 @@ def test_semantic_config_reaches_standard_wandb_presentation(tmp_path: Path) -> 
     assert presentation.job_type == "proposed-probe-semantic-subspace"
     assert "arm:probe-semantic-subspace-distillation" in presentation.tags
     assert "frozen-classifier forward-KL" in presentation.notes
-    assert _resolved_method_presentation_layers(
-        condition=protocol.condition, method=method
-    ) == (11,)
+    assert _resolved_method_presentation_layers(condition=protocol.condition, method=method) == (
+        11,
+    )
 
 
 def test_semantic_materializer_revalidates_and_binds(

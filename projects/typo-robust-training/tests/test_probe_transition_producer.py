@@ -21,6 +21,7 @@ from typo_robust_training.probe.producer import (
     ProbeTransitionProducerRunConfig,
     run_select_probe_transition,
 )
+from _tokenizer_attestation import tokenizer_attestation_provenance
 from typo_robust_training.probe.partition import build_probe_fit_partitions
 from typo_robust_training.probe.runtime import (
     _checkout_code_revision,
@@ -237,11 +238,22 @@ class _FakeProvider:
 
     def provenance(self) -> dict[str, object]:
         return {
-            "provider": "fake-test-provider/v1",
+            "provider": "hugging-face-complete-block-residual/v1",
             "model": self.model,
             "model_revision": self.model_revision,
             "base_model_frozen": True,
             "code_revision": self.code_revision,
+            "decoder_layers": self.decoder_layers,
+            "hidden_size": self.hidden_size,
+            "tokenizer_snapshot_attestation": tokenizer_attestation_provenance(
+                self.model,
+                self.model_revision,
+            ),
+            "gpu_id": "test-gpu",
+            "python": "test-python",
+            "torch": "test-torch",
+            "transformers": "test-transformers",
+            "safetensors": "test-safetensors",
         }
 
     def token_inflation_bucket(self, record: ProbeCohortRecord) -> str:
@@ -367,10 +379,53 @@ def test_producer_derives_transition_and_binds_every_output(tmp_path: Path) -> N
             )
     artifact_hash = sha256_file(result.artifact_path)
     assert result.artifact_path.name == f"probe-transition-{artifact_hash}.json"
+    artifact_payload = json.loads(result.artifact_path.read_text())
+    assert artifact_payload["schema_version"] == "typo-denoising-probe-selection/v5"
+    assert "runtime_provenance" in artifact_payload["references"]
     consumed = load_probe_transition_artifact(result.artifact_path)
     assert consumed.selected_transition_layer == 2
     assert consumed.code_revision == "b" * 40
     assert consumed.hidden_size == 2
+    assert consumed.tokenizer_snapshot_attestation == tokenizer_attestation_provenance(
+        consumed.model,
+        consumed.model_revision,
+    )
+
+
+def test_v5_artifact_rejects_unhashed_runtime_provenance_tampering(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    result = run_select_probe_transition(
+        _run_config(files, tmp_path / "output"),
+        activation_provider=_FakeProvider(),
+    )
+    payload = json.loads(result.artifact_path.read_text())
+    reference = payload["references"]["runtime_provenance"]
+    provenance_path = result.artifact_path.parent / reference["relative_path"]
+    provenance = json.loads(provenance_path.read_text())
+    provenance["model_revision"] = "f" * 40
+    provenance_path.write_text(json.dumps(provenance), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="hash differs"):
+        load_probe_transition_artifact(result.artifact_path)
+
+
+def test_v5_artifact_rejects_rehashed_nonproduction_runtime(tmp_path: Path) -> None:
+    files = _files(tmp_path)
+    result = run_select_probe_transition(
+        _run_config(files, tmp_path / "output"),
+        activation_provider=_FakeProvider(),
+    )
+    payload = json.loads(result.artifact_path.read_text())
+    reference = payload["references"]["runtime_provenance"]
+    provenance_path = result.artifact_path.parent / reference["relative_path"]
+    provenance = json.loads(provenance_path.read_text())
+    provenance["provider"] = "fake-test-provider/v1"
+    _write_json(provenance_path, provenance)
+    reference["sha256"] = sha256_file(provenance_path)
+    _write_json(result.artifact_path, payload)
+
+    with pytest.raises(ValueError, match="runtime provenance identity differs"):
+        load_probe_transition_artifact(result.artifact_path)
 
 
 def test_loader_preserves_the_legacy_convex_v3_bundle_contract(tmp_path: Path) -> None:
@@ -438,7 +493,10 @@ def test_loader_rejects_cross_family_selection_and_config_after_rehash(tmp_path:
     artifact["schema_version"] = "typo-denoising-probe-selection/v3"
     _write_json(result.artifact_path, artifact)
 
-    with pytest.raises(ValueError, match="identity differs from its preregistration"):
+    with pytest.raises(
+        ValueError,
+        match="reference fields differ|identity differs from its preregistration",
+    ):
         load_probe_transition_artifact(result.artifact_path)
 
 

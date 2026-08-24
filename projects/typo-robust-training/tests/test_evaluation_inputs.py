@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from _tokenizer_attestation import tokenizer_attestation_provenance
+
 from typo_robust_training.evaluation.checkpoints import (
     load_adapter_descriptors,
     load_patch_window,
@@ -64,6 +66,10 @@ def _adapter(
                 "teacher_revision": PROTOCOL.model_revision,
                 "student_revision": PROTOCOL.model_revision,
                 "tokenizer_revision": PROTOCOL.model_revision,
+                "tokenizer_snapshot_attestation": tokenizer_attestation_provenance(
+                    PROTOCOL.model,
+                    PROTOCOL.model_revision,
+                ),
                 "code_revision": "f" * 40,
             }
             if runtime_version == "v2"
@@ -333,7 +339,7 @@ def test_v4_adapter_rejects_legacy_runtime_or_runtime_evidence_drift(tmp_path: P
         runtime_version="v1",
         method_evidence_sha256="9" * 64,
     )
-    with pytest.raises(ValueError, match="requires runtime provenance v2"):
+    with pytest.raises(ValueError, match="runtime identity differs"):
         load_adapter_descriptors((legacy,), protocol=PROTOCOL)
 
     for label, replacement in (("missing", None), ("mismatch", "8" * 64)):
@@ -381,7 +387,9 @@ def test_v4_adapter_rejects_mixed_seed_evidence_and_unsupported_condition(
         load_adapter_descriptors((unsupported,), protocol=PROTOCOL)
 
 
-def test_legacy_adapter_manifest_does_not_require_method_evidence(tmp_path: Path) -> None:
+def test_legacy_adapter_manifest_is_not_eligible_for_confirmatory_evaluation(
+    tmp_path: Path,
+) -> None:
     adapter = _adapter(
         tmp_path,
         condition="output-matching",
@@ -392,9 +400,8 @@ def test_legacy_adapter_manifest_does_not_require_method_evidence(tmp_path: Path
     run.pop("method_evidence_sha256", None)
     (adapter.parent / "run.json").write_text(json.dumps(run), encoding="utf-8")
 
-    descriptor = load_adapter_descriptors((adapter,), protocol=PROTOCOL)[0]
-    assert descriptor.localization_sha256 is None
-    assert descriptor.method_evidence_sha256 is None
+    with pytest.raises(ValueError, match="runtime identity differs"):
+        load_adapter_descriptors((adapter,), protocol=PROTOCOL)
 
 
 def test_patch_window_rejects_model_or_revision_drift(tmp_path: Path) -> None:

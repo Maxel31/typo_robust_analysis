@@ -382,6 +382,14 @@ class HuggingFaceRobustnessEvaluationRuntimeFactory:
         if not isinstance(patch_window, PatchWindow):
             raise TypeError("evaluation runtime factory patch window is invalid")
         self.code_revision, self.source_tree_sha256 = _checkout_source_attestation()
+        from typo_cot.models.tokenizer_attestation import (
+            preflight_frozen_tokenizer_attestation,
+        )
+
+        frozen_tokenizer_attestation = preflight_frozen_tokenizer_attestation(
+            expected_model=protocol.model,
+            expected_revision=protocol.model_revision,
+        )
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None and visible != gpu_id:
             raise ValueError(
@@ -396,6 +404,7 @@ class HuggingFaceRobustnessEvaluationRuntimeFactory:
             raise RuntimeError("robustness evaluation requires exactly one requested CUDA GPU")
         from typo_cot.evaluation.generation import resolve_effective_eos_token_ids
         from typo_cot.experiments.layerwise_kl_patching.patching import find_decoder_layers
+        from typo_cot.models.tokenizer_attestation import require_frozen_tokenizer_attestation
         from typo_cot.models.wrapper import create_model_wrapper
 
         self.protocol = protocol
@@ -417,6 +426,15 @@ class HuggingFaceRobustnessEvaluationRuntimeFactory:
                 role="evaluation",
             )
         )
+        self.tokenizer_snapshot_attestation = require_frozen_tokenizer_attestation(
+            self.wrapper,
+            expected_model=protocol.model,
+            expected_revision=protocol.model_revision,
+        )
+        if self.tokenizer_snapshot_attestation.provenance_dict() != (
+            frozen_tokenizer_attestation.provenance_dict()
+        ):
+            raise ValueError("evaluation tokenizer attestation changed after preflight")
         self.layers = find_decoder_layers(base_model)
         if not patch_window.layers or patch_window.stop > len(self.layers):
             raise ValueError("evaluation patch window is outside the model")
@@ -1000,6 +1018,9 @@ class HuggingFaceRobustnessEvaluationRuntime:
             "requested_revision": self.protocol.model_revision,
             "model_revision": self._factory.model_revision,
             "tokenizer_revision": self._factory.tokenizer_revision,
+            "tokenizer_snapshot_attestation": (
+                self._factory.tokenizer_snapshot_attestation.provenance_dict()
+            ),
             "code_revision": self._factory.code_revision,
             "source_tree_sha256": self._factory.source_tree_sha256,
             "condition": self.condition,

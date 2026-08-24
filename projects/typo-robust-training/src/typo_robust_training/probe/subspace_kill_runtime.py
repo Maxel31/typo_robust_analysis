@@ -135,6 +135,18 @@ class HuggingFaceSemanticSubspaceKillRuntime:
             or set(complement_by_seed) != set(parent.probe_seeds)
         ):
             raise ValueError("semantic kill runtime evidence identity differs")
+        from typo_cot.models.tokenizer_attestation import (
+            preflight_frozen_tokenizer_attestation,
+        )
+
+        frozen_tokenizer_attestation = preflight_frozen_tokenizer_attestation(
+            expected_model=protocol.model,
+            expected_revision=protocol.model_revision,
+        )
+        if parent.tokenizer_snapshot_attestation is not None and dict(
+            parent.tokenizer_snapshot_attestation
+        ) != frozen_tokenizer_attestation.provenance_dict():
+            raise ValueError("semantic kill tokenizer provenance differs from parent probe")
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible is not None and visible != gpu_id:
             raise ValueError("CUDA_VISIBLE_DEVICES conflicts with semantic kill GPU")
@@ -145,6 +157,7 @@ class HuggingFaceSemanticSubspaceKillRuntime:
         if not torch.cuda.is_available() or torch.cuda.device_count() != 1:
             raise RuntimeError("semantic kill runtime requires exactly one requested GPU")
         from typo_cot.experiments.layerwise_kl_patching.patching import find_decoder_layers
+        from typo_cot.models.tokenizer_attestation import require_frozen_tokenizer_attestation
         from typo_cot.models.wrapper import create_model_wrapper
 
         wrapper = create_model_wrapper(
@@ -158,6 +171,15 @@ class HuggingFaceSemanticSubspaceKillRuntime:
         self.model.eval()
         self.model.requires_grad_(False)
         self.tokenizer = wrapper.tokenizer
+        self.tokenizer_snapshot_attestation = require_frozen_tokenizer_attestation(
+            wrapper,
+            expected_model=protocol.model,
+            expected_revision=protocol.model_revision,
+        )
+        if self.tokenizer_snapshot_attestation.provenance_dict() != (
+            frozen_tokenizer_attestation.provenance_dict()
+        ):
+            raise ValueError("semantic kill tokenizer attestation changed after preflight")
         self.loaded_model_revision, self.loaded_tokenizer_revision = attest_loaded_revisions(
             self.model, self.tokenizer, protocol.model_revision
         )
@@ -429,6 +451,9 @@ class HuggingFaceSemanticSubspaceKillRuntime:
             "model": self.protocol.model,
             "loaded_model_revision": self.loaded_model_revision,
             "loaded_tokenizer_revision": self.loaded_tokenizer_revision,
+            "tokenizer_snapshot_attestation": (
+                self.tokenizer_snapshot_attestation.provenance_dict()
+            ),
             "parent_probe_code_revision": self.protocol.parent_probe_code_revision,
             "kill_runtime_code_revision": self.protocol.kill_runtime_code_revision,
             "checkout_attestation": self.checkout_attestation.as_dict(),

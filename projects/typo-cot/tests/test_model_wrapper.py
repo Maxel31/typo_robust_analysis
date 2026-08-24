@@ -159,16 +159,17 @@ class TestModelWrapper:
         mock_tokenizer.assert_called_once()
 
     @patch("typo_cot.models.wrapper.AutoModelForCausalLM.from_pretrained")
-    @patch("typo_cot.models.wrapper.AutoTokenizer.from_pretrained")
+    @patch("typo_cot.models.wrapper.load_attested_tokenizer")
     def test_model_and_tokenizer_are_loaded_at_the_requested_revision(
         self,
-        mock_tokenizer: MagicMock,
+        mock_attested_tokenizer: MagicMock,
         mock_model: MagicMock,
     ) -> None:
         mock_model.return_value = MagicMock()
         tokenizer = MagicMock()
         tokenizer.pad_token = "<pad>"
-        mock_tokenizer.return_value = tokenizer
+        attestation = MagicMock()
+        mock_attested_tokenizer.return_value = tokenizer, attestation
 
         wrapper = ModelWrapper(
             model_name="gpt2",
@@ -180,7 +181,27 @@ class TestModelWrapper:
         _ = wrapper.tokenizer
 
         assert mock_model.call_args.kwargs["revision"] == "0123456789abcdef"
-        assert mock_tokenizer.call_args.kwargs["revision"] == "0123456789abcdef"
+        mock_attested_tokenizer.assert_called_once_with(
+            "gpt2",
+            "0123456789abcdef",
+            trust_remote_code=False,
+        )
+        assert wrapper.tokenizer_snapshot_attestation is attestation
+
+    @patch("typo_cot.models.wrapper.AutoModelForCausalLM.from_pretrained")
+    def test_pinned_remote_code_is_rejected_before_model_load(
+        self,
+        mock_model: MagicMock,
+    ) -> None:
+        with pytest.raises(ValueError, match="forbid trust_remote_code"):
+            ModelWrapper(
+                model_name="gpt2",
+                device=torch.device("cpu"),
+                revision="0123456789abcdef",
+                trust_remote_code=True,
+            )
+
+        mock_model.assert_not_called()
 
     @patch("typo_cot.models.wrapper.AutoTokenizer.from_pretrained")
     def test_tokenize(self, mock_tokenizer: MagicMock) -> None:

@@ -10,6 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from _tokenizer_attestation import frozen_tokenizer_attestation
+
 from typo_robust_training.data.perturb import TypoGenerator
 from typo_robust_training.data.splits import normalized_content_sha256
 from typo_robust_training.training.config import load_adapter_training_config
@@ -458,6 +460,10 @@ def test_runtime_provenance_reports_probe_evidence_hash(
     runtime.teacher_revision = REVISION
     runtime.student_revision = REVISION
     runtime.tokenizer_revision = REVISION
+    runtime.tokenizer_snapshot_attestation = frozen_tokenizer_attestation(
+        runtime.protocol.model,
+        runtime.protocol.model_revision,
+    )[1]
     runtime.code_revision = "f" * 40
     runtime.source_tree_sha256 = "e" * 64
     runtime.seed = 42

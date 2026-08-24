@@ -48,6 +48,28 @@ _SELECTION_TO_CONFIG_SCHEMA = {
     "typo-denoising-probe-selection/v2": _CONFIG_V2,
     "typo-denoising-probe-selection/v3": _CONFIG_V3,
     "typo-denoising-probe-selection/v4": _CONFIG_V4,
+    "typo-denoising-probe-selection/v5": _CONFIG_V4,
+}
+# The sole probe bundle produced before tokenizer snapshot provenance was
+# embedded transitively.  No other legacy v2--v4 bundle is eligible for a
+# scientific child stage.
+_LEGACY_TOKENIZER_UNATTESTED_ALLOWLIST = frozenset(
+    {"9be12f47f1699652cb6cddd69c3a8f73cc5aad1acd666f0568b82417c86e4eef"}
+)
+_PROBE_RUNTIME_PROVENANCE_FIELDS = {
+    "provider",
+    "model",
+    "model_revision",
+    "code_revision",
+    "decoder_layers",
+    "hidden_size",
+    "base_model_frozen",
+    "tokenizer_snapshot_attestation",
+    "gpu_id",
+    "python",
+    "torch",
+    "transformers",
+    "safetensors",
 }
 _TOP_LEVEL_FIELDS_V2 = {
     "schema_version",
@@ -1184,6 +1206,7 @@ class ProbeTransitionArtifact:
     identity_inventory: ProbeTransitionIdentityInventory
     protected_split_registry_sha256: str
     fit_records: tuple[ProbeFitRecord, ...]
+    tokenizer_snapshot_attestation: Mapping[str, object] | None
 
     @property
     def suffix_layers(self) -> tuple[int, ...]:
@@ -1214,6 +1237,47 @@ class ProbeTransitionArtifact:
         return self.identity_inventory.all
 
 
+def validate_probe_runtime_provenance(
+    value: object,
+    *,
+    protocol: ProbeProducerProtocol,
+) -> Mapping[str, object]:
+    """Validate the complete production runtime identity of v5 probe evidence."""
+
+    if not isinstance(value, Mapping) or set(value) != _PROBE_RUNTIME_PROVENANCE_FIELDS:
+        raise ValueError("probe runtime provenance fields differ")
+    expected = {
+        "provider": "hugging-face-complete-block-residual/v1",
+        "model": protocol.model,
+        "model_revision": protocol.model_revision,
+        "code_revision": protocol.code_revision,
+        "decoder_layers": protocol.decoder_layers,
+        "hidden_size": protocol.hidden_size,
+        "base_model_frozen": True,
+    }
+    if any(value[field] != expected_value for field, expected_value in expected.items()):
+        raise ValueError("probe runtime provenance identity differs")
+    if (
+        type(value["decoder_layers"]) is not int
+        or type(value["hidden_size"]) is not int
+        or value["base_model_frozen"] is not True
+    ):
+        raise ValueError("probe runtime provenance identity differs")
+    for field in ("gpu_id", "python", "torch", "transformers", "safetensors"):
+        if not isinstance(value[field], str) or not value[field]:
+            raise ValueError(f"probe runtime provenance {field} differs")
+    from typo_cot.models.tokenizer_attestation import (
+        validate_tokenizer_attestation_provenance,
+    )
+
+    attestation = validate_tokenizer_attestation_provenance(
+        value["tokenizer_snapshot_attestation"],
+        expected_model=protocol.model,
+        expected_revision=protocol.model_revision,
+    )
+    return MappingProxyType(attestation.provenance_dict())
+
+
 def _validation_peak(trajectory: ProbeSeedTrajectory) -> int:
     drops = trajectory.transition_drop
     maximum = max(drops)
@@ -1235,6 +1299,7 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
         "typo-denoising-probe-selection/v2",
         "typo-denoising-probe-selection/v3",
         "typo-denoising-probe-selection/v4",
+        "typo-denoising-probe-selection/v5",
     }:
         raise ValueError("probe transition schema_version differs")
     expected_top_level = (
@@ -1243,6 +1308,7 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
         in {
             "typo-denoising-probe-selection/v3",
             "typo-denoising-probe-selection/v4",
+            "typo-denoising-probe-selection/v5",
         }
         else _TOP_LEVEL_FIELDS_V2
     )
@@ -1305,8 +1371,11 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
     if artifact_schema in {
         "typo-denoising-probe-selection/v3",
         "typo-denoising-probe-selection/v4",
+        "typo-denoising-probe-selection/v5",
     }:
         expected_reference_fields.add("fit_diagnostics")
+    if artifact_schema == "typo-denoising-probe-selection/v5":
+        expected_reference_fields.add("runtime_provenance")
     if not isinstance(references, Mapping) or set(references) != expected_reference_fields:
         raise ValueError("probe transition reference fields differ")
     root = resolved.parent.resolve()
@@ -1332,6 +1401,7 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
             in {
                 "typo-denoising-probe-selection/v3",
                 "typo-denoising-probe-selection/v4",
+                "typo-denoising-probe-selection/v5",
             }
             and (
                 payload["fit_partition_rule"] != protocol.fit_partition_rule
@@ -1347,6 +1417,17 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
         }
     ):
         raise ValueError("probe artifact identity differs from its preregistration")
+    tokenizer_snapshot_attestation: Mapping[str, object] | None = None
+    if artifact_schema == "typo-denoising-probe-selection/v5":
+        runtime_path, _ = _reference(
+            references["runtime_provenance"],
+            root=root,
+            field="probe runtime provenance",
+        )
+        tokenizer_snapshot_attestation = validate_probe_runtime_provenance(
+            _json_file(runtime_path),
+            protocol=protocol,
+        )
     classes_path, classes_sha256 = _reference(
         references["class_inventory"], root=root, field="probe class inventory"
     )
@@ -1510,6 +1591,7 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
     if artifact_schema in {
         "typo-denoising-probe-selection/v3",
         "typo-denoising-probe-selection/v4",
+        "typo-denoising-probe-selection/v5",
     }:
         stored_clean_upper = payload["validation_clean_ce_upper_by_seed"]
         expected_seed_keys = {str(seed) for seed in seeds}
@@ -1589,7 +1671,27 @@ def load_probe_transition_artifact(path: Path) -> ProbeTransitionArtifact:
             )
             for row in manifests["fit"]
         ),
+        tokenizer_snapshot_attestation=tokenizer_snapshot_attestation,
     )
+
+
+def require_probe_artifact_child_eligibility(
+    artifact: ProbeTransitionArtifact,
+) -> None:
+    """Reject unattested legacy probe bundles before any derivative stage.
+
+    Generic artifact inspection remains able to audit historical bundles, but
+    training, state-gate, and kill-test children may consume only v5 evidence
+    or the one explicitly recorded pre-attestation Gemma artifact.
+    """
+
+    if not isinstance(artifact, ProbeTransitionArtifact):
+        raise TypeError("probe child eligibility requires a validated artifact")
+    if (
+        artifact.tokenizer_snapshot_attestation is None
+        and artifact.artifact_sha256 not in _LEGACY_TOKENIZER_UNATTESTED_ALLOWLIST
+    ):
+        raise ValueError("legacy probe transition lacks tokenizer provenance")
 
 
 __all__ = [
@@ -1597,4 +1699,6 @@ __all__ = [
     "ProbeTransitionArtifact",
     "ProbeTransitionIdentityInventory",
     "load_probe_transition_artifact",
+    "require_probe_artifact_child_eligibility",
+    "validate_probe_runtime_provenance",
 ]

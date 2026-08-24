@@ -12,6 +12,11 @@ from typing import Any, ClassVar
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizer
 
+from typo_cot.models.tokenizer_attestation import (
+    TokenizerSnapshotAttestation,
+    load_attested_tokenizer,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -148,8 +153,15 @@ class ModelWrapper:
         self.use_multi_gpu = use_multi_gpu
         self.revision = revision
 
+        if self.revision is not None and self.trust_remote_code:
+            # Scientific pinned loads must fail before the model can execute
+            # repository-provided code.  Rejecting only in the tokenizer path
+            # is too late because ``model`` is commonly accessed first.
+            raise ValueError("pinned scientific loads forbid trust_remote_code=True")
+
         self._model: PreTrainedModel | None = None
         self._tokenizer: PreTrainedTokenizer | None = None
+        self._tokenizer_snapshot_attestation: TokenizerSnapshotAttestation | None = None
         self._is_lxt_wrapped: bool = False
 
     @property
@@ -165,6 +177,12 @@ class ModelWrapper:
         if self._tokenizer is None:
             self._load_tokenizer()
         return self._tokenizer
+
+    @property
+    def tokenizer_snapshot_attestation(self) -> TokenizerSnapshotAttestation | None:
+        """Return the immutable-snapshot attestation after a pinned tokenizer load."""
+
+        return self._tokenizer_snapshot_attestation
 
     def _load_model(self) -> None:
         """モデルをロード."""
@@ -196,16 +214,24 @@ class ModelWrapper:
     def _load_tokenizer(self) -> None:
         """トークナイザーをロード."""
         logger.info(f"トークナイザーをロード中: {self.model_name}")
-        revision_kwargs = {"revision": self.revision} if self.revision is not None else {}
-
-        self._tokenizer = AutoTokenizer.from_pretrained(
-            self.model_name,
-            trust_remote_code=self.trust_remote_code,
-            **revision_kwargs,
-        )
+        if self.revision is None:
+            # Preserve the historical unpinned API.  Scientific runtimes pass a
+            # revision and therefore take the fail-closed path below.
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name,
+                trust_remote_code=self.trust_remote_code,
+            )
+        else:
+            self._tokenizer, self._tokenizer_snapshot_attestation = load_attested_tokenizer(
+                self.model_name,
+                self.revision,
+                trust_remote_code=self.trust_remote_code,
+            )
 
         # パディングトークンの設定
         if self._tokenizer.pad_token is None:
+            if self.revision is not None:
+                raise ValueError("attested tokenizer unexpectedly lacks its normalized pad token")
             self._tokenizer.pad_token = self._tokenizer.eos_token
 
         logger.info(f"トークナイザーロード完了: {self.model_name}")
