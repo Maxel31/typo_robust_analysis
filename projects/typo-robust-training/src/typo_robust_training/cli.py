@@ -211,6 +211,36 @@ def _run_freeze_tokenizer_attestation(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_freeze_probe_source_pool(args: argparse.Namespace) -> int:
+    from typo_robust_training.probe.source_pool import (
+        ProbeSourcePoolFreezeConfig,
+        freeze_probe_source_pool,
+    )
+
+    try:
+        result = freeze_probe_source_pool(
+            ProbeSourcePoolFreezeConfig(
+                parquet_path=args.source_parquet,
+                parquet_sha256=args.source_parquet_sha256,
+                protected_exclusion_run_path=args.protected_exclusion_run,
+                protected_exclusion_producer_sha256=(args.protected_exclusion_producer_sha256),
+                code_revision=args.code_revision,
+                output_dir=args.output_dir,
+            )
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"freeze-probe-source-pool: error: {exc}", file=sys.stderr)
+        return 1
+    print(f"frozen probe source records: {result.records}")
+    print(f"source manifest: {result.source_manifest_path}")
+    print(f"decision ledger: {result.decision_ledger_path}")
+    print(f"protected exclusion producer: {result.protected_exclusion_run_path}")
+    print(f"protected exclusion producer SHA256: {args.protected_exclusion_producer_sha256}")
+    print(f"freeze producer manifest: {result.run_path}")
+    print(f"freeze producer record SHA256: {result.run_sha256}")
+    return 0
+
+
 def _run_calibrate_evaluation_v2_severity(args: argparse.Namespace) -> int:
     from typo_robust_training.evaluation.calibration_v2 import (
         run_base_only_severity_calibration,
@@ -822,6 +852,21 @@ def register_commands(
     tokenizer.add_argument("--code-revision", required=True)
     tokenizer.add_argument("--output-dir", required=True, type=Path)
     tokenizer.set_defaults(_typo_cot_plugin_handler=_run_freeze_tokenizer_attestation)
+
+    probe_source_pool = commands.add_parser(
+        "freeze-probe-source-pool",
+        help=(
+            "Freeze the unused pinned FineWeb-Edu shard after historical "
+            "protected-identity exclusion."
+        ),
+    )
+    probe_source_pool.add_argument("--source-parquet", required=True, type=Path)
+    probe_source_pool.add_argument("--source-parquet-sha256", required=True)
+    probe_source_pool.add_argument("--protected-exclusion-run", required=True, type=Path)
+    probe_source_pool.add_argument("--protected-exclusion-producer-sha256", required=True)
+    probe_source_pool.add_argument("--code-revision", required=True)
+    probe_source_pool.add_argument("--output-dir", required=True, type=Path)
+    probe_source_pool.set_defaults(_typo_cot_plugin_handler=_run_freeze_probe_source_pool)
 
     parser = commands.add_parser(
         "build-robustness-training-data",
