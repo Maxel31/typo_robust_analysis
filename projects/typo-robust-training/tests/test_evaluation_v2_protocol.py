@@ -31,6 +31,7 @@ from typo_robust_training.evaluation.statistics_v2 import clustered_paired_macro
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PROTOCOL_PATH = PROJECT_ROOT / "configs/robustness-evaluation-v2.yaml"
 REGISTRY_TEMPLATE = PROJECT_ROOT / "configs/robustness-evaluation-v2-registry.template.json"
+TWO_RECORDS_PER_TASK = {task: 2 for task in ("gsm8k", "mmlu", "arc", "mmlu_pro", "commonsense_qa")}
 
 
 def _digest(value: str) -> str:
@@ -151,7 +152,13 @@ def test_v2_protocol_freezes_models_calibration_population_and_legacy_random2() 
     assert protocol.calibration_records_per_task == 200
     assert protocol.calibration_variants_per_item == 3
     assert protocol.severity_edit_counts == (2, 4, 8)
-    assert protocol.confirmatory_records_per_task == 1000
+    assert dict(protocol.confirmatory_records_per_task) == {
+        "gsm8k": 1000,
+        "mmlu": 1000,
+        "arc": 700,
+        "mmlu_pro": 1000,
+        "commonsense_qa": 600,
+    }
     assert protocol.confirmatory_typo_variants_per_item == 2
     assert "legacy-random-2" in protocol.secondary_conditions
     assert protocol.arms == (
@@ -274,6 +281,34 @@ def test_v2_protocol_rejects_unfrozen_generation_contract(tmp_path: Path) -> Non
 
     with pytest.raises(ValueError, match="legacy random-2 contract differs"):
         load_evaluation_v2_protocol(drifted)
+
+
+def test_v2_protocol_rejects_infeasible_equal_confirmatory_counts(tmp_path: Path) -> None:
+    payload = json.loads(PROTOCOL_PATH.read_text(encoding="utf-8"))
+    payload["confirmatory"]["records_per_task"] = 1000
+    drifted = tmp_path / "protocol.json"
+    drifted.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="confirmatory.records_per_task fields differ"):
+        load_evaluation_v2_protocol(drifted)
+
+
+def test_v2_confirmatory_counts_fit_frozen_split_k8_eligibility_audit() -> None:
+    protocol = load_evaluation_v2_protocol(PROTOCOL_PATH)
+    # Non-model source audit on the pinned standard test/validation splits.
+    eligible_at_k8 = {
+        "gsm8k": 1319,
+        "mmlu": 10258,
+        "arc": 960,
+        "mmlu_pro": 9586,
+        "commonsense_qa": 844,
+    }
+    assert all(
+        protocol.calibration_records_per_task + protocol.confirmatory_records_per_task[task]
+        <= eligible_at_k8[task]
+        for task in protocol.tasks
+    )
+    assert sum(protocol.confirmatory_records_per_task.values()) == 4300
 
 
 def test_v2_protocol_rejects_rehashed_runtime_subcontract(tmp_path: Path) -> None:
@@ -515,13 +550,13 @@ def test_calibration_rejects_same_source_relabelled_into_another_task(tmp_path: 
 def _confirmatory_rows() -> list[dict[str, object]]:
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
         bootstrap_replicates=100,
     )
     rows: list[dict[str, object]] = []
     for model in protocol.models:
         for task_index, task in enumerate(protocol.tasks):
-            for item in range(protocol.confirmatory_records_per_task):
+            for item in range(protocol.confirmatory_records_per_task[task]):
                 record_id = f"{task_index * 1000 + item:064x}"
                 for condition in (
                     "factorial-all-layers-all-tokens",
@@ -569,7 +604,7 @@ def _write_confirmatory_binding(
     item_rows: list[dict[str, object]] = []
     typo_rows: list[dict[str, object]] = []
     for task_index, task in enumerate(protocol.tasks):
-        for item in range(protocol.confirmatory_records_per_task):
+        for item in range(protocol.confirmatory_records_per_task[task]):
             record_id = f"{record_offset + task_index * 1000 + item:064x}"
             source_text = f"source:{task}:{record_id}"
             source_hash = _digest(source_text)
@@ -620,7 +655,7 @@ def test_clustered_bootstrap_averages_variants_and_seeds_before_item_resampling(
 ) -> None:
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
         bootstrap_replicates=100,
     )
     rows = _confirmatory_rows()
@@ -654,7 +689,7 @@ def test_clustered_bootstrap_rejects_duplicate_seed_rows_as_false_replication(
 ) -> None:
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
         bootstrap_replicates=10,
     )
     rows = _confirmatory_rows()
@@ -675,7 +710,7 @@ def test_clustered_bootstrap_rejects_duplicate_seed_rows_as_false_replication(
 def test_clustered_bootstrap_rejects_model_revision_drift(tmp_path: Path) -> None:
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
         bootstrap_replicates=10,
     )
     rows = _confirmatory_rows()
@@ -698,7 +733,7 @@ def test_clustered_bootstrap_rejects_clean_outcomes_that_change_by_typo_variant(
 ) -> None:
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
         bootstrap_replicates=10,
     )
     rows = _confirmatory_rows()
@@ -732,7 +767,7 @@ def test_clustered_bootstrap_rejects_arm_specific_realized_typo_text(tmp_path: P
 
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
         bootstrap_replicates=10,
     )
     rows = _confirmatory_rows()
@@ -756,7 +791,7 @@ def test_clustered_bootstrap_rejects_arm_specific_realized_typo_text(tmp_path: P
 def test_clustered_bootstrap_rejects_arm_specific_source_text(tmp_path: Path) -> None:
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
         bootstrap_replicates=10,
     )
     rows = _confirmatory_rows()
@@ -782,7 +817,7 @@ def test_self_rehashed_confirmatory_manifest_cannot_rebind_frozen_outcomes(
 ) -> None:
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
         bootstrap_replicates=10,
     )
     original = _write_confirmatory_binding(tmp_path, protocol)
@@ -826,7 +861,7 @@ def test_self_rehashed_reference_answer_cannot_rebind_frozen_outcomes(
 ) -> None:
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
         bootstrap_replicates=10,
     )
     frozen = _write_confirmatory_binding(tmp_path, protocol)
@@ -905,7 +940,7 @@ def test_tier_manifest_rejects_rehashed_id_with_confirmatory_source_leak(
 ) -> None:
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
     )
     binding = _write_confirmatory_binding(tmp_path, protocol)
     calibration_paths, calibration_sources = _write_calibration_registry_inputs(
@@ -1112,7 +1147,7 @@ def _opening_registry_artifact_paths(root: Path) -> dict[str, Path]:
 def test_ready_registry_binds_manifests_and_clean_merged_source_tree(tmp_path: Path) -> None:
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
     )
     binding = _write_confirmatory_binding(tmp_path, protocol, record_offset=100_000)
     calibration_paths, calibration_sources = _write_calibration_registry_inputs(
@@ -1288,7 +1323,7 @@ def test_ready_registry_binds_manifests_and_clean_merged_source_tree(tmp_path: P
 def test_ready_registry_rejects_runtime_contract_hash_drift(tmp_path: Path) -> None:
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
     )
     binding = _write_confirmatory_binding(tmp_path, protocol, record_offset=100_000)
     calibration_paths, calibration_sources = _write_calibration_registry_inputs(
@@ -1335,7 +1370,7 @@ def test_ready_registry_rejects_runtime_contract_hash_drift(tmp_path: Path) -> N
 def test_ready_registry_recomputes_base_only_calibration_result(tmp_path: Path) -> None:
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
     )
     binding = _write_confirmatory_binding(tmp_path, protocol, record_offset=100_000)
     calibration_paths, calibration_sources = _write_calibration_registry_inputs(
@@ -1385,7 +1420,7 @@ def test_ready_registry_recomputes_base_only_calibration_result(tmp_path: Path) 
 def test_ready_registry_reparses_self_rehashed_tier_manifest(tmp_path: Path) -> None:
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
     )
     binding = _write_confirmatory_binding(tmp_path, protocol, record_offset=100_000)
     calibration_paths, calibration_sources = _write_calibration_registry_inputs(
@@ -1440,13 +1475,13 @@ def test_ready_registry_reparses_self_rehashed_tier_manifest(tmp_path: Path) -> 
 def _mistral_direct_rows() -> list[dict[str, object]]:
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
         bootstrap_replicates=50,
     )
     model_id = "mistralai/Mistral-7B-v0.1"
     rows: list[dict[str, object]] = []
     for task_index, task in enumerate(protocol.tasks):
-        for item in range(protocol.confirmatory_records_per_task):
+        for item in range(protocol.confirmatory_records_per_task[task]):
             record_id = f"{task_index * 1000 + item:064x}"
             for condition in (
                 "factorial-probe-suffix-downstream-horizon",
@@ -1481,7 +1516,7 @@ def test_mistral_faithful_primary_contrast_uses_matched_replication_seeds(
 ) -> None:
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
         bootstrap_replicates=50,
     )
     binding = _write_confirmatory_binding(tmp_path, protocol)
@@ -1502,7 +1537,7 @@ def test_mistral_faithful_primary_contrast_uses_matched_replication_seeds(
 def test_public_seed1_anchor_cannot_enter_primary_mistral_contrast(tmp_path: Path) -> None:
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
         bootstrap_replicates=10,
     )
     rows = _mistral_direct_rows()
@@ -1534,7 +1569,7 @@ def test_public_seed1_anchor_cannot_enter_primary_mistral_contrast(tmp_path: Pat
 def test_kojima_faithful_arm_is_rejected_on_gemma(tmp_path: Path) -> None:
     protocol = replace(
         load_evaluation_v2_protocol(PROTOCOL_PATH),
-        confirmatory_records_per_task=2,
+        confirmatory_records_per_task=TWO_RECORDS_PER_TASK,
         bootstrap_replicates=10,
     )
     rows = _mistral_direct_rows()

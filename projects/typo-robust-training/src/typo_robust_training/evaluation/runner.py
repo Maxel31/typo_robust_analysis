@@ -580,10 +580,24 @@ def run_robustness_evaluation(
     if not config.gpu_id or "," in config.gpu_id:
         raise ValueError("--gpu-id must name one physical GPU")
     from typo_robust_training.evaluation.runtime_registry_v2 import (
+        CONFIRMATORY_TRAINING_CONDITIONS,
         confirmatory_evaluation_is_required,
     )
 
-    requires_evaluation_v2 = confirmatory_evaluation_is_required(config.checkpoint_paths)
+    # Test-only injected descriptors need not materialize checkpoint provenance.
+    # Production calls never inject descriptors, so the public path remains
+    # fail-closed on missing, linked, or inconsistent run/runtime manifests.
+    requires_evaluation_v2 = (
+        bool(
+            {
+                descriptor.condition
+                for descriptor in descriptors or ()
+                if descriptor.condition in CONFIRMATORY_TRAINING_CONDITIONS
+            }
+        )
+        if descriptors is not None
+        else confirmatory_evaluation_is_required(config.checkpoint_paths)
+    )
     if requires_evaluation_v2 and config.evaluation_v2_registry_bundle_path is None:
         raise ValueError("confirmatory evaluation requires --evaluation-v2-registry-bundle")
     if not requires_evaluation_v2 and config.evaluation_v2_registry_bundle_path is not None:
@@ -604,6 +618,14 @@ def run_robustness_evaluation(
             bundle_path=config.evaluation_v2_registry_bundle_path,
             checkpoint_paths=config.checkpoint_paths,
             evaluation_data_dir=config.evaluation_data_dir,
+        )
+        # The v2 semantic manifests, Base-only observation producer, and
+        # clustered confirmatory report are deliberately not routed through the
+        # legacy v1 bundle/report implementation.  Until the dedicated v2
+        # production runner lands, stopping here is the only scientifically
+        # valid behavior: proceeding would label a v1 evaluation as v2.
+        raise RuntimeError(
+            "evaluation v2 production data/outcome/statistics runner is not implemented"
         )
     protocol = load_robustness_evaluation_config(config.config_path)
     from typo_robust_training.evaluation.study import load_evaluation_study_protocol

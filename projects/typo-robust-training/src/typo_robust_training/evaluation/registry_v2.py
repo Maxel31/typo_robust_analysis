@@ -146,8 +146,9 @@ def load_confirmatory_semantic_binding(
         global_record_ids.add(record_id)
         global_source_hashes.add(source_hash)
         task_counts[task] += 1
+    expected_counts = protocol.confirmatory_records_per_task
     if set(task_counts) != set(protocol.tasks) or any(
-        task_counts[task] != protocol.confirmatory_records_per_task for task in protocol.tasks
+        task_counts[task] != expected_counts[task] for task in protocol.tasks
     ):
         raise ValueError("evaluation v2 confirmatory item sample size differs")
 

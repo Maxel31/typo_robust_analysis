@@ -1,5 +1,16 @@
 # Typo頑健化 評価プロトコル v2.0 事前登録
 
+> **実行状態（2026-08-24）:** 本版ではprotocol parser、Base-only calibration
+> processor、semantic registry、統計関数、training/opening phase gateまでを実装した。
+> calibration/confirmatory item・typo manifestのproduction freezer、Base観測生成runner、
+> v2 manifestを直接消費するconfirmatory runner、およびclustered統計reportへの接続は
+> 次PRのblocking要件である。これらが揃うまではv2 openingをlegacy v1 runnerへ流さず、
+> production commandはモデル構築前に明示的に停止する。下記calibration commandは、
+> 外部で正しく凍結済みの3入力を検証・集計するprocessorであり、それらを生成しない。
+> またMistral factorial実装はmodel-specificなconfig v8 / method identityへ移行中であり、
+> 現在の共通factorial v7宣言とは一致しない。Mistral実装の最終contract確定後、学習開始前に
+> Gemma v7とMistral v8を別々にsemantic validationするprotocolへ更新する必要がある。
+
 状態: **学習armの結果を参照する前の凍結候補**
 
 machine-readable contract: `configs/robustness-evaluation-v2.yaml`
@@ -148,8 +159,12 @@ uv run --project projects/typo-robust-training typo-cot \
 
 ### 4.1 母集団
 
-5 taskから各1,000件、計5,000件をstable hashで抽出する。calibrationおよび全ての
-学習・probeデータとはID非重複にする。各itemにつき`k*` typoを2変種生成し、全arm・
+standard test/validation splitの実データ適格性をモデル実行前に監査し、GSM8K 1,000件、
+MMLU 1,000件、ARC 700件、MMLU-Pro 1,000件、CommonsenseQA 600件の計4,300件を
+stable hashで抽出する。task間の件数差はmacro重みへ反映せず、task等重みを維持する。
+calibration 200件/taskと合算しても、最も厳しい`k=8`でARCは900/960、
+CommonsenseQAは800/844の適格範囲に収まるよう、結果を見る前に件数を固定した。
+calibrationおよび全ての学習・probeデータとはID非重複にする。各itemにつき`k*` typoを2変種生成し、全arm・
 全seedで同じbytesを読む。Baseのclean正解・typo不正解へ条件付けたflip cohortは
 診断に限り、primaryには使用しない。
 同じ`model × arm × item × learning seed`のclean入力はtypo variantによらず同一なので、
@@ -194,7 +209,7 @@ n\simeq
 \approx4,200.
 \]
 
-5,000 itemは約1.5ppの差に対する80%以上の検出力を意図する。1pp差を安定して
+4,300 itemはこの近似必要数を上回り、約1.5ppの差に対する80%以上の検出力を意図する。1pp差を安定して
 検出する設計ではなく、1pp未満を強い性能優位と表現しない。
 
 ## 5. Clustered paired bootstrap

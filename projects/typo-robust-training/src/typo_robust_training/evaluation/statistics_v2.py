@@ -197,7 +197,9 @@ def clustered_paired_macro_contrast(
         (variant, None) for variant in range(protocol.confirmatory_typo_variants_per_item)
     }
     for (model_id, task), record_ids in records_by_model_task.items():
-        if len(record_ids) != protocol.confirmatory_records_per_task:
+        expected_counts = protocol.confirmatory_records_per_task
+        expected_count = expected_counts[task]
+        if len(record_ids) != expected_count:
             raise ValueError("evaluation v2 confirmatory task sample size differs")
         for record_id in record_ids:
             for condition in (left_condition, right_condition):

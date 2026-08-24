@@ -58,7 +58,13 @@
   },
   "confirmatory": {
     "tasks": ["gsm8k", "mmlu", "arc", "mmlu_pro", "commonsense_qa"],
-    "records_per_task": 1000,
+    "records_per_task": {
+      "gsm8k": 1000,
+      "mmlu": 1000,
+      "arc": 700,
+      "mmlu_pro": 1000,
+      "commonsense_qa": 600
+    },
     "typo_variants_per_item": 2,
     "primary_condition": "base-calibrated-random-k",
     "secondary_conditions": [

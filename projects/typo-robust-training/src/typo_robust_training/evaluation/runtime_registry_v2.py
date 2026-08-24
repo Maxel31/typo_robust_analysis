@@ -570,21 +570,29 @@ def confirmatory_evaluation_is_required(checkpoint_paths: Sequence[Path]) -> boo
                 "evaluation v2 concrete checkpoint directory cannot be a symbolic link"
             )
         checkpoint = supplied.resolve()
+        if not checkpoint.is_dir():
+            raise ValueError("evaluation checkpoint directory is unavailable")
+        checkpoint_conditions: set[str] = set()
         for path, label in (
             (checkpoint.parent / "run.json", "checkpoint training run"),
             (checkpoint / "training_runtime.json", "checkpoint runtime"),
         ):
-            resolved = path.resolve()
-            # Legacy injected-runtime tests and pre-v2 experiments do not always
-            # materialize checkpoint provenance before the ordinary runner
-            # validation.  Absence is therefore not itself a v2 marker.
-            if not resolved.is_file() or resolved.is_symlink():
-                continue
-            value = _object(resolved, label=label)
+            if path.is_symlink():
+                raise ValueError(f"evaluation {label} cannot be a symbolic link")
+            if not path.is_file():
+                raise ValueError(f"evaluation {label} is unavailable")
+            value = _object(path, label=label)
             condition = value.get("condition")
-            if isinstance(condition, str) and condition:
-                conditions.add(condition)
-    return bool(conditions & CONFIRMATORY_TRAINING_CONDITIONS)
+            if not isinstance(condition, str) or not condition:
+                raise ValueError(f"evaluation {label} condition is unavailable")
+            checkpoint_conditions.add(condition)
+        if len(checkpoint_conditions) != 1:
+            raise ValueError("evaluation checkpoint runtime/run condition differs")
+        conditions.update(checkpoint_conditions)
+    confirmatory = conditions & CONFIRMATORY_TRAINING_CONDITIONS
+    if confirmatory and confirmatory != conditions:
+        raise ValueError("evaluation cannot mix v2 confirmatory and legacy checkpoints")
+    return bool(confirmatory)
 
 
 __all__ = [

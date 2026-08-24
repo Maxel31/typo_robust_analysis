@@ -77,6 +77,15 @@ _TYPO_MANIFEST_FIELDS = {
     "realized_typo_sha256",
 }
 _TASKS = ("gsm8k", "mmlu", "arc", "mmlu_pro", "commonsense_qa")
+_CONFIRMATORY_RECORDS_PER_TASK = MappingProxyType(
+    {
+        "gsm8k": 1000,
+        "mmlu": 1000,
+        "arc": 700,
+        "mmlu_pro": 1000,
+        "commonsense_qa": 600,
+    }
+)
 _OPERATIONS = (
     "keyboard-neighbor-substitution",
     "deletion",
@@ -234,7 +243,7 @@ class EvaluationV2Protocol:
     minimum_model_macro_gap_points: float
     minimum_each_model_gap_points: float
     minimum_typo_to_clean_accuracy_ratio: float
-    confirmatory_records_per_task: int
+    confirmatory_records_per_task: Mapping[str, int]
     confirmatory_typo_variants_per_item: int
     arms: tuple[str, ...]
     training_contract_identities: Mapping[str, str]
@@ -421,8 +430,20 @@ def load_evaluation_v2_protocol(path: Path) -> EvaluationV2Protocol:
         },
     )
     confirmatory_tasks = _string_tuple(confirmatory["tasks"], field="confirmatory.tasks")
-    confirmatory_records = _integer(
-        confirmatory["records_per_task"], field="confirmatory.records_per_task", minimum=1
+    confirmatory_records_raw = _mapping(
+        confirmatory["records_per_task"],
+        field="confirmatory.records_per_task",
+        fields=set(_TASKS),
+    )
+    confirmatory_records = MappingProxyType(
+        {
+            task: _integer(
+                confirmatory_records_raw[task],
+                field=f"confirmatory.records_per_task.{task}",
+                minimum=1,
+            )
+            for task in _TASKS
+        }
     )
     confirmatory_variants = _integer(
         confirmatory["typo_variants_per_item"],
@@ -504,7 +525,7 @@ def load_evaluation_v2_protocol(path: Path) -> EvaluationV2Protocol:
     )
     if (
         confirmatory_tasks != _TASKS
-        or confirmatory_records != 1000
+        or dict(confirmatory_records) != dict(_CONFIRMATORY_RECORDS_PER_TASK)
         or confirmatory_variants != 2
         or confirmatory["primary_condition"] != "base-calibrated-random-k"
         or secondary_conditions != _SECONDARY_CONDITIONS
@@ -626,7 +647,7 @@ def load_evaluation_v2_protocol(path: Path) -> EvaluationV2Protocol:
         minimum_model_macro_gap_points=minimum_macro_gap,
         minimum_each_model_gap_points=minimum_each_gap,
         minimum_typo_to_clean_accuracy_ratio=minimum_ratio,
-        confirmatory_records_per_task=confirmatory_records,
+        confirmatory_records_per_task=MappingProxyType(dict(confirmatory_records)),
         confirmatory_typo_variants_per_item=confirmatory_variants,
         arms=arms,
         training_contract_identities=MappingProxyType(dict(training_contract_identities)),

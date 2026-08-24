@@ -15,6 +15,7 @@ from typo_robust_training.evaluation.runner import (
     run_robustness_evaluation,
 )
 from typo_robust_training.evaluation.runtime_registry_v2 import (
+    confirmatory_evaluation_is_required,
     load_evaluation_v2_runtime_registry_bundle,
     validate_confirmatory_evaluation_opening,
     validate_confirmatory_training_runtime,
@@ -567,6 +568,97 @@ def test_evaluation_phase_failure_precedes_protocol_or_gpu_runtime(
             )
         )
     assert called == {"protocol": False}
+
+
+def test_valid_v2_opening_cannot_fall_through_to_legacy_v1_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called = {"legacy_protocol": False}
+    monkeypatch.setattr(
+        "typo_robust_training.evaluation.runtime_registry_v2.confirmatory_evaluation_is_required",
+        lambda _checkpoint_paths: True,
+    )
+    monkeypatch.setattr(
+        "typo_robust_training.evaluation.runtime_registry_v2.validate_confirmatory_evaluation_opening",
+        lambda **_kwargs: object(),
+    )
+
+    def forbidden_legacy_protocol(*_args, **_kwargs):
+        called["legacy_protocol"] = True
+        raise AssertionError("v2 opening fell through to the legacy v1 report")
+
+    monkeypatch.setattr(
+        "typo_robust_training.evaluation.runner.load_robustness_evaluation_config",
+        forbidden_legacy_protocol,
+    )
+    with pytest.raises(RuntimeError, match="v2 production.*not implemented"):
+        run_robustness_evaluation(
+            RobustnessEvaluationRunConfig(
+                config_path=tmp_path / "legacy-config.json",
+                study_protocol_path=tmp_path / "v2-protocol.json",
+                training_data_dir=tmp_path / "training",
+                evaluation_data_dir=tmp_path / "evaluation",
+                evaluation_role="final-test",
+                layer_selection_path=tmp_path / "window.json",
+                window_validation_path=None,
+                checkpoint_paths=(tmp_path / "checkpoint",),
+                splits=("same-task",),
+                gpu_id="0",
+                output_dir=tmp_path / "output",
+                confirm_sealed_role=True,
+                resume=False,
+                evaluation_v2_registry_bundle_path=tmp_path / "opening-bundle.json",
+            )
+        )
+    assert called == {"legacy_protocol": False}
+    assert not (tmp_path / "output").exists()
+
+
+def test_confirmatory_detection_rejects_missing_linked_and_conflicting_provenance(
+    tmp_path: Path,
+) -> None:
+    checkpoint = _checkpoint(
+        tmp_path / "confirmatory",
+        model=MODELS[0],
+        condition=FACTORIAL[0],
+        seed=42,
+    )
+    assert confirmatory_evaluation_is_required((checkpoint,)) is True
+
+    runtime_path = checkpoint / "training_runtime.json"
+    runtime_payload = json.loads(runtime_path.read_text(encoding="utf-8"))
+    runtime_path.unlink()
+    with pytest.raises(ValueError, match="checkpoint runtime is unavailable"):
+        confirmatory_evaluation_is_required((checkpoint,))
+
+    external = tmp_path / "external-runtime.json"
+    _write_json(external, runtime_payload)
+    runtime_path.symlink_to(external)
+    with pytest.raises(ValueError, match="checkpoint runtime cannot be a symbolic link"):
+        confirmatory_evaluation_is_required((checkpoint,))
+
+    runtime_path.unlink()
+    _write_json(runtime_path, {**runtime_payload, "condition": FACTORIAL[1]})
+    with pytest.raises(ValueError, match="runtime/run condition differs"):
+        confirmatory_evaluation_is_required((checkpoint,))
+
+
+def test_confirmatory_detection_rejects_mixed_legacy_batch(tmp_path: Path) -> None:
+    confirmatory = _checkpoint(
+        tmp_path / "confirmatory",
+        model=MODELS[0],
+        condition=FACTORIAL[0],
+        seed=42,
+    )
+    legacy = _checkpoint(
+        tmp_path / "legacy",
+        model=MODELS[0],
+        condition="output-matching",
+        seed=42,
+    )
+    assert confirmatory_evaluation_is_required((legacy,)) is False
+    with pytest.raises(ValueError, match="cannot mix v2 confirmatory and legacy"):
+        confirmatory_evaluation_is_required((confirmatory, legacy))
 
 
 def test_confirmatory_evaluation_cannot_omit_opening_registry(
