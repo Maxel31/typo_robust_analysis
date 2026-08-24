@@ -4,18 +4,23 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
 from typo_robust_training.localization.components import ComponentRef
 from typo_robust_training.training.activations import forward_with_component_activations
-from typo_robust_training.training.config import AdapterTrainingProtocol
+from typo_robust_training.training.config import (
+    AdapterTrainingProtocol,
+    is_kojima_faithful_protocol,
+)
 from typo_robust_training.training.encoding import (
     PairedEncoding,
     output_logit_pairs_for_scope,
 )
 from typo_robust_training.training.losses import (
     aligned_output_kl,
+    aligned_soft_cross_entropy,
     answer_cross_entropy,
     next_token_cross_entropy,
     normalized_component_state_loss,
@@ -23,6 +28,16 @@ from typo_robust_training.training.losses import (
     probe_semantic_classifier_kl,
     residual_window_cosine_loss,
 )
+
+
+def _output_matching_loss(protocol: AdapterTrainingProtocol):
+    """Use public soft CE only for the named reproduction arm."""
+
+    return (
+        aligned_soft_cross_entropy
+        if is_kojima_faithful_protocol(protocol)
+        else aligned_output_kl
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +82,7 @@ def compute_training_step(
     semantic_basis: Any | None = None,
     semantic_projected_class_weights: Any | None = None,
     semantic_classifier_bias: Any | None = None,
+    teacher_adapter_disabled: bool = False,
 ) -> TrainingStepOutput:
     """Compute all configured losses while keeping the teacher fully detached."""
 
@@ -108,9 +124,18 @@ def compute_training_step(
         raise ValueError("non-semantic training cannot consume a semantic classifier")
     if not math.isfinite(float(state_weight)) or float(state_weight) < 0.0:
         raise ValueError("state loss weight must be finite and non-negative")
-    teacher.requires_grad_(False)
-    teacher.eval()
-    student.train()
+    if teacher_adapter_disabled:
+        if teacher is not student or not hasattr(student, "disable_adapter"):
+            raise ValueError(
+                "adapter-disabled teacher requires the same PEFT student model"
+            )
+        # The public runtime never switches the PEFT model back to train mode.
+        # Gradients remain enabled for LoRA weights in eval mode (dropout is 0).
+        student.eval()
+    else:
+        teacher.requires_grad_(False)
+        teacher.eval()
+        student.train()
     try:
         device = next(parameter.device for parameter in student.parameters())
     except StopIteration as exc:
@@ -125,7 +150,10 @@ def compute_training_step(
     components = tuple(component_weights or ())
     teacher_output = teacher_components = None
     if require_teacher:
-        with torch.no_grad():
+        adapter_context = (
+            student.disable_adapter() if teacher_adapter_disabled else nullcontext()
+        )
+        with torch.no_grad(), adapter_context:
             if component_state and encoding.clean_edit_positions:
                 teacher_output, teacher_components = forward_with_component_activations(
                     teacher,
@@ -180,7 +208,8 @@ def compute_training_step(
     if protocol.loss_weights["output"] > 0.0:
         if teacher_output is None:
             raise RuntimeError("output matching is missing the clean teacher")
-        losses["output"] = aligned_output_kl(
+        output_loss = _output_matching_loss(protocol)
+        losses["output"] = output_loss(
             teacher_output.logits,
             logits,
             logit_pairs=output_logit_pairs_for_scope(

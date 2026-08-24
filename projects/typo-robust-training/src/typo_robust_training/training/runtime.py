@@ -25,7 +25,11 @@ from typo_robust_training.training.adapters import (
     attach_lora_adapters,
     trainable_parameter_report,
 )
-from typo_robust_training.training.config import AdapterTrainingProtocol
+from typo_robust_training.training.config import (
+    AdapterTrainingProtocol,
+    is_kojima_faithful_protocol,
+    is_probe_factorial_protocol,
+)
 from typo_robust_training.training.encoding import (
     PairedEncoding,
     encode_training_pair,
@@ -45,6 +49,10 @@ from typo_robust_training.training.methods import (
     resolve_training_method,
 )
 from typo_robust_training.training.pairs import TrainingPair, UnusableTrainingPairError
+from typo_robust_training.training.kojima_faithful import (
+    UnusableKojimaFaithfulPairError,
+    encode_kojima_faithful_pair,
+)
 from typo_robust_training.training.runner import (
     factorial_group_balanced_accumulation_scales,
     TrainingMicroStepResult,
@@ -59,6 +67,42 @@ def _version(name: str) -> str:
         return importlib.metadata.version(name)
     except importlib.metadata.PackageNotFoundError:
         return "not-installed"
+
+
+def _positive_architecture_integer(config: object, field: str) -> int:
+    value = getattr(config, field, None)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"training model architecture field {field} is unavailable")
+    return value
+
+
+def resolve_attention_head_dim(config: object) -> int:
+    """Resolve a canonical head width while preserving Gemma's explicit GQA width."""
+
+    text_config = getattr(config, "text_config", config)
+    hidden_size = _positive_architecture_integer(text_config, "hidden_size")
+    attention_heads = _positive_architecture_integer(text_config, "num_attention_heads")
+    if hidden_size % attention_heads != 0:
+        raise ValueError(
+            "training model hidden_size must be divisible by num_attention_heads"
+        )
+    derived = hidden_size // attention_heads
+    explicit = getattr(text_config, "head_dim", None)
+    if explicit is None:
+        return derived
+    if isinstance(explicit, bool) or not isinstance(explicit, int) or explicit <= 0:
+        raise ValueError("training model explicit head_dim must be a positive integer")
+    model_type = getattr(text_config, "model_type", None)
+    if explicit != derived and model_type not in {
+        "gemma",
+        "gemma2",
+        "gemma3",
+        "gemma3_text",
+    }:
+        raise ValueError(
+            "training model explicit head_dim disagrees with hidden_size/num_attention_heads"
+        )
+    return explicit
 
 
 def _cpu_cuda_rng_states(states: object) -> tuple[object, ...]:
@@ -876,21 +920,32 @@ class HuggingFaceAdapterTrainingRuntime:
         ):
             raise ValueError("training model decoder layers differ from the frozen config")
         text_config = getattr(student_base.config, "text_config", student_base.config)
-        self.attention_head_dim = getattr(text_config, "head_dim", None)
-        self.mlp_intermediate_size = getattr(text_config, "intermediate_size", None)
-        self.attention_heads = getattr(text_config, "num_attention_heads", None)
-        if any(
-            isinstance(value, bool) or not isinstance(value, int) or value <= 0
-            for value in (
-                self.attention_head_dim,
-                self.mlp_intermediate_size,
-                self.attention_heads,
-            )
+        teacher_text_config = getattr(self.teacher.config, "text_config", self.teacher.config)
+        self.attention_head_dim = resolve_attention_head_dim(text_config)
+        teacher_attention_head_dim = resolve_attention_head_dim(teacher_text_config)
+        self.mlp_intermediate_size = _positive_architecture_integer(
+            text_config, "intermediate_size"
+        )
+        self.attention_heads = _positive_architecture_integer(
+            text_config, "num_attention_heads"
+        )
+        teacher_architecture = (
+            teacher_attention_head_dim,
+            _positive_architecture_integer(teacher_text_config, "intermediate_size"),
+            _positive_architecture_integer(teacher_text_config, "num_attention_heads"),
+        )
+        if teacher_architecture != (
+            self.attention_head_dim,
+            self.mlp_intermediate_size,
+            self.attention_heads,
         ):
-            raise ValueError("training model architecture fields are unavailable")
+            raise ValueError("teacher and student architecture fields differ")
         if resolved_method is not None:
             adapter_layers = resolved_method.adapter_layers
-        elif protocol.layer_scope == "all-decoder-layers":
+        elif protocol.layer_scope in {
+            "all-decoder-layers",
+            "all-linear-lora-including-embedding-and-lm-head",
+        }:
             adapter_layers = tuple(range(self.num_decoder_layers))
         else:
             if not isinstance(evidence, LocalizationEvidence):
@@ -1001,6 +1056,8 @@ class HuggingFaceAdapterTrainingRuntime:
         torch.cuda.reset_peak_memory_stats()
 
     def _encode_pair(self, pair: TrainingPair) -> PairedEncoding:
+        if is_kojima_faithful_protocol(self.protocol):
+            return encode_kojima_faithful_pair(pair, tokenizer=self.tokenizer)
         return encode_training_pair(
             pair,
             tokenizer=self.tokenizer,
@@ -1008,7 +1065,7 @@ class HuggingFaceAdapterTrainingRuntime:
             require_answer_targets=self.protocol.loss_weights["answer"] > 0.0,
             require_all_edits_visible=not self.protocol.schema_version.endswith("/v1"),
             require_downstream_targets=(
-                self.protocol.schema_version.endswith("/v7") and not pair.is_noop
+                is_probe_factorial_protocol(self.protocol) and not pair.is_noop
             ),
         )
 
@@ -1017,7 +1074,7 @@ class HuggingFaceAdapterTrainingRuntime:
 
         try:
             self._encode_pair(pair)
-        except UnusableTrainingPairError:
+        except (UnusableTrainingPairError, UnusableKojimaFaithfulPairError):
             return False
         return True
 
@@ -1061,7 +1118,11 @@ class HuggingFaceAdapterTrainingRuntime:
         else:
             encoding = self._encode_pair(pair)
         return compute_training_step(
-            teacher=self.teacher,
+            teacher=(
+                self.student
+                if is_kojima_faithful_protocol(self.protocol)
+                else self.teacher
+            ),
             student=self.student,
             encoding=encoding,
             protocol=self.protocol,
@@ -1072,6 +1133,7 @@ class HuggingFaceAdapterTrainingRuntime:
             semantic_basis=self.semantic_basis,
             semantic_projected_class_weights=self.semantic_projected_class_weights,
             semantic_classifier_bias=self.semantic_classifier_bias,
+            teacher_adapter_disabled=is_kojima_faithful_protocol(self.protocol),
         )
 
     def prepare_accumulation(
@@ -1717,6 +1779,7 @@ class HuggingFaceAdapterTrainingRuntime:
             "code_revision": self.code_revision,
             "source_tree_sha256": self.source_tree_sha256,
             "condition": self.protocol.condition,
+            "method_identity": self.protocol.method_identity,
             "seed": self.seed,
             "device": str(self.device),
             "cuda": torch.version.cuda,
@@ -1746,6 +1809,11 @@ class HuggingFaceAdapterTrainingRuntime:
             "trainable_parameters": self.parameter_report.trainable_parameters,
             "total_parameters": self.parameter_report.total_parameters,
             "attention_head_dim": self.attention_head_dim,
+            "training_teacher_mode": (
+                "same-student-model-with-adapter-disabled"
+                if is_kojima_faithful_protocol(self.protocol)
+                else "separate-frozen-clean-model"
+            ),
             "teacher_frozen": True,
             "student_base_frozen": True,
         }
@@ -1754,5 +1822,6 @@ class HuggingFaceAdapterTrainingRuntime:
 __all__ = [
     "HuggingFaceAdapterTrainingRuntime",
     "next_gradient_ratio_violations",
+    "resolve_attention_head_dim",
     "validate_resume_state_calibration",
 ]

@@ -19,6 +19,7 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _CONDITIONS = (
     "noisy-language-model",
     "output-matching",
+    "kojima-faithful-output-matching",
     "random-window-state-distillation",
     "global-state-alignment",
     "localized-state-distillation",
@@ -31,6 +32,16 @@ _CONDITIONS = (
     "factorial-probe-suffix-downstream-horizon",
     "factorial-random-layers-downstream-horizon",
 )
+_FACTORIAL_CONDITIONS = frozenset(
+    {
+        "factorial-all-layers-all-tokens",
+        "factorial-all-layers-downstream-horizon",
+        "factorial-probe-suffix-all-tokens",
+        "factorial-probe-suffix-downstream-horizon",
+        "factorial-random-layers-downstream-horizon",
+    }
+)
+_KOJIMA_CONDITION = "kojima-faithful-output-matching"
 _LOSS_NAMES = ("noisy_language_model", "answer", "output", "state", "clean")
 _TARGET_MODULES = (
     "q_proj",
@@ -41,6 +52,7 @@ _TARGET_MODULES = (
     "up_proj",
     "down_proj",
 )
+_KOJIMA_TARGET_MODULES = ("embed_tokens", *_TARGET_MODULES, "lm_head")
 _TOP = {
     "schema_version",
     "condition",
@@ -51,6 +63,7 @@ _TOP = {
     "objective",
 }
 _TOP_V4 = _TOP | {"method_evidence"}
+_TOP_V7 = _TOP | {"method_identity"}
 _METHOD_EVIDENCE_V4 = {"schema_version", "artifact_sha256"}
 _MODEL = {"id", "revision", "dtype"}
 _MODEL_V2 = _MODEL | {"decoder_layers"}
@@ -61,6 +74,14 @@ _SEQUENCE = {
     "answer_format",
 }
 _SEQUENCE_V2 = _SEQUENCE | {"pairing_policy"}
+_SEQUENCE_V7 = _SEQUENCE_V2 | {
+    "training_corpus",
+    "training_corpus_revision",
+    "training_corpus_data_file",
+    "packing_policy",
+    "data_runtime_policy",
+    "upstream_code_revision",
+}
 _ADAPTER = {
     "method",
     "rank",
@@ -90,6 +111,10 @@ _OPTIMIZATION = {
     "resume_contract",
 }
 _OPTIMIZATION_V3 = _OPTIMIZATION | {"max_student_tokens"}
+_OPTIMIZATION_V7 = _OPTIMIZATION_V3 | {
+    "public_anchor_seed",
+    "matched_replication_seeds",
+}
 _OBJECTIVE = {
     "weights",
     "state_scope",
@@ -105,6 +130,78 @@ _OBJECTIVE_V2 = _OBJECTIVE | {
     "state_window_policy",
 }
 _GRADIENT_RATIO_GUARD_OPTIMIZER_STEPS = 50
+_KOJIMA_METHOD_IDENTITY = "kojima-faithful-output-matching/v1"
+_KOJIMA_FROZEN_SECTIONS: Mapping[str, object] = {
+    "model": {
+        "id": "mistralai/Mistral-7B-v0.1",
+        "revision": "7231864981174d9bee8c7687c24c8344414eae6b",
+        "dtype": "bfloat16",
+        "decoder_layers": 32,
+    },
+    "sequence": {
+        "max_length": 8192,
+        "on_the_fly_typo": "kojima-random-frequency-four-operation/v1",
+        "natural_pairs": "disabled/v1",
+        "answer_format": "no-hard-answer-target/v1",
+        "pairing_policy": "kojima-50pct-clean-document-noise/v1",
+        "training_corpus": "HuggingFaceFW/fineweb",
+        "training_corpus_revision": "9bb295ddab0e05d785b879661af7260fed5140fc",
+        "training_corpus_data_file": "sample/10BT/000_00000.parquet",
+        "packing_policy": "kojima-bos-overfill500-canonicalize-truncate8192/v2",
+        "data_runtime_policy": (
+            "hash-attested-8800-attempt-skip-replace-stream/v2"
+        ),
+        "upstream_code_revision": "4cb90b28e9f6976046a6e93aec2dcab27e76555d",
+    },
+    "adapter": {
+        "method": "lora",
+        "rank": 16,
+        "alpha": 8,
+        "dropout": 0,
+        "target_modules": list(_KOJIMA_TARGET_MODULES),
+        "layer_scope": "all-linear-lora-including-embedding-and-lm-head",
+        "layer_policy": "kojima-all-linear-with-embedding-head/v1",
+        "bias": "none",
+        "task_type": "CAUSAL_LM",
+    },
+    "optimization": {
+        "optimizer": "adamw",
+        "learning_rate": 0.0001,
+        "weight_decay": 0.01,
+        "warmup_ratio": 0.0,
+        "scheduler": "constant-with-warmup",
+        "gradient_checkpointing": True,
+        "micro_batch_size": 1,
+        "gradient_accumulation_steps": 8,
+        "max_optimizer_steps": 1000,
+        "max_student_tokens": 65536000,
+        "max_grad_norm": 1.0,
+        "checkpoint_every_optimizer_steps": 250,
+        "log_every_micro_steps": 1,
+        "seed_inventory": [1, 42, 43, 44],
+        "public_anchor_seed": 1,
+        "matched_replication_seeds": [42, 43, 44],
+        "resume_contract": "exact-next-sample-and-rng/v1",
+    },
+    "objective": {
+        "weights": {
+            "noisy_language_model": 0,
+            "answer": 0,
+            "output": 1,
+            "state": 0,
+            "clean": 0,
+        },
+        "state_scope": "none",
+        "state_distance": "none",
+        "output_scope": "aligned-non-edited-next-token/v1",
+        "noisy_language_model_scope": "all-nonpadding-next-tokens/v1",
+        "temperature": 1.0,
+        "epsilon": 1e-8,
+        "state_gradient_ratio": None,
+        "calibration_micro_batches": 0,
+        "state_window_policy": "none",
+    },
+}
 _V6_FROZEN_SECTIONS: Mapping[str, object] = {
     "model": {
         "id": "google/gemma-3-4b-it",
@@ -267,6 +364,7 @@ class AdapterTrainingProtocol:
 
     schema_version: str
     condition: str
+    method_identity: str
     model: str
     model_revision: str
     decoder_layers: int | None
@@ -276,6 +374,12 @@ class AdapterTrainingProtocol:
     natural_pairs: str
     answer_format: str
     pairing_policy: str
+    training_corpus: str | None
+    training_corpus_revision: str | None
+    training_corpus_data_file: str | None
+    packing_policy: str | None
+    data_runtime_policy: str | None
+    upstream_code_revision: str | None
     adapter_method: str
     lora_rank: int
     lora_alpha: float
@@ -300,6 +404,8 @@ class AdapterTrainingProtocol:
     checkpoint_every_optimizer_steps: int
     log_every_micro_steps: int
     seed_inventory: tuple[int, ...]
+    public_anchor_seed: int | None
+    matched_replication_seeds: tuple[int, ...]
     resume_contract: str
     loss_weights: Mapping[str, float]
     state_scope: str
@@ -316,6 +422,23 @@ class AdapterTrainingProtocol:
     config_sha256: str
 
 
+def is_kojima_faithful_protocol(protocol: AdapterTrainingProtocol) -> bool:
+    """Select the faithful runtime by method identity, never by schema version.
+
+    Schema ``v7`` is shared with state-free factorial arms in the integrated
+    experiment tree.  Treating the schema as a method selector would silently
+    replace their group-balanced data/KL path with the public-reproduction path.
+    """
+
+    return getattr(protocol, "condition", None) == _KOJIMA_CONDITION
+
+
+def is_probe_factorial_protocol(protocol: AdapterTrainingProtocol) -> bool:
+    """Select the state-free factorial runtime only by its named condition."""
+
+    return getattr(protocol, "condition", None) in _FACTORIAL_CONDITIONS
+
+
 def _validate_condition(
     condition: str,
     *,
@@ -326,6 +449,26 @@ def _validate_condition(
     state_window_policy: str,
     layer_policy: str,
 ) -> None:
+    if (
+        schema_version == "robustness-adapter-training-config/v7"
+        and condition == _KOJIMA_CONDITION
+    ):
+        if (
+            layer_scope != "all-linear-lora-including-embedding-and-lm-head"
+            or layer_policy != "kojima-all-linear-with-embedding-head/v1"
+            or state_scope != "none"
+            or state_window_policy != "none"
+            or dict(weights)
+            != {
+                "noisy_language_model": 0.0,
+                "answer": 0.0,
+                "output": 1.0,
+                "state": 0.0,
+                "clean": 0.0,
+            }
+        ):
+            raise ValueError("Kojima-faithful condition and objective disagree")
+        return
     if schema_version == "robustness-adapter-training-config/v7":
         expected = {
             "factorial-all-layers-all-tokens": (
@@ -518,13 +661,20 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         raise ValueError(f"adapter training config is not UTF-8: {resolved}") from exc
     if not isinstance(decoded, Mapping):
         raise ValueError("config must be an object")
+    decoded_schema = decoded.get("schema_version")
+    decoded_condition = decoded.get("condition")
+    decoded_is_kojima = (
+        decoded_schema == "robustness-adapter-training-config/v7"
+        and decoded_condition == _KOJIMA_CONDITION
+    )
     root = _mapping(
         decoded,
         field="config",
         fields=(
-            _TOP_V4
-            if decoded.get("schema_version")
-            in {
+            _TOP_V7
+            if decoded_is_kojima
+            else _TOP_V4
+            if decoded_schema in {
                 "robustness-adapter-training-config/v4",
                 "robustness-adapter-training-config/v5",
                 "robustness-adapter-training-config/v6",
@@ -547,13 +697,31 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     condition = _string(root["condition"], field="condition")
     if condition not in _CONDITIONS:
         raise ValueError("training condition is unsupported")
+    is_kojima = (
+        schema_version == "robustness-adapter-training-config/v7"
+        and condition == _KOJIMA_CONDITION
+    )
+    is_factorial = (
+        schema_version == "robustness-adapter-training-config/v7"
+        and condition in _FACTORIAL_CONDITIONS
+    )
+    if schema_version.endswith("/v7") and not (is_kojima or is_factorial):
+        raise ValueError("v7 training condition is unsupported")
+    if is_kojima:
+        if root["method_identity"] != _KOJIMA_METHOD_IDENTITY:
+            raise ValueError("Kojima-faithful method_identity differs")
+        for section, expected in _KOJIMA_FROZEN_SECTIONS.items():
+            if _canonical_json(root[section]) != _canonical_json(expected):
+                raise ValueError(
+                    f"Kojima-faithful {section} differs from the frozen protocol"
+                )
     if schema_version.endswith("/v6"):
         if condition != "probe-semantic-subspace-distillation":
             raise ValueError("semantic training condition differs from the frozen template")
         for section, expected in _V6_FROZEN_SECTIONS.items():
             if _canonical_json(root[section]) != _canonical_json(expected):
                 raise ValueError(f"semantic training {section} differs from the frozen template")
-    if schema_version.endswith("/v7"):
+    if is_factorial:
         for section in ("model", "sequence", "optimization"):
             if _canonical_json(root[section]) != _canonical_json(
                 _V4_FROZEN_SECTIONS[section]
@@ -592,7 +760,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
             raise ValueError("probe-factorial recipe differs outside the two frozen axes")
 
     expected_method_evidence_sha256: str | None = None
-    if schema_version.endswith(("/v4", "/v5", "/v6", "/v7")):
+    if schema_version.endswith(("/v4", "/v5", "/v6")) or is_factorial:
         method_evidence = _mapping(
             root["method_evidence"],
             field="method_evidence",
@@ -631,19 +799,29 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     sequence = _mapping(
         root["sequence"],
         field="sequence",
-        fields=_SEQUENCE if schema_version.endswith("/v1") else _SEQUENCE_V2,
-    )
-    expected_sequence: dict[str, object] = {
-        "on_the_fly_typo": "record-epoch-counter-based/v1",
-        "natural_pairs": "fixed-clean-typo-source-pairs/v1",
-        "answer_format": (
-            "short-answer-suffix/v1"
+        fields=(
+            _SEQUENCE
             if schema_version.endswith("/v1")
-            else "no-hard-answer-target/v1"
+            else _SEQUENCE_V7
+            if is_kojima
+            else _SEQUENCE_V2
         ),
-    }
-    if not schema_version.endswith("/v1"):
-        expected_sequence["pairing_policy"] = "exact-alternating-clean-noisy/v1"
+    )
+    expected_sequence: dict[str, object]
+    if is_kojima:
+        expected_sequence = dict(_KOJIMA_FROZEN_SECTIONS["sequence"])  # type: ignore[arg-type]
+    else:
+        expected_sequence = {
+            "on_the_fly_typo": "record-epoch-counter-based/v1",
+            "natural_pairs": "fixed-clean-typo-source-pairs/v1",
+            "answer_format": (
+                "short-answer-suffix/v1"
+                if schema_version.endswith("/v1")
+                else "no-hard-answer-target/v1"
+            ),
+        }
+        if not schema_version.endswith("/v1"):
+            expected_sequence["pairing_policy"] = "exact-alternating-clean-noisy/v1"
     for field, expected in expected_sequence.items():
         if sequence[field] != expected:
             raise ValueError(f"sequence.{field} differs from {expected}")
@@ -653,9 +831,9 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         field="adapter",
         fields=(
             _ADAPTER_V7
-            if schema_version.endswith("/v7")
+            if is_factorial
             else _ADAPTER_V4
-            if schema_version.endswith(("/v4", "/v5", "/v6"))
+            if schema_version.endswith(("/v4", "/v5", "/v6")) or is_kojima
             else _ADAPTER
         ),
     )
@@ -664,7 +842,10 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     if adapter["task_type"] != "CAUSAL_LM":
         raise ValueError("adapter.task_type must be CAUSAL_LM")
     target_modules = tuple(adapter["target_modules"])  # type: ignore[arg-type]
-    if target_modules != _TARGET_MODULES:
+    expected_target_modules = (
+        _KOJIMA_TARGET_MODULES if is_kojima else _TARGET_MODULES
+    )
+    if target_modules != expected_target_modules:
         raise ValueError("adapter.target_modules differ from the frozen module order")
     lora_rank = _integer(adapter["rank"], field="adapter.rank", minimum=1)
     lora_alpha = _number(adapter["alpha"], field="adapter.alpha")
@@ -681,7 +862,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         or dropout != 0.0
     ):
         raise ValueError("semantic training LoRA must be frozen at r16 alpha8 dropout0")
-    if schema_version.endswith("/v7") and (
+    if is_factorial and (
         lora_rank != 16
         or lora_alpha != 8.0
         or dropout != 0.0
@@ -689,12 +870,18 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         != "sha256-layer-keyed-kaiming-a-zero-b/v1"
     ):
         raise ValueError("probe-factorial LoRA recipe or initialization differs")
+    if is_kojima and (
+        lora_rank != 16 or lora_alpha != 8.0 or dropout != 0.0
+    ):
+        raise ValueError("Kojima-faithful LoRA must use rank 16, alpha 8, and dropout 0")
 
     optimization = _mapping(
         root["optimization"],
         field="optimization",
         fields=(
-            _OPTIMIZATION_V3
+            _OPTIMIZATION_V7
+            if is_kojima
+            else _OPTIMIZATION_V3
             if schema_version.endswith(("/v3", "/v4", "/v5", "/v6", "/v7"))
             else _OPTIMIZATION
         ),
@@ -716,8 +903,37 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     seeds = tuple(
         _integer(value, field="optimization.seed_inventory", minimum=0) for value in seeds_raw
     )
-    if seeds != (42, 43, 44):
-        raise ValueError("optimization.seed_inventory must be 42, 43, 44")
+    expected_seeds = (1, 42, 43, 44) if is_kojima else (42, 43, 44)
+    if seeds != expected_seeds:
+        raise ValueError(
+            "optimization.seed_inventory differs from the frozen seed inventory"
+        )
+    public_anchor_seed: int | None = None
+    matched_replication_seeds: tuple[int, ...] = ()
+    if is_kojima:
+        public_anchor_seed = _integer(
+            optimization["public_anchor_seed"],
+            field="optimization.public_anchor_seed",
+            minimum=0,
+        )
+        matched_raw = optimization["matched_replication_seeds"]
+        if not isinstance(matched_raw, list):
+            raise ValueError("optimization.matched_replication_seeds must be a list")
+        matched_replication_seeds = tuple(
+            _integer(
+                value,
+                field="optimization.matched_replication_seeds",
+                minimum=0,
+            )
+            for value in matched_raw
+        )
+        if (
+            public_anchor_seed != 1
+            or matched_replication_seeds != (42, 43, 44)
+            or public_anchor_seed in matched_replication_seeds
+            or set(seeds) != {public_anchor_seed, *matched_replication_seeds}
+        ):
+            raise ValueError("Kojima anchor/matched seed roles differ")
     warmup = _number(optimization["warmup_ratio"], field="optimization.warmup_ratio")
     if warmup > 1.0:
         raise ValueError("optimization.warmup_ratio must be at most one")
@@ -780,7 +996,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         raise ValueError("objective.state_distance differs")
     output_scope = str(objective["output_scope"])
     allowed_output_scopes = {"aligned-non-edited-next-token/v1"}
-    if schema_version.endswith("/v7"):
+    if is_factorial:
         allowed_output_scopes.add(
             "clean-all-noisy-edited-word-downstream-offsets-2-16/v1"
         )
@@ -797,7 +1013,7 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     epsilon = _number(objective["epsilon"], field="objective.epsilon", minimum=1e-12)
     if schema_version.endswith("/v6") and (temperature != 1.0 or epsilon != 1e-8):
         raise ValueError("semantic distillation temperature and epsilon differ")
-    if schema_version.endswith("/v7") and (temperature != 1.0 or epsilon != 1e-8):
+    if is_factorial and (temperature != 1.0 or epsilon != 1e-8):
         raise ValueError("probe-factorial distillation temperature and epsilon differ")
 
     if not schema_version.endswith("/v1"):
@@ -874,9 +1090,44 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
                     f"probe-transition {section} differs from the frozen 10M recipe"
                 )
 
+    max_optimizer_steps = _integer(
+        optimization["max_optimizer_steps"],
+        field="optimization.max_optimizer_steps",
+        minimum=1,
+    )
+    max_student_tokens = (
+        _integer(
+            optimization["max_student_tokens"],
+            field="optimization.max_student_tokens",
+            minimum=1,
+        )
+        if schema_version.endswith(("/v3", "/v4", "/v5", "/v6", "/v7"))
+        else None
+    )
+    max_sequence_length = _integer(
+        sequence["max_length"], field="sequence.max_length", minimum=2
+    )
+    if is_kojima and (
+        max_student_tokens
+        != max_sequence_length * micro_batch_size * gradient_accumulation_steps
+        * max_optimizer_steps
+    ):
+        raise ValueError(
+            "Kojima-faithful context, batch, token budget, and optimizer steps disagree"
+        )
+
     return AdapterTrainingProtocol(
         schema_version=str(schema_version),
         condition=condition,
+        method_identity=(
+            _KOJIMA_METHOD_IDENTITY
+            if is_kojima
+            else "legacy-output-matching-pilot/v1"
+            if condition == "output-matching" and schema_version.endswith("/v1")
+            else "kojima-inspired-output-matching/v1"
+            if condition == "output-matching"
+            else f"{condition}/v1"
+        ),
         model=_string(model["id"], field="model.id"),
         model_revision=revision,
         decoder_layers=(
@@ -885,25 +1136,49 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
             else _integer(model["decoder_layers"], field="model.decoder_layers", minimum=2)
         ),
         dtype="bfloat16",
-        max_sequence_length=_integer(
-            sequence["max_length"], field="sequence.max_length", minimum=2
-        ),
+        max_sequence_length=max_sequence_length,
         on_the_fly_typo=str(sequence["on_the_fly_typo"]),
         natural_pairs=str(sequence["natural_pairs"]),
         answer_format=str(sequence["answer_format"]),
         pairing_policy=pairing_policy,
+        training_corpus=(
+            str(sequence["training_corpus"]) if is_kojima else None
+        ),
+        training_corpus_revision=(
+            str(sequence["training_corpus_revision"])
+            if is_kojima
+            else None
+        ),
+        training_corpus_data_file=(
+            str(sequence["training_corpus_data_file"])
+            if is_kojima
+            else None
+        ),
+        packing_policy=(
+            str(sequence["packing_policy"]) if is_kojima else None
+        ),
+        data_runtime_policy=(
+            str(sequence["data_runtime_policy"])
+            if is_kojima
+            else None
+        ),
+        upstream_code_revision=(
+            str(sequence["upstream_code_revision"])
+            if is_kojima
+            else None
+        ),
         adapter_method="lora",
         lora_rank=lora_rank,
         lora_alpha=lora_alpha,
         lora_dropout=dropout,
-        lora_target_modules=_TARGET_MODULES,
+        lora_target_modules=expected_target_modules,
         layer_scope=layer_scope,
         layer_policy=layer_policy,
         adapter_bias="none",
         adapter_task_type="CAUSAL_LM",
         adapter_initialization_policy=(
             str(adapter["initialization_policy"])
-            if schema_version.endswith("/v7")
+            if is_factorial
             else "peft-default/v1"
         ),
         optimizer="adamw",
@@ -914,20 +1189,8 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
         gradient_checkpointing=gradient_checkpointing,
         micro_batch_size=micro_batch_size,
         gradient_accumulation_steps=gradient_accumulation_steps,
-        max_optimizer_steps=_integer(
-            optimization["max_optimizer_steps"],
-            field="optimization.max_optimizer_steps",
-            minimum=1,
-        ),
-        max_student_tokens=(
-            _integer(
-                optimization["max_student_tokens"],
-                field="optimization.max_student_tokens",
-                minimum=1,
-            )
-            if schema_version.endswith(("/v3", "/v4", "/v5", "/v6", "/v7"))
-            else None
-        ),
+        max_optimizer_steps=max_optimizer_steps,
+        max_student_tokens=max_student_tokens,
         max_grad_norm=_number(optimization["max_grad_norm"], field="optimization.max_grad_norm"),
         checkpoint_every_optimizer_steps=_integer(
             optimization["checkpoint_every_optimizer_steps"],
@@ -940,6 +1203,8 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
             minimum=1,
         ),
         seed_inventory=seeds,
+        public_anchor_seed=public_anchor_seed,
+        matched_replication_seeds=matched_replication_seeds,
         resume_contract=str(optimization["resume_contract"]),
         loss_weights=weights,
         state_scope=state_scope,
@@ -959,4 +1224,9 @@ def load_adapter_training_config(path: Path) -> AdapterTrainingProtocol:
     )
 
 
-__all__ = ["AdapterTrainingProtocol", "load_adapter_training_config"]
+__all__ = [
+    "AdapterTrainingProtocol",
+    "is_kojima_faithful_protocol",
+    "is_probe_factorial_protocol",
+    "load_adapter_training_config",
+]

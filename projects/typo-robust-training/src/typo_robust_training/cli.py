@@ -33,6 +33,33 @@ def _run_build_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_prepare_kojima_faithful_data(args: argparse.Namespace) -> int:
+    from typo_robust_training.training.kojima_faithful import (
+        PrepareKojimaFaithfulDataConfig,
+        prepare_kojima_faithful_data,
+    )
+
+    try:
+        result = prepare_kojima_faithful_data(
+            PrepareKojimaFaithfulDataConfig(
+                seed=args.seed,
+                cache_dir=args.cache_dir,
+                output_dir=args.output_dir,
+            )
+        )
+    except (FileExistsError, RuntimeError, ValueError) as exc:
+        print(f"prepare-kojima-faithful-data: error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"prepared {result.packed_examples} packed attempt(s), "
+        f"targeting {result.student_tokens} usable student token(s): "
+        f"{result.packed_sources_path}"
+    )
+    print(f"manifest: {result.manifest_path}")
+    print(f"run manifest: {result.run_path}")
+    return 0
+
+
 def _run_freeze_evaluation(args: argparse.Namespace) -> int:
     from typo_robust_training.evaluation.freeze import (
         FreezeEvaluationRunConfig,
@@ -592,6 +619,15 @@ def register_commands(
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.set_defaults(_typo_cot_plugin_handler=_run_build_data)
 
+    faithful_data = commands.add_parser(
+        "prepare-kojima-faithful-data",
+        help="Freeze the pinned FineWeb packing stream for one faithful Kojima seed.",
+    )
+    faithful_data.add_argument("--seed", required=True, type=int, choices=(1, 42, 43, 44))
+    faithful_data.add_argument("--cache-dir", type=Path)
+    faithful_data.add_argument("--output-dir", required=True, type=Path)
+    faithful_data.set_defaults(_typo_cot_plugin_handler=_run_prepare_kojima_faithful_data)
+
     freeze = commands.add_parser(
         "freeze-robustness-evaluation",
         help="Freeze model-independent paired evaluation text and one-use roles.",
@@ -816,6 +852,10 @@ def register_commands(
     for command, condition in (
         ("train-noisy-language-model", "noisy-language-model"),
         ("train-output-matching", "output-matching"),
+        (
+            "train-kojima-faithful-output-matching",
+            "kojima-faithful-output-matching",
+        ),
         ("train-global-state-alignment", "global-state-alignment"),
         (
             "train-random-window-state-distillation",

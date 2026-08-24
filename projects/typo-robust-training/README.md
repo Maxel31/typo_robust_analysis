@@ -389,7 +389,7 @@ CUDA_VISIBLE_DEVICES="${GPU_ID}" uv run --project "${TRAIN_PROJECT}" --locked \
 
 Run the four conditions serially when only one GPU is available. Add `--resume`
 only when the same output directory already contains an exact compatible
-checkpoint. W&B uses descriptive names beginning with `Kojima baseline`,
+checkpoint. W&B uses descriptive names beginning with `Kojima-inspired baseline`,
 `Proposed method`, `Random-window control`, and `All-layer control`; each name
 also includes the operation, layer range, model, token budget, and seed.
 
