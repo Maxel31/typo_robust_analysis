@@ -13,19 +13,39 @@ registry template: `configs/robustness-evaluation-v2-registry.template.json`
 output distribution matchingを行う手法を評価する。旧early-window hidden-state
 distillationは主手法に含めない。
 
-比較する確証armは次の4条件である。
+確証factorialはBaseとv7学習実装の次の5条件である。
 
 1. `base`: 学習なし。
-2. `output-matching-all-layers`: 全decoder層へLoRAを置くKojima型対照。
-3. `probe-boundary-output-matching`: `b`以降だけへLoRAを置く提案条件。
-4. `random-freeze-output-matching`: `b`個の層をhashで無作為にfreezeし、残りへ
-   同一LoRAを置くparameter-count対照。freeze maskはmodel revision、protocol、
-   learning seedから結果を見る前に決定する。
+2. `factorial-all-layers-all-tokens`: 全decoder層×全aligned token。v7内で予算と
+   LoRA容量を揃えたKojima-style対照。
+3. `factorial-all-layers-downstream-horizon`: 全decoder層×編集後horizon。
+   targetingだけを変更する対照。
+4. `factorial-probe-suffix-all-tokens`: Probe境界`b`以降×全aligned token。
+   placementだけを変更する対照。
+5. `factorial-probe-suffix-downstream-horizon`: Probe境界`b`以降×編集後horizon。
+   **完全提案条件**。
+6. `factorial-random-layers-downstream-horizon`: Probe suffixと同数のrandom layer×
+   編集後horizon。場所の情報量を検定する対照。maskは全learning seedで共通の
+   `sha256-seed42-count-matched-random-freeze/v1`に固定し、seedごとに引き直さない。
 
-完全な主張には、提案条件がBaseに対してclean非劣性かつtypo優越であり、
-全層対照とrandom-freeze対照の両方を上回ることが必要である。random-freezeに
-勝てない場合は、freeze自体の効果は残り得るが、Linear Probeが配置を情報したとは
-主張しない。
+さらにMistralだけで、公開手順を忠実に再現する
+`kojima-faithful-output-matching`を直接比較する。主要比較には提案と同じ
+matched replication seed `{42,43,44}`を使う。公開defaultのseed 1 runは
+`kojima-faithful-output-matching-public-seed1-anchor`として再現性確認用に保持するが、
+seed平均、bootstrap、優越性CIへ混ぜない。
+
+完全な主張には、完全提案条件がBaseに対してclean非劣性かつtypo優越であり、
+all/all、all/horizon、suffix/all、random/horizonの4条件を所定の比較で上回ることが
+必要である。Mistralではmatched-seed faithful Kojimaにも勝つ必要がある。
+学習契約は未統合feature branchのcommitではなく、config schema
+`robustness-adapter-training-config/v7`、factorial method identity
+`probe-output-factorial/v1`、evidence schema
+`probe-output-factorial-evidence-binding/v1`、faithful method identity
+`kojima-faithful-output-matching/v1`という意味的identityへ固定する。実行に使う最終merged
+commitとcanonical source-tree SHA-256は、統合完了後かつ学習開始前にregistryへ記録する。
+source-tree SHA-256は`git ls-tree -r --full-tree HEAD`のraw LF bytesをSHA-256化する
+`sha256-of-git-ls-tree-r-full-tree-head-lf/v1`で一意に計算する。未統合commitを科学契約として
+扱わない。
 
 ## 2. 固定モデル
 
@@ -34,7 +54,7 @@ distillationは主手法に含めない。
 | role | model | exact revision |
 |---|---|---|
 | development anchor | `google/gemma-3-4b-it` | `093f9f388b31de276ce2de164bdc2081324b9767` |
-| Kojima-family replication | `mistralai/Mistral-7B-Instruct-v0.3` | `c170c708c41dac9275d15a8fff4eca08d52bab71` |
+| Kojima direct comparison | `mistralai/Mistral-7B-v0.1` | `7231864981174d9bee8c7687c24c8344414eae6b` |
 
 モデルごとのBase gapを見て一方を削除したり、第三モデルへ差し替えたりしない。
 いずれかでcalibrationが成立しない場合も、その不成立を結果として残す。
@@ -93,6 +113,15 @@ calibrationのitem manifest、実現typo manifest、Base observations、選択�
 それぞれSHA-256でregistryへ登録する。モデル横断で同じsource itemと同じ実現typo
 textを使用する。選択後に再生成しない。
 
+ファイル全体のSHA-256だけでは十分でない。item manifestは各行に`task`、
+`record_id`、`source_text`、`source_text_sha256`を持ち、typo manifestはそれらへの
+参照に加えて`severity_edit_count`、`variant`、`realized_typo_text`、
+`realized_typo_sha256`を持つ。較正CLIは両manifestを厳格にparseし、textからhashを
+再計算したうえで、全observationのrecord/source/typo hashが対応行と一致すること、
+過不足なく全gridを覆うことを検証する。したがって、古いmanifestを単に再hashした
+ファイルや、任意ファイルのdigestだけを登録したものは有効な凍結成果物ではない。
+text digestは正規化を加えないUTF-8 exact text bytesのSHA-256とする。
+
 凍結済みBase observationsを選択規則へ通すコマンドは次の通り。終了コード`0`は
 severity選択、`2`は規則どおりの停止、`1`は入力・provenance違反を表す。
 
@@ -114,6 +143,8 @@ uv run --project projects/typo-robust-training typo-cot \
 学習・probeデータとはID非重複にする。各itemにつき`k*` typoを2変種生成し、全arm・
 全seedで同じbytesを読む。Baseのclean正解・typo不正解へ条件付けたflip cohortは
 診断に限り、primaryには使用しない。
+同じ`model × arm × item × learning seed`のclean入力はtypo variantによらず同一なので、
+`clean_correct`がvariant間で変化する出力は評価配管の不整合としてfail closedする。
 
 旧v1.4の`random-2`は`secondary-continuity-only`として残す。旧結果を破棄せず、
 同じhash-bound manifest上で全新armを再評価する。primary severityの代わりには
@@ -125,10 +156,15 @@ uv run --project projects/typo-robust-training typo-cot \
 
 1. clean非劣性: 提案−Baseのmodel/task等重みmacro 95% CI下限が`-1.0pp`より大きい。
    task単位の点推定が`-3.0pp`以下にならず、clean PPL比が`1.02`以下。
-2. 対全層typo優越: 提案−全層の95% CI下限が0より大きく、点推定が`+1.5pp`以上。
-3. 対Base typo改善: 提案−Baseの95% CI下限が0より大きく、点推定が`+2.0pp`以上。
-4. Probe配置特異性: 提案−random-freezeの95% CI下限が0より大きい。
-5. seed方向: 3 seedすべてで提案−全層のtypo差が正。
+2. 対all/all優越: full−all/allの95% CI下限が0より大きく、点推定が`+1.5pp`以上。
+3. targeting寄与: full−all/horizonの95% CI下限が0より大きい。
+4. placement寄与: full−suffix/allの95% CI下限が0より大きい。
+5. Probe配置特異性: full−random/horizonの95% CI下限が0より大きい。
+6. 対Base typo改善: full−Baseの95% CI下限が0より大きく、点推定が`+2.0pp`以上。
+7. Mistral直接比較: full−faithful Kojimaの95% CI下限が0より大きい。両armとも
+   matched seed `{42,43,44}`だけを使う。
+8. seed方向: 3 seedすべてでfull−all/allが正で、Mistralでは
+   full−faithful Kojimaも正。
 
 clean−typo gapの縮小単独はclean性能を下げても達成できるため、成功判定に使わない。
 wrong→right、right→wrong、netは必ず同時に報告する。
@@ -148,8 +184,8 @@ n\simeq
 
 ## 5. Clustered paired bootstrap
 
-統計単位はsource itemであり、`2 typo variants × 3 learning seeds`を独立な6標本とは
-数えない。比較arm`a,b`のitem差を
+統計単位はsource itemであり、`2 typo variants × 3 matched learning seeds`を独立な
+6標本とは数えない。比較arm`a,b`のitem差を
 
 \[
 d_{m,t,i}=
@@ -158,6 +194,10 @@ d_{m,t,i}=
 \]
 
 とする。Baseにはlearning seedがないため、Base値はvariant内で一度だけ用いる。
+faithful Kojimaの主要比較もseed `{42,43,44}`で同じ式を用いる。公開seed 1 anchorは
+この式へ投入せず、単独の記述値としてのみ報告する。
+各outcome行はmodel IDだけでなくexact revisionも持ち、§2のrevisionと異なる行は
+統計処理前に拒否する。
 各bootstrap反復ではmodel/task cell内でsource itemを復元抽出し、cell平均を計算後、
 taskとmodelを等重みで平均する。arm、variant、seedはitemと一緒に動かし、別々に
 再標本化しない。10,000反復、seed 42、95% percentile CIを用いる。
@@ -191,7 +231,7 @@ v1.4を黙って書き換えず、v2を別schemaとして扱う。主な差は�
 | typo変種 | 1実現値 | 2実現値/item | 変種を独立nと数えない |
 | model | Gemma中心 | Gemma/Mistral exact revision固定 | calibration後の交換禁止 |
 | bootstrap | learning-seed/task/item階層 | item cluster、seed/variantを先に平均 | 3 seedを3nと数えない |
-| 対照 | Base対adapter中心 | Base/全層/Probe境界/random-freeze | 全armを同一hashで再実行 |
+| 対照 | Base対adapter中心 | Base+5 factorial、Mistral-only faithful | 全armを同一hashで再実行 |
 | mechanistic audit | random-2、nonblocking | 同じくsecondary、nonblocking | 成功指標へ昇格しない |
 
 v1のfrozen manifestをprimaryへ流用せず、v2用calibration/confirmatory manifestを新規に
@@ -201,12 +241,15 @@ hash凍結する。一方、旧random-2のregistry hashをv2 registryから参�
 ## 8. 停止・縮小規則
 
 - calibration不成立: severity/modelをshopせず停止。
-- 全層対照が所定予算でBaseを改善しない: Kojima型再現が成立せず、対Kojima優位を
-  主張しない。
+- all/allが所定予算でBaseを改善しない: matched-budget Kojima-style対照が成立せず、
+  その比較に対する性能優位を主張しない。faithful Kojimaとの直接比較は別に報告する。
 - clean非劣性不合格: 提案手法失敗。
 - Base比typo改善不合格: 頑健化手法として失敗。
-- 全層と同等: 性能優位なし。parameter/GPU時間が小さければ効率結果のみ。
-- random-freezeと同等: Linear Probeによる配置選択の価値は不成立。
+- all/allと同等: matched-budget性能優位なし。parameter/GPU時間が小さければ効率結果のみ。
+- all/horizonと同等: Probe suffix配置の付加価値は不成立。
+- suffix/allと同等: downstream-horizon targetingの付加価値は不成立。
+- random/horizonと同等: Linear Probeによる配置選択の価値は不成立。
+- Mistral faithfulと同等: Kojimaへの直接的性能優位は不成立。
 - 低token予算でのみ優位: データ効率主張に縮小。
 - 1モデルだけ成功: model-specificと明記。
 - 開封後の閾値、severity、モデル、item、loss、境界変更は禁止。
@@ -222,7 +265,11 @@ templateのnullを埋めるだけでは足りない。次をすべて確認し�
 5. `adapter_outputs_used_for_calibration=false`。
 6. `severity_grid_extended=false`。
 7. `model_inventory_changed_after_calibration=false`。
-8. confirmatory item/2-variant typo/全arm checkpoint registryの各SHA-256。
-9. v1 random-2 frozen registryのSHA-256。
+8. 学習実装の意味的identityがprotocolと一致し、実行に使う最終merged commitとcanonical
+   source-tree SHA-256がregistryへ記録されていること。
+9. confirmatory item/2-variant typo/5 factorial arm checkpoint registryの各SHA-256。
+10. Mistral faithful matched seed `{42,43,44}` registryのSHA-256。
+11. 公開seed 1 anchor checkpointのSHA-256と`reproducibility-only-not-pooled`表記。
+12. v1 random-2 frozen registryのSHA-256。
 
 これらのいずれかが欠けるregistryから、確証評価を開始してはならない。

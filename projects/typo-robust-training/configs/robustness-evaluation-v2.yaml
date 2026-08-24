@@ -13,9 +13,9 @@
       "role": "development-anchor"
     },
     {
-      "id": "mistralai/Mistral-7B-Instruct-v0.3",
-      "revision": "c170c708c41dac9275d15a8fff4eca08d52bab71",
-      "role": "kojima-family-replication"
+      "id": "mistralai/Mistral-7B-v0.1",
+      "revision": "7231864981174d9bee8c7687c24c8344414eae6b",
+      "role": "kojima-direct-comparison"
     }
   ],
   "governance": {
@@ -40,7 +40,8 @@
     "minimum_model_macro_gap_points": 8.0,
     "minimum_each_model_gap_points": 5.0,
     "minimum_typo_to_clean_accuracy_ratio": 0.5,
-    "selection_rule": "smallest-eligible-severity/v1"
+    "selection_rule": "smallest-eligible-severity/v1",
+    "semantic_manifest_contract": "strict-jsonl-sha256-utf8-exact-text/v1"
   },
   "confirmatory": {
     "tasks": ["gsm8k", "mmlu", "arc", "mmlu_pro", "commonsense_qa"],
@@ -58,11 +59,72 @@
     ],
     "arms": [
       "base",
-      "output-matching-all-layers",
-      "probe-boundary-output-matching",
-      "random-freeze-output-matching"
+      "factorial-all-layers-all-tokens",
+      "factorial-all-layers-downstream-horizon",
+      "factorial-probe-suffix-all-tokens",
+      "factorial-probe-suffix-downstream-horizon",
+      "factorial-random-layers-downstream-horizon"
     ],
-    "random_freeze_control": "same-frozen-layer-count-hash-selected-per-training-seed/v1"
+    "random_freeze_control": "sha256-seed42-count-matched-random-freeze/v1",
+    "source_tree_hash_policy": "sha256-of-git-ls-tree-r-full-tree-head-lf/v1",
+    "training_contract_identities": {
+      "factorial_config_schema": "robustness-adapter-training-config/v7",
+      "factorial_method_identity": "probe-output-factorial/v1",
+      "factorial_evidence_schema": "probe-output-factorial-evidence-binding/v1",
+      "kojima_faithful_config_schema": "robustness-adapter-training-config/v7",
+      "kojima_faithful_method_identity": "kojima-faithful-output-matching/v1"
+    },
+    "model_specific_arms": [
+      {
+        "condition": "kojima-faithful-output-matching",
+        "model_id": "mistralai/Mistral-7B-v0.1",
+        "model_revision": "7231864981174d9bee8c7687c24c8344414eae6b",
+        "pooling": "separate-mistral-only",
+        "training_seeds": [42, 43, 44]
+      }
+    ],
+    "descriptive_anchors": [
+      {
+        "condition": "kojima-faithful-output-matching-public-seed1-anchor",
+        "recipe_condition": "kojima-faithful-output-matching",
+        "model_id": "mistralai/Mistral-7B-v0.1",
+        "model_revision": "7231864981174d9bee8c7687c24c8344414eae6b",
+        "training_seed": 1,
+        "role": "reproducibility-only-not-pooled"
+      }
+    ],
+    "primary_novelty_contrasts": [
+      {
+        "left": "factorial-all-layers-all-tokens",
+        "right": "factorial-probe-suffix-downstream-horizon",
+        "difference": "right-minus-left",
+        "pooling": "equal-gemma-mistral"
+      },
+      {
+        "left": "factorial-all-layers-downstream-horizon",
+        "right": "factorial-probe-suffix-downstream-horizon",
+        "difference": "right-minus-left",
+        "pooling": "equal-gemma-mistral"
+      },
+      {
+        "left": "factorial-probe-suffix-all-tokens",
+        "right": "factorial-probe-suffix-downstream-horizon",
+        "difference": "right-minus-left",
+        "pooling": "equal-gemma-mistral"
+      },
+      {
+        "left": "factorial-random-layers-downstream-horizon",
+        "right": "factorial-probe-suffix-downstream-horizon",
+        "difference": "right-minus-left",
+        "pooling": "equal-gemma-mistral"
+      },
+      {
+        "left": "kojima-faithful-output-matching",
+        "right": "factorial-probe-suffix-downstream-horizon",
+        "difference": "right-minus-left",
+        "pooling": "mistral-only"
+      }
+    ]
   },
   "statistics": {
     "training_seeds": [42, 43, 44],
@@ -80,11 +142,14 @@
   "gates": {
     "clean_noninferiority_margin_points": 1.0,
     "minimum_task_clean_change_points": -3.0,
-    "minimum_proposal_vs_all_layer_typo_gain_points": 1.5,
-    "require_proposal_vs_all_layer_ci_lower_above_zero": true,
-    "minimum_proposal_vs_base_typo_gain_points": 2.0,
-    "require_proposal_vs_base_ci_lower_above_zero": true,
-    "require_proposal_vs_random_freeze_ci_lower_above_zero": true,
+    "minimum_full_vs_all_all_typo_gain_points": 1.5,
+    "require_full_vs_all_all_ci_lower_above_zero": true,
+    "require_full_vs_all_horizon_ci_lower_above_zero": true,
+    "require_full_vs_suffix_all_ci_lower_above_zero": true,
+    "require_full_vs_random_horizon_ci_lower_above_zero": true,
+    "require_mistral_full_vs_faithful_ci_lower_above_zero": true,
+    "minimum_full_vs_base_typo_gain_points": 2.0,
+    "require_full_vs_base_ci_lower_above_zero": true,
     "maximum_clean_ppl_ratio": 1.02,
     "require_all_seed_directions_positive": true,
     "mechanistic_diagnostics_are_blocking": false
@@ -96,6 +161,9 @@
     "calibration_result_sha256_required": true,
     "confirmatory_item_manifest_sha256_required": true,
     "realized_typo_variant_manifest_sha256_required": true,
+    "training_contract_semantic_identities_required": true,
+    "final_merged_implementation_commit_required": true,
+    "final_merged_source_tree_sha256_required": true,
     "legacy_random_2_registry_sha256_required": true,
     "all_arms_must_share_exact_item_and_typo_hashes": true
   }

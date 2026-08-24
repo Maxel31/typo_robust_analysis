@@ -56,6 +56,23 @@ _OBSERVATION_FIELDS = {
     "clean_correct",
     "typo_correct",
 }
+_ITEM_MANIFEST_FIELDS = {
+    "schema_version",
+    "task",
+    "record_id",
+    "source_text",
+    "source_text_sha256",
+}
+_TYPO_MANIFEST_FIELDS = {
+    "schema_version",
+    "task",
+    "record_id",
+    "source_text_sha256",
+    "severity_edit_count",
+    "variant",
+    "realized_typo_text",
+    "realized_typo_sha256",
+}
 _TASKS = ("gsm8k", "mmlu", "arc", "mmlu_pro", "commonsense_qa")
 _OPERATIONS = (
     "keyboard-neighbor-substitution",
@@ -64,9 +81,52 @@ _OPERATIONS = (
 )
 _ARMS = (
     "base",
-    "output-matching-all-layers",
-    "probe-boundary-output-matching",
-    "random-freeze-output-matching",
+    "factorial-all-layers-all-tokens",
+    "factorial-all-layers-downstream-horizon",
+    "factorial-probe-suffix-all-tokens",
+    "factorial-probe-suffix-downstream-horizon",
+    "factorial-random-layers-downstream-horizon",
+)
+_MISTRAL_FAITHFUL_ARM = "kojima-faithful-output-matching"
+_MODEL_SPECIFIC_ARMS = (
+    MappingProxyType(
+        {
+            "condition": _MISTRAL_FAITHFUL_ARM,
+            "model_id": "mistralai/Mistral-7B-v0.1",
+            "model_revision": "7231864981174d9bee8c7687c24c8344414eae6b",
+            "pooling": "separate-mistral-only",
+            "training_seeds": [42, 43, 44],
+        }
+    ),
+)
+_DESCRIPTIVE_ANCHORS = (
+    MappingProxyType(
+        {
+            "condition": "kojima-faithful-output-matching-public-seed1-anchor",
+            "recipe_condition": _MISTRAL_FAITHFUL_ARM,
+            "model_id": "mistralai/Mistral-7B-v0.1",
+            "model_revision": "7231864981174d9bee8c7687c24c8344414eae6b",
+            "training_seed": 1,
+            "role": "reproducibility-only-not-pooled",
+        }
+    ),
+)
+_PRIMARY_NOVELTY_CONTRASTS = tuple(
+    MappingProxyType(
+        {
+            "left": left,
+            "right": "factorial-probe-suffix-downstream-horizon",
+            "difference": "right-minus-left",
+            "pooling": pooling,
+        }
+    )
+    for left, pooling in (
+        ("factorial-all-layers-all-tokens", "equal-gemma-mistral"),
+        ("factorial-all-layers-downstream-horizon", "equal-gemma-mistral"),
+        ("factorial-probe-suffix-all-tokens", "equal-gemma-mistral"),
+        ("factorial-random-layers-downstream-horizon", "equal-gemma-mistral"),
+        (_MISTRAL_FAITHFUL_ARM, "mistral-only"),
+    )
 )
 _SECONDARY_CONDITIONS = (
     "legacy-random-2",
@@ -76,6 +136,15 @@ _SECONDARY_CONDITIONS = (
     "random-8",
     "transposition-2",
     "natural-injection",
+)
+_TRAINING_CONTRACT_IDENTITIES = MappingProxyType(
+    {
+        "factorial_config_schema": "robustness-adapter-training-config/v7",
+        "factorial_method_identity": "probe-output-factorial/v1",
+        "factorial_evidence_schema": "probe-output-factorial-evidence-binding/v1",
+        "kojima_faithful_config_schema": "robustness-adapter-training-config/v7",
+        "kojima_faithful_method_identity": "kojima-faithful-output-matching/v1",
+    }
 )
 
 
@@ -154,6 +223,10 @@ class EvaluationV2Protocol:
     confirmatory_records_per_task: int
     confirmatory_typo_variants_per_item: int
     arms: tuple[str, ...]
+    training_contract_identities: Mapping[str, str]
+    model_specific_arms: tuple[Mapping[str, object], ...]
+    descriptive_anchors: tuple[Mapping[str, object], ...]
+    primary_novelty_contrasts: tuple[Mapping[str, str], ...]
     secondary_conditions: tuple[str, ...]
     training_seeds: tuple[int, ...]
     bootstrap_replicates: int
@@ -216,9 +289,9 @@ def load_evaluation_v2_protocol(path: Path) -> EvaluationV2Protocol:
             "development-anchor",
         ),
         FrozenEvaluationModel(
-            "mistralai/Mistral-7B-Instruct-v0.3",
-            "c170c708c41dac9275d15a8fff4eca08d52bab71",
-            "kojima-family-replication",
+            "mistralai/Mistral-7B-v0.1",
+            "7231864981174d9bee8c7687c24c8344414eae6b",
+            "kojima-direct-comparison",
         ),
     )
     if tuple(models) != expected_models:
@@ -260,6 +333,7 @@ def load_evaluation_v2_protocol(path: Path) -> EvaluationV2Protocol:
             "minimum_each_model_gap_points",
             "minimum_typo_to_clean_accuracy_ratio",
             "selection_rule",
+            "semantic_manifest_contract",
         },
     )
     tasks = _string_tuple(calibration["tasks"], field="calibration.tasks")
@@ -291,12 +365,12 @@ def load_evaluation_v2_protocol(path: Path) -> EvaluationV2Protocol:
         or variants_per_item != 3
         or severity != (2, 4, 8)
         or operations != _OPERATIONS
-        or calibration["targeting"]
-        != "uniform-eligible-question-words-without-replacement/v1"
+        or calibration["targeting"] != "uniform-eligible-question-words-without-replacement/v1"
         or minimum_macro_gap != 8.0
         or minimum_each_gap != 5.0
         or minimum_ratio != 0.5
         or calibration["selection_rule"] != "smallest-eligible-severity/v1"
+        or calibration["semantic_manifest_contract"] != "strict-jsonl-sha256-utf8-exact-text/v1"
     ):
         raise ValueError("evaluation v2 Base-only calibration rule differs")
 
@@ -311,6 +385,11 @@ def load_evaluation_v2_protocol(path: Path) -> EvaluationV2Protocol:
             "secondary_conditions",
             "arms",
             "random_freeze_control",
+            "source_tree_hash_policy",
+            "training_contract_identities",
+            "model_specific_arms",
+            "descriptive_anchors",
+            "primary_novelty_contrasts",
         },
     )
     confirmatory_tasks = _string_tuple(confirmatory["tasks"], field="confirmatory.tasks")
@@ -326,6 +405,75 @@ def load_evaluation_v2_protocol(path: Path) -> EvaluationV2Protocol:
         confirmatory["secondary_conditions"], field="confirmatory.secondary_conditions"
     )
     arms = _string_tuple(confirmatory["arms"], field="confirmatory.arms")
+    training_contract_identities = _mapping(
+        confirmatory["training_contract_identities"],
+        field="confirmatory.training_contract_identities",
+        fields=set(_TRAINING_CONTRACT_IDENTITIES),
+    )
+    model_specific_arms = confirmatory["model_specific_arms"]
+    if not isinstance(model_specific_arms, list):
+        raise ValueError("evaluation v2 model-specific arms differ")
+    normalized_model_specific_arms = tuple(
+        MappingProxyType(
+            dict(
+                _mapping(
+                    value,
+                    field=f"confirmatory.model_specific_arms[{index}]",
+                    fields={
+                        "condition",
+                        "model_id",
+                        "model_revision",
+                        "pooling",
+                        "training_seeds",
+                    },
+                )
+            )
+        )
+        for index, value in enumerate(model_specific_arms)
+    )
+    if any(
+        _int_tuple(value["training_seeds"], field="model_specific_arms.training_seeds")
+        != (42, 43, 44)
+        for value in normalized_model_specific_arms
+    ):
+        raise ValueError("evaluation v2 model-specific seed inventory differs")
+    descriptive_anchors = confirmatory["descriptive_anchors"]
+    if not isinstance(descriptive_anchors, list):
+        raise ValueError("evaluation v2 descriptive anchors differ")
+    normalized_descriptive_anchors = tuple(
+        MappingProxyType(
+            dict(
+                _mapping(
+                    value,
+                    field=f"confirmatory.descriptive_anchors[{index}]",
+                    fields={
+                        "condition",
+                        "recipe_condition",
+                        "model_id",
+                        "model_revision",
+                        "training_seed",
+                        "role",
+                    },
+                )
+            )
+        )
+        for index, value in enumerate(descriptive_anchors)
+    )
+    raw_contrasts = confirmatory["primary_novelty_contrasts"]
+    if not isinstance(raw_contrasts, list):
+        raise ValueError("evaluation v2 primary novelty contrasts differ")
+    novelty_contrasts = tuple(
+        MappingProxyType(
+            dict(
+                _mapping(
+                    value,
+                    field=f"confirmatory.primary_novelty_contrasts[{index}]",
+                    fields={"left", "right", "difference", "pooling"},
+                )
+            )
+        )
+        for index, value in enumerate(raw_contrasts)
+    )
     if (
         confirmatory_tasks != _TASKS
         or confirmatory_records != 1000
@@ -333,8 +481,15 @@ def load_evaluation_v2_protocol(path: Path) -> EvaluationV2Protocol:
         or confirmatory["primary_condition"] != "base-calibrated-random-k"
         or secondary_conditions != _SECONDARY_CONDITIONS
         or arms != _ARMS
-        or confirmatory["random_freeze_control"]
-        != "same-frozen-layer-count-hash-selected-per-training-seed/v1"
+        or dict(training_contract_identities) != dict(_TRAINING_CONTRACT_IDENTITIES)
+        or tuple(dict(value) for value in normalized_model_specific_arms)
+        != tuple(dict(value) for value in _MODEL_SPECIFIC_ARMS)
+        or tuple(dict(value) for value in normalized_descriptive_anchors)
+        != tuple(dict(value) for value in _DESCRIPTIVE_ANCHORS)
+        or tuple(dict(value) for value in novelty_contrasts)
+        != tuple(dict(value) for value in _PRIMARY_NOVELTY_CONTRASTS)
+        or confirmatory["random_freeze_control"] != "sha256-seed42-count-matched-random-freeze/v1"
+        or confirmatory["source_tree_hash_policy"] != "sha256-of-git-ls-tree-r-full-tree-head-lf/v1"
     ):
         raise ValueError("evaluation v2 confirmatory population differs")
 
@@ -377,11 +532,14 @@ def load_evaluation_v2_protocol(path: Path) -> EvaluationV2Protocol:
         fields={
             "clean_noninferiority_margin_points",
             "minimum_task_clean_change_points",
-            "minimum_proposal_vs_all_layer_typo_gain_points",
-            "require_proposal_vs_all_layer_ci_lower_above_zero",
-            "minimum_proposal_vs_base_typo_gain_points",
-            "require_proposal_vs_base_ci_lower_above_zero",
-            "require_proposal_vs_random_freeze_ci_lower_above_zero",
+            "minimum_full_vs_all_all_typo_gain_points",
+            "require_full_vs_all_all_ci_lower_above_zero",
+            "require_full_vs_all_horizon_ci_lower_above_zero",
+            "require_full_vs_suffix_all_ci_lower_above_zero",
+            "require_full_vs_random_horizon_ci_lower_above_zero",
+            "require_mistral_full_vs_faithful_ci_lower_above_zero",
+            "minimum_full_vs_base_typo_gain_points",
+            "require_full_vs_base_ci_lower_above_zero",
             "maximum_clean_ppl_ratio",
             "require_all_seed_directions_positive",
             "mechanistic_diagnostics_are_blocking",
@@ -390,11 +548,14 @@ def load_evaluation_v2_protocol(path: Path) -> EvaluationV2Protocol:
     expected_gates = {
         "clean_noninferiority_margin_points": 1.0,
         "minimum_task_clean_change_points": -3.0,
-        "minimum_proposal_vs_all_layer_typo_gain_points": 1.5,
-        "require_proposal_vs_all_layer_ci_lower_above_zero": True,
-        "minimum_proposal_vs_base_typo_gain_points": 2.0,
-        "require_proposal_vs_base_ci_lower_above_zero": True,
-        "require_proposal_vs_random_freeze_ci_lower_above_zero": True,
+        "minimum_full_vs_all_all_typo_gain_points": 1.5,
+        "require_full_vs_all_all_ci_lower_above_zero": True,
+        "require_full_vs_all_horizon_ci_lower_above_zero": True,
+        "require_full_vs_suffix_all_ci_lower_above_zero": True,
+        "require_full_vs_random_horizon_ci_lower_above_zero": True,
+        "require_mistral_full_vs_faithful_ci_lower_above_zero": True,
+        "minimum_full_vs_base_typo_gain_points": 2.0,
+        "require_full_vs_base_ci_lower_above_zero": True,
         "maximum_clean_ppl_ratio": 1.02,
         "require_all_seed_directions_positive": True,
         "mechanistic_diagnostics_are_blocking": False,
@@ -412,6 +573,9 @@ def load_evaluation_v2_protocol(path: Path) -> EvaluationV2Protocol:
             "calibration_result_sha256_required",
             "confirmatory_item_manifest_sha256_required",
             "realized_typo_variant_manifest_sha256_required",
+            "training_contract_semantic_identities_required",
+            "final_merged_implementation_commit_required",
+            "final_merged_source_tree_sha256_required",
             "legacy_random_2_registry_sha256_required",
             "all_arms_must_share_exact_item_and_typo_hashes",
         },
@@ -435,6 +599,10 @@ def load_evaluation_v2_protocol(path: Path) -> EvaluationV2Protocol:
         confirmatory_records_per_task=confirmatory_records,
         confirmatory_typo_variants_per_item=confirmatory_variants,
         arms=arms,
+        training_contract_identities=MappingProxyType(dict(training_contract_identities)),
+        model_specific_arms=normalized_model_specific_arms,
+        descriptive_anchors=normalized_descriptive_anchors,
+        primary_novelty_contrasts=novelty_contrasts,
         secondary_conditions=secondary_conditions,
         training_seeds=seeds,
         bootstrap_replicates=10_000,
@@ -551,6 +719,84 @@ class BaseCalibrationObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class CalibrationItemManifestRow:
+    task: str
+    record_id: str
+    source_text: str
+    source_text_sha256: str
+
+    @classmethod
+    def from_mapping(cls, value: object) -> CalibrationItemManifestRow:
+        row = _mapping(value, field="calibration item manifest", fields=_ITEM_MANIFEST_FIELDS)
+        if row["schema_version"] != "robustness-evaluation-v2-calibration-item/v1":
+            raise ValueError("evaluation v2 calibration item schema differs")
+        task, record_id, source_text, source_hash = (
+            row["task"],
+            row["record_id"],
+            row["source_text"],
+            row["source_text_sha256"],
+        )
+        if not isinstance(task, str) or not task:
+            raise ValueError("evaluation v2 calibration item task is invalid")
+        if not isinstance(record_id, str) or _SHA64.fullmatch(record_id) is None:
+            raise ValueError("evaluation v2 calibration item record ID is invalid")
+        if not isinstance(source_text, str) or not source_text:
+            raise ValueError("evaluation v2 calibration source text is invalid")
+        if not isinstance(source_hash, str) or _SHA64.fullmatch(source_hash) is None:
+            raise ValueError("evaluation v2 calibration source hash is invalid")
+        if hashlib.sha256(source_text.encode("utf-8")).hexdigest() != source_hash:
+            raise ValueError("evaluation v2 calibration source text/hash binding differs")
+        return cls(task, record_id, source_text, source_hash)
+
+
+@dataclass(frozen=True, slots=True)
+class CalibrationTypoManifestRow:
+    task: str
+    record_id: str
+    source_text_sha256: str
+    severity_edit_count: int
+    variant: int
+    realized_typo_text: str
+    realized_typo_sha256: str
+
+    @classmethod
+    def from_mapping(cls, value: object) -> CalibrationTypoManifestRow:
+        row = _mapping(value, field="calibration typo manifest", fields=_TYPO_MANIFEST_FIELDS)
+        if row["schema_version"] != "robustness-evaluation-v2-calibration-typo/v1":
+            raise ValueError("evaluation v2 calibration typo schema differs")
+        task, record_id, source_hash, typo_text, typo_hash = (
+            row["task"],
+            row["record_id"],
+            row["source_text_sha256"],
+            row["realized_typo_text"],
+            row["realized_typo_sha256"],
+        )
+        if not isinstance(task, str) or not task:
+            raise ValueError("evaluation v2 calibration typo task is invalid")
+        if not isinstance(record_id, str) or _SHA64.fullmatch(record_id) is None:
+            raise ValueError("evaluation v2 calibration typo record ID is invalid")
+        if not isinstance(source_hash, str) or _SHA64.fullmatch(source_hash) is None:
+            raise ValueError("evaluation v2 calibration typo source hash is invalid")
+        if not isinstance(typo_text, str) or not typo_text:
+            raise ValueError("evaluation v2 calibration realized typo text is invalid")
+        if not isinstance(typo_hash, str) or _SHA64.fullmatch(typo_hash) is None:
+            raise ValueError("evaluation v2 calibration realized typo hash is invalid")
+        if hashlib.sha256(typo_text.encode("utf-8")).hexdigest() != typo_hash:
+            raise ValueError("evaluation v2 calibration realized typo text/hash binding differs")
+        return cls(
+            task=task,
+            record_id=record_id,
+            source_text_sha256=source_hash,
+            severity_edit_count=_integer(
+                row["severity_edit_count"], field="severity_edit_count", minimum=1
+            ),
+            variant=_integer(row["variant"], field="variant"),
+            realized_typo_text=typo_text,
+            realized_typo_sha256=typo_hash,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class SeverityCalibrationResult:
     status: str
     selected_edit_count: int | None
@@ -569,6 +815,95 @@ def load_base_calibration_observations(path: Path) -> tuple[BaseCalibrationObser
     if not observations:
         raise ValueError("evaluation v2 calibration observations are empty")
     return tuple(observations)
+
+
+def _load_manifest_rows(path: Path, *, typo: bool) -> tuple[object, ...]:
+    rows: list[object] = []
+    label = "typo" if typo else "item"
+    parser = CalibrationTypoManifestRow if typo else CalibrationItemManifestRow
+    for line_number, line in read_lf_jsonl_lines(
+        Path(path), context=f"evaluation v2 calibration {label} manifest"
+    ):
+        value = strict_loads(line, context=f"{path}:{line_number}")
+        rows.append(parser.from_mapping(value))
+    if not rows:
+        raise ValueError(f"evaluation v2 calibration {label} manifest is empty")
+    return tuple(rows)
+
+
+def validate_calibration_semantic_bindings(
+    observations: Sequence[BaseCalibrationObservation],
+    *,
+    protocol: EvaluationV2Protocol,
+    item_manifest_path: Path,
+    realized_typo_manifest_path: Path,
+) -> None:
+    """Bind observations to parsed source and realized-typo text manifests."""
+
+    item_rows = _load_manifest_rows(item_manifest_path, typo=False)
+    typo_rows = _load_manifest_rows(realized_typo_manifest_path, typo=True)
+    items: dict[tuple[str, str], CalibrationItemManifestRow] = {}
+    for value in item_rows:
+        if not isinstance(value, CalibrationItemManifestRow):
+            raise TypeError("evaluation v2 internal item manifest parser mismatch")
+        key = (value.task, value.record_id)
+        if value.task not in protocol.tasks:
+            raise ValueError("evaluation v2 calibration item task inventory differs")
+        if key in items:
+            raise ValueError("evaluation v2 calibration item manifest contains duplicates")
+        items[key] = value
+    for task in protocol.tasks:
+        if sum(key[0] == task for key in items) != protocol.calibration_records_per_task:
+            raise ValueError("evaluation v2 calibration item manifest sample size differs")
+
+    typos: dict[tuple[str, str, int, int], CalibrationTypoManifestRow] = {}
+    expected_cells = {
+        (severity, variant)
+        for severity in protocol.severity_edit_counts
+        for variant in range(protocol.calibration_variants_per_item)
+    }
+    cells_by_item: dict[tuple[str, str], set[tuple[int, int]]] = defaultdict(set)
+    for value in typo_rows:
+        if not isinstance(value, CalibrationTypoManifestRow):
+            raise TypeError("evaluation v2 internal typo manifest parser mismatch")
+        item_key = (value.task, value.record_id)
+        key = (value.task, value.record_id, value.severity_edit_count, value.variant)
+        if item_key not in items:
+            raise ValueError("evaluation v2 calibration typo has no bound source item")
+        if value.source_text_sha256 != items[item_key].source_text_sha256:
+            raise ValueError("evaluation v2 calibration typo/source semantic binding differs")
+        if (
+            value.severity_edit_count not in protocol.severity_edit_counts
+            or value.variant not in range(protocol.calibration_variants_per_item)
+        ):
+            raise ValueError("evaluation v2 calibration typo grid differs")
+        if key in typos:
+            raise ValueError("evaluation v2 calibration typo manifest contains duplicates")
+        typos[key] = value
+        cells_by_item[item_key].add((value.severity_edit_count, value.variant))
+    if set(cells_by_item) != set(items) or any(
+        cells != expected_cells for cells in cells_by_item.values()
+    ):
+        raise ValueError("evaluation v2 calibration typo manifest coverage differs")
+
+    observation_cells: dict[str, set[tuple[str, str, int, int]]] = defaultdict(set)
+    for row in observations:
+        item_key = (row.task, row.record_id)
+        typo_key = (row.task, row.record_id, row.severity_edit_count, row.variant)
+        item = items.get(item_key)
+        typo_row = typos.get(typo_key)
+        if item is None or typo_row is None:
+            raise ValueError("evaluation v2 observation has no semantic manifest binding")
+        if row.source_text_sha256 != item.source_text_sha256:
+            raise ValueError("evaluation v2 observation/source manifest binding differs")
+        if row.realized_typo_sha256 != typo_row.realized_typo_sha256:
+            raise ValueError("evaluation v2 observation/typo manifest binding differs")
+        observation_cells[row.model_id].add(typo_key)
+    expected_typo_keys = set(typos)
+    if set(observation_cells) != {model.model_id for model in protocol.models} or any(
+        cells != expected_typo_keys for cells in observation_cells.values()
+    ):
+        raise ValueError("evaluation v2 observation/manifest coverage differs")
 
 
 def _validate_calibration_cohort(
@@ -755,6 +1090,12 @@ def run_base_only_severity_calibration(
     if any(not path.is_file() for path in inputs):
         raise ValueError("evaluation v2 calibration inputs must be files")
     observations = load_base_calibration_observations(inputs[0])
+    validate_calibration_semantic_bindings(
+        observations,
+        protocol=protocol,
+        item_manifest_path=inputs[1],
+        realized_typo_manifest_path=inputs[2],
+    )
     status, selected, summaries = score_base_only_severity_calibration(
         observations, protocol=protocol
     )
@@ -805,6 +1146,8 @@ def run_base_only_severity_calibration(
 
 __all__ = [
     "BaseCalibrationObservation",
+    "CalibrationItemManifestRow",
+    "CalibrationTypoManifestRow",
     "EvaluationV2Protocol",
     "FrozenEvaluationModel",
     "SeverityCalibrationResult",
@@ -812,4 +1155,5 @@ __all__ = [
     "load_evaluation_v2_protocol",
     "run_base_only_severity_calibration",
     "score_base_only_severity_calibration",
+    "validate_calibration_semantic_bindings",
 ]

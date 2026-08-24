@@ -9,8 +9,8 @@
       "revision": "093f9f388b31de276ce2de164bdc2081324b9767"
     },
     {
-      "id": "mistralai/Mistral-7B-Instruct-v0.3",
-      "revision": "c170c708c41dac9275d15a8fff4eca08d52bab71"
+      "id": "mistralai/Mistral-7B-v0.1",
+      "revision": "7231864981174d9bee8c7687c24c8344414eae6b"
     }
   ],
   "governance_attestation": {
@@ -28,8 +28,33 @@
   },
   "confirmatory": {
     "status": "pending",
+    "factorial_arm_inventory": [
+      "base",
+      "factorial-all-layers-all-tokens",
+      "factorial-all-layers-downstream-horizon",
+      "factorial-probe-suffix-all-tokens",
+      "factorial-probe-suffix-downstream-horizon",
+      "factorial-random-layers-downstream-horizon"
+    ],
+    "mistral_only_direct_comparison_arm": "kojima-faithful-output-matching",
+    "mistral_only_direct_comparison_seeds": [42, 43, 44],
+    "training_contract_identities": {
+      "factorial_config_schema": "robustness-adapter-training-config/v7",
+      "factorial_method_identity": "probe-output-factorial/v1",
+      "factorial_evidence_schema": "probe-output-factorial-evidence-binding/v1",
+      "kojima_faithful_config_schema": "robustness-adapter-training-config/v7",
+      "kojima_faithful_method_identity": "kojima-faithful-output-matching/v1"
+    },
+    "final_merged_implementation_commit": null,
+    "final_merged_source_tree_sha256": null,
+    "source_tree_hash_policy": "sha256-of-git-ls-tree-r-full-tree-head-lf/v1",
     "item_manifest_sha256": null,
     "realized_typo_variant_manifest_sha256": null,
+    "factorial_arm_registry_sha256": null,
+    "mistral_kojima_faithful_matched_seed_42_43_44_registry_sha256": null,
+    "mistral_kojima_faithful_public_seed_1_anchor_checkpoint_sha256": null,
+    "public_seed_1_anchor_role": "reproducibility-only-not-pooled",
+    "random_layer_mask_policy": "sha256-seed42-count-matched-random-freeze/v1",
     "arm_checkpoint_registry_sha256": null,
     "opening_log_sha256": null
   },
