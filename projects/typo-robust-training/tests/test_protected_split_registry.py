@@ -12,9 +12,11 @@ from typo_robust_training.cli import register_commands
 from typo_robust_training.data import protected_registry as registry_module
 from typo_robust_training.data.protected_registry import (
     INVENTORY_SCHEMA,
+    OVERLAP_AUDIT_SCHEMA,
     PRODUCER_SCHEMA,
     REGISTRY_SCHEMA,
     TIERS,
+    ProtectedSplitOverlapError,
     freeze_protected_split_registry,
     load_protected_split_registry_bundle,
 )
@@ -414,12 +416,46 @@ def test_three_tier_transitive_identity_bridge_is_rejected(tmp_path: Path) -> No
         rows_by_tier=rows,
         schemas=schemas,
     )
-    with pytest.raises(ValueError, match="overlap transitively"):
+    output = tmp_path / "output"
+    with pytest.raises(ProtectedSplitOverlapError, match="overlap transitively") as exc_info:
         freeze_protected_split_registry(
             inventory_path=_inventory,
             inventory_sha256=inventory_sha,
-            output_dir=tmp_path / "output",
+            output_dir=output,
         )
+    error = exc_info.value
+    assert len(error.components) == 1
+    component = error.components[0]
+    assert component.tiers == ("training", "localization", "tune")
+    assert {identity.kind for identity in component.identities} == {
+        "source_group_sha256",
+        "parent_source_sha256",
+        "normalized_content_sha256",
+    }
+    assert [(row.tier, row.line_number) for row in component.occurrences] == [
+        ("training", 1),
+        ("localization", 1),
+        ("tune", 1),
+    ]
+    assert all(row.source_relative_path.endswith(".jsonl") for row in component.occurrences)
+    report = error.audit_report
+    assert report["schema_version"] == OVERLAP_AUDIT_SCHEMA
+    assert json.loads(error.audit_json) == report
+    for row in rows.values():
+        for record in row:
+            for forbidden_field in ("text", "clean_text", "typo_text"):
+                forbidden = record.get(forbidden_field)
+                if isinstance(forbidden, str):
+                    assert forbidden not in error.audit_json
+    assert not output.exists()
+
+    with pytest.raises(ProtectedSplitOverlapError) as repeated:
+        freeze_protected_split_registry(
+            inventory_path=_inventory,
+            inventory_sha256=inventory_sha,
+            output_dir=tmp_path / "repeated-output",
+        )
+    assert repeated.value.audit_json == error.audit_json
 
 
 def test_clean_typo_cross_tier_overlap_is_rejected(tmp_path: Path) -> None:

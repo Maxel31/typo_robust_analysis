@@ -112,6 +112,7 @@ def _run_freeze_evaluation(args: argparse.Namespace) -> int:
 
 def _run_freeze_protected_split_registry(args: argparse.Namespace) -> int:
     from typo_robust_training.data.protected_registry import (
+        ProtectedSplitOverlapError,
         freeze_protected_split_registry,
     )
 
@@ -121,6 +122,10 @@ def _run_freeze_protected_split_registry(args: argparse.Namespace) -> int:
             inventory_sha256=args.inventory_sha256,
             output_dir=args.output_dir,
         )
+    except ProtectedSplitOverlapError as exc:
+        print(f"freeze-protected-split-registry: error: {exc}", file=sys.stderr)
+        print(exc.audit_json, file=sys.stderr)
+        return 1
     except (FileExistsError, RuntimeError, ValueError) as exc:
         print(f"freeze-protected-split-registry: error: {exc}", file=sys.stderr)
         return 1

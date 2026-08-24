@@ -65,3 +65,5 @@ Python consumerは`load_protected_split_registry_bundle(...)`が返すbundleの`
 ## overlapの意味
 
 各recordについて、source group、parent source、clean/typoのnormalized full-text identityを同じconnected componentへ結合します。componentが2 tier以上に属した場合は失敗します。このため、trainingとlocalizationがgroupを共有し、localizationとsealedが別のparent identityを共有するような3-tier bridgeも検出できます。同じtier内の完全に同一なrecordはdeduplicateできますが、同じsource identityで本文やmetadataが異なるrecordはconflictとして拒否します。
+
+cross-tier collision時はbundleを一切publishせず、CLIは`typo-protected-split-overlap-audit/v1`形式の決定的な診断JSONをstderrへ出します。診断に含むのはcomponentごとのtier、identity種別とSHA-256、入力の相対path・行番号・record IDだけです。clean/typo本文、回答、metadataは含みません。Python callerは`ProtectedSplitOverlapError.audit_report`から同じ型付き診断を取得できます。この診断は漏洩修正のためだけのものであり、重複を許容したsplit certificationには使用できません。

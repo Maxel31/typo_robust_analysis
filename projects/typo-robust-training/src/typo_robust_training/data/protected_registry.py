@@ -37,6 +37,7 @@ from typo_robust_training.training.pairs import TrainingSource
 INVENTORY_SCHEMA = "typo-protected-split-inventory/v1"
 REGISTRY_SCHEMA = "typo-protected-split-registry/v1"
 PRODUCER_SCHEMA = "freeze-protected-split-registry-run/v1"
+OVERLAP_AUDIT_SCHEMA = "typo-protected-split-overlap-audit/v1"
 TIERS = ("training", "localization", "tune", "pre-pr", "sealed")
 _RECORD_SCHEMA_ORDER = (
     "robustness-clean-record/v1",
@@ -323,6 +324,7 @@ def _decode_inventory(raw: bytes, *, context: str) -> tuple[ProtectedInputSpec, 
 class _RecordIdentity:
     canonical_sha256: str
     address: str
+    line_number: int
     source_group_sha256: str
     parent_source_sha256: str
     normalized_content_sha256: tuple[str, ...]
@@ -374,6 +376,7 @@ def _record_identity(
     *,
     spec: ProtectedInputSpec,
     context: str,
+    line_number: int,
 ) -> _RecordIdentity:
     if not isinstance(value, Mapping):
         raise ValueError(f"{context} must contain one JSON object")
@@ -465,6 +468,7 @@ def _record_identity(
     return _RecordIdentity(
         canonical_sha256=_canonical_sha256(dict(value)),
         address=record_id,
+        line_number=line_number,
         source_group_sha256=probe_source_group_sha256(source_view),
         parent_source_sha256=probe_parent_source_sha256(source_view),
         normalized_content_sha256=tuple(normalized),
@@ -492,7 +496,14 @@ def _jsonl_records_from_raw(
     for number, line in enumerate(lines, 1):
         context = f"{path}:{number}"
         value = strict_loads(line, context=context)
-        records.append(_record_identity(value, spec=spec, context=context))
+        records.append(
+            _record_identity(
+                value,
+                spec=spec,
+                context=context,
+                line_number=number,
+            )
+        )
     return tuple(records)
 
 
@@ -545,6 +556,83 @@ class ProtectedSplitIdentitySets:
 
 
 @dataclass(frozen=True, slots=True)
+class ProtectedOverlapIdentity:
+    """One hash-only identity participating in a cross-tier collision."""
+
+    kind: str
+    sha256: str
+
+    def as_dict(self) -> dict[str, object]:
+        return {"kind": self.kind, "sha256": self.sha256}
+
+
+@dataclass(frozen=True, slots=True)
+class ProtectedOverlapOccurrence:
+    """Safe source location for one colliding record; never includes record text."""
+
+    tier: str
+    source_relative_path: str
+    line_number: int
+    record_id: str
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "tier": self.tier,
+            "source_relative_path": self.source_relative_path,
+            "line_number": self.line_number,
+            "record_id": self.record_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ProtectedOverlapComponent:
+    """Deterministic hash-only audit of one transitive collision component."""
+
+    tiers: tuple[str, ...]
+    identities: tuple[ProtectedOverlapIdentity, ...]
+    occurrences: tuple[ProtectedOverlapOccurrence, ...]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "tiers": list(self.tiers),
+            "identities": [identity.as_dict() for identity in self.identities],
+            "occurrences": [occurrence.as_dict() for occurrence in self.occurrences],
+        }
+
+
+class ProtectedSplitOverlapError(ValueError):
+    """Strict split-certification failure with a body-free collision audit."""
+
+    def __init__(self, components: tuple[ProtectedOverlapComponent, ...]) -> None:
+        if not components:
+            raise ValueError("protected overlap error requires at least one component")
+        self.components = components
+        super().__init__(
+            f"protected split tiers overlap transitively; collision_components={len(components)}"
+        )
+
+    @property
+    def audit_report(self) -> dict[str, object]:
+        """Return a deterministic report containing hashes and source locations only."""
+
+        return {
+            "schema_version": OVERLAP_AUDIT_SCHEMA,
+            "collision_components": [component.as_dict() for component in self.components],
+        }
+
+    @property
+    def audit_json(self) -> str:
+        """Return the canonical single-line representation used by the CLI."""
+
+        return json.dumps(
+            self.audit_report,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class _RegistryBuild:
     payload: Mapping[str, object]
     audits: tuple[_InputAudit, ...]
@@ -570,6 +658,7 @@ def _build_registry(
     }
     union = _UnionFind()
     node_tiers: dict[str, set[str]] = {}
+    node_occurrences: dict[str, set[ProtectedOverlapOccurrence]] = {}
     addresses: dict[tuple[str, str], str] = {}
     exact_by_tier: dict[str, set[str]] = {tier: set() for tier in TIERS}
     tier_records = {tier: 0 for tier in TIERS}
@@ -592,16 +681,27 @@ def _build_registry(
             if previous is not None and previous != record.canonical_sha256:
                 raise ValueError("same-tier protected record identity has conflicting records")
             addresses[address_key] = record.canonical_sha256
+            nodes = (
+                f"source_group_sha256:{record.source_group_sha256}",
+                f"parent_source_sha256:{record.parent_source_sha256}",
+                *(
+                    f"normalized_content_sha256:{digest}"
+                    for digest in record.normalized_content_sha256
+                ),
+            )
+            occurrence = ProtectedOverlapOccurrence(
+                tier=spec.tier,
+                source_relative_path=spec.relative_path,
+                line_number=record.line_number,
+                record_id=record.address,
+            )
+            for node in nodes:
+                node_occurrences.setdefault(node, set()).add(occurrence)
             if record.canonical_sha256 in exact_by_tier[spec.tier]:
                 unique_in_file.add(record.canonical_sha256)
                 continue
             exact_by_tier[spec.tier].add(record.canonical_sha256)
             unique_in_file.add(record.canonical_sha256)
-            nodes = (
-                f"source-group:{record.source_group_sha256}",
-                f"parent-source:{record.parent_source_sha256}",
-                *(f"normalized-content:{digest}" for digest in record.normalized_content_sha256),
-            )
             for node in nodes:
                 union.add(node)
                 node_tiers.setdefault(node, set()).add(spec.tier)
@@ -622,10 +722,56 @@ def _build_registry(
             )
         )
     component_tiers: dict[str, set[str]] = {}
+    component_nodes: dict[str, set[str]] = {}
     for node, tiers in node_tiers.items():
-        component_tiers.setdefault(union.find(node), set()).update(tiers)
-    if any(len(tiers) > 1 for tiers in component_tiers.values()):
-        raise ValueError("protected split tiers overlap transitively")
+        root = union.find(node)
+        component_tiers.setdefault(root, set()).update(tiers)
+        component_nodes.setdefault(root, set()).add(node)
+    overlap_components: list[ProtectedOverlapComponent] = []
+    tier_order = {tier: index for index, tier in enumerate(TIERS)}
+    for root, tiers in component_tiers.items():
+        if len(tiers) <= 1:
+            continue
+        nodes = component_nodes[root]
+        identities = tuple(
+            ProtectedOverlapIdentity(kind=kind, sha256=digest)
+            for kind, digest in sorted(node.split(":", 1) for node in nodes)
+        )
+        occurrences = tuple(
+            sorted(
+                {occurrence for node in nodes for occurrence in node_occurrences[node]},
+                key=lambda occurrence: (
+                    tier_order[occurrence.tier],
+                    occurrence.source_relative_path,
+                    occurrence.line_number,
+                    occurrence.record_id,
+                ),
+            )
+        )
+        overlap_components.append(
+            ProtectedOverlapComponent(
+                tiers=tuple(sorted(tiers, key=tier_order.__getitem__)),
+                identities=identities,
+                occurrences=occurrences,
+            )
+        )
+    if overlap_components:
+        overlap_components.sort(
+            key=lambda component: (
+                component.tiers,
+                tuple((identity.kind, identity.sha256) for identity in component.identities),
+                tuple(
+                    (
+                        occurrence.tier,
+                        occurrence.source_relative_path,
+                        occurrence.line_number,
+                        occurrence.record_id,
+                    )
+                    for occurrence in component.occurrences
+                ),
+            )
+        )
+        raise ProtectedSplitOverlapError(tuple(overlap_components))
     registries = [
         {
             "tier": tier,
@@ -1211,10 +1357,15 @@ def load_protected_split_registry_bundle(
 __all__ = [
     "ALLOWED_RECORD_SCHEMAS",
     "INVENTORY_SCHEMA",
+    "OVERLAP_AUDIT_SCHEMA",
     "PRODUCER_SCHEMA",
+    "ProtectedOverlapComponent",
+    "ProtectedOverlapIdentity",
+    "ProtectedOverlapOccurrence",
     "ProtectedSplitRegistryBundle",
     "ProtectedSplitRegistryFreezeResult",
     "ProtectedSplitIdentitySets",
+    "ProtectedSplitOverlapError",
     "REGISTRY_SCHEMA",
     "TIERS",
     "freeze_protected_split_registry",
