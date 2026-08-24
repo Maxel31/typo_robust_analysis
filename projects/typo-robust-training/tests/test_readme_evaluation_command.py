@@ -64,6 +64,7 @@ TRAINING_PLUGIN_COMMANDS = frozenset(
         "freeze-generic-localization-pairs",
         "freeze-robustness-evaluation",
         "localize-robustness-components",
+        "materialize-probe-output-factorial-configs",
         "materialize-probe-transition-state-training-config",
         "materialize-probe-semantic-training-config",
         "materialize-probe-transition-training-config",
@@ -72,6 +73,11 @@ TRAINING_PLUGIN_COMMANDS = frozenset(
         "select-generic-joint-patch-window",
         "select-probe-transition",
         "train-global-state-alignment",
+        "train-factorial-all-layers-all-tokens",
+        "train-factorial-all-layers-downstream-horizon",
+        "train-factorial-probe-suffix-all-tokens",
+        "train-factorial-probe-suffix-downstream-horizon",
+        "train-factorial-random-layers-downstream-horizon",
         "train-localized-state-distillation",
         "train-noisy-language-model",
         "train-output-matching",
@@ -221,7 +227,7 @@ def test_real_cli_registers_the_exact_core_and_training_plugin_commands() -> Non
     assert CORE_COMMANDS.isdisjoint(TRAINING_PLUGIN_COMMANDS)
     assert combined_commands - plugin_commands == CORE_COMMANDS
     assert combined_commands == CORE_COMMANDS | TRAINING_PLUGIN_COMMANDS
-    assert len(combined_commands) == 56
+    assert len(combined_commands) == 62
 
 
 @pytest.mark.parametrize("readme_name", ["README.md", "README.ja.md"])

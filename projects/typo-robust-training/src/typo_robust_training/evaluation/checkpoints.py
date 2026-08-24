@@ -32,6 +32,11 @@ _CONDITIONS = (
     "probe-transition-single-layer-state-distillation",
     "causal-probe-subspace-distillation",
     "probe-semantic-subspace-distillation",
+    "factorial-all-layers-all-tokens",
+    "factorial-all-layers-downstream-horizon",
+    "factorial-probe-suffix-all-tokens",
+    "factorial-probe-suffix-downstream-horizon",
+    "factorial-random-layers-downstream-horizon",
 )
 if frozenset(_CONDITIONS) != SUPPORTED_ADAPTER_CONDITIONS:  # pragma: no cover - import invariant
     raise RuntimeError("evaluation adapter condition order is incomplete")

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import math
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -79,6 +81,7 @@ def attach_lora_adapters(
     *,
     protocol: AdapterTrainingProtocol,
     decoder_layers: tuple[int, ...],
+    initialization_seed: int | None = None,
 ) -> Any:
     """Freeze the base model and insert LoRA only at the declared sites."""
 
@@ -107,6 +110,21 @@ def attach_lora_adapters(
         target_modules=list(target_names),
     )
     adapted = get_peft_model(model, config)
+    if protocol.adapter_initialization_policy == "sha256-layer-keyed-kaiming-a-zero-b/v1":
+        if (
+            isinstance(initialization_seed, bool)
+            or not isinstance(initialization_seed, int)
+            or initialization_seed < 0
+        ):
+            raise ValueError("layer-keyed LoRA initialization requires a non-negative seed")
+        initialize_layer_keyed_lora(
+            adapted,
+            seed=initialization_seed,
+            expected_layers=layers,
+            expected_modules=modules,
+        )
+    elif protocol.adapter_initialization_policy != "peft-default/v1":
+        raise ValueError("LoRA initialization policy is unsupported")
     if protocol.gradient_checkpointing:
         adapted.gradient_checkpointing_enable(
             gradient_checkpointing_kwargs={"use_reentrant": False}
@@ -120,6 +138,75 @@ def attach_lora_adapters(
         expected_modules=modules,
     )
     return adapted
+
+
+def _coordinate_seed(*, seed: int, layer: int, module: str, role: str) -> int:
+    payload = (
+        "typo-robust-lora-init/v1"
+        f"\0seed={seed}\0layer={layer}\0module={module}\0role={role}"
+    ).encode("utf-8")
+    return int.from_bytes(hashlib.sha256(payload).digest()[:8], "big") & ((1 << 63) - 1)
+
+
+def initialize_layer_keyed_lora(
+    model: Any,
+    *,
+    seed: int,
+    expected_layers: tuple[int, ...],
+    expected_modules: tuple[str, ...],
+) -> None:
+    """Initialize every LoRA coordinate independently of the arm's layer set.
+
+    A shared ``(seed, layer, module)`` coordinate is therefore bit-identical in
+    an all-layer, suffix, or random-freeze arm.  This removes PEFT insertion
+    order and global RNG consumption as factorial confounds.
+    """
+
+    import torch
+
+    layers = _layers(expected_layers)
+    modules = _modules(expected_modules)
+    expected = {
+        (layer, module, role)
+        for layer in layers
+        for module in modules
+        for role in ("A", "B")
+    }
+    observed: set[tuple[int, str, str]] = set()
+    with torch.no_grad():
+        for name, parameter in model.named_parameters():
+            if not parameter.requires_grad or "lora_" not in name:
+                continue
+            layer_match = _DECODER_LAYER.search(name)
+            module_matches = [module for module in modules if f".{module}." in name]
+            role = "A" if ".lora_A." in name else "B" if ".lora_B." in name else None
+            if layer_match is None or len(module_matches) != 1 or role is None:
+                raise ValueError(f"cannot resolve layer-keyed LoRA coordinate: {name}")
+            coordinate = (int(layer_match.group(1)), module_matches[0], role)
+            if coordinate not in expected or coordinate in observed:
+                raise ValueError(f"unexpected or duplicate layer-keyed LoRA coordinate: {name}")
+            observed.add(coordinate)
+            if role == "B":
+                parameter.zero_()
+                continue
+            generator = torch.Generator(device="cpu")
+            generator.manual_seed(
+                _coordinate_seed(
+                    seed=seed,
+                    layer=coordinate[0],
+                    module=coordinate[1],
+                    role=role,
+                )
+            )
+            value = torch.empty(tuple(parameter.shape), dtype=torch.float32, device="cpu")
+            torch.nn.init.kaiming_uniform_(
+                value,
+                a=math.sqrt(5),
+                generator=generator,
+            )
+            parameter.copy_(value.to(device=parameter.device, dtype=parameter.dtype))
+    if observed != expected:
+        raise ValueError(f"layer-keyed LoRA coordinates are missing: {sorted(expected - observed)}")
 
 
 def trainable_parameter_report(
@@ -178,5 +265,6 @@ def trainable_parameter_report(
 __all__ = [
     "TrainableParameterReport",
     "attach_lora_adapters",
+    "initialize_layer_keyed_lora",
     "trainable_parameter_report",
 ]

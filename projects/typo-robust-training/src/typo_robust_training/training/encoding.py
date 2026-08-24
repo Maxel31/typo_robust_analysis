@@ -16,6 +16,11 @@ from typo_robust_training.training.pairs import (
 
 _QUESTION_PREFIX = "Question:\n"
 _ANSWER_PROMPT_SUFFIX = "\nAnswer:"
+ALL_ALIGNED_OUTPUT_SCOPE = "aligned-non-edited-next-token/v1"
+EDIT_DOWNSTREAM_OUTPUT_SCOPE = (
+    "clean-all-noisy-edited-word-downstream-offsets-2-16/v1"
+)
+_DOWNSTREAM_OFFSETS = range(2, 17)
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +47,7 @@ class PairedEncoding:
     answer_targets: tuple[tuple[int, int], ...]
     student_tokens: int
     is_noop: bool
+    downstream_output_logit_pairs: tuple[tuple[int, int], ...] = ()
 
 
 def render_training_pair(pair: TrainingPair) -> RenderedTrainingPair:
@@ -192,6 +198,7 @@ def encode_training_pair(
     max_length: int,
     require_answer_targets: bool = False,
     require_all_edits_visible: bool = False,
+    require_downstream_targets: bool = False,
 ) -> PairedEncoding:
     """Tokenize one pair and derive all masks without heuristic token alignment."""
 
@@ -258,6 +265,20 @@ def encode_training_pair(
         clean_edit_positions = typo_edit_positions = ()
     if len(clean_edit_positions) != len(typo_edit_positions):
         raise UnusableTrainingPairError("training edited-word token cardinalities differ")
+    downstream_target_positions = {
+        edit_position + offset
+        for edit_position in typo_edit_positions
+        for offset in _DOWNSTREAM_OFFSETS
+    }
+    downstream_output_pairs = tuple(
+        (clean_logit, typo_logit)
+        for clean_logit, typo_logit in output_pairs
+        if typo_logit + 1 in downstream_target_positions
+    )
+    if pair.edits and require_downstream_targets and not downstream_output_pairs:
+        raise UnusableTrainingPairError(
+            "training noisy pair has no aligned downstream +2..+16 targets"
+        )
     return PairedEncoding(
         record_id=pair.record_id,
         clean_input_ids=clean_ids,
@@ -265,6 +286,7 @@ def encode_training_pair(
         clean_attention_mask=clean_mask,
         typo_attention_mask=typo_mask,
         output_logit_pairs=output_pairs,
+        downstream_output_logit_pairs=downstream_output_pairs,
         global_state_token_pairs=aligned,
         clean_edit_positions=clean_edit_positions,
         typo_edit_positions=typo_edit_positions,
@@ -277,6 +299,30 @@ def encode_training_pair(
         student_tokens=sum(typo_mask),
         is_noop=pair.is_noop,
     )
+
+
+def output_logit_pairs_for_scope(
+    encoding: PairedEncoding,
+    *,
+    output_scope: str,
+) -> tuple[tuple[int, int], ...]:
+    """Resolve the frozen row-conditional output target without silent fallbacks."""
+
+    if not isinstance(encoding, PairedEncoding):
+        raise TypeError("output target selection requires PairedEncoding")
+    if output_scope == ALL_ALIGNED_OUTPUT_SCOPE:
+        return encoding.output_logit_pairs
+    if output_scope != EDIT_DOWNSTREAM_OUTPUT_SCOPE:
+        raise ValueError("training output scope is unsupported")
+    if encoding.is_noop:
+        # Clean anchoring always uses the complete exact alignment.  Applying
+        # the edit horizon to clean rows would erase the preservation signal.
+        return encoding.output_logit_pairs
+    if not encoding.downstream_output_logit_pairs:
+        raise UnusableTrainingPairError(
+            "training noisy pair has no aligned downstream +2..+16 targets"
+        )
+    return encoding.downstream_output_logit_pairs
 
 
 def retained_clean_character_extent(
@@ -299,9 +345,12 @@ def retained_clean_character_extent(
 
 
 __all__ = [
+    "ALL_ALIGNED_OUTPUT_SCOPE",
+    "EDIT_DOWNSTREAM_OUTPUT_SCOPE",
     "PairedEncoding",
     "RenderedTrainingPair",
     "encode_training_pair",
+    "output_logit_pairs_for_scope",
     "retained_clean_character_extent",
     "render_training_pair",
 ]

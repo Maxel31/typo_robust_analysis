@@ -107,6 +107,46 @@ _ARM_PRESENTATION = {
         "in the validated rank-16 probe semantic subspace at the edited-word-final "
         "probe-transition coordinate.",
     ),
+    "factorial-all-layers-all-tokens": (
+        "All-layer/all-token baseline",
+        "Full aligned output matching",
+        "factorial-all-layers-all-tokens",
+        "baseline-output-factorial",
+        "baseline",
+        "Kojima-style all-layer LoRA with output matching at every aligned non-edited token.",
+    ),
+    "factorial-all-layers-downstream-horizon": (
+        "All-layer horizon control",
+        "AP-horizon output matching",
+        "factorial-all-layers-horizon",
+        "control-output-horizon",
+        "control",
+        "All-layer LoRA with noisy supervision restricted to downstream offsets +2..+16.",
+    ),
+    "factorial-probe-suffix-all-tokens": (
+        "Probe-suffix placement control",
+        "Full aligned output matching",
+        "factorial-probe-suffix-all-tokens",
+        "control-probe-placement",
+        "control",
+        "Linear-probe suffix LoRA with full aligned output matching.",
+    ),
+    "factorial-probe-suffix-downstream-horizon": (
+        "Probe-interface proposal",
+        "Probe-suffix AP-horizon output matching",
+        "factorial-probe-suffix-horizon",
+        "proposed-probe-interface",
+        "proposed",
+        "Linear-probe suffix LoRA with noisy output matching only at AP-derived offsets +2..+16.",
+    ),
+    "factorial-random-layers-downstream-horizon": (
+        "Random-freeze placement control",
+        "Count-matched random-layer AP-horizon output matching",
+        "factorial-random-layers-horizon",
+        "control-random-freeze",
+        "control",
+        "Deterministic count-matched random LoRA layers with identical horizon supervision.",
+    ),
 }
 
 _LEGACY_ARM_PRESENTATION = {

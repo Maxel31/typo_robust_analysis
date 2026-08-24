@@ -240,7 +240,7 @@ def _load_evidence(
     if protocol.condition in {
         "probe-transition-output-matching",
         "probe-semantic-subspace-distillation",
-    }:
+    } | set(training_methods.PROBE_FACTORIAL_CONDITIONS):
         if (
             config.probe_selection_path is None
             or protocol.decoder_layers is None
@@ -732,7 +732,7 @@ def run_adapter_training(
         "probe-transition-output-matching",
         "probe-transition-single-layer-state-distillation",
         "probe-semantic-subspace-distillation",
-    }:
+    } | set(training_methods.PROBE_FACTORIAL_CONDITIONS):
         expected_type = {
             "probe-transition-output-matching": (
                 training_methods.ProbeTransitionTrainingEvidence
@@ -743,6 +743,10 @@ def run_adapter_training(
             "probe-semantic-subspace-distillation": (
                 training_methods.ProbeSemanticSubspaceTrainingEvidence
             ),
+            **{
+                condition: training_methods.ProbeTransitionTrainingEvidence
+                for condition in training_methods.PROBE_FACTORIAL_CONDITIONS
+            },
         }[protocol.condition]
         if not isinstance(evidence, expected_type):
             raise ValueError("injected probe method evidence differs from the condition")
