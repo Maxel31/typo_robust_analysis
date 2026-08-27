@@ -27,9 +27,10 @@ def _load_config(path: Path) -> Exp6Config:
 
 
 def _exp6(args: argparse.Namespace) -> int:
+    output_dir = Path(args.output_dir)
+    if output_dir.exists():
+        raise FileExistsError(f"output directory already exists: {output_dir}")
     config = _load_config(Path(args.config))
-    if args.model is not None:
-        config = Exp6Config(**{**config.__dict__, "model": args.model})
     if args.limit is not None:
         config = Exp6Config(**{**config.__dict__, "limit": args.limit})
     if args.device is not None:
@@ -40,7 +41,7 @@ def _exp6(args: argparse.Namespace) -> int:
         progress=lambda values: tqdm(values, desc="exp6"),
     )
     write_exp6_results(
-        output_dir=Path(args.output_dir),
+        output_dir=output_dir,
         config=config,
         records=records,
         summary=summary,
@@ -55,7 +56,6 @@ def build_parser() -> argparse.ArgumentParser:
     exp6 = subcommands.add_parser("exp6-cosine", help="run the UCC-Inj exp6 adaptation")
     exp6.add_argument("--config", required=True, help="YAML configuration")
     exp6.add_argument("--output-dir", required=True, help="new result directory")
-    exp6.add_argument("--model", help="override config.model for an adaptation")
     exp6.add_argument("--device", help="override config.device, e.g. cuda:0")
     exp6.add_argument("--limit", type=int, help="run a deterministic prefix for a smoke test")
     exp6.set_defaults(handler=_exp6)
