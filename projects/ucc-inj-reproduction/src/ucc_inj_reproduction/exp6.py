@@ -134,6 +134,8 @@ class Exp6Config:
             raise ValueError("max_length must be a positive integer")
         if not isinstance(self.trust_remote_code, bool):
             raise ValueError("trust_remote_code must be a boolean")
+        if self.trust_remote_code:
+            raise ValueError("trust_remote_code must remain disabled for this protocol adaptation")
         if not isinstance(self.add_generation_prompt, bool):
             raise ValueError("add_generation_prompt must be a boolean")
         if self.dtype not in {"bfloat16", "float16", "float32"}:
@@ -453,12 +455,12 @@ def _load_runtime(config: Exp6Config) -> HiddenStateExtractor:
     dtype = getattr(torch, config.dtype)
     local_arguments = {"local_files_only": True}
     tokenizer = AutoTokenizer.from_pretrained(
-        str(snapshot_path), trust_remote_code=config.trust_remote_code, **local_arguments
+        str(snapshot_path), trust_remote_code=False, **local_arguments
     )
     model = AutoModelForCausalLM.from_pretrained(
         str(snapshot_path),
         dtype=dtype,
-        trust_remote_code=config.trust_remote_code,
+        trust_remote_code=False,
         **local_arguments,
     ).to(config.device).eval()
     loader_commit = getattr(getattr(model, "config", None), "_commit_hash", None)
@@ -666,6 +668,7 @@ def write_exp6_results(
     records: Sequence[dict[str, Any]],
     summary: Sequence[dict[str, float | int]],
     provenance: dict[str, Any],
+    reserved_output_dir: bool = False,
 ) -> None:
     """Write a complete, strict-JSON result directory without overwriting runs."""
     if not records:
@@ -683,7 +686,13 @@ def write_exp6_results(
     summary_payload = json.dumps(
         list(summary), ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False
     ) + "\n"
-    output_dir.mkdir(parents=True, exist_ok=False)
+    if reserved_output_dir:
+        if output_dir.is_symlink() or not output_dir.is_dir():
+            raise FileNotFoundError("reserved output directory is no longer a real directory")
+        if any(output_dir.iterdir()):
+            raise FileExistsError("reserved output directory is no longer empty")
+    else:
+        output_dir.mkdir(parents=True, exist_ok=False)
     (output_dir / "config.json").write_text(config_payload, encoding="utf-8")
     (output_dir / "provenance.json").write_text(provenance_payload, encoding="utf-8")
     (output_dir / "per_example.jsonl").write_text(records_payload, encoding="utf-8")
