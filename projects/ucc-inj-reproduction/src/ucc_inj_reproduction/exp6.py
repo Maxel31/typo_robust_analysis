@@ -444,10 +444,27 @@ def _load_runtime(config: Exp6Config) -> HiddenStateExtractor:
 
 def _load_question_cohort(config: Exp6Config) -> _QuestionCohort:
     from datasets import load_dataset
+    from huggingface_hub import snapshot_download
 
-    revision_arguments = {"revision": config.dataset_revision} if config.dataset_revision else {}
+    config.validate()
+    snapshot_path = Path(
+        snapshot_download(
+            repo_id=config.dataset,
+            repo_type="dataset",
+            revision=config.dataset_revision,
+        )
+    ).resolve()
+    resolved_commit = snapshot_path.name.lower()
+    if resolved_commit != config.dataset_revision.lower():
+        raise RuntimeError(
+            "Hugging Face dataset snapshot resolved a different commit: "
+            f"requested={config.dataset_revision}, resolved={resolved_commit}"
+        )
+
     dataset = load_dataset(
-        config.dataset, config.dataset_config, split=config.split, **revision_arguments
+        str(snapshot_path),
+        config.dataset_config,
+        split=config.split,
     )
     available_rows = len(dataset)
     rows = dataset if config.limit is None else dataset.select(range(min(config.limit, available_rows)))
@@ -460,6 +477,8 @@ def _load_question_cohort(config: Exp6Config) -> _QuestionCohort:
             "requested_config": config.dataset_config,
             "requested_split": config.split,
             "requested_revision": config.dataset_revision,
+            "resolved_commit": resolved_commit,
+            "snapshot_binding": "verified_huggingface_snapshot_directory",
             "fingerprint": getattr(rows, "_fingerprint", None),
             "builder_name": getattr(info, "builder_name", None),
             "config_name": getattr(info, "config_name", None),
