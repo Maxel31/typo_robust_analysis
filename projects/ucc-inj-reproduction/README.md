@@ -69,9 +69,11 @@ commit with `snapshot_download`, verifies the returned snapshot directory's
 commit, and loads both the model and tokenizer from that one local snapshot
 with network fallback disabled. It never labels a merely requested revision as
 resolved. The default GSM8K revision is likewise an immutable 40-character
-commit; mutable revisions and local dataset paths that could bypass revision binding are rejected.
+commit. The dataset repository is resolved and verified as its own
+`repo_type="dataset"` snapshot before any rows are loaded; mutable revisions
+and local paths that could bypass revision binding are rejected.
 
-The provenance manifest records the verified snapshot commit, the
+The provenance manifest records the verified model and dataset snapshot commits, the
 tokenizer-vocabulary and chat-template hashes, dataset revision/fingerprint and
 ordered cohort hash, relevant source-file and lockfile hashes, and software/GPU
 versions. Injected test runtimes that bypass the verified loader are explicitly
