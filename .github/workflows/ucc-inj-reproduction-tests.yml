@@ -25,7 +25,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install lightweight test dependencies
-        run: python -m pip install "numpy>=2,<3" "pytest>=8,<10" "PyYAML>=6,<7"
+        run: python -m pip install "numpy>=2,<3" "pytest>=8,<10" "PyYAML>=6,<7" "tqdm>=4.65,<5"
       - name: Run isolated unit tests
         env:
           PYTHONPATH: projects/ucc-inj-reproduction/src
