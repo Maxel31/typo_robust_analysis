@@ -1,0 +1,21 @@
+# UCC-Inj exp6 protocol adaptation, not a faithful reproduction.
+# Upstream uses Qwen/Qwen3-30B-A3B and checked-in noise artifacts; this
+# configuration adapts the operator to Gemma with deterministic regenerated noise.
+exp6:
+  protocol_scope: adaptation
+  model: google/gemma-3-4b-it
+  model_revision: 093f9f388b31de276ce2de164bdc2081324b9767
+  dataset: openai/gsm8k
+  dataset_revision: cc7b047b6e5bb11b4f1af84efc572db110a51b3c
+  dataset_config: main
+  split: test
+  question_field: question
+  seed: 42
+  noise_levels: [0, 1, 2, 3]
+  limit: null
+  # Hard rejection cap for complete inputs. Inputs are never truncated.
+  max_length: 8192
+  device: cuda:0
+  dtype: bfloat16
+  trust_remote_code: false
+  add_generation_prompt: false
