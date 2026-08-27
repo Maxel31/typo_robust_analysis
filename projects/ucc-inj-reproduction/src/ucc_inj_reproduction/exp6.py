@@ -534,16 +534,42 @@ def load_gsm8k_questions(config: Exp6Config) -> list[str]:
 def _implementation_provenance() -> dict[str, Any]:
     package_dir = Path(__file__).resolve().parent
     project_dir = package_dir.parents[1]
-    files = {
+    source_files = {
         "exp6.py": package_dir / "exp6.py",
         "noise.py": package_dir / "noise.py",
         "cli.py": package_dir / "cli.py",
-        "uv.lock": project_dir / "uv.lock",
     }
+    lock_path = project_dir / "uv.lock"
+    distribution_names = (
+        "datasets",
+        "huggingface-hub",
+        "numpy",
+        "pyyaml",
+        "torch",
+        "tqdm",
+        "transformers",
+    )
+    installed_versions: dict[str, str | None] = {}
+    for name in distribution_names:
+        try:
+            installed_versions[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            installed_versions[name] = None
     return {
         "source_sha256": {
             name: _sha256_bytes(path.read_bytes()) if path.is_file() else None
-            for name, path in files.items()
+            for name, path in source_files.items()
+        },
+        "dependency_environment": {
+            "uv_lock": {
+                "status": (
+                    "hashed_source_tree_lock"
+                    if lock_path.is_file()
+                    else "unavailable_in_installed_layout"
+                ),
+                "sha256": _sha256_bytes(lock_path.read_bytes()) if lock_path.is_file() else None,
+            },
+            "installed_versions": installed_versions,
         },
         "git_commit_environment": os.environ.get("GITHUB_SHA")
         or os.environ.get("TYPO_ROBUST_GIT_COMMIT"),
