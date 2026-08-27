@@ -45,6 +45,7 @@ The run aborts rather than emitting a partial scientific result when it sees:
 - a broken level-0 identity control;
 - zero-norm or non-finite hidden states/cosines;
 - ambiguous YAML/runtime types such as quoted booleans or boolean integers;
+- misplaced siblings beside the top-level `exp6:` mapping;
 - any attempt to enable remote model code; or
 - a scope label other than `adaptation`.
 
@@ -77,15 +78,19 @@ and local paths that could bypass revision binding are rejected.
 
 The provenance manifest records the verified model and dataset snapshot commits, the
 tokenizer-vocabulary and chat-template hashes, dataset revision/fingerprint and
-ordered cohort hash, relevant source-file and lockfile hashes, and software/GPU
-versions. Injected test runtimes that bypass the verified loader are explicitly
+ordered cohort hash, source-file hashes, and software/GPU versions. Source-tree
+runs also record the `uv.lock` hash; installed-layout runs explicitly record that
+the source-tree lock is unavailable and preserve installed distribution versions
+instead. Injected test runtimes that bypass the verified loader are explicitly
 labeled unverified.
 JSON serialization rejects NaN and Infinity. Empty cohorts and empty result
 payloads are rejected. The CLI atomically reserves a new, real output directory
 before GPU inference, so existing paths, dangling symlinks, and invalid parents
 fail before model work. Result files are written only after strict JSON
-serialization succeeds; a failed run may leave an empty reserved directory,
-which is never reused or overwritten.
+serialization succeeds. If a run fails before writing any file, the CLI releases
+only its still-empty reservation so the exact command can be retried. A nonempty
+or partially written result directory is preserved and is never reused or
+overwritten.
 
 ## Install and test
 
