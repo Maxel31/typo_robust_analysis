@@ -38,20 +38,25 @@ class InputTooLongError(ValueError):
     """Raised before inference when a complete model input exceeds the hard cap."""
 
 
-def _is_full_commit_sha(value: str) -> bool:
+def _is_full_commit_sha(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
     lowered = value.lower()
     return len(lowered) == 40 and all(character in "0123456789abcdef" for character in lowered)
 
 
 def _validate_huggingface_repo_id(value: str) -> None:
     """Reject local paths and ambiguous model sources before snapshot resolution."""
+    allowed = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
     parts = value.split("/")
     if (
         len(parts) != 2
-        or any(not part or part in {".", ".."} for part in parts)
-        or "\\" in value
-        or "://" in value
-        or value.startswith((".", "~", "/"))
+        or any(
+            not part
+            or part in {".", ".."}
+            or any(character not in allowed for character in part)
+            for part in parts
+        )
     ):
         raise ValueError("model must be a Hugging Face Hub repository ID in owner/name form")
 
