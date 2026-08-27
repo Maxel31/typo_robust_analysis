@@ -204,6 +204,7 @@ def test_config_allows_level_zero_and_rejects_false_faithful_scope() -> None:
         ("limit", True, "limit must be a positive integer"),
         ("max_length", True, "max_length must be a positive integer"),
         ("trust_remote_code", "false", "trust_remote_code must be a boolean"),
+        ("trust_remote_code", True, "trust_remote_code must remain disabled"),
         ("add_generation_prompt", "false", "add_generation_prompt must be a boolean"),
         ("dtype", "float128", "dtype must be one of"),
         ("device", False, "device must be a non-empty string"),
@@ -485,6 +486,36 @@ def test_writer_serialises_provenance_and_refuses_nan_before_mkdir(
             provenance=provenance,
         )
     assert not invalid_output.exists()
+
+
+
+def test_writer_accepts_only_an_empty_reserved_real_directory(tmp_path: Path) -> None:
+    config = Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu")
+    records = [{"noise_level": 0, "cosine_similarity": [1.0]}]
+    reserved = tmp_path / "reserved"
+    reserved.mkdir()
+    write_exp6_results(
+        output_dir=reserved,
+        config=config,
+        records=records,
+        summary=[],
+        provenance={},
+        reserved_output_dir=True,
+    )
+    assert (reserved / "per_example.jsonl").is_file()
+
+    occupied = tmp_path / "occupied"
+    occupied.mkdir()
+    (occupied / "unexpected").write_text("occupied", encoding="utf-8")
+    with pytest.raises(FileExistsError, match="no longer empty"):
+        write_exp6_results(
+            output_dir=occupied,
+            config=config,
+            records=records,
+            summary=[],
+            provenance={},
+            reserved_output_dir=True,
+        )
 
 
 def test_extracted_pair_rejects_terminal_suffix_and_truncation_mismatches() -> None:
