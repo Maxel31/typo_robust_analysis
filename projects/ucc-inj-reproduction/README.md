@@ -44,7 +44,8 @@ The run aborts rather than emitting a partial scientific result when it sees:
 - clean/noisy template suffix or terminal-token disagreement;
 - a broken level-0 identity control;
 - zero-norm or non-finite hidden states/cosines;
-- ambiguous YAML/runtime types such as quoted booleans or boolean integers; or
+- ambiguous YAML/runtime types such as quoted booleans or boolean integers;
+- any attempt to enable remote model code; or
 - a scope label other than `adaptation`.
 
 `max_length` is a rejection cap, not a truncation length. The 8,192-token
@@ -80,8 +81,11 @@ ordered cohort hash, relevant source-file and lockfile hashes, and software/GPU
 versions. Injected test runtimes that bypass the verified loader are explicitly
 labeled unverified.
 JSON serialization rejects NaN and Infinity. Empty cohorts and empty result
-payloads are rejected. Existing output directories are detected before GPU
-inference and are never overwritten.
+payloads are rejected. The CLI atomically reserves a new, real output directory
+before GPU inference, so existing paths, dangling symlinks, and invalid parents
+fail before model work. Result files are written only after strict JSON
+serialization succeeds; a failed run may leave an empty reserved directory,
+which is never reused or overwritten.
 
 ## Install and test
 
