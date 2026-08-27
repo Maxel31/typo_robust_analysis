@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import json
+import sys
 from contextlib import nullcontext
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pytest
+import ucc_inj_reproduction.exp6 as exp6_module
 from ucc_inj_reproduction.exp6 import (
     ADAPTATION_SCOPE,
     COMPARISON_POSITION,
+    DEFAULT_GEMMA_REVISION,
     Exp6Config,
     ExtractedStates,
     HiddenStateExtractor,
@@ -61,6 +64,9 @@ class FakeTokenizer:
         self.token_ids = token_ids
         self.tokenize_kwargs: list[dict[str, Any]] = []
 
+    def get_vocab(self) -> dict[str, int]:
+        return {"<pad>": 0, "token": 1, "</s>": 9}
+
     def apply_chat_template(
         self,
         messages: list[dict[str, str]],
@@ -104,6 +110,7 @@ def make_extracted(
     input_ids: tuple[int, ...] = (1, 9),
     logical_position: str = COMPARISON_POSITION,
     suffix: str = "same-suffix",
+    truncated: bool = False,
 ) -> ExtractedStates:
     return ExtractedStates(
         hidden_states=np.asarray(values, dtype=float),
@@ -114,11 +121,16 @@ def make_extracted(
         input_ids_sha256="input-hash",
         template_suffix_sha256=suffix,
         logical_position=logical_position,
+        truncated=truncated,
     )
 
 
 class FakeExtractor:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
     def states(self, text: str) -> ExtractedStates:
+        self.calls.append(text)
         if any(ord(character) >= 0xFE00 for character in text):
             return make_extracted(
                 np.asarray([[1.0, 3.0], [2.0, 5.0]]),
@@ -150,6 +162,13 @@ def test_config_allows_level_zero_and_rejects_false_faithful_scope() -> None:
         Exp6Config(
             model="unit-test",
             protocol_scope="faithful",
+            noise_levels=(0,),
+            device="cpu",
+        ).validate()
+    with pytest.raises(ValueError, match="immutable"):
+        Exp6Config(
+            model="unit-test",
+            model_revision="main",
             noise_levels=(0,),
             device="cpu",
         ).validate()
@@ -240,12 +259,14 @@ def test_level_zero_runs_independently_as_identity_control() -> None:
         device="cpu",
         limit=None,
     )
+    extractor = FakeExtractor()
     records, summary, provenance = run_exp6(
         config,
         questions=["one"],
-        extractor=FakeExtractor(),
+        extractor=extractor,
     )
 
+    assert extractor.calls == ["one", "one"]
     assert len(records) == 1
     record = records[0]
     assert record["protocol_scope"] == ADAPTATION_SCOPE
@@ -348,3 +369,144 @@ def test_writer_serialises_provenance_and_refuses_nan_before_mkdir(
             provenance=provenance,
         )
     assert not invalid_output.exists()
+
+
+def test_extracted_pair_rejects_terminal_suffix_and_truncation_mismatches() -> None:
+    clean = make_extracted(np.asarray([[1.0, 2.0]]), input_ids=(1, 9))
+    with pytest.raises(ValueError, match="terminal token"):
+        cosine_for_extracted_pair(
+            clean,
+            make_extracted(np.asarray([[1.0, 2.0]]), input_ids=(1, 8)),
+        )
+    with pytest.raises(ValueError, match="template suffix"):
+        cosine_for_extracted_pair(
+            clean,
+            make_extracted(np.asarray([[1.0, 2.0]]), suffix="different"),
+        )
+    with pytest.raises(ValueError, match="truncated"):
+        cosine_for_extracted_pair(
+            clean,
+            make_extracted(np.asarray([[1.0, 2.0]]), truncated=True),
+        )
+
+
+def test_run_rejects_empty_cohort_before_loading_or_forwarding() -> None:
+    config = Exp6Config(model="unit-test", noise_levels=(0,), device="cpu")
+    extractor = FakeExtractor()
+    with pytest.raises(ValueError, match="cohort is empty"):
+        run_exp6(config, questions=[], extractor=extractor)
+    assert extractor.calls == []
+
+
+def test_runtime_provenance_binds_tokenizer_without_private_commit_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(exp6_module.importlib.metadata, "version", lambda _name: "test-version")
+    tokenizer = FakeTokenizer({"one": [1, 9]})
+    tokenizer.init_kwargs = {}
+    model = FakeModel()
+    model.config = SimpleNamespace(
+        _name_or_path="unit-test",
+        _commit_hash=DEFAULT_GEMMA_REVISION,
+        to_dict=lambda: {"model_type": "fake"},
+    )
+    extractor = HiddenStateExtractor(
+        tokenizer=tokenizer,
+        model=model,
+        config=Exp6Config(model="unit-test", noise_levels=(0,), device="cpu"),
+        torch_module=FakeTorch(),
+    )
+    provenance = extractor.runtime_provenance()
+    assert provenance["model"]["resolved_commit"] == DEFAULT_GEMMA_REVISION
+    assert provenance["tokenizer"]["resolved_commit"] == DEFAULT_GEMMA_REVISION
+    assert provenance["tokenizer"]["vocab_sha256"]
+
+
+def test_runtime_loads_model_and_tokenizer_from_the_same_immutable_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    class LoadedModel:
+        def __init__(self) -> None:
+            self.config = SimpleNamespace(_commit_hash=DEFAULT_GEMMA_REVISION)
+
+        def to(self, _device: str) -> LoadedModel:
+            return self
+
+        def eval(self) -> LoadedModel:
+            return self
+
+    class TokenizerFactory:
+        @staticmethod
+        def from_pretrained(_model: str, **kwargs: Any) -> FakeTokenizer:
+            calls.append(("tokenizer", kwargs["revision"]))
+            return FakeTokenizer({"one": [1, 9]})
+
+    class ModelFactory:
+        @staticmethod
+        def from_pretrained(_model: str, **kwargs: Any) -> LoadedModel:
+            calls.append(("model", kwargs["revision"]))
+            return LoadedModel()
+
+    fake_torch = ModuleType("torch")
+    fake_torch.bfloat16 = object()
+    fake_torch.cuda = SimpleNamespace(is_available=lambda: False)
+    fake_transformers = ModuleType("transformers")
+    fake_transformers.AutoTokenizer = TokenizerFactory
+    fake_transformers.AutoModelForCausalLM = ModelFactory
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+
+    extractor = exp6_module._load_runtime(
+        Exp6Config(model="unit-test", noise_levels=(0,), device="cpu")
+    )
+    assert extractor.config.model_revision == DEFAULT_GEMMA_REVISION
+    assert calls == [
+        ("tokenizer", DEFAULT_GEMMA_REVISION),
+        ("model", DEFAULT_GEMMA_REVISION),
+    ]
+
+
+def test_template_suffix_probe_supports_content_normalising_templates() -> None:
+    class TrimmingTokenizer(FakeTokenizer):
+        def apply_chat_template(
+            self,
+            messages: list[dict[str, str]],
+            *,
+            tokenize: bool,
+            add_generation_prompt: bool,
+            **kwargs: Any,
+        ) -> Any:
+            text = messages[0]["content"]
+            if not tokenize:
+                return f"<user>{text.strip()}</user>"
+            return super().apply_chat_template(
+                messages,
+                tokenize=tokenize,
+                add_generation_prompt=add_generation_prompt,
+                **kwargs,
+            )
+
+    tokenizer = TrimmingTokenizer({" padded \n": [1, 9]})
+    extractor = HiddenStateExtractor(
+        tokenizer=tokenizer,
+        model=FakeModel(),
+        config=Exp6Config(model="unit-test", noise_levels=(0,), device="cpu"),
+        torch_module=FakeTorch(),
+    )
+    states = extractor.states(" padded \n")
+    assert states.template_suffix_sha256
+
+
+def test_writer_rejects_empty_records(tmp_path: Path) -> None:
+    output_dir = tmp_path / "empty"
+    with pytest.raises(ValueError, match="empty"):
+        write_exp6_results(
+            output_dir=output_dir,
+            config=Exp6Config(model="unit-test", noise_levels=(0,), device="cpu"),
+            records=[],
+            summary=[],
+            provenance={},
+        )
+    assert not output_dir.exists()
