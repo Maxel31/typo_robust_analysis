@@ -45,8 +45,8 @@ def _is_full_commit_sha(value: object) -> bool:
     return len(lowered) == 40 and all(character in "0123456789abcdef" for character in lowered)
 
 
-def _validate_huggingface_repo_id(value: str) -> None:
-    """Reject local paths and ambiguous model sources before snapshot resolution."""
+def _validate_huggingface_repo_id(*, field: str, value: str) -> None:
+    """Reject local paths and ambiguous Hub sources before snapshot resolution."""
     allowed = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
     parts = value.split("/")
     if (
@@ -58,7 +58,7 @@ def _validate_huggingface_repo_id(value: str) -> None:
             for part in parts
         )
     ):
-        raise ValueError("model must be a Hugging Face Hub repository ID in owner/name form")
+        raise ValueError(f"{field} must be a Hugging Face Hub repository ID in owner/name form")
 
 
 @dataclass(frozen=True)
@@ -88,7 +88,8 @@ class Exp6Config:
             )
         if not self.model:
             raise ValueError("model is required")
-        _validate_huggingface_repo_id(self.model)
+        _validate_huggingface_repo_id(field="model", value=self.model)
+        _validate_huggingface_repo_id(field="dataset", value=self.dataset)
         if not _is_full_commit_sha(self.model_revision):
             raise ValueError("model_revision must be a full immutable 40-character commit SHA")
         if not _is_full_commit_sha(self.dataset_revision):
