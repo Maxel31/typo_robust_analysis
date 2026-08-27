@@ -27,7 +27,6 @@ from ucc_inj_reproduction.exp6 import (
     write_exp6_results,
 )
 
-
 class FakeTensor:
     def __init__(self, values: Any) -> None:
         self.values = np.asarray(values)
@@ -49,7 +48,6 @@ class FakeTensor:
 
     def to(self, _device: str) -> FakeTensor:
         return self
-
 
 class FakeTokenizer:
     name_or_path = "fake-tokenizer"
@@ -86,7 +84,6 @@ class FakeTokenizer:
             "attention_mask": FakeTensor([[1] * len(values)]),
         }
 
-
 class FakeModel:
     def __init__(self) -> None:
         self.calls = 0
@@ -97,12 +94,10 @@ class FakeModel:
         base = np.arange(1, length * 2 + 1, dtype=float).reshape(1, length, 2)
         return SimpleNamespace(hidden_states=(FakeTensor(base), FakeTensor(base + 1.0)))
 
-
 class FakeTorch:
     @staticmethod
     def inference_mode() -> Any:
         return nullcontext()
-
 
 def make_extracted(
     values: np.ndarray,
@@ -124,7 +119,6 @@ def make_extracted(
         truncated=truncated,
     )
 
-
 class FakeExtractor:
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -138,7 +132,6 @@ class FakeExtractor:
             )
         return make_extracted(np.asarray([[1.0, 2.0], [3.0, 4.0]]))
 
-
 class MismatchedPositionExtractor:
     def __init__(self) -> None:
         self.calls = 0
@@ -150,7 +143,6 @@ class MismatchedPositionExtractor:
             np.asarray([[1.0, 2.0], [3.0, 4.0]]),
             logical_position=position,
         )
-
 
 def test_config_allows_level_zero_and_rejects_false_faithful_scope() -> None:
     Exp6Config(model="tests/unit-test", noise_levels=(0, 1), device="cpu").validate()
@@ -193,8 +185,6 @@ def test_config_allows_level_zero_and_rejects_false_faithful_scope() -> None:
             device="cpu",
         ).validate()
 
-
-
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
@@ -223,7 +213,6 @@ def test_config_rejects_ambiguous_runtime_types(
     values[field] = value
     with pytest.raises(ValueError, match=message):
         Exp6Config(**values).validate()  # type: ignore[arg-type]
-
 
 def test_dataset_load_uses_one_verified_snapshot(
     monkeypatch: pytest.MonkeyPatch,
@@ -268,7 +257,6 @@ def test_dataset_load_uses_one_verified_snapshot(
     assert cohort.provenance["resolved_commit"] == revision
     assert cohort.provenance["snapshot_binding"] == "verified_huggingface_snapshot_directory"
 
-
 def test_dataset_load_rejects_wrong_snapshot_before_reading_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -290,13 +278,11 @@ def test_dataset_load_rejects_wrong_snapshot_before_reading_rows(
             Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu")
         )
 
-
 def test_last_non_padding_index_handles_left_and_right_padding() -> None:
     assert last_non_padding_index([0, 0, 1, 1]) == 3
     assert last_non_padding_index([1, 1, 0, 0]) == 1
     with pytest.raises(ValueError, match="no non-padding"):
         last_non_padding_index([0, 0])
-
 
 def test_extractor_refuses_overlong_input_before_forward() -> None:
     tokenizer = FakeTokenizer({"too long": [1, 2, 3]})
@@ -320,7 +306,6 @@ def test_extractor_refuses_overlong_input_before_forward() -> None:
     assert tokenizer.tokenize_kwargs[0]["truncation"] is False
     assert "max_length" not in tokenizer.tokenize_kwargs[0]
 
-
 def test_extractor_uses_each_complete_inputs_own_terminal_token() -> None:
     tokenizer = FakeTokenizer({"clean": [1, 9], "noisy": [2, 3, 9]})
     model = FakeModel()
@@ -340,7 +325,6 @@ def test_extractor_uses_each_complete_inputs_own_terminal_token() -> None:
     assert clean.logical_position == noisy.logical_position == COMPARISON_POSITION
     assert model.calls == 2
 
-
 def test_cosine_per_layer_rejects_undefined_or_nonfinite_values() -> None:
     result = cosine_per_layer(
         np.asarray([[1.0, 0.0]]),
@@ -358,7 +342,6 @@ def test_cosine_per_layer_rejects_undefined_or_nonfinite_values() -> None:
             np.asarray([[1.0, 1.0]]),
         )
 
-
 def test_extracted_pair_rejects_mismatched_logical_position() -> None:
     clean = make_extracted(np.asarray([[1.0, 2.0]]))
     noisy = make_extracted(
@@ -367,7 +350,6 @@ def test_extracted_pair_rejects_mismatched_logical_position() -> None:
     )
     with pytest.raises(ValueError, match="same logical position"):
         cosine_for_extracted_pair(clean, noisy)
-
 
 def test_level_zero_runs_independently_as_identity_control() -> None:
     config = Exp6Config(
@@ -392,7 +374,6 @@ def test_level_zero_runs_independently_as_identity_control() -> None:
     assert record["cosine_similarity"] == pytest.approx([1.0, 1.0])
     assert summary[0]["hidden_state_index"] == 0
     assert provenance["protocol"]["scope"] == ADAPTATION_SCOPE
-
 
 def test_exp6_records_every_question_and_noise_level() -> None:
     config = Exp6Config(
@@ -426,7 +407,6 @@ def test_exp6_records_every_question_and_noise_level() -> None:
         (3, 1, 2),
     }
 
-
 def test_run_rejects_mismatched_logical_positions() -> None:
     config = Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu")
     with pytest.raises(ValueError, match="same logical position"):
@@ -435,7 +415,6 @@ def test_run_rejects_mismatched_logical_positions() -> None:
             questions=["one"],
             extractor=MismatchedPositionExtractor(),
         )
-
 
 def test_stable_seed_ignores_python_process_hash_randomisation() -> None:
     assert stable_example_seed(
@@ -449,13 +428,11 @@ def test_stable_seed_ignores_python_process_hash_randomisation() -> None:
         noise_level=2,
     ) != stable_example_seed(root_seed=42, example_index=1, noise_level=3)
 
-
 def test_summary_rejects_nonfinite_cosines() -> None:
     with pytest.raises(ValueError, match="non-finite"):
         summarise_layer_cosines(
             [{"noise_level": 1, "cosine_similarity": [float("nan")]}]
         )
-
 
 def test_writer_serialises_provenance_and_refuses_nan_before_mkdir(
     tmp_path: Path,
@@ -487,8 +464,6 @@ def test_writer_serialises_provenance_and_refuses_nan_before_mkdir(
         )
     assert not invalid_output.exists()
 
-
-
 def test_writer_accepts_only_an_empty_reserved_real_directory(tmp_path: Path) -> None:
     config = Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu")
     records = [{"noise_level": 0, "cosine_similarity": [1.0]}]
@@ -517,7 +492,6 @@ def test_writer_accepts_only_an_empty_reserved_real_directory(tmp_path: Path) ->
             reserved_output_dir=True,
         )
 
-
 def test_extracted_pair_rejects_terminal_suffix_and_truncation_mismatches() -> None:
     clean = make_extracted(np.asarray([[1.0, 2.0]]), input_ids=(1, 9))
     with pytest.raises(ValueError, match="terminal token"):
@@ -536,14 +510,12 @@ def test_extracted_pair_rejects_terminal_suffix_and_truncation_mismatches() -> N
             make_extracted(np.asarray([[1.0, 2.0]]), truncated=True),
         )
 
-
 def test_run_rejects_empty_cohort_before_loading_or_forwarding() -> None:
     config = Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu")
     extractor = FakeExtractor()
     with pytest.raises(ValueError, match="cohort is empty"):
         run_exp6(config, questions=[], extractor=extractor)
     assert extractor.calls == []
-
 
 def test_injected_runtime_does_not_claim_verified_snapshot_binding(
     monkeypatch: pytest.MonkeyPatch,
@@ -569,13 +541,12 @@ def test_injected_runtime_does_not_claim_verified_snapshot_binding(
     assert provenance["model"]["snapshot_binding"] == "unverified_injected_runtime"
     assert provenance["tokenizer"]["vocab_sha256"]
 
-
 def test_runtime_loads_model_and_tokenizer_from_one_verified_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(exp6_module.importlib.metadata, "version", lambda _name: "test-version")
     snapshot_calls: list[tuple[str, str]] = []
-    load_calls: list[tuple[str, str, bool]] = []
+    load_calls: list[tuple[str, str, bool, bool]] = []
     snapshot_path = f"/cache/models--tests--unit-test/snapshots/{DEFAULT_GEMMA_REVISION}"
 
     class LoadedModel:
@@ -591,7 +562,9 @@ def test_runtime_loads_model_and_tokenizer_from_one_verified_snapshot(
     class TokenizerFactory:
         @staticmethod
         def from_pretrained(source: str, **kwargs: Any) -> FakeTokenizer:
-            load_calls.append(("tokenizer", source, kwargs["local_files_only"]))
+            load_calls.append(
+                ("tokenizer", source, kwargs["local_files_only"], kwargs["trust_remote_code"])
+            )
             tokenizer = FakeTokenizer({"one": [1, 9]})
             tokenizer.init_kwargs = {}
             return tokenizer
@@ -599,7 +572,9 @@ def test_runtime_loads_model_and_tokenizer_from_one_verified_snapshot(
     class ModelFactory:
         @staticmethod
         def from_pretrained(source: str, **kwargs: Any) -> LoadedModel:
-            load_calls.append(("model", source, kwargs["local_files_only"]))
+            load_calls.append(
+                ("model", source, kwargs["local_files_only"], kwargs["trust_remote_code"])
+            )
             return LoadedModel()
 
     fake_torch = ModuleType("torch")
@@ -625,14 +600,13 @@ def test_runtime_loads_model_and_tokenizer_from_one_verified_snapshot(
     provenance = extractor.runtime_provenance()
     assert snapshot_calls == [("tests/unit-test", DEFAULT_GEMMA_REVISION)]
     assert load_calls == [
-        ("tokenizer", snapshot_path, True),
-        ("model", snapshot_path, True),
+        ("tokenizer", snapshot_path, True, False),
+        ("model", snapshot_path, True, False),
     ]
     assert provenance["model"]["resolved_commit"] == DEFAULT_GEMMA_REVISION
     assert provenance["tokenizer"]["resolved_commit"] == DEFAULT_GEMMA_REVISION
     assert provenance["model"]["snapshot_binding"] == "verified_huggingface_snapshot_directory"
     assert provenance["tokenizer"]["snapshot_binding"] == "verified_huggingface_snapshot_directory"
-
 
 def test_runtime_rejects_snapshot_directory_for_a_different_commit(
     monkeypatch: pytest.MonkeyPatch,
@@ -662,7 +636,6 @@ def test_runtime_rejects_snapshot_directory_for_a_different_commit(
         exp6_module._load_runtime(
             Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu")
         )
-
 
 def test_template_suffix_probe_supports_content_normalising_templates() -> None:
     class TrimmingTokenizer(FakeTokenizer):
@@ -694,7 +667,6 @@ def test_template_suffix_probe_supports_content_normalising_templates() -> None:
     states = extractor.states(" padded \n")
     assert states.template_suffix_sha256
 
-
 def test_writer_rejects_empty_records(tmp_path: Path) -> None:
     output_dir = tmp_path / "empty"
     with pytest.raises(ValueError, match="empty"):
@@ -706,7 +678,6 @@ def test_writer_rejects_empty_records(tmp_path: Path) -> None:
             provenance={},
         )
     assert not output_dir.exists()
-
 
 def test_level_zero_rejects_second_forward_with_changed_tokenization() -> None:
     class ChangingTokenExtractor:
@@ -725,7 +696,6 @@ def test_level_zero_rejects_second_forward_with_changed_tokenization() -> None:
             extractor=ChangingTokenExtractor(),
         )
 
-
 def test_level_zero_rejects_second_forward_with_changed_hidden_states() -> None:
     class ChangingStateExtractor:
         def __init__(self) -> None:
@@ -742,7 +712,6 @@ def test_level_zero_rejects_second_forward_with_changed_hidden_states() -> None:
             questions=["one"],
             extractor=ChangingStateExtractor(),
         )
-
 
 def test_nonzero_noise_rejected_when_tokenizer_erases_the_perturbation() -> None:
     class ErasingExtractor:
