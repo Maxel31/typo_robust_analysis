@@ -439,6 +439,7 @@ def test_injected_runtime_does_not_claim_verified_snapshot_binding(
 def test_runtime_loads_model_and_tokenizer_from_one_verified_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(exp6_module.importlib.metadata, "version", lambda _name: "test-version")
     snapshot_calls: list[tuple[str, str]] = []
     load_calls: list[tuple[str, str, bool]] = []
     snapshot_path = f"/cache/models--tests--unit-test/snapshots/{DEFAULT_GEMMA_REVISION}"
