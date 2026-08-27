@@ -1600,6 +1600,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "datasets" },
+    { name = "huggingface-hub" },
     { name = "numpy" },
     { name = "pyyaml" },
     { name = "torch" },
@@ -1616,6 +1617,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "datasets", specifier = ">=4" },
+    { name = "huggingface-hub", specifier = ">=0.36" },
     { name = "numpy", specifier = ">=2" },
     { name = "pyyaml", specifier = ">=6" },
     { name = "torch", specifier = "==2.10.0" },
