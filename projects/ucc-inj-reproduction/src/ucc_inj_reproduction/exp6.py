@@ -30,6 +30,7 @@ UPSTREAM_COMMIT = "aec814fcbb4388fa6fa874fbcec08a3ab1f78190"
 UPSTREAM_MODEL = "Qwen/Qwen3-30B-A3B"
 UPSTREAM_EXPERIMENT_SCRIPT = "exp6/test_similarity_with_clean_text.py"
 UPSTREAM_NOISE_ENCODER = "datasets/gsm8k/main/encoder.py"
+DEFAULT_GEMMA_REVISION = "093f9f388b31de276ce2de164bdc2081324b9767"
 
 
 class InputTooLongError(ValueError):
@@ -40,7 +41,7 @@ class InputTooLongError(ValueError):
 class Exp6Config:
     model: str
     protocol_scope: str = ADAPTATION_SCOPE
-    model_revision: str | None = "main"
+    model_revision: str = DEFAULT_GEMMA_REVISION
     dataset: str = "openai/gsm8k"
     dataset_revision: str | None = "main"
     dataset_config: str = "main"
@@ -49,7 +50,7 @@ class Exp6Config:
     seed: int = 42
     noise_levels: tuple[int, ...] = (0, 1, 2, 3)
     limit: int | None = None
-    max_length: int = 131072
+    max_length: int = 8192
     device: str = "cuda"
     dtype: str = "bfloat16"
     trust_remote_code: bool = False
@@ -63,6 +64,11 @@ class Exp6Config:
             )
         if not self.model:
             raise ValueError("model is required")
+        revision = self.model_revision.lower()
+        if len(revision) != 40 or any(
+            character not in "0123456789abcdef" for character in revision
+        ):
+            raise ValueError("model_revision must be a full immutable 40-character commit SHA")
         if not self.noise_levels or any(level < 0 for level in self.noise_levels):
             raise ValueError("noise_levels must contain one or more non-negative integers")
         if 0 not in self.noise_levels:
@@ -116,13 +122,45 @@ def _sha256_token_ids(values: Sequence[int]) -> str:
     return _sha256_bytes(array.tobytes(order="C"))
 
 
-def _template_suffix_sha256(rendered: str, content: str) -> str:
-    first = rendered.find(content)
+def _tokenizer_vocab_sha256(tokenizer: Any) -> str:
+    vocab = tokenizer.get_vocab()
+    if not isinstance(vocab, dict) or not vocab:
+        raise ValueError("tokenizer.get_vocab() must return a non-empty mapping")
+    if any(not isinstance(token, str) or not isinstance(token_id, int) for token, token_id in vocab.items()):
+        raise ValueError("tokenizer vocabulary must map strings to integer IDs")
+    serialised = json.dumps(
+        vocab,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return _sha256_text(serialised)
+
+
+def _template_suffix_sha256(
+    tokenizer: Any,
+    content: str,
+    *,
+    add_generation_prompt: bool,
+) -> str:
+    """Hash the rendered suffix without assuming templates preserve content verbatim."""
+    boundary = f"__UCC_INJ_BOUNDARY_{_sha256_text(content)[:24]}__"
+    if boundary in content:
+        raise ValueError("content unexpectedly contains the template boundary marker")
+    rendered = tokenizer.apply_chat_template(
+        [{"role": "user", "content": content + boundary}],
+        tokenize=False,
+        add_generation_prompt=add_generation_prompt,
+    )
+    if not isinstance(rendered, str):
+        raise TypeError("tokenizer chat template must render to text")
+    first = rendered.find(boundary)
     if first < 0:
-        raise ValueError("chat template did not preserve the exact user content")
-    if rendered.find(content, first + len(content)) >= 0:
-        raise ValueError("chat template contains the full user content more than once")
-    return _sha256_text(rendered[first + len(content) :])
+        raise ValueError("chat template did not preserve the boundary marker")
+    if rendered.find(boundary, first + len(boundary)) >= 0:
+        raise ValueError("chat template rendered the boundary marker more than once")
+    return _sha256_text(rendered[first + len(boundary) :])
 
 
 def stable_example_seed(*, root_seed: int, example_index: int, noise_level: int) -> int:
@@ -222,13 +260,6 @@ class HiddenStateExtractor:
 
     def states(self, text: str) -> ExtractedStates:
         messages = [{"role": "user", "content": text}]
-        rendered = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=self.config.add_generation_prompt,
-        )
-        if not isinstance(rendered, str):
-            raise TypeError("tokenizer chat template must render to text")
         encoded = self.tokenizer.apply_chat_template(
             messages,
             tokenize=True,
@@ -252,7 +283,7 @@ class HiddenStateExtractor:
                 f"complete model input has {len(input_ids)} tokens, "
                 f"exceeding max_length={self.config.max_length}; refusing to truncate"
             )
-        index = int(valid_positions[-1])
+        index = last_non_padding_index(mask_values)
         device_encoded = {key: value.to(self.config.device) for key, value in encoded.items()}
         with self.torch.inference_mode():
             output = self.model(**device_encoded, output_hidden_states=True, use_cache=False)
@@ -267,13 +298,16 @@ class HiddenStateExtractor:
             token_index=index,
             terminal_token_id=input_ids[-1],
             input_ids_sha256=_sha256_token_ids(input_ids),
-            template_suffix_sha256=_template_suffix_sha256(rendered, text),
+            template_suffix_sha256=_template_suffix_sha256(
+                self.tokenizer,
+                text,
+                add_generation_prompt=self.config.add_generation_prompt,
+            ),
         )
 
     def runtime_provenance(self) -> dict[str, Any]:
         model_config = getattr(self.model, "config", None)
         config_dict = model_config.to_dict() if hasattr(model_config, "to_dict") else {}
-        tokenizer_kwargs = getattr(self.tokenizer, "init_kwargs", {}) or {}
         cuda = getattr(self.torch, "cuda", None)
         gpu_name: str | None = None
         if self.config.device.startswith("cuda") and cuda is not None and cuda.is_available():
@@ -283,16 +317,20 @@ class HiddenStateExtractor:
                 "requested_id": self.config.model,
                 "requested_revision": self.config.model_revision,
                 "resolved_name_or_path": str(getattr(model_config, "_name_or_path", self.config.model)),
-                "resolved_commit": getattr(model_config, "_commit_hash", None),
+                "resolved_commit": self.config.model_revision,
+                "loader_reported_commit": getattr(model_config, "_commit_hash", None),
                 "class": type(self.model).__name__,
                 "config_sha256": _sha256_text(
                     json.dumps(config_dict, ensure_ascii=False, sort_keys=True, allow_nan=False)
                 ),
             },
             "tokenizer": {
+                "requested_id": self.config.model,
+                "requested_revision": self.config.model_revision,
                 "resolved_name_or_path": str(getattr(self.tokenizer, "name_or_path", self.config.model)),
-                "resolved_commit": tokenizer_kwargs.get("_commit_hash"),
+                "resolved_commit": self.config.model_revision,
                 "class": type(self.tokenizer).__name__,
+                "vocab_sha256": _tokenizer_vocab_sha256(self.tokenizer),
                 "chat_template_sha256": _sha256_text(
                     str(getattr(self.tokenizer, "chat_template", ""))
                 ),
@@ -323,7 +361,7 @@ def _load_runtime(config: Exp6Config) -> HiddenStateExtractor:
     if config.device.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is unavailable")
     dtype = getattr(torch, config.dtype)
-    revision_arguments = {"revision": config.model_revision} if config.model_revision else {}
+    revision_arguments = {"revision": config.model_revision}
     tokenizer = AutoTokenizer.from_pretrained(
         config.model, trust_remote_code=config.trust_remote_code, **revision_arguments
     )
@@ -333,6 +371,12 @@ def _load_runtime(config: Exp6Config) -> HiddenStateExtractor:
         trust_remote_code=config.trust_remote_code,
         **revision_arguments,
     ).to(config.device).eval()
+    loader_commit = getattr(getattr(model, "config", None), "_commit_hash", None)
+    if loader_commit is not None and loader_commit != config.model_revision:
+        raise RuntimeError(
+            "model loader resolved a different commit: "
+            f"requested={config.model_revision}, loaded={loader_commit}"
+        )
     return HiddenStateExtractor(tokenizer=tokenizer, model=model, config=config, torch_module=torch)
 
 
@@ -354,7 +398,7 @@ def _load_question_cohort(config: Exp6Config) -> _QuestionCohort:
             "requested_config": config.dataset_config,
             "requested_split": config.split,
             "requested_revision": config.dataset_revision,
-            "fingerprint": getattr(dataset, "_fingerprint", None),
+            "fingerprint": getattr(rows, "_fingerprint", None),
             "builder_name": getattr(info, "builder_name", None),
             "config_name": getattr(info, "config_name", None),
             "version": str(getattr(info, "version", None)),
@@ -413,6 +457,8 @@ def run_exp6(
                 "selected_questions_sha256": _sha256_ordered_texts(injected),
             },
         )
+    if not cohort.questions:
+        raise ValueError("question cohort is empty; refusing to emit a successful empty run")
     active_extractor = extractor if extractor is not None else _load_runtime(config)
     records: list[dict[str, Any]] = []
     for example_index, question in enumerate(progress(cohort.questions)):
@@ -430,6 +476,11 @@ def run_exp6(
                     raise RuntimeError("level-0 control changed the input text")
                 if clean_states.input_ids != noisy_states.input_ids:
                     raise RuntimeError("level-0 control changed tokenization")
+            else:
+                if noisy_question == question:
+                    raise RuntimeError("nonzero noise level did not change the input text")
+                if clean_states.input_ids == noisy_states.input_ids:
+                    raise RuntimeError("nonzero noise was erased before reaching the model")
             similarities = cosine_for_extracted_pair(clean_states, noisy_states)
             if level == 0 and not np.allclose(similarities, 1.0, rtol=1e-6, atol=1e-6):
                 raise RuntimeError("level-0 control did not produce unit cosine similarity")
@@ -460,6 +511,14 @@ def run_exp6(
                     "cosine_similarity": [float(value) for value in similarities],
                 }
             )
+    expected_records = len(cohort.questions) * len(config.noise_levels)
+    if len(records) != expected_records:
+        raise RuntimeError(
+            f"incomplete run: expected {expected_records} records, produced {len(records)}"
+        )
+    level_zero_records = sum(int(record["noise_level"]) == 0 for record in records)
+    if level_zero_records != len(cohort.questions):
+        raise RuntimeError("level-0 control count does not match the question cohort")
     runtime_provenance = (
         active_extractor.runtime_provenance()
         if hasattr(active_extractor, "runtime_provenance")
@@ -494,6 +553,8 @@ def write_exp6_results(
     provenance: dict[str, Any],
 ) -> None:
     """Write a complete, strict-JSON result directory without overwriting runs."""
+    if not records:
+        raise ValueError("refusing to write an empty scientific result")
     config_payload = json.dumps(
         asdict(config), ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False
     ) + "\n"
