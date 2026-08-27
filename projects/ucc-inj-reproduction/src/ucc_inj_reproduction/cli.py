@@ -16,7 +16,13 @@ def _load_config(path: Path) -> Exp6Config:
     loaded: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(loaded, dict):
         raise TypeError("config must be a YAML mapping")
-    section = loaded.get("exp6", loaded)
+    if "exp6" in loaded:
+        unexpected = sorted(set(loaded) - {"exp6"})
+        if unexpected:
+            raise ValueError(f"unexpected top-level config keys outside exp6: {unexpected}")
+        section = loaded["exp6"]
+    else:
+        section = loaded
     if not isinstance(section, dict):
         raise TypeError("exp6 config must be a mapping")
     if "noise_levels" in section:
@@ -38,18 +44,25 @@ def _exp6(args: argparse.Namespace) -> int:
         output_dir.mkdir(parents=True, exist_ok=False)
     except FileExistsError as error:
         raise FileExistsError(f"output path is already occupied: {output_dir}") from error
-    records, summary, provenance = run_exp6(
-        config,
-        progress=lambda values: tqdm(values, desc="exp6"),
-    )
-    write_exp6_results(
-        output_dir=output_dir,
-        config=config,
-        records=records,
-        summary=summary,
-        provenance=provenance,
-        reserved_output_dir=True,
-    )
+    try:
+        records, summary, provenance = run_exp6(
+            config,
+            progress=lambda values: tqdm(values, desc="exp6"),
+        )
+        write_exp6_results(
+            output_dir=output_dir,
+            config=config,
+            records=records,
+            summary=summary,
+            provenance=provenance,
+            reserved_output_dir=True,
+        )
+    except BaseException:
+        try:
+            output_dir.rmdir()
+        except OSError:
+            pass
+        raise
     return 0
 
 
