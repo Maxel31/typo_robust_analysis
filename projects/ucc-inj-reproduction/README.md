@@ -46,9 +46,9 @@ The run aborts rather than emitting a partial scientific result when it sees:
 - zero-norm or non-finite hidden states/cosines; or
 - a scope label other than `adaptation`.
 
-`max_length` is a rejection cap, not a truncation length. The default
-131,072-token cap matches the intended Gemma context scale, but the configured
-model remains the final authority and may reject a smaller unsupported input.
+`max_length` is a rejection cap, not a truncation length. The 8,192-token
+default bounds the memory required by all-layer hidden-state capture; complete
+inputs above it are rejected before model inference.
 
 ## Provenance and outputs
 
@@ -63,11 +63,15 @@ Each new output directory contains:
 - `per_example.jsonl`
 - `layer_summary.json`
 
-The provenance manifest records the requested and resolved model/tokenizer
-revision, chat-template hash, dataset revision/fingerprint and ordered cohort
-hash, relevant source-file and lockfile hashes, and software/GPU versions.
-JSON serialization rejects NaN and Infinity. Existing output directories are
-never overwritten.
+The configuration pins Gemma to immutable Hugging Face commit
+`093f9f388b31de276ce2de164bdc2081324b9767`; both the model and tokenizer
+load from that exact snapshot. The provenance manifest records this revision,
+the tokenizer-vocabulary and chat-template hashes, dataset revision/fingerprint
+and ordered cohort hash, relevant source-file and lockfile hashes, and
+software/GPU versions.
+JSON serialization rejects NaN and Infinity. Empty cohorts and empty result
+payloads are rejected. Existing output directories are detected before GPU
+inference and are never overwritten.
 
 ## Install and test
 
