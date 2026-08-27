@@ -1,4 +1,4 @@
-"""Reproduction experiments for the UCC-Inj hidden-state study."""
+"""Protocol adaptations of UCC-Inj hidden-state experiments."""
 
 from .noise import inject_variation_selector_noise
 
