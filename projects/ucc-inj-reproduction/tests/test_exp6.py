@@ -194,6 +194,72 @@ def test_config_allows_level_zero_and_rejects_false_faithful_scope() -> None:
         ).validate()
 
 
+def test_dataset_load_uses_one_verified_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    revision = exp6_module.DEFAULT_GSM8K_REVISION
+    snapshot_path = f"/cache/datasets--openai--gsm8k/snapshots/{revision}"
+    snapshot_calls: list[tuple[str, str, str]] = []
+    load_calls: list[tuple[str, str, str]] = []
+
+    class FakeDataset(list[dict[str, str]]):
+        _fingerprint = "verified-dataset-fingerprint"
+        info = SimpleNamespace(
+            builder_name="parquet",
+            config_name="main",
+            version="1.0.0",
+        )
+
+    fake_hub = ModuleType("huggingface_hub")
+
+    def fake_snapshot_download(*, repo_id: str, repo_type: str, revision: str) -> str:
+        snapshot_calls.append((repo_id, repo_type, revision))
+        return snapshot_path
+
+    fake_hub.snapshot_download = fake_snapshot_download
+    fake_datasets = ModuleType("datasets")
+
+    def fake_load_dataset(source: str, config_name: str, *, split: str) -> FakeDataset:
+        load_calls.append((source, config_name, split))
+        return FakeDataset([{"question": "verified question"}])
+
+    fake_datasets.load_dataset = fake_load_dataset
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+    monkeypatch.setitem(sys.modules, "datasets", fake_datasets)
+
+    cohort = exp6_module._load_question_cohort(
+        Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu")
+    )
+
+    assert cohort.questions == ("verified question",)
+    assert snapshot_calls == [("openai/gsm8k", "dataset", revision)]
+    assert load_calls == [(snapshot_path, "main", "test")]
+    assert cohort.provenance["resolved_commit"] == revision
+    assert cohort.provenance["snapshot_binding"] == "verified_huggingface_snapshot_directory"
+
+
+def test_dataset_load_rejects_wrong_snapshot_before_reading_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_hub = ModuleType("huggingface_hub")
+    fake_hub.snapshot_download = (
+        lambda **_kwargs: f"/cache/datasets--openai--gsm8k/snapshots/{'0' * 40}"
+    )
+    fake_datasets = ModuleType("datasets")
+
+    def must_not_load(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("dataset loading must not occur after snapshot mismatch")
+
+    fake_datasets.load_dataset = must_not_load
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+    monkeypatch.setitem(sys.modules, "datasets", fake_datasets)
+
+    with pytest.raises(RuntimeError, match="dataset snapshot resolved a different commit"):
+        exp6_module._load_question_cohort(
+            Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu")
+        )
+
+
 def test_last_non_padding_index_handles_left_and_right_padding() -> None:
     assert last_non_padding_index([0, 0, 1, 1]) == 3
     assert last_non_padding_index([1, 1, 0, 0]) == 1
