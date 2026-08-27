@@ -69,7 +69,7 @@ commit with `snapshot_download`, verifies the returned snapshot directory's
 commit, and loads both the model and tokenizer from that one local snapshot
 with network fallback disabled. It never labels a merely requested revision as
 resolved. The default GSM8K revision is likewise an immutable 40-character
-commit and mutable dataset refs are rejected.
+commit; mutable revisions and local dataset paths that could bypass revision binding are rejected.
 
 The provenance manifest records the verified snapshot commit, the
 tokenizer-vocabulary and chat-template hashes, dataset revision/fingerprint and
