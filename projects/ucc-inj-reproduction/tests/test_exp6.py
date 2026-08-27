@@ -153,22 +153,35 @@ class MismatchedPositionExtractor:
 
 
 def test_config_allows_level_zero_and_rejects_false_faithful_scope() -> None:
-    Exp6Config(model="unit-test", noise_levels=(0, 1), device="cpu").validate()
+    Exp6Config(model="tests/unit-test", noise_levels=(0, 1), device="cpu").validate()
     with pytest.raises(ValueError, match="non-negative"):
-        Exp6Config(model="unit-test", noise_levels=(0, -1), device="cpu").validate()
+        Exp6Config(model="tests/unit-test", noise_levels=(0, -1), device="cpu").validate()
     with pytest.raises(ValueError, match="level-0"):
-        Exp6Config(model="unit-test", noise_levels=(1,), device="cpu").validate()
+        Exp6Config(model="tests/unit-test", noise_levels=(1,), device="cpu").validate()
     with pytest.raises(ValueError, match="faithful"):
         Exp6Config(
-            model="unit-test",
+            model="tests/unit-test",
             protocol_scope="faithful",
             noise_levels=(0,),
             device="cpu",
         ).validate()
     with pytest.raises(ValueError, match="immutable"):
         Exp6Config(
-            model="unit-test",
+            model="tests/unit-test",
             model_revision="main",
+            noise_levels=(0,),
+            device="cpu",
+        ).validate()
+    with pytest.raises(ValueError, match="Hugging Face Hub"):
+        Exp6Config(
+            model="/tmp/local-model",
+            noise_levels=(0,),
+            device="cpu",
+        ).validate()
+    with pytest.raises(ValueError, match="dataset_revision"):
+        Exp6Config(
+            model="tests/unit-test",
+            dataset_revision="main",
             noise_levels=(0,),
             device="cpu",
         ).validate()
@@ -188,7 +201,7 @@ def test_extractor_refuses_overlong_input_before_forward() -> None:
         tokenizer=tokenizer,
         model=model,
         config=Exp6Config(
-            model="unit-test",
+            model="tests/unit-test",
             noise_levels=(0,),
             max_length=2,
             device="cpu",
@@ -210,7 +223,7 @@ def test_extractor_uses_each_complete_inputs_own_terminal_token() -> None:
     extractor = HiddenStateExtractor(
         tokenizer=tokenizer,
         model=model,
-        config=Exp6Config(model="unit-test", noise_levels=(0,), device="cpu"),
+        config=Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu"),
         torch_module=FakeTorch(),
     )
 
@@ -254,7 +267,7 @@ def test_extracted_pair_rejects_mismatched_logical_position() -> None:
 
 def test_level_zero_runs_independently_as_identity_control() -> None:
     config = Exp6Config(
-        model="unit-test",
+        model="tests/unit-test",
         noise_levels=(0,),
         device="cpu",
         limit=None,
@@ -279,7 +292,7 @@ def test_level_zero_runs_independently_as_identity_control() -> None:
 
 def test_exp6_records_every_question_and_noise_level() -> None:
     config = Exp6Config(
-        model="unit-test",
+        model="tests/unit-test",
         noise_levels=(0, 1, 3),
         device="cpu",
         limit=None,
@@ -311,7 +324,7 @@ def test_exp6_records_every_question_and_noise_level() -> None:
 
 
 def test_run_rejects_mismatched_logical_positions() -> None:
-    config = Exp6Config(model="unit-test", noise_levels=(0,), device="cpu")
+    config = Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu")
     with pytest.raises(ValueError, match="same logical position"):
         run_exp6(
             config,
@@ -343,7 +356,7 @@ def test_summary_rejects_nonfinite_cosines() -> None:
 def test_writer_serialises_provenance_and_refuses_nan_before_mkdir(
     tmp_path: Path,
 ) -> None:
-    config = Exp6Config(model="unit-test", noise_levels=(0,), device="cpu")
+    config = Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu")
     valid_output = tmp_path / "valid"
     provenance = {
         "schema_version": "ucc-inj-exp6-provenance/v2",
@@ -391,14 +404,14 @@ def test_extracted_pair_rejects_terminal_suffix_and_truncation_mismatches() -> N
 
 
 def test_run_rejects_empty_cohort_before_loading_or_forwarding() -> None:
-    config = Exp6Config(model="unit-test", noise_levels=(0,), device="cpu")
+    config = Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu")
     extractor = FakeExtractor()
     with pytest.raises(ValueError, match="cohort is empty"):
         run_exp6(config, questions=[], extractor=extractor)
     assert extractor.calls == []
 
 
-def test_runtime_provenance_binds_tokenizer_without_private_commit_metadata(
+def test_injected_runtime_does_not_claim_verified_snapshot_binding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(exp6_module.importlib.metadata, "version", lambda _name: "test-version")
@@ -406,30 +419,33 @@ def test_runtime_provenance_binds_tokenizer_without_private_commit_metadata(
     tokenizer.init_kwargs = {}
     model = FakeModel()
     model.config = SimpleNamespace(
-        _name_or_path="unit-test",
+        _name_or_path="tests/unit-test",
         _commit_hash=DEFAULT_GEMMA_REVISION,
         to_dict=lambda: {"model_type": "fake"},
     )
     extractor = HiddenStateExtractor(
         tokenizer=tokenizer,
         model=model,
-        config=Exp6Config(model="unit-test", noise_levels=(0,), device="cpu"),
+        config=Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu"),
         torch_module=FakeTorch(),
     )
     provenance = extractor.runtime_provenance()
-    assert provenance["model"]["resolved_commit"] == DEFAULT_GEMMA_REVISION
-    assert provenance["tokenizer"]["resolved_commit"] == DEFAULT_GEMMA_REVISION
+    assert provenance["model"]["resolved_commit"] is None
+    assert provenance["tokenizer"]["resolved_commit"] is None
+    assert provenance["model"]["snapshot_binding"] == "unverified_injected_runtime"
     assert provenance["tokenizer"]["vocab_sha256"]
 
 
-def test_runtime_loads_model_and_tokenizer_from_the_same_immutable_revision(
+def test_runtime_loads_model_and_tokenizer_from_one_verified_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[tuple[str, str]] = []
+    snapshot_calls: list[tuple[str, str]] = []
+    load_calls: list[tuple[str, str, bool]] = []
+    snapshot_path = f"/cache/models--tests--unit-test/snapshots/{DEFAULT_GEMMA_REVISION}"
 
     class LoadedModel:
         def __init__(self) -> None:
-            self.config = SimpleNamespace(_commit_hash=DEFAULT_GEMMA_REVISION)
+            self.config = SimpleNamespace(_commit_hash=None)
 
         def to(self, _device: str) -> LoadedModel:
             return self
@@ -439,14 +455,14 @@ def test_runtime_loads_model_and_tokenizer_from_the_same_immutable_revision(
 
     class TokenizerFactory:
         @staticmethod
-        def from_pretrained(_model: str, **kwargs: Any) -> FakeTokenizer:
-            calls.append(("tokenizer", kwargs["revision"]))
+        def from_pretrained(source: str, **kwargs: Any) -> FakeTokenizer:
+            load_calls.append(("tokenizer", source, kwargs["local_files_only"]))
             return FakeTokenizer({"one": [1, 9]})
 
     class ModelFactory:
         @staticmethod
-        def from_pretrained(_model: str, **kwargs: Any) -> LoadedModel:
-            calls.append(("model", kwargs["revision"]))
+        def from_pretrained(source: str, **kwargs: Any) -> LoadedModel:
+            load_calls.append(("model", source, kwargs["local_files_only"]))
             return LoadedModel()
 
     fake_torch = ModuleType("torch")
@@ -455,17 +471,59 @@ def test_runtime_loads_model_and_tokenizer_from_the_same_immutable_revision(
     fake_transformers = ModuleType("transformers")
     fake_transformers.AutoTokenizer = TokenizerFactory
     fake_transformers.AutoModelForCausalLM = ModelFactory
+    fake_hub = ModuleType("huggingface_hub")
+
+    def fake_snapshot_download(*, repo_id: str, revision: str) -> str:
+        snapshot_calls.append((repo_id, revision))
+        return snapshot_path
+
+    fake_hub.snapshot_download = fake_snapshot_download
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
     monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
 
     extractor = exp6_module._load_runtime(
-        Exp6Config(model="unit-test", noise_levels=(0,), device="cpu")
+        Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu")
     )
-    assert extractor.config.model_revision == DEFAULT_GEMMA_REVISION
-    assert calls == [
-        ("tokenizer", DEFAULT_GEMMA_REVISION),
-        ("model", DEFAULT_GEMMA_REVISION),
+    provenance = extractor.runtime_provenance()
+    assert snapshot_calls == [("tests/unit-test", DEFAULT_GEMMA_REVISION)]
+    assert load_calls == [
+        ("tokenizer", snapshot_path, True),
+        ("model", snapshot_path, True),
     ]
+    assert provenance["model"]["resolved_commit"] == DEFAULT_GEMMA_REVISION
+    assert provenance["tokenizer"]["resolved_commit"] == DEFAULT_GEMMA_REVISION
+    assert provenance["model"]["snapshot_binding"] == "verified_huggingface_snapshot_directory"
+
+
+def test_runtime_rejects_snapshot_directory_for_a_different_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wrong_commit = "0" * 40
+    fake_torch = ModuleType("torch")
+    fake_torch.bfloat16 = object()
+    fake_torch.cuda = SimpleNamespace(is_available=lambda: False)
+    fake_transformers = ModuleType("transformers")
+
+    class MustNotLoad:
+        @staticmethod
+        def from_pretrained(*_args: Any, **_kwargs: Any) -> Any:
+            raise AssertionError("model/tokenizer loading must not occur after snapshot mismatch")
+
+    fake_transformers.AutoTokenizer = MustNotLoad
+    fake_transformers.AutoModelForCausalLM = MustNotLoad
+    fake_hub = ModuleType("huggingface_hub")
+    fake_hub.snapshot_download = (
+        lambda **_kwargs: f"/cache/models--tests--unit-test/snapshots/{wrong_commit}"
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub)
+
+    with pytest.raises(RuntimeError, match="resolved a different commit"):
+        exp6_module._load_runtime(
+            Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu")
+        )
 
 
 def test_template_suffix_probe_supports_content_normalising_templates() -> None:
@@ -492,7 +550,7 @@ def test_template_suffix_probe_supports_content_normalising_templates() -> None:
     extractor = HiddenStateExtractor(
         tokenizer=tokenizer,
         model=FakeModel(),
-        config=Exp6Config(model="unit-test", noise_levels=(0,), device="cpu"),
+        config=Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu"),
         torch_module=FakeTorch(),
     )
     states = extractor.states(" padded \n")
@@ -504,7 +562,7 @@ def test_writer_rejects_empty_records(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="empty"):
         write_exp6_results(
             output_dir=output_dir,
-            config=Exp6Config(model="unit-test", noise_levels=(0,), device="cpu"),
+            config=Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu"),
             records=[],
             summary=[],
             provenance={},
@@ -524,7 +582,7 @@ def test_level_zero_rejects_second_forward_with_changed_tokenization() -> None:
 
     with pytest.raises(RuntimeError, match="changed tokenization"):
         run_exp6(
-            Exp6Config(model="unit-test", noise_levels=(0,), device="cpu"),
+            Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu"),
             questions=["one"],
             extractor=ChangingTokenExtractor(),
         )
@@ -542,7 +600,7 @@ def test_level_zero_rejects_second_forward_with_changed_hidden_states() -> None:
 
     with pytest.raises(RuntimeError, match="unit cosine"):
         run_exp6(
-            Exp6Config(model="unit-test", noise_levels=(0,), device="cpu"),
+            Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu"),
             questions=["one"],
             extractor=ChangingStateExtractor(),
         )
@@ -555,7 +613,7 @@ def test_nonzero_noise_rejected_when_tokenizer_erases_the_perturbation() -> None
 
     with pytest.raises(RuntimeError, match="erased before reaching the model"):
         run_exp6(
-            Exp6Config(model="unit-test", noise_levels=(0, 1), device="cpu"),
+            Exp6Config(model="tests/unit-test", noise_levels=(0, 1), device="cpu"),
             questions=["one"],
             extractor=ErasingExtractor(),
         )
