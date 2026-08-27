@@ -194,6 +194,36 @@ def test_config_allows_level_zero_and_rejects_false_faithful_scope() -> None:
         ).validate()
 
 
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("noise_levels", (0, True), "non-negative integers"),
+        ("noise_levels", (0, 1.5), "non-negative integers"),
+        ("seed", True, "seed must be an integer"),
+        ("limit", True, "limit must be a positive integer"),
+        ("max_length", True, "max_length must be a positive integer"),
+        ("trust_remote_code", "false", "trust_remote_code must be a boolean"),
+        ("add_generation_prompt", "false", "add_generation_prompt must be a boolean"),
+        ("dtype", "float128", "dtype must be one of"),
+        ("device", False, "device must be a non-empty string"),
+    ],
+)
+def test_config_rejects_ambiguous_runtime_types(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    values: dict[str, object] = {
+        "model": "tests/unit-test",
+        "noise_levels": (0, 1),
+        "device": "cpu",
+    }
+    values[field] = value
+    with pytest.raises(ValueError, match=message):
+        Exp6Config(**values).validate()  # type: ignore[arg-type]
+
+
 def test_dataset_load_uses_one_verified_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
