@@ -31,6 +31,24 @@ def test_load_exp6_config_fails_closed_without_level_zero(tmp_path: Path) -> Non
         _load_config(config_path)
 
 
+
+@pytest.mark.parametrize("field", ["trust_remote_code", "add_generation_prompt"])
+def test_load_exp6_config_rejects_quoted_false_booleans(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    config_path = tmp_path / "quoted-false.yaml"
+    config_path.write_text(
+        "exp6:\n"
+        "  model: tests/test-model\n"
+        "  noise_levels: [0]\n"
+        f'  {field}: "false"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=rf"{field} must be a boolean"):
+        _load_config(config_path)
+
+
 def test_exp6_cli_contract() -> None:
     parsed = build_parser().parse_args(
         [
