@@ -94,7 +94,7 @@ class Exp6Config:
             ("dtype", self.dtype),
         )
         for field, value in string_fields:
-            if type(value) is not str or not value:
+            if not isinstance(value, str) or not value:
                 raise ValueError(f"{field} must be a non-empty string")
         if self.protocol_scope != ADAPTATION_SCOPE:
             raise ValueError(
@@ -108,24 +108,33 @@ class Exp6Config:
         if not _is_full_commit_sha(self.dataset_revision):
             raise ValueError("dataset_revision must be a full immutable 40-character commit SHA")
         if (
-            type(self.noise_levels) is not tuple
+            not isinstance(self.noise_levels, tuple)
             or not self.noise_levels
-            or any(type(level) is not int or level < 0 for level in self.noise_levels)
+            or any(
+                not isinstance(level, int) or isinstance(level, bool) or level < 0
+                for level in self.noise_levels
+            )
         ):
             raise ValueError("noise_levels must contain one or more non-negative integers")
         if 0 not in self.noise_levels:
             raise ValueError("noise_levels must include the independently executed level-0 control")
         if len(set(self.noise_levels)) != len(self.noise_levels):
             raise ValueError("noise_levels must not contain duplicates")
-        if type(self.seed) is not int:
+        if not isinstance(self.seed, int) or isinstance(self.seed, bool):
             raise ValueError("seed must be an integer")
-        if self.limit is not None and (type(self.limit) is not int or self.limit <= 0):
+        if self.limit is not None and (
+            not isinstance(self.limit, int) or isinstance(self.limit, bool) or self.limit <= 0
+        ):
             raise ValueError("limit must be a positive integer when supplied")
-        if type(self.max_length) is not int or self.max_length <= 0:
+        if (
+            not isinstance(self.max_length, int)
+            or isinstance(self.max_length, bool)
+            or self.max_length <= 0
+        ):
             raise ValueError("max_length must be a positive integer")
-        if type(self.trust_remote_code) is not bool:
+        if not isinstance(self.trust_remote_code, bool):
             raise ValueError("trust_remote_code must be a boolean")
-        if type(self.add_generation_prompt) is not bool:
+        if not isinstance(self.add_generation_prompt, bool):
             raise ValueError("add_generation_prompt must be a boolean")
         if self.dtype not in {"bfloat16", "float16", "float32"}:
             raise ValueError("dtype must be one of: bfloat16, float16, float32")
