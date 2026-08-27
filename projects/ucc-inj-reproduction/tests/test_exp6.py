@@ -495,6 +495,7 @@ def test_runtime_loads_model_and_tokenizer_from_one_verified_snapshot(
     assert provenance["model"]["resolved_commit"] == DEFAULT_GEMMA_REVISION
     assert provenance["tokenizer"]["resolved_commit"] == DEFAULT_GEMMA_REVISION
     assert provenance["model"]["snapshot_binding"] == "verified_huggingface_snapshot_directory"
+    assert provenance["tokenizer"]["snapshot_binding"] == "verified_huggingface_snapshot_directory"
 
 
 def test_runtime_rejects_snapshot_directory_for_a_different_commit(
