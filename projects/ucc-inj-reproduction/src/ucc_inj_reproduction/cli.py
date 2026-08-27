@@ -28,14 +28,16 @@ def _load_config(path: Path) -> Exp6Config:
 
 def _exp6(args: argparse.Namespace) -> int:
     output_dir = Path(args.output_dir)
-    if output_dir.exists():
-        raise FileExistsError(f"output directory already exists: {output_dir}")
     config = _load_config(Path(args.config))
     if args.limit is not None:
         config = Exp6Config(**{**config.__dict__, "limit": args.limit})
     if args.device is not None:
         config = Exp6Config(**{**config.__dict__, "device": args.device})
     config.validate()
+    try:
+        output_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as error:
+        raise FileExistsError(f"output path is already occupied: {output_dir}") from error
     records, summary, provenance = run_exp6(
         config,
         progress=lambda values: tqdm(values, desc="exp6"),
@@ -46,6 +48,7 @@ def _exp6(args: argparse.Namespace) -> int:
         records=records,
         summary=summary,
         provenance=provenance,
+        reserved_output_dir=True,
     )
     return 0
 
