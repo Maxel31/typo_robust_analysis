@@ -1,16 +1,19 @@
-"""Implementation of UCC-Inj experiment 6.
+"""Controlled adaptation of UCC-Inj experiment 6.
 
-The reference repository compares every GSM8K test question with variants in
-which one, two, or three random Unicode variation selectors are inserted after
-each character.  It feeds each clean/noisy question through the same chat
-template, extracts the hidden state at the *last model-input token*, then
-reports clean--noisy cosine similarity for every hidden-state index.
+The upstream experiment uses Qwen/Qwen3-30B-A3B and checked-in noisy
+GSM8K files. This module intentionally implements a reproducibility-hardened
+Gemma protocol adaptation. It never silently truncates either side of a
+clean/noisy pair.
 """
 
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import json
+import os
+import platform
+import sys
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -20,34 +23,106 @@ import numpy as np
 
 from .noise import inject_variation_selector_noise
 
+ADAPTATION_SCOPE = "adaptation"
+COMPARISON_POSITION = "last_non_padding_model_input_token"
+UPSTREAM_REPOSITORY = "https://github.com/yifusuyi/UCC-Inj"
+UPSTREAM_COMMIT = "aec814fcbb4388fa6fa874fbcec08a3ab1f78190"
+UPSTREAM_MODEL = "Qwen/Qwen3-30B-A3B"
+UPSTREAM_EXPERIMENT_SCRIPT = "exp6/test_similarity_with_clean_text.py"
+UPSTREAM_NOISE_ENCODER = "datasets/gsm8k/main/encoder.py"
+
+
+class InputTooLongError(ValueError):
+    """Raised before inference when a complete model input exceeds the hard cap."""
+
 
 @dataclass(frozen=True)
 class Exp6Config:
     model: str
+    protocol_scope: str = ADAPTATION_SCOPE
+    model_revision: str | None = "main"
     dataset: str = "openai/gsm8k"
+    dataset_revision: str | None = "main"
     dataset_config: str = "main"
     split: str = "test"
     question_field: str = "question"
     seed: int = 42
-    noise_levels: tuple[int, ...] = (1, 2, 3)
+    noise_levels: tuple[int, ...] = (0, 1, 2, 3)
     limit: int | None = None
-    max_length: int = 2048
+    max_length: int = 131072
     device: str = "cuda"
     dtype: str = "bfloat16"
     trust_remote_code: bool = False
     add_generation_prompt: bool = False
 
     def validate(self) -> None:
+        if self.protocol_scope != ADAPTATION_SCOPE:
+            raise ValueError(
+                "this implementation only supports protocol_scope='adaptation'; "
+                "a faithful UCC-Inj reproduction requires the pinned Qwen/data artifacts"
+            )
         if not self.model:
             raise ValueError("model is required")
-        if not self.noise_levels or any(level <= 0 for level in self.noise_levels):
-            raise ValueError("noise_levels must contain one or more positive integers")
+        if not self.noise_levels or any(level < 0 for level in self.noise_levels):
+            raise ValueError("noise_levels must contain one or more non-negative integers")
+        if 0 not in self.noise_levels:
+            raise ValueError("noise_levels must include the independently executed level-0 control")
         if len(set(self.noise_levels)) != len(self.noise_levels):
             raise ValueError("noise_levels must not contain duplicates")
         if self.limit is not None and self.limit <= 0:
             raise ValueError("limit must be positive when supplied")
         if self.max_length <= 0:
             raise ValueError("max_length must be positive")
+
+
+@dataclass(frozen=True)
+class ExtractedStates:
+    hidden_states: np.ndarray
+    input_ids: tuple[int, ...]
+    input_token_count: int
+    token_index: int
+    terminal_token_id: int
+    input_ids_sha256: str
+    template_suffix_sha256: str
+    logical_position: str = COMPARISON_POSITION
+    truncated: bool = False
+
+
+@dataclass(frozen=True)
+class _QuestionCohort:
+    questions: tuple[str, ...]
+    provenance: dict[str, Any]
+
+
+def _sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def _sha256_text(value: str) -> str:
+    return _sha256_bytes(value.encode("utf-8"))
+
+
+def _sha256_ordered_texts(values: Sequence[str]) -> str:
+    digest = hashlib.sha256()
+    for value in values:
+        encoded = value.encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+    return digest.hexdigest()
+
+
+def _sha256_token_ids(values: Sequence[int]) -> str:
+    array = np.asarray(tuple(values), dtype="<i8")
+    return _sha256_bytes(array.tobytes(order="C"))
+
+
+def _template_suffix_sha256(rendered: str, content: str) -> str:
+    first = rendered.find(content)
+    if first < 0:
+        raise ValueError("chat template did not preserve the exact user content")
+    if rendered.find(content, first + len(content)) >= 0:
+        raise ValueError("chat template contains the full user content more than once")
+    return _sha256_text(rendered[first + len(content) :])
 
 
 def stable_example_seed(*, root_seed: int, example_index: int, noise_level: int) -> int:
@@ -65,43 +140,79 @@ def last_non_padding_index(attention_mask: Any) -> int:
     return int(valid[-1])
 
 
+def common_suffix_token_count(left: Sequence[int], right: Sequence[int]) -> int:
+    """Return the number of identical terminal token IDs in two complete inputs."""
+    count = 0
+    for left_value, right_value in zip(reversed(left), reversed(right), strict=False):
+        if left_value != right_value:
+            break
+        count += 1
+    return count
+
+
 def cosine_per_layer(clean: np.ndarray, noisy: np.ndarray) -> np.ndarray:
-    """Compute cosine similarity for matching ``[layer, hidden]`` arrays."""
+    """Compute finite cosine similarities for matching layer-by-hidden arrays."""
     clean_values = np.asarray(clean, dtype=np.float64)
     noisy_values = np.asarray(noisy, dtype=np.float64)
     if clean_values.shape != noisy_values.shape or clean_values.ndim != 2:
         raise ValueError("clean and noisy states must both have shape [layers, hidden]")
+    if not np.all(np.isfinite(clean_values)) or not np.all(np.isfinite(noisy_values)):
+        raise ValueError("hidden states contain non-finite values")
     denominator = np.linalg.norm(clean_values, axis=1) * np.linalg.norm(noisy_values, axis=1)
-    result = np.full(clean_values.shape[0], np.nan, dtype=np.float64)
-    valid = denominator > 0
-    result[valid] = np.sum(clean_values[valid] * noisy_values[valid], axis=1) / denominator[valid]
+    if np.any(denominator <= 0) or not np.all(np.isfinite(denominator)):
+        raise ValueError("cosine similarity is undefined for zero or non-finite norms")
+    result = np.sum(clean_values * noisy_values, axis=1) / denominator
+    if not np.all(np.isfinite(result)):
+        raise ValueError("cosine similarity produced non-finite values")
     return result
 
 
+def cosine_for_extracted_pair(clean: ExtractedStates, noisy: ExtractedStates) -> np.ndarray:
+    """Compare the same logical endpoint of two complete, untruncated inputs."""
+    if clean.truncated or noisy.truncated:
+        raise ValueError("truncated inputs are not valid for the exp6 comparison")
+    if (
+        clean.logical_position != COMPARISON_POSITION
+        or noisy.logical_position != COMPARISON_POSITION
+    ):
+        raise ValueError(
+            "clean and noisy states must target the same logical position: "
+            f"{COMPARISON_POSITION}"
+        )
+    if clean.template_suffix_sha256 != noisy.template_suffix_sha256:
+        raise ValueError("clean and noisy chat-template suffixes differ")
+    if clean.terminal_token_id != noisy.terminal_token_id:
+        raise ValueError("clean and noisy complete inputs end at different terminal token IDs")
+    if common_suffix_token_count(clean.input_ids, noisy.input_ids) == 0:
+        raise ValueError("clean and noisy complete inputs have no shared terminal token suffix")
+    return cosine_per_layer(clean.hidden_states, noisy.hidden_states)
+
+
 def summarise_layer_cosines(records: Iterable[dict[str, Any]]) -> list[dict[str, float | int]]:
-    """Aggregate per-example cosine records into one row per noise-level/layer."""
+    """Aggregate records into one row per noise level and hidden-state index."""
     grouped: dict[tuple[int, int], list[float]] = {}
     for record in records:
         level = int(record["noise_level"])
-        for layer, value in enumerate(record["cosine_similarity"]):
+        for hidden_state_index, value in enumerate(record["cosine_similarity"]):
             numeric = float(value)
-            if np.isfinite(numeric):
-                grouped.setdefault((level, layer), []).append(numeric)
+            if not np.isfinite(numeric):
+                raise ValueError("records contain a non-finite cosine similarity")
+            grouped.setdefault((level, hidden_state_index), []).append(numeric)
     return [
         {
             "noise_level": level,
-            "layer": layer,
+            "hidden_state_index": hidden_state_index,
             "n": len(values),
             "mean_cosine": float(np.mean(values)),
             "median_cosine": float(np.median(values)),
             "std_cosine": float(np.std(values, ddof=0)),
         }
-        for (level, layer), values in sorted(grouped.items())
+        for (level, hidden_state_index), values in sorted(grouped.items())
     ]
 
 
 class HiddenStateExtractor:
-    """Extract last-input-token hidden states without depending on padding side."""
+    """Extract endpoint hidden states from complete prompts without truncation."""
 
     def __init__(self, *, tokenizer: Any, model: Any, config: Exp6Config, torch_module: Any) -> None:
         self.tokenizer = tokenizer
@@ -109,24 +220,99 @@ class HiddenStateExtractor:
         self.config = config
         self.torch = torch_module
 
-    def states(self, text: str) -> np.ndarray:
+    def states(self, text: str) -> ExtractedStates:
         messages = [{"role": "user", "content": text}]
+        rendered = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=self.config.add_generation_prompt,
+        )
+        if not isinstance(rendered, str):
+            raise TypeError("tokenizer chat template must render to text")
         encoded = self.tokenizer.apply_chat_template(
             messages,
             tokenize=True,
             add_generation_prompt=self.config.add_generation_prompt,
             return_tensors="pt",
             return_dict=True,
-            truncation=True,
-            max_length=self.config.max_length,
+            truncation=False,
         )
-        encoded = {key: value.to(self.config.device) for key, value in encoded.items()}
+        if "input_ids" not in encoded or "attention_mask" not in encoded:
+            raise ValueError("tokenizer output must include input_ids and attention_mask")
+        input_values = encoded["input_ids"][0].detach().cpu().numpy().reshape(-1)
+        mask_values = encoded["attention_mask"][0].detach().cpu().numpy().reshape(-1)
+        if input_values.size != mask_values.size:
+            raise ValueError("input_ids and attention_mask lengths differ")
+        valid_positions = np.flatnonzero(mask_values)
+        if valid_positions.size == 0:
+            raise ValueError("attention mask has no non-padding tokens")
+        input_ids = tuple(int(input_values[position]) for position in valid_positions)
+        if len(input_ids) > self.config.max_length:
+            raise InputTooLongError(
+                f"complete model input has {len(input_ids)} tokens, "
+                f"exceeding max_length={self.config.max_length}; refusing to truncate"
+            )
+        index = int(valid_positions[-1])
+        device_encoded = {key: value.to(self.config.device) for key, value in encoded.items()}
         with self.torch.inference_mode():
-            output = self.model(**encoded, output_hidden_states=True, use_cache=False)
-        index = last_non_padding_index(encoded["attention_mask"][0].detach().cpu().numpy())
-        return np.stack(
-            [hidden[0, index, :].float().cpu().numpy() for hidden in output.hidden_states], axis=0
+            output = self.model(**device_encoded, output_hidden_states=True, use_cache=False)
+        hidden_states = np.stack(
+            [hidden[0, index, :].float().cpu().numpy() for hidden in output.hidden_states],
+            axis=0,
         )
+        return ExtractedStates(
+            hidden_states=hidden_states,
+            input_ids=input_ids,
+            input_token_count=len(input_ids),
+            token_index=index,
+            terminal_token_id=input_ids[-1],
+            input_ids_sha256=_sha256_token_ids(input_ids),
+            template_suffix_sha256=_template_suffix_sha256(rendered, text),
+        )
+
+    def runtime_provenance(self) -> dict[str, Any]:
+        model_config = getattr(self.model, "config", None)
+        config_dict = model_config.to_dict() if hasattr(model_config, "to_dict") else {}
+        tokenizer_kwargs = getattr(self.tokenizer, "init_kwargs", {}) or {}
+        cuda = getattr(self.torch, "cuda", None)
+        gpu_name: str | None = None
+        if self.config.device.startswith("cuda") and cuda is not None and cuda.is_available():
+            gpu_name = str(cuda.get_device_name(self.config.device))
+        return {
+            "model": {
+                "requested_id": self.config.model,
+                "requested_revision": self.config.model_revision,
+                "resolved_name_or_path": str(getattr(model_config, "_name_or_path", self.config.model)),
+                "resolved_commit": getattr(model_config, "_commit_hash", None),
+                "class": type(self.model).__name__,
+                "config_sha256": _sha256_text(
+                    json.dumps(config_dict, ensure_ascii=False, sort_keys=True, allow_nan=False)
+                ),
+            },
+            "tokenizer": {
+                "resolved_name_or_path": str(getattr(self.tokenizer, "name_or_path", self.config.model)),
+                "resolved_commit": tokenizer_kwargs.get("_commit_hash"),
+                "class": type(self.tokenizer).__name__,
+                "chat_template_sha256": _sha256_text(
+                    str(getattr(self.tokenizer, "chat_template", ""))
+                ),
+                "vocab_size": getattr(self.tokenizer, "vocab_size", None),
+                "padding_side": getattr(self.tokenizer, "padding_side", None),
+                "truncation_side": getattr(self.tokenizer, "truncation_side", None),
+                "model_max_length": getattr(self.tokenizer, "model_max_length", None),
+                "add_generation_prompt": self.config.add_generation_prompt,
+                "truncation_policy": "reject",
+            },
+            "software": {
+                "python": sys.version,
+                "platform": platform.platform(),
+                "torch": str(getattr(self.torch, "__version__", "unknown")),
+                "transformers": importlib.metadata.version("transformers"),
+                "datasets": importlib.metadata.version("datasets"),
+                "cuda": str(getattr(getattr(self.torch, "version", None), "cuda", None)),
+                "gpu": gpu_name,
+            },
+        }
 
 
 def _load_runtime(config: Exp6Config) -> HiddenStateExtractor:
@@ -137,24 +323,70 @@ def _load_runtime(config: Exp6Config) -> HiddenStateExtractor:
     if config.device.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is unavailable")
     dtype = getattr(torch, config.dtype)
-    tokenizer = AutoTokenizer.from_pretrained(config.model, trust_remote_code=config.trust_remote_code)
+    revision_arguments = {"revision": config.model_revision} if config.model_revision else {}
+    tokenizer = AutoTokenizer.from_pretrained(
+        config.model, trust_remote_code=config.trust_remote_code, **revision_arguments
+    )
     model = AutoModelForCausalLM.from_pretrained(
         config.model,
         dtype=dtype,
         trust_remote_code=config.trust_remote_code,
+        **revision_arguments,
     ).to(config.device).eval()
     return HiddenStateExtractor(tokenizer=tokenizer, model=model, config=config, torch_module=torch)
 
 
-def load_gsm8k_questions(config: Exp6Config) -> list[str]:
-    """Load the reference study's GSM8K split (1319 examples for ``test``)."""
+def _load_question_cohort(config: Exp6Config) -> _QuestionCohort:
     from datasets import load_dataset
 
-    dataset = load_dataset(config.dataset, config.dataset_config, split=config.split)
-    questions = [str(row[config.question_field]) for row in dataset]
-    if config.limit is not None:
-        questions = questions[: config.limit]
-    return questions
+    revision_arguments = {"revision": config.dataset_revision} if config.dataset_revision else {}
+    dataset = load_dataset(
+        config.dataset, config.dataset_config, split=config.split, **revision_arguments
+    )
+    available_rows = len(dataset)
+    rows = dataset if config.limit is None else dataset.select(range(min(config.limit, available_rows)))
+    questions = tuple(str(row[config.question_field]) for row in rows)
+    info = getattr(dataset, "info", None)
+    return _QuestionCohort(
+        questions=questions,
+        provenance={
+            "requested_id": config.dataset,
+            "requested_config": config.dataset_config,
+            "requested_split": config.split,
+            "requested_revision": config.dataset_revision,
+            "fingerprint": getattr(dataset, "_fingerprint", None),
+            "builder_name": getattr(info, "builder_name", None),
+            "config_name": getattr(info, "config_name", None),
+            "version": str(getattr(info, "version", None)),
+            "available_num_rows": available_rows,
+            "selected_num_rows": len(questions),
+            "selected_questions_sha256": _sha256_ordered_texts(questions),
+        },
+    )
+
+
+def load_gsm8k_questions(config: Exp6Config) -> list[str]:
+    """Load the configured GSM8K cohort."""
+    return list(_load_question_cohort(config).questions)
+
+
+def _implementation_provenance() -> dict[str, Any]:
+    package_dir = Path(__file__).resolve().parent
+    project_dir = package_dir.parents[1]
+    files = {
+        "exp6.py": package_dir / "exp6.py",
+        "noise.py": package_dir / "noise.py",
+        "cli.py": package_dir / "cli.py",
+        "uv.lock": project_dir / "uv.lock",
+    }
+    return {
+        "source_sha256": {
+            name: _sha256_bytes(path.read_bytes()) if path.is_file() else None
+            for name, path in files.items()
+        },
+        "git_commit_environment": os.environ.get("GITHUB_SHA")
+        or os.environ.get("TYPO_ROBUST_GIT_COMMIT"),
+    }
 
 
 def run_exp6(
@@ -163,35 +395,94 @@ def run_exp6(
     questions: Sequence[str] | None = None,
     extractor: HiddenStateExtractor | None = None,
     progress: Callable[[Iterable[Any]], Iterable[Any]] = lambda values: values,
-) -> tuple[list[dict[str, Any]], list[dict[str, float | int]]]:
-    """Run exp6 and return detailed records and per-layer summary statistics."""
+) -> tuple[list[dict[str, Any]], list[dict[str, float | int]], dict[str, Any]]:
+    """Run the adaptation and return records, summary, and frozen provenance."""
     config.validate()
-    active_questions = list(questions) if questions is not None else load_gsm8k_questions(config)
-    if config.limit is not None:
-        active_questions = active_questions[: config.limit]
+    if questions is None:
+        cohort = _load_question_cohort(config)
+    else:
+        selected = list(questions)
+        if config.limit is not None:
+            selected = selected[: config.limit]
+        injected = tuple(str(question) for question in selected)
+        cohort = _QuestionCohort(
+            questions=injected,
+            provenance={
+                "source": "injected",
+                "selected_num_rows": len(injected),
+                "selected_questions_sha256": _sha256_ordered_texts(injected),
+            },
+        )
     active_extractor = extractor if extractor is not None else _load_runtime(config)
     records: list[dict[str, Any]] = []
-    for example_index, question in enumerate(progress(active_questions)):
+    for example_index, question in enumerate(progress(cohort.questions)):
         clean_states = active_extractor.states(question)
         for level in config.noise_levels:
+            noise_seed = stable_example_seed(
+                root_seed=config.seed, example_index=example_index, noise_level=level
+            )
             noisy_question = inject_variation_selector_noise(
-                question,
-                noise_level=level,
-                seed=stable_example_seed(
-                    root_seed=config.seed, example_index=example_index, noise_level=level
-                ),
+                question, noise_level=level, seed=noise_seed
             )
             noisy_states = active_extractor.states(noisy_question)
-            similarities = cosine_per_layer(clean_states, noisy_states)
+            if level == 0:
+                if noisy_question != question:
+                    raise RuntimeError("level-0 control changed the input text")
+                if clean_states.input_ids != noisy_states.input_ids:
+                    raise RuntimeError("level-0 control changed tokenization")
+            similarities = cosine_for_extracted_pair(clean_states, noisy_states)
+            if level == 0 and not np.allclose(similarities, 1.0, rtol=1e-6, atol=1e-6):
+                raise RuntimeError("level-0 control did not produce unit cosine similarity")
             records.append(
                 {
-                    "schema_version": "ucc-inj-exp6/v1",
+                    "schema_version": "ucc-inj-exp6/v2",
+                    "protocol_scope": config.protocol_scope,
+                    "upstream_commit": UPSTREAM_COMMIT,
                     "example_index": example_index,
                     "noise_level": level,
+                    "noise_seed": noise_seed,
+                    "comparison_position": COMPARISON_POSITION,
+                    "clean_text_sha256": _sha256_text(question),
+                    "noisy_text_sha256": _sha256_text(noisy_question),
+                    "clean_input_tokens": clean_states.input_token_count,
+                    "noisy_input_tokens": noisy_states.input_token_count,
+                    "clean_token_index": clean_states.token_index,
+                    "noisy_token_index": noisy_states.token_index,
+                    "clean_terminal_token_id": clean_states.terminal_token_id,
+                    "noisy_terminal_token_id": noisy_states.terminal_token_id,
+                    "clean_input_ids_sha256": clean_states.input_ids_sha256,
+                    "noisy_input_ids_sha256": noisy_states.input_ids_sha256,
+                    "template_suffix_sha256": clean_states.template_suffix_sha256,
+                    "common_terminal_suffix_tokens": common_suffix_token_count(
+                        clean_states.input_ids, noisy_states.input_ids
+                    ),
+                    "truncated": False,
                     "cosine_similarity": [float(value) for value in similarities],
                 }
             )
-    return records, summarise_layer_cosines(records)
+    runtime_provenance = (
+        active_extractor.runtime_provenance()
+        if hasattr(active_extractor, "runtime_provenance")
+        else {"extractor": type(active_extractor).__name__, "injected": True}
+    )
+    provenance = {
+        "schema_version": "ucc-inj-exp6-provenance/v2",
+        "protocol": {
+            "scope": config.protocol_scope,
+            "upstream_repository": UPSTREAM_REPOSITORY,
+            "upstream_commit": UPSTREAM_COMMIT,
+            "upstream_model": UPSTREAM_MODEL,
+            "upstream_experiment_script": UPSTREAM_EXPERIMENT_SCRIPT,
+            "upstream_noise_encoder": UPSTREAM_NOISE_ENCODER,
+            "adaptation_model": config.model,
+        },
+        "resolved": {
+            **runtime_provenance,
+            "dataset": cohort.provenance,
+            "implementation": _implementation_provenance(),
+        },
+    }
+    return records, summarise_layer_cosines(records), provenance
 
 
 def write_exp6_results(
@@ -200,15 +491,24 @@ def write_exp6_results(
     config: Exp6Config,
     records: Sequence[dict[str, Any]],
     summary: Sequence[dict[str, float | int]],
+    provenance: dict[str, Any],
 ) -> None:
-    """Write self-describing JSONL/JSON results without replacing prior runs."""
+    """Write a complete, strict-JSON result directory without overwriting runs."""
+    config_payload = json.dumps(
+        asdict(config), ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False
+    ) + "\n"
+    provenance_payload = json.dumps(
+        provenance, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False
+    ) + "\n"
+    records_payload = "".join(
+        json.dumps(record, ensure_ascii=False, sort_keys=True, allow_nan=False) + "\n"
+        for record in records
+    )
+    summary_payload = json.dumps(
+        list(summary), ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False
+    ) + "\n"
     output_dir.mkdir(parents=True, exist_ok=False)
-    (output_dir / "config.json").write_text(
-        json.dumps(asdict(config), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    with (output_dir / "per_example.jsonl").open("w", encoding="utf-8") as handle:
-        for record in records:
-            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
-    (output_dir / "layer_summary.json").write_text(
-        json.dumps(list(summary), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    (output_dir / "config.json").write_text(config_payload, encoding="utf-8")
+    (output_dir / "provenance.json").write_text(provenance_payload, encoding="utf-8")
+    (output_dir / "per_example.jsonl").write_text(records_payload, encoding="utf-8")
+    (output_dir / "layer_summary.json").write_text(summary_payload, encoding="utf-8")
