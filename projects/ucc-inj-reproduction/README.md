@@ -64,11 +64,18 @@ Each new output directory contains:
 - `layer_summary.json`
 
 The configuration pins Gemma to immutable Hugging Face commit
-`093f9f388b31de276ce2de164bdc2081324b9767`; both the model and tokenizer
-load from that exact snapshot. The provenance manifest records this revision,
-the tokenizer-vocabulary and chat-template hashes, dataset revision/fingerprint
-and ordered cohort hash, relevant source-file and lockfile hashes, and
-software/GPU versions.
+`093f9f388b31de276ce2de164bdc2081324b9767`. The runtime resolves that exact
+commit with `snapshot_download`, verifies the returned snapshot directory's
+commit, and loads both the model and tokenizer from that one local snapshot
+with network fallback disabled. It never labels a merely requested revision as
+resolved. The default GSM8K revision is likewise an immutable 40-character
+commit and mutable dataset refs are rejected.
+
+The provenance manifest records the verified snapshot commit, the
+tokenizer-vocabulary and chat-template hashes, dataset revision/fingerprint and
+ordered cohort hash, relevant source-file and lockfile hashes, and software/GPU
+versions. Injected test runtimes that bypass the verified loader are explicitly
+labeled unverified.
 JSON serialization rejects NaN and Infinity. Empty cohorts and empty result
 payloads are rejected. Existing output directories are detected before GPU
 inference and are never overwritten.
