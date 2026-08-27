@@ -31,10 +31,29 @@ UPSTREAM_MODEL = "Qwen/Qwen3-30B-A3B"
 UPSTREAM_EXPERIMENT_SCRIPT = "exp6/test_similarity_with_clean_text.py"
 UPSTREAM_NOISE_ENCODER = "datasets/gsm8k/main/encoder.py"
 DEFAULT_GEMMA_REVISION = "093f9f388b31de276ce2de164bdc2081324b9767"
+DEFAULT_GSM8K_REVISION = "cc7b047b6e5bb11b4f1af84efc572db110a51b3c"
 
 
 class InputTooLongError(ValueError):
     """Raised before inference when a complete model input exceeds the hard cap."""
+
+
+def _is_full_commit_sha(value: str) -> bool:
+    lowered = value.lower()
+    return len(lowered) == 40 and all(character in "0123456789abcdef" for character in lowered)
+
+
+def _validate_huggingface_repo_id(value: str) -> None:
+    """Reject local paths and ambiguous model sources before snapshot resolution."""
+    parts = value.split("/")
+    if (
+        len(parts) != 2
+        or any(not part or part in {".", ".."} for part in parts)
+        or "\\" in value
+        or "://" in value
+        or value.startswith((".", "~", "/"))
+    ):
+        raise ValueError("model must be a Hugging Face Hub repository ID in owner/name form")
 
 
 @dataclass(frozen=True)
@@ -43,7 +62,7 @@ class Exp6Config:
     protocol_scope: str = ADAPTATION_SCOPE
     model_revision: str = DEFAULT_GEMMA_REVISION
     dataset: str = "openai/gsm8k"
-    dataset_revision: str | None = "main"
+    dataset_revision: str = DEFAULT_GSM8K_REVISION
     dataset_config: str = "main"
     split: str = "test"
     question_field: str = "question"
@@ -64,11 +83,11 @@ class Exp6Config:
             )
         if not self.model:
             raise ValueError("model is required")
-        revision = self.model_revision.lower()
-        if len(revision) != 40 or any(
-            character not in "0123456789abcdef" for character in revision
-        ):
+        _validate_huggingface_repo_id(self.model)
+        if not _is_full_commit_sha(self.model_revision):
             raise ValueError("model_revision must be a full immutable 40-character commit SHA")
+        if not _is_full_commit_sha(self.dataset_revision):
+            raise ValueError("dataset_revision must be a full immutable 40-character commit SHA")
         if not self.noise_levels or any(level < 0 for level in self.noise_levels):
             raise ValueError("noise_levels must contain one or more non-negative integers")
         if 0 not in self.noise_levels:
@@ -252,11 +271,20 @@ def summarise_layer_cosines(records: Iterable[dict[str, Any]]) -> list[dict[str,
 class HiddenStateExtractor:
     """Extract endpoint hidden states from complete prompts without truncation."""
 
-    def __init__(self, *, tokenizer: Any, model: Any, config: Exp6Config, torch_module: Any) -> None:
+    def __init__(
+        self,
+        *,
+        tokenizer: Any,
+        model: Any,
+        config: Exp6Config,
+        torch_module: Any,
+        resolved_snapshot_commit: str | None = None,
+    ) -> None:
         self.tokenizer = tokenizer
         self.model = model
         self.config = config
         self.torch = torch_module
+        self.resolved_snapshot_commit = resolved_snapshot_commit
 
     def states(self, text: str) -> ExtractedStates:
         messages = [{"role": "user", "content": text}]
@@ -317,7 +345,12 @@ class HiddenStateExtractor:
                 "requested_id": self.config.model,
                 "requested_revision": self.config.model_revision,
                 "resolved_name_or_path": str(getattr(model_config, "_name_or_path", self.config.model)),
-                "resolved_commit": self.config.model_revision,
+                "resolved_commit": self.resolved_snapshot_commit,
+                "snapshot_binding": (
+                    "verified_huggingface_snapshot_directory"
+                    if self.resolved_snapshot_commit is not None
+                    else "unverified_injected_runtime"
+                ),
                 "loader_reported_commit": getattr(model_config, "_commit_hash", None),
                 "class": type(self.model).__name__,
                 "config_sha256": _sha256_text(
@@ -328,7 +361,12 @@ class HiddenStateExtractor:
                 "requested_id": self.config.model,
                 "requested_revision": self.config.model_revision,
                 "resolved_name_or_path": str(getattr(self.tokenizer, "name_or_path", self.config.model)),
-                "resolved_commit": self.config.model_revision,
+                "resolved_commit": self.resolved_snapshot_commit,
+                "snapshot_binding": (
+                    "verified_huggingface_snapshot_directory"
+                    if self.resolved_snapshot_commit is not None
+                    else "unverified_injected_runtime"
+                ),
                 "class": type(self.tokenizer).__name__,
                 "vocab_sha256": _tokenizer_vocab_sha256(self.tokenizer),
                 "chat_template_sha256": _sha256_text(
@@ -355,29 +393,47 @@ class HiddenStateExtractor:
 
 def _load_runtime(config: Exp6Config) -> HiddenStateExtractor:
     import torch
+    from huggingface_hub import snapshot_download
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     config.validate()
     if config.device.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is unavailable")
+
+    snapshot_path = Path(
+        snapshot_download(repo_id=config.model, revision=config.model_revision)
+    ).resolve()
+    resolved_commit = snapshot_path.name.lower()
+    if resolved_commit != config.model_revision.lower():
+        raise RuntimeError(
+            "Hugging Face snapshot resolved a different commit: "
+            f"requested={config.model_revision}, resolved={resolved_commit}"
+        )
+
     dtype = getattr(torch, config.dtype)
-    revision_arguments = {"revision": config.model_revision}
+    local_arguments = {"local_files_only": True}
     tokenizer = AutoTokenizer.from_pretrained(
-        config.model, trust_remote_code=config.trust_remote_code, **revision_arguments
+        str(snapshot_path), trust_remote_code=config.trust_remote_code, **local_arguments
     )
     model = AutoModelForCausalLM.from_pretrained(
-        config.model,
+        str(snapshot_path),
         dtype=dtype,
         trust_remote_code=config.trust_remote_code,
-        **revision_arguments,
+        **local_arguments,
     ).to(config.device).eval()
     loader_commit = getattr(getattr(model, "config", None), "_commit_hash", None)
-    if loader_commit is not None and loader_commit != config.model_revision:
+    if loader_commit is not None and loader_commit.lower() != resolved_commit:
         raise RuntimeError(
-            "model loader resolved a different commit: "
-            f"requested={config.model_revision}, loaded={loader_commit}"
+            "model loader reported a different commit from the verified snapshot: "
+            f"snapshot={resolved_commit}, loader={loader_commit}"
         )
-    return HiddenStateExtractor(tokenizer=tokenizer, model=model, config=config, torch_module=torch)
+    return HiddenStateExtractor(
+        tokenizer=tokenizer,
+        model=model,
+        config=config,
+        torch_module=torch,
+        resolved_snapshot_commit=resolved_commit,
+    )
 
 
 def _load_question_cohort(config: Exp6Config) -> _QuestionCohort:
