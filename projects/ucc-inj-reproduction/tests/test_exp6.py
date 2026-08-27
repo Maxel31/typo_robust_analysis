@@ -465,7 +465,9 @@ def test_runtime_loads_model_and_tokenizer_from_one_verified_snapshot(
         @staticmethod
         def from_pretrained(source: str, **kwargs: Any) -> FakeTokenizer:
             load_calls.append(("tokenizer", source, kwargs["local_files_only"]))
-            return FakeTokenizer({"one": [1, 9]})
+            tokenizer = FakeTokenizer({"one": [1, 9]})
+            tokenizer.init_kwargs = {}
+            return tokenizer
 
     class ModelFactory:
         @staticmethod
