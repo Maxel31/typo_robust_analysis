@@ -178,6 +178,13 @@ def test_config_allows_level_zero_and_rejects_false_faithful_scope() -> None:
             noise_levels=(0,),
             device="cpu",
         ).validate()
+    with pytest.raises(ValueError, match="dataset must be a Hugging Face Hub"):
+        Exp6Config(
+            model="tests/unit-test",
+            dataset="/tmp/local_dataset.py",
+            noise_levels=(0,),
+            device="cpu",
+        ).validate()
     with pytest.raises(ValueError, match="dataset_revision"):
         Exp6Config(
             model="tests/unit-test",
