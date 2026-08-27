@@ -44,6 +44,7 @@ def _exp6(args: argparse.Namespace) -> int:
         output_dir.mkdir(parents=True, exist_ok=False)
     except FileExistsError as error:
         raise FileExistsError(f"output path is already occupied: {output_dir}") from error
+    completed = False
     try:
         records, summary, provenance = run_exp6(
             config,
@@ -57,12 +58,13 @@ def _exp6(args: argparse.Namespace) -> int:
             provenance=provenance,
             reserved_output_dir=True,
         )
-    except BaseException:
-        try:
-            output_dir.rmdir()
-        except OSError:
-            pass
-        raise
+        completed = True
+    finally:
+        if not completed:
+            try:
+                output_dir.rmdir()
+            except OSError:
+                pass
     return 0
 
 
