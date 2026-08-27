@@ -49,6 +49,20 @@ def test_load_exp6_config_rejects_quoted_false_booleans(
         _load_config(config_path)
 
 
+
+def test_load_exp6_config_rejects_enabling_remote_code(tmp_path: Path) -> None:
+    config_path = tmp_path / "remote-code.yaml"
+    config_path.write_text(
+        "exp6:\n"
+        "  model: tests/test-model\n"
+        "  noise_levels: [0]\n"
+        "  trust_remote_code: true\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="must remain disabled"):
+        _load_config(config_path)
+
+
 def test_exp6_cli_contract() -> None:
     parsed = build_parser().parse_args(
         [
@@ -71,7 +85,7 @@ def test_cli_rejects_existing_output_before_expensive_run(
 ) -> None:
     existing = tmp_path / "existing"
     existing.mkdir()
-    config = Exp6Config(model="unit-test", noise_levels=(0,), device="cpu")
+    config = Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu")
     monkeypatch.setattr(cli, "_load_config", lambda _path: config)
     calls: list[str] = []
 
@@ -88,6 +102,64 @@ def test_cli_rejects_existing_output_before_expensive_run(
                 str(tmp_path / "unused.yaml"),
                 "--output-dir",
                 str(existing),
+            ]
+        )
+    assert calls == []
+
+
+
+def test_cli_rejects_dangling_output_symlink_before_expensive_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_dir = tmp_path / "dangling"
+    output_dir.symlink_to(tmp_path / "missing-target", target_is_directory=True)
+    config = Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu")
+    monkeypatch.setattr(cli, "_load_config", lambda _path: config)
+    calls: list[str] = []
+
+    def fake_run_exp6(_config: Exp6Config, **_kwargs: object) -> tuple[list, list, dict]:
+        calls.append("gpu-run")
+        return [], [], {}
+
+    monkeypatch.setattr(cli, "run_exp6", fake_run_exp6)
+    with pytest.raises(FileExistsError, match="already occupied"):
+        cli.main(
+            [
+                "exp6-cosine",
+                "--config",
+                str(tmp_path / "unused.yaml"),
+                "--output-dir",
+                str(output_dir),
+            ]
+        )
+    assert calls == []
+
+
+def test_cli_rejects_output_below_a_regular_file_before_expensive_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent = tmp_path / "regular-file"
+    parent.write_text("not a directory", encoding="utf-8")
+    output_dir = parent / "result"
+    config = Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu")
+    monkeypatch.setattr(cli, "_load_config", lambda _path: config)
+    calls: list[str] = []
+
+    def fake_run_exp6(_config: Exp6Config, **_kwargs: object) -> tuple[list, list, dict]:
+        calls.append("gpu-run")
+        return [], [], {}
+
+    monkeypatch.setattr(cli, "run_exp6", fake_run_exp6)
+    with pytest.raises(OSError):
+        cli.main(
+            [
+                "exp6-cosine",
+                "--config",
+                str(tmp_path / "unused.yaml"),
+                "--output-dir",
+                str(output_dir),
             ]
         )
     assert calls == []
