@@ -460,6 +460,11 @@ def run_exp6(
     if not cohort.questions:
         raise ValueError("question cohort is empty; refusing to emit a successful empty run")
     active_extractor = extractor if extractor is not None else _load_runtime(config)
+    runtime_provenance = (
+        active_extractor.runtime_provenance()
+        if hasattr(active_extractor, "runtime_provenance")
+        else {"extractor": type(active_extractor).__name__, "injected": True}
+    )
     records: list[dict[str, Any]] = []
     for example_index, question in enumerate(progress(cohort.questions)):
         clean_states = active_extractor.states(question)
@@ -519,11 +524,6 @@ def run_exp6(
     level_zero_records = sum(int(record["noise_level"]) == 0 for record in records)
     if level_zero_records != len(cohort.questions):
         raise RuntimeError("level-0 control count does not match the question cohort")
-    runtime_provenance = (
-        active_extractor.runtime_provenance()
-        if hasattr(active_extractor, "runtime_provenance")
-        else {"extractor": type(active_extractor).__name__, "injected": True}
-    )
     provenance = {
         "schema_version": "ucc-inj-exp6-provenance/v2",
         "protocol": {
