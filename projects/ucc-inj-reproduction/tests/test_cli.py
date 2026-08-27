@@ -1,7 +1,9 @@
 from pathlib import Path
 
 import pytest
+from ucc_inj_reproduction import cli
 from ucc_inj_reproduction.cli import _load_config, build_parser
+from ucc_inj_reproduction.exp6 import Exp6Config
 
 
 def test_load_exp6_config_converts_noise_levels_to_tuple(tmp_path: Path) -> None:
@@ -43,3 +45,31 @@ def test_exp6_cli_contract() -> None:
     )
     assert parsed.command == "exp6-cosine"
     assert parsed.limit == 2
+
+
+def test_cli_rejects_existing_output_before_expensive_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    config = Exp6Config(model="unit-test", noise_levels=(0,), device="cpu")
+    monkeypatch.setattr(cli, "_load_config", lambda _path: config)
+    calls: list[str] = []
+
+    def fake_run_exp6(_config: Exp6Config, **_kwargs: object) -> tuple[list, list, dict]:
+        calls.append("gpu-run")
+        return [], [], {}
+
+    monkeypatch.setattr(cli, "run_exp6", fake_run_exp6)
+    with pytest.raises(FileExistsError, match="already exists"):
+        cli.main(
+            [
+                "exp6-cosine",
+                "--config",
+                str(tmp_path / "unused.yaml"),
+                "--output-dir",
+                str(existing),
+            ]
+        )
+    assert calls == []
