@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tomllib
 from contextlib import nullcontext
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -757,3 +758,85 @@ def test_nonzero_noise_rejected_when_tokenizer_erases_the_perturbation() -> None
             questions=["one"],
             extractor=ErasingExtractor(),
         )
+
+
+def test_implementation_provenance_distinguishes_installed_layout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package_dir = tmp_path / "site-packages" / "ucc_inj_reproduction"
+    package_dir.mkdir(parents=True)
+    for filename in ("exp6.py", "noise.py", "cli.py"):
+        (package_dir / filename).write_text(
+            f"# installed test artifact: {filename}\n",
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(exp6_module, "__file__", str(package_dir / "exp6.py"))
+    monkeypatch.setattr(
+        exp6_module.importlib.metadata,
+        "version",
+        lambda name: f"test-{name}",
+    )
+
+    provenance = exp6_module._implementation_provenance()
+
+    assert all(provenance["source_sha256"].values())
+    assert provenance["dependency_environment"]["uv_lock"] == {
+        "status": "unavailable_in_installed_layout",
+        "sha256": None,
+    }
+    assert provenance["dependency_environment"]["installed_versions"] == {
+        name: f"test-{name}"
+        for name in (
+            "datasets",
+            "huggingface-hub",
+            "numpy",
+            "pyyaml",
+            "torch",
+            "tqdm",
+            "transformers",
+        )
+    }
+
+
+def test_implementation_provenance_hashes_source_tree_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "project"
+    package_dir = project_dir / "src" / "ucc_inj_reproduction"
+    package_dir.mkdir(parents=True)
+    for filename in ("exp6.py", "noise.py", "cli.py"):
+        (package_dir / filename).write_text(
+            f"# source test artifact: {filename}\n",
+            encoding="utf-8",
+        )
+    (project_dir / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+
+    monkeypatch.setattr(exp6_module, "__file__", str(package_dir / "exp6.py"))
+    monkeypatch.setattr(
+        exp6_module.importlib.metadata,
+        "version",
+        lambda name: f"test-{name}",
+    )
+
+    provenance = exp6_module._implementation_provenance()
+
+    assert provenance["dependency_environment"]["uv_lock"]["status"] == (
+        "hashed_source_tree_lock"
+    )
+    assert provenance["dependency_environment"]["uv_lock"]["sha256"]
+
+
+def test_project_declares_snapshot_download_dependency_directly() -> None:
+    project_dir = Path(__file__).resolve().parents[1]
+    metadata = tomllib.loads(
+        (project_dir / "pyproject.toml").read_text(encoding="utf-8")
+    )
+
+    dependencies = metadata["project"]["dependencies"]
+    assert any(
+        dependency.startswith("huggingface-hub>=")
+        for dependency in dependencies
+    )
