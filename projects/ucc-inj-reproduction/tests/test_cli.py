@@ -61,6 +61,20 @@ def test_load_exp6_config_rejects_enabling_remote_code(tmp_path: Path) -> None:
         _load_config(config_path)
 
 
+
+def test_load_exp6_config_rejects_misplaced_top_level_keys(tmp_path: Path) -> None:
+    config_path = tmp_path / "misplaced.yaml"
+    config_path.write_text(
+        "exp6:\n"
+        "  model: tests/test-model\n"
+        "  noise_levels: [0]\n"
+        "limit: 3\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="unexpected top-level config keys"):
+        _load_config(config_path)
+
+
 def test_exp6_cli_contract() -> None:
     parsed = build_parser().parse_args(
         [
@@ -160,3 +174,35 @@ def test_cli_rejects_output_below_a_regular_file_before_expensive_run(
             ]
         )
     assert calls == []
+
+
+def test_cli_releases_empty_reservation_after_failure_and_allows_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_dir = tmp_path / "retryable"
+    config = Exp6Config(model="tests/unit-test", noise_levels=(0,), device="cpu")
+    monkeypatch.setattr(cli, "_load_config", lambda _path: config)
+
+    def aborting_run(_config: Exp6Config, **_kwargs: object) -> tuple[list, list, dict]:
+        raise RuntimeError("injected scientific gate failure")
+
+    monkeypatch.setattr(cli, "run_exp6", aborting_run)
+    command = [
+        "exp6-cosine",
+        "--config",
+        str(tmp_path / "unused.yaml"),
+        "--output-dir",
+        str(output_dir),
+    ]
+    with pytest.raises(RuntimeError, match="scientific gate failure"):
+        cli.main(command)
+    assert not output_dir.exists()
+
+    def healthy_run(_config: Exp6Config, **_kwargs: object) -> tuple[list, list, dict]:
+        return ([{"noise_level": 0, "cosine_similarity": [1.0]}], [], {})
+
+    monkeypatch.setattr(cli, "run_exp6", healthy_run)
+    assert cli.main(command) == 0
+    assert (output_dir / "per_example.jsonl").is_file()
+
