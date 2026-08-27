@@ -510,3 +510,52 @@ def test_writer_rejects_empty_records(tmp_path: Path) -> None:
             provenance={},
         )
     assert not output_dir.exists()
+
+
+def test_level_zero_rejects_second_forward_with_changed_tokenization() -> None:
+    class ChangingTokenExtractor:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def states(self, _text: str) -> ExtractedStates:
+            self.calls += 1
+            token_ids = (1, 9) if self.calls == 1 else (2, 9)
+            return make_extracted(np.asarray([[1.0, 2.0]]), input_ids=token_ids)
+
+    with pytest.raises(RuntimeError, match="changed tokenization"):
+        run_exp6(
+            Exp6Config(model="unit-test", noise_levels=(0,), device="cpu"),
+            questions=["one"],
+            extractor=ChangingTokenExtractor(),
+        )
+
+
+def test_level_zero_rejects_second_forward_with_changed_hidden_states() -> None:
+    class ChangingStateExtractor:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def states(self, _text: str) -> ExtractedStates:
+            self.calls += 1
+            values = np.asarray([[1.0, 2.0]]) if self.calls == 1 else np.asarray([[2.0, 1.0]])
+            return make_extracted(values)
+
+    with pytest.raises(RuntimeError, match="unit cosine"):
+        run_exp6(
+            Exp6Config(model="unit-test", noise_levels=(0,), device="cpu"),
+            questions=["one"],
+            extractor=ChangingStateExtractor(),
+        )
+
+
+def test_nonzero_noise_rejected_when_tokenizer_erases_the_perturbation() -> None:
+    class ErasingExtractor:
+        def states(self, _text: str) -> ExtractedStates:
+            return make_extracted(np.asarray([[1.0, 2.0]]))
+
+    with pytest.raises(RuntimeError, match="erased before reaching the model"):
+        run_exp6(
+            Exp6Config(model="unit-test", noise_levels=(0, 1), device="cpu"),
+            questions=["one"],
+            extractor=ErasingExtractor(),
+        )
