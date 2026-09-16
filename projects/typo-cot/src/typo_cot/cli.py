@@ -25,6 +25,7 @@ from typo_cot.experiments.build_rebuttal_manifest import (
     BuildRebuttalManifestConfig,
     run_build_rebuttal_manifest,
 )
+from typo_cot.experiments.rebuttal_v2.cli import register_rebuttal_v2_commands
 from typo_cot.experiments.clean_prefix_scan import (
     CleanPrefixScanConfig,
     CleanPrefixScanRunError,
@@ -739,6 +740,7 @@ def _parser() -> argparse.ArgumentParser:
     patch_text.add_argument("--limit", type=_positive_int)
     patch_text.add_argument("--output-dir", required=True, type=Path)
     patch_text.add_argument("--resume", action="store_true")
+    register_rebuttal_v2_commands(commands)
     _register_command_plugins(commands)
     return parser
 
@@ -788,6 +790,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     plugin_handler = getattr(args, "_typo_cot_plugin_handler", None)
     if plugin_handler is not None:
         return int(plugin_handler(args))
+    rebuttal_v2_handler = getattr(args, "_rebuttal_v2_handler", None)
+    if rebuttal_v2_handler is not None:
+        return int(rebuttal_v2_handler(args))
     if args.command == "experiments" and args.catalog_action == "list":
         _print_list(args.format)
         return 0

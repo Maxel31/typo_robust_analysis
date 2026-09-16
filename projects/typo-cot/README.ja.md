@@ -19,7 +19,8 @@ uv run --project projects/typo-cot typo-cot experiments source
 既存のv1 rebuttalコマンドは、論文の歴史的protocolに照らして保存された再現artifactを
 検証します。[Rebuttal v2の仕様](docs/rebuttal_v2/README.md) は監査とfresh対照実験の
 ための別の手順で、過去の成功数との一致を新観測の受入条件にしません。
-PR-00の内容は文書・schema・設定のみです。予定CLI `typo-cot rebuttal-v2` は未実装で、
+CPU専用の [`typo-cot rebuttal-v2 intake`](docs/rebuttal_v2/intake.md) は、出典を検証し、
+欠落を明示した固定manifestを出力します。後続の監査・生成コマンドは未実装で、
 v2のモデル実験結果や実モデルsmokeの検証結果はまだありません。
 
 ## セットアップ

@@ -132,3 +132,27 @@ human scoring, parser-independent semantic claims are inconclusive.
 
 These are pre-implementation review corrections without new model observations.
 The review and corrective commits remain part of the initial PR-00 freeze history.
+
+## PR-01 implementation (2026-09-16)
+
+PR-00 was merged in `b63d4251c93f5ff11cd60841bfe739f20028724c` before PR-01
+started from main. PR-01 implements only the CPU archive intake and its CLI.
+The scientific protocol remains revision `2.0.0` with canonical SHA-256
+`d13794e9d29f1c1750c66f996475ba05f7932e239768963ef1014b562868e70b`.
+
+The initial versioned source adapters are documented in [intake.md](intake.md).
+They explicitly serialize the PR-00 source contract; unknown layouts are reported
+without guessing or converting legacy artifacts in place. Saved scoring metadata
+is retained and summarized as archived judgments, never rerun or used as an
+acceptance quota. Missing evidence and structural non-applicability stay distinct.
+
+Independent CPU fixtures cover identity/hash integrity, exact missing IDs,
+source-kind separation, aliases, absent raw generation, zero-row metadata, and
+128 recorded successes against a historical reference of 129. They are synthetic
+fixtures, not evidence that the original 172/97-item archives were recovered.
+Existing v1 entry points, extractors and acceptance rules are unchanged.
+
+Implementation and CPU fixtures are available for R0 only. Real-model smoke and
+formal model results remain not run; R1 onward are not implemented by this PR.
+The optional model-dependent test suite requires torch, which is not installed
+in the CPU-only validation environment. No GPU test is claimed as passed.

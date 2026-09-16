@@ -1,8 +1,8 @@
 # Rebuttal v2 artifact and CLI contracts
 
-Status: PR-00 specification, protocol revision `2.0.0`. These are contracts for
-later implementation PRs; no v2 validator, CLI, generation run, or result is
-implemented by this document. Scientific definitions, parser grammar, cohorts,
+Status: protocol revision `2.0.0`. PR-01 implements the R0 intake contracts;
+later audit, planning, generation and reporting contracts remain specifications.
+No real-model smoke or formal results are available. Scientific definitions, parser grammar, cohorts,
 and acceptance cases are in [README.md](README.md). Machine settings are in
 [protocol.json](../../configs/rebuttal_v2/protocol.json).
 
@@ -148,6 +148,10 @@ unknown), task/model identity, target rule and perturbation identity (nullable
 only when unknown), exact texts/prompts, gold, saved edits/coordinates, and raw
 generation references. Unsupported source layouts are reported; aggregate counts
 are never expanded into invented per-item generations.
+
+PR-01's concrete source adapter versions and input serialization are defined in
+[intake.md](intake.md). They make the source-side normalization contract explicit;
+they do not reinterpret v1 manifests as v2 or add a new scientific protocol.
 
 Intake writes `source_audit.json`, `archive_inventory.jsonl`,
 `pair_manifest.jsonl`, `pair_manifest.meta.json`, `archive_generation_records.jsonl`,
