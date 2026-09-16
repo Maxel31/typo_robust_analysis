@@ -22,6 +22,12 @@ def register_rebuttal_v2_commands(
     intake.add_argument("--protocol", type=Path, required=True)
     intake.add_argument("--output-dir", type=Path, required=True)
     intake.set_defaults(_rebuttal_v2_handler=_run_intake)
+    answer = operations.add_parser(
+        "answer-audit", help="Compare explicit-answer and public v1 parsers on saved text."
+    )
+    answer.add_argument("--manifest", type=Path, required=True)
+    answer.add_argument("--output-dir", type=Path, required=True)
+    answer.set_defaults(_rebuttal_v2_handler=_run_answer_audit)
 
 
 def _run_intake(args: argparse.Namespace) -> int:
@@ -32,6 +38,18 @@ def _run_intake(args: argparse.Namespace) -> int:
         result = run_intake(args.archive_index, args.protocol, args.output_dir)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"rebuttal-v2 intake: error: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True, allow_nan=False))
+    return 0
+
+
+def _run_answer_audit(args: argparse.Namespace) -> int:
+    from .answer_audit import run_answer_audit
+
+    try:
+        result = run_answer_audit(args.manifest, args.output_dir)
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"rebuttal-v2 answer-audit: error: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(result, ensure_ascii=False, sort_keys=True, allow_nan=False))
     return 0

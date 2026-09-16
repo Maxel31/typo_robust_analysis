@@ -24,9 +24,11 @@ the paper's historical protocol. The [Rebuttal v2 protocol](docs/rebuttal_v2/REA
 defines a separate audit and fresh-control workflow that accepts observations
 without requiring historical success counts. The CPU-only
 [`typo-cot rebuttal-v2 intake`](docs/rebuttal_v2/intake.md) command verifies sources
-and writes an immutable manifest with explicit missingness. Later audit/generation
-commands are not implemented, and no v2 model results or real-model smoke checks
-are available.
+and writes an immutable manifest with explicit missingness.
+[`typo-cot rebuttal-v2 answer-audit`](docs/rebuttal_v2/answer_audit.md) compares
+explicit-answer scoring with the unchanged public v1 parser on saved generations.
+Later input-audit/generation commands are not implemented, and no v2 model results
+or real-model smoke checks are available.
 
 ## Setup
 

@@ -1,6 +1,7 @@
 # Rebuttal v2 artifact and CLI contracts
 
-Status: protocol revision `2.0.0`. PR-01 implements the R0 intake contracts;
+Status: protocol revision `2.0.0`. PR-01 implements R0 intake and PR-02 implements
+R1 saved-generation answer audit;
 later audit, planning, generation and reporting contracts remain specifications.
 No real-model smoke or formal results are available. Scientific definitions, parser grammar, cohorts,
 and acceptance cases are in [README.md](README.md). Machine settings are in
@@ -267,6 +268,13 @@ verified the unknown historical tokenizer. No floating `main` revision qualifies
 as an immutable lock.
 
 ## 5. Answer audit and input audit
+
+PR-02's concrete R1 artifacts, parser scoring contracts, availability handling,
+and frozen blind-sampling policy are defined in [answer_audit.md](answer_audit.md).
+The primary score uses exact canonical gold; the explicitly labeled public v1
+proxy reproduces its unchanged raw-gold comparison and additionally reports an
+auxiliary canonical comparison. These are distinct scoring rules, not an
+unidentified historical parser or a fresh-baseline experiment.
 
 `answer_audit_records.jsonl` (`rebuttal-answer-audit/v2`) joins `generation_id`
 and verified generation `RecordRef` to `pair_id`, task/valid labels, parser ID,
