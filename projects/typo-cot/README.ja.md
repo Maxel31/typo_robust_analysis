@@ -23,7 +23,9 @@ CPU専用の [`typo-cot rebuttal-v2 intake`](docs/rebuttal_v2/intake.md) は、�
 欠落を明示した固定manifestを出力します。
 [`typo-cot rebuttal-v2 answer-audit`](docs/rebuttal_v2/answer_audit.md) は保存生成を対象に、
 明示回答の採点と変更していないpublic v1 parserの採点を比較します。
-後続の入力監査・生成コマンドは未実装で、
+[`input-audit`・`annotation-export`・`annotation-import`](docs/rebuttal_v2/input_audit.md)
+は独立した編集span・token座標監査と、Stage Aを固定してから原文を開示する二段階注釈を提供します。
+後続の計画・生成・集計コマンドは未実装で、
 v2のモデル実験結果や実モデルsmokeの検証結果はまだありません。
 
 ## セットアップ

@@ -27,8 +27,10 @@ without requiring historical success counts. The CPU-only
 and writes an immutable manifest with explicit missingness.
 [`typo-cot rebuttal-v2 answer-audit`](docs/rebuttal_v2/answer_audit.md) compares
 explicit-answer scoring with the unchanged public v1 parser on saved generations.
-Later input-audit/generation commands are not implemented, and no v2 model results
-or real-model smoke checks are available.
+[`input-audit`, `annotation-export`, and `annotation-import`](docs/rebuttal_v2/input_audit.md)
+add independent edit/token coordinates and a locked two-stage human-review workflow.
+Planning, generation, and reduction commands are not implemented, and no v2
+model results or real-model smoke checks are available.
 
 ## Setup
 

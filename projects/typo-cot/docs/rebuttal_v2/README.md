@@ -1,8 +1,8 @@
 # Rebuttal v2：監査・限定対照実験
 
-Status: protocol revision 2.0.0; PR-01 CPU intake and PR-02 saved-generation answer audit implemented with acceptance fixtures; later commands not implemented; real-model smoke not run; formal experiments not run.
+Status: protocol revision 2.0.0; PR-01 intake, PR-02 answer audit, and PR-03 input audit / two-stage annotation implemented with CPU acceptance fixtures; planning/generation/reduction not implemented; real-model smoke not run; formal experiments not run.
 
-本書はPR-00で固定した科学的契約である。フィールド・入出力参照・状態遷移は [schemas.md](schemas.md)、既知の結果と判断記録は [decision_log.md](decision_log.md)、機械可読設定は [protocol.json](../../configs/rebuttal_v2/protocol.json) を参照する。PR-01の [intake](intake.md) とPR-02の [answer-audit](answer_audit.md) を実装した。ここに示す後続CLIは未実装であり、機能ごとのPRで追加する。
+本書はPR-00で固定した科学的契約である。フィールド・入出力参照・状態遷移は [schemas.md](schemas.md)、既知の結果と判断記録は [decision_log.md](decision_log.md)、機械可読設定は [protocol.json](../../configs/rebuttal_v2/protocol.json) を参照する。PR-01の [intake](intake.md)、PR-02の [answer-audit](answer_audit.md)、PR-03の [input-audit・二段階注釈](input_audit.md) を実装した。ここに示す計画・生成・集計CLIは未実装であり、機能ごとのPRで追加する。
 
 ## 1. 目的と範囲
 
@@ -322,7 +322,7 @@ GPU間で一致すべき `scientific_config_sha256`（model/tokenizer/dtype/back
 
 既存の `typo-cot experiments` 等を改名せず、argparseに `rebuttal-v2` namespaceを追加する。CPU commandを読むだけでGPUモデルをimportしない。
 
-以下はrepo rootからのコマンド契約。`SOURCE_ROOT` と `REBUTTAL_V2_ROOT` はユーザーの実データ位置へ設定する変数。`intake` と `answer-audit` は実装済みであり、それ以外はまだ実行できない受入仕様である。
+以下はrepo rootからのコマンド契約。`SOURCE_ROOT` と `REBUTTAL_V2_ROOT` はユーザーの実データ位置へ設定する変数。`intake`、`answer-audit`、`input-audit`、`annotation-export`、`annotation-import` は実装済みであり、`plan`・`run`・`reduce` はまだ実行できない受入仕様である。
 
 ```bash
 uv run --project projects/typo-cot typo-cot rebuttal-v2 intake \

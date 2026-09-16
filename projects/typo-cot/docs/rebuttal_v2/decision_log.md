@@ -217,3 +217,76 @@ PR-01 preserves identical acquisition claims while deduplicating scientific
 records. The consumer now accepts those identical claims and continues to reject
 contradictions. All 128 successful fixture outputs passed the repeated probe;
 this is artifact compatibility evidence, not additional scientific observations.
+
+## PR-03 implementation (2026-09-16)
+
+PR-02 was reviewed, all threads resolved, and merged in
+`ddac4c202b2cb45dbea9fa5cc2b6f57ba03d1f06` before PR-03 started from main.
+The protocol remains revision `2.0.0` with unchanged canonical hash.
+
+Before inspecting real outputs or human judgments, PR-03 fixes the independent
+Unicode Levenshtein difference and word-segmentation rules, ambiguity policy,
+resource bounds, exact full-prompt tokenization lock, and conservative region/
+archived-coordinate adapters in [input_audit.md](input_audit.md). Multiple edits
+and repeated words remain distinct; archived coordinates never rescue an
+unreconstructable independent alignment. Intended-token hit uses the actual edit
+span, not merely membership in the edited word. Tokenizer identity agreement
+requires explicit ID/revision/file-hash evidence; revision-only agreement has a
+separate field.
+
+`tokenizers==0.22.2` becomes a direct CPU dependency, using the same version
+already in the dependency lock. No model weights or torch dependency are added
+to CPU auditing. The tokenizer is loaded only from verified local bytes.
+
+Annotation selection uses verified original R3/R4 membership and available
+questions, never alignment, answer correctness, or patch outcome. Random opaque
+IDs and a strict reviewer allowlist isolate private metadata. Stage A must be
+complete and hash-locked before any Stage B clean material is exported; the
+shared B export does not disclose another rater's A responses. Missing ratings
+fail with exact keys; they do not become unassessable labels. Two raters are the
+default, with an explicit single-rater exception and no inter-rater agreement
+claim in that mode. All independent judgments and adjudications are retained.
+
+CPU command-stage completion is separate from completion of the entire R2
+experiment. Fixtures use synthetic tokenizers/questions/judgments; actual human
+annotations, archived semantic-restricted result tables, real-model smoke and
+formal experiments remain incomplete or not run. PR-04 planning is not implemented
+by this change.
+
+PR-03 review corrections reject adjudication for unanimous or single-rater
+items and require every declared special-token ID to be an actual special
+token in the verified tokenizer. These integrity checks are covered by nine
+additional synthetic regressions; no human judgment or model outcome informed
+the corrections, and the scientific protocol is unchanged.
+
+Further review exposed legitimate incomplete archive inputs: declared regions
+may survive without their exact prompt. Such ancillary material now remains
+unavailable with side-specific coverage instead of aborting a whole batch.
+Missing/blank clean queries do not alter the frozen typo-based Stage A selection;
+Stage B and import require explicit human `unassessable` judgments for those
+items. No judgment is synthesized and no unsupported semantic-preserved item is
+added. Shared region/risk constants eliminate duplicate contract declarations.
+Archived tokenizer identity now treats non-string or blank values as unknown
+evidence, while known nonempty values are compared exactly and mismatches remain
+false. Stage B's copied mapping and coverage do not make it a self-contained
+package: returned Stage A and upstream evidence remain immutable, hash-bound
+references that must stay available at their recorded locations unless the whole
+reference tree is relocated consistently. These pre-merge clarifications use
+only synthetic fixtures, not archive outcomes.
+
+A later integration review found that a legitimate one-to-many word
+correspondence (for example, `cat` to `Xcat-Y`) could reach the strict tokenizer
+with duplicate side spans and abort the whole manifest. Endpoint tokenization now
+receives word spans only for `alignment_status="aligned"`. Unsupported
+correspondence still records complete prompt token IDs/hashes with no word
+endpoints and retains its invalid/unknown status; it is neither deduplicated nor
+salvaged into an alignment. This is a failure-isolation correction, not a cohort,
+intervention, or semantic-label change.
+
+Artifact publication no longer removes a caller-created empty output directory
+before publication. It writes an owned sibling staging directory and directly
+renames that directory onto an absent or empty destination. If rename fails, an
+existing empty destination is preserved and only owned staging is removed;
+concurrently created nonempty output is never deleted. Four new regressions join
+the 18-test artifact-I/O suite for absent/pre-existing output, injected rename
+failure, concurrent publication, and staging-name confinement.

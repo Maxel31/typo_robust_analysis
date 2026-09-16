@@ -1,8 +1,8 @@
 # Rebuttal v2 artifact and CLI contracts
 
-Status: protocol revision `2.0.0`. PR-01 implements R0 intake and PR-02 implements
-R1 saved-generation answer audit;
-later audit, planning, generation and reporting contracts remain specifications.
+Status: protocol revision `2.0.0`. PR-01 implements R0 intake, PR-02 implements
+R1 answer audit, and PR-03 implements R2 input audit and two-stage annotations.
+Planning, generation and reduction contracts remain specifications.
 No real-model smoke or formal results are available. Scientific definitions, parser grammar, cohorts,
 and acceptance cases are in [README.md](README.md). Machine settings are in
 [protocol.json](../../configs/rebuttal_v2/protocol.json).
@@ -262,10 +262,13 @@ field affecting rendered tokenization is fixed. A multi-model manifest uses its
 matching entry; an absent model entry makes that pair's token audit `unknown`
 while retaining independent text audit results. The lock describes the tokenizer
 used for independent audit; `matches_archived_tokenizer` is true/false/unknown
-separately. Unknown
-archived revision permits a new pinned-tokenizer audit but prevents claiming it
-verified the unknown historical tokenizer. No floating `main` revision qualifies
-as an immutable lock.
+separately. For each archived tokenizer ID, revision, and file-hash value, a
+non-string or blank value contributes unknown identity evidence. Any known
+nonempty unequal string makes the aggregate result false; otherwise incomplete
+evidence makes it null. Known values are compared exactly as stored without
+stripping, coercion, or normalization. Unknown archived revision permits a new
+pinned-tokenizer audit but prevents claiming it verified the unknown historical
+tokenizer. No floating `main` revision qualifies as an immutable lock.
 
 ## 5. Answer audit and input audit
 
@@ -332,6 +335,14 @@ unknown classification is not false. They do not set semantic labels.
 
 ## 6. Blinded annotations and semantic labels
 
+PR-03 concretizes the versioned difference/word-segmentation algorithms, local
+tokenizer lock, archived-coordinate adapters, annotation forms and outputs in
+[input_audit.md](input_audit.md). Input audit requires sibling
+`input_audit_records.meta.json` (`rebuttal-input-audit-metadata/v2`) binding its
+record file, manifest and manifest metadata, tokenizer lock, protocol and algorithm
+version. Annotation commands verify this chain, including an empty audit.
+Command-stage completion does not claim completion of the whole R2 experiment.
+
 Annotation metadata carries batch ID, schema version, frozen selection manifest
 hash and stage. Private `annotation_mapping.jsonl` maps a random opaque `blind_id`
 to pair ID and source references. Blind IDs must not encode pair IDs, labels,
@@ -366,6 +377,11 @@ set is `unique_preserved`, `ambiguous`, `task_changed`, `unassessable`.
 Adjudication retains all independent A/B judgments, adjudicator ID/timestamp,
 disagreement reason, and final label. Import verifies selected IDs, complete
 required ratings, lock hashes, unique keys, legal labels and mapping integrity.
+Adjudication requires disagreement among the required independent raters;
+unanimous and single-rater items reject adjudication rows.
+Missing/blank clean queries do not change Stage A selection. They restrict Stage
+B `allowed_labels` and every imported rating to explicit `unassessable`, with a
+private coverage reason; import never fabricates that judgment for a missing row.
 Missing annotation records are reported as missing, never silently labeled
 `unassessable`. `semantic_labels.jsonl` holds pair ID, final label, rating mode,
 source/judgment references and adjudication status; no patch results are inputs.
@@ -379,6 +395,12 @@ Stage B validates the complete returned A ID/rater inventory against the supplie
 Stage A batch, hashes that labels file, and writes an immutable A lock plus a
 new Stage B `annotation_batch.json`. The new batch references the prior batch,
 private mapping, returned A judgments, A lock and B export by verified hashes.
+Only the mapping and coverage are copied into the Stage B directory; the returned
+Stage A file and other upstream evidence remain external hash-bound references,
+often with absolute paths. The Stage B directory is therefore not a self-contained
+export. Original referenced files must remain immutable and available through
+import and later consumers; relocation is valid only when the full reference tree
+is updated consistently without breaking any recorded hash binding.
 Import takes this Stage B batch plus returned independent B/adjudication records,
 validates their IDs/rater inventory and referenced A lock, and retains all A/B
 judgments and adjudication with hashes in its output metadata. Raters return
