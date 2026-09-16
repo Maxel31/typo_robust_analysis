@@ -164,12 +164,16 @@ scientific conflict evidence. Other scientific null/known differences still
 conflict. Verified aliases can link different original IDs without erasing their
 distinct historical IDs. A canonical-identity-first deterministic representative,
 defined in schemas.md, supplies the top-level provenance; source order does not.
+Equivalent inline/reference text payloads are selected independently by a fixed
+rule (inline first, otherwise canonical-JSON reference order), after verifying
+equal exact-text hashes. Input ordering does not choose their storage form.
 `source_kind` remains a consistency requirement for one acquisition identity:
 submitted archives and public/fresh regenerations cannot share a namespace/key
 and be silently collapsed into whichever source kind was read first. Compare
 these acquisition events in separately namespaced intake runs; this adapter does
 not coalesce different source kinds even through pair aliases. Generation counts
-retain each generation's own source kind independently of pair acquisition.
+are grouped by recorded `source_kind`, which must match the normalized pair's
+acquisition kind. A redundant plural `source_kinds` field is not emitted.
 
 An `expected_ids_ref` points to the explicitly enumerated archived ID artifact
 defined in schemas.md. Known missing IDs and extra records are reported without
@@ -197,6 +201,8 @@ The output set is `source_audit.json`, `archive_inventory.jsonl`,
 `archive_generation_records.jsonl`, `historical_count_comparison.csv`,
 `missing_inputs.csv`, and `run.json`. Historical counts and observed source counts
 remain separately labeled. No source aggregates are expanded into per-item rows.
+Omitted historical counts are displayed as `NA`, distinct from an explicitly
+recorded empty object `{}` or a known zero count.
 The manifest metadata binds protocol and source coverage even with zero rows.
 Run metadata references the outputs, never the reverse, to avoid reference cycles.
 Intake `expected_ids` and `missing_ids` are source pair keys grouped by cohort;
@@ -211,6 +217,8 @@ plus the Git commit and dirty state when Git identity is available. Outside a Gi
 checkout those Git fields are null with an explicit reason, not invented values.
 If only the Git status operation times out, an already resolved commit is kept
 and dirty state stays unknown; untracked files are not hidden from provenance.
+Before publication, every captured input is hash-checked again using streaming
+reads. Parsing still uses the originally captured, verified snapshot bytes.
 CSV is a display/export view: formula-like string cells are prefixed with an
 apostrophe to keep them text when opened in spreadsheet software. Exact unescaped
 IDs and text remain in JSON/JSONL, the authoritative inputs for machine joins.

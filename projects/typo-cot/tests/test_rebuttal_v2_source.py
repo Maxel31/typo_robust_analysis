@@ -959,3 +959,86 @@ def test_cohort_reference_tracks_actual_claimant_not_selected_pair_representativ
     claimants = [item for item in row["source_identity_provenance"] if item["cohort_ids"] == ["R3"]]
     assert len(claimants) == 1
     assert claimants[0]["source_ref"]["record_id"] == "claimant"
+
+
+@pytest.mark.parametrize("field", ["clean_text", "typo_text", "clean_prompt", "typo_prompt"])
+@pytest.mark.parametrize(
+    "storage", [("inline", "ref"), ("ref", "ref"), ("ref", "inline", "ref"), ("ref", "ref", "ref")]
+)
+def test_duplicate_exact_text_storage_has_order_independent_manifest_bytes(
+    tmp_path: Path, field: str, storage: tuple[str, ...]
+) -> None:
+    _fixture(tmp_path)
+    (base,) = _rows(tmp_path / "pairs.jsonl")
+    exact = "  identical é\r\n e\u0301\u2028tail\n"
+    pairs = []
+    text_refs = []
+    for number, mode in enumerate(storage):
+        pair = {**base, "source_record_id": f"record-{number}", field: None}
+        if mode == "inline":
+            pair[field] = exact
+        else:
+            # Reverse path order relative to source order to exercise the
+            # reference minimum independently of the selected acquisition.
+            path = tmp_path / f"text-{len(storage) - number}.txt"
+            path.write_bytes(exact.encode("utf-8"))
+            pair[f"{field}_ref"] = {"path": path.name, "sha256": _hash(path)}
+            text_refs.append({"path": str(path), "sha256": _hash(path)})
+        pairs.append(pair)
+    index = _separate_pair_sources(tmp_path, pairs)
+    payload = json.loads(index.read_text())
+    sources = payload["sources"]
+    expected_bytes = None
+    expected_hash = None
+    for number, permutation in enumerate(itertools.permutations(sources)):
+        payload["sources"] = list(permutation)
+        index.write_text(json.dumps(payload))
+        output = tmp_path / f"storage-order-{number}"
+        source.run_intake(index, PROTOCOL, output)
+        manifest = output / "pair_manifest.jsonl"
+        observed_bytes = manifest.read_bytes()
+        observed_hash = _hash(manifest)
+        if expected_bytes is None:
+            expected_bytes, expected_hash = observed_bytes, observed_hash
+        assert observed_bytes == expected_bytes
+        assert observed_hash == expected_hash
+        (row,) = _rows(manifest)
+        if "inline" in storage:
+            assert row[field] == exact
+            assert row[f"{field}_ref"] is None
+        else:
+            assert row[field] is None
+            assert row[f"{field}_ref"] == min(text_refs, key=source.canonical_json)
+        assert row[f"{field}_sha256"] == hashlib.sha256(exact.encode("utf-8")).hexdigest()
+        assert len(row["source_identity_provenance"]) == len(storage)
+
+
+def test_repeated_source_declarations_do_not_add_self_references(tmp_path: Path) -> None:
+    index = _fixture(tmp_path)
+    payload = json.loads(index.read_text())
+    payload["sources"].append(
+        {**payload["sources"][0], "source_id": "same-file-second-declaration"}
+    )
+    index.write_text(json.dumps(payload))
+    source.run_intake(index, PROTOCOL, tmp_path / "out")
+    (row,) = _rows(tmp_path / "out/pair_manifest.jsonl")
+    assert row["additional_source_refs"] == []
+    assert len(row["source_identity_provenance"]) == 2
+    inventory = _rows(tmp_path / "out/archive_inventory.jsonl")
+    assert {item["source_id"] for item in inventory} == {"pairs", "same-file-second-declaration"}
+
+
+def test_duplicate_expected_generation_disagreement_still_fails_generic_comparison(
+    tmp_path: Path,
+) -> None:
+    _fixture(tmp_path)
+    (base,) = _rows(tmp_path / "pairs.jsonl")
+    first = {**base, "expected_generations": []}
+    second = {
+        **base,
+        "source_record_id": "other",
+        "expected_generations": [{"arm": "clean", "window": None}],
+    }
+    index = _separate_pair_sources(tmp_path, [first, second])
+    with pytest.raises(source.IntakeError, match="fields: expected_generations"):
+        source.run_intake(index, PROTOCOL, tmp_path / "out")

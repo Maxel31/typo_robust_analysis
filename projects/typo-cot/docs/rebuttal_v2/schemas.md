@@ -218,8 +218,18 @@ The top-level identity/provenance fields summarize the original identity matchin
 the canonical pair identity if present, otherwise the lexicographically first
 canonical-JSON original identity. Within it, prefer an acquisition carrying the
 known historical ID, then a canonical original group identity, then canonical-JSON
-order. The other source rows remain in `additional_source_refs` (empty for a
-single acquisition). This representative is not selected by source input order.
+order. The other source rows remain as unique RecordRefs in
+`additional_source_refs`, excluding the representative reference (empty for a
+single source row). All acquisition declarations still remain in provenance and
+inventory. This representative is not selected by source input order.
+Exact-text equality is checked by each component's hash before deduplication.
+For each text/prompt component, its inline/reference representation is selected
+independently and deterministically: prefer an available inline string, otherwise
+the artifact reference first in canonical-JSON order. Keep inline and reference
+mutually exclusive. All original acquisition references remain available even
+if this representation comes from a different acquisition than the identity
+representative. Equivalent payload storage choices cannot make source order
+change the normalized manifest bytes.
 Different `source_kind` values remain incompatible for one normalized pair; use
 separately namespaced intake runs for archived and regenerated acquisition events.
 

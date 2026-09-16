@@ -42,6 +42,7 @@ from .schemas import (
     require_string,
     require_string_list,
     require_timestamp,
+    sha256_file,
     sha256_text,
     strict_loads,
 )
@@ -909,14 +910,31 @@ def _merge_pair_identity_provenance(old: dict[str, Any], pair: dict[str, Any]) -
     old["source_ref"] = representative["source_ref"]
     old["source_sha256"] = representative["source_ref"]["artifact"]["sha256"]
     old["source_record_id"] = representative["source_ref"]["record_id"]
+    representative_ref = canonical_json(representative["source_ref"])
+    unique_refs = {canonical_json(item["source_ref"]): item["source_ref"] for item in provenance}
     old["additional_source_refs"] = [
-        item["source_ref"] for item in provenance if item is not representative
+        unique_refs[key] for key in sorted(unique_refs) if key != representative_ref
     ]
     reasons = set(old["reason_codes"]) | set(pair["reason_codes"])
     reasons.discard("historical_pair_id_unknown")
     if old["historical_pair_id"] is None:
         reasons.add("historical_pair_id_unknown")
     old["reason_codes"] = sorted(reasons)
+
+
+def _merge_pair_text_representations(old: dict[str, Any], pair: dict[str, Any]) -> None:
+    """Select exact-text storage independently of acquisition iteration order.
+
+    Call only after equal text hashes have been established. The minimum rule
+    is associative: inline wins, otherwise canonical reference ordering wins.
+    Inline and reference fields move together, preserving their exclusivity.
+    """
+    for name in ("clean_text", "typo_text", "clean_prompt", "typo_prompt"):
+        choices = [(row[name], row[f"{name}_ref"]) for row in (old, pair)]
+        inline, reference = min(
+            choices, key=lambda item: (item[0] is None, canonical_json(item[1]))
+        )
+        old[name], old[f"{name}_ref"] = inline, reference
 
 
 def _join_records(audit: SourceAudit) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -955,9 +973,8 @@ def _join_records(audit: SourceAudit) -> tuple[list[dict[str, Any]], list[dict[s
             # The manifest has unique IDs, but repeated acquisition records retain
             # all source provenance and are explicitly reported as duplicates.
             _merge_pair_identity_provenance(old, pair)
+            _merge_pair_text_representations(old, pair)
             old["cohort_ids"] = sorted(set(old["cohort_ids"]) | set(pair["cohort_ids"]))
-            if old["expected_generations"] != pair["expected_generations"]:
-                raise IntakeError(f"Conflicting expected generation slots for pair_id {pid}")
             audit.findings.append(
                 _finding(
                     entry["source_id"],
@@ -1193,12 +1210,10 @@ def _observed_scoring_counts(
                 "incorrect_n": 0,
                 "unscored_n": 0,
                 "generation_ids": [],
-                "source_kinds": [],
             }
         counts = groups[key]
         counts["observed_n"] += 1
         counts["generation_ids"].append(generation["generation_id"])
-        counts["source_kinds"] = sorted(set(counts["source_kinds"]) | {generation["source_kind"]})
         match = scoring.get("gold_match")
         if match is None:
             counts["unscored_n"] += 1
@@ -1479,7 +1494,9 @@ def write_manifest(
     count_rows = [
         {
             **row,
-            "historical_counts_json": canonical_json(row.get("historical_counts", {})),
+            "historical_counts_json": canonical_json(row["historical_counts"])
+            if "historical_counts" in row
+            else None,
             "observed_scoring_counts_json": canonical_json(
                 _observed_scoring_counts(row, generations)
             ),
@@ -1547,7 +1564,8 @@ def write_manifest(
             (staging / name).write_bytes(raw)
         # Validate all original input snapshots immediately before publication.
         for path, digest in audit.index.snapshots.items():
-            _snapshot(path, audit.index.snapshots, digest)
+            if sha256_file(path) != digest:
+                raise IntakeError(f"Input artifact changed before publication: {path}")
         if output.exists():
             output.rmdir()  # Refuses a concurrent nonempty directory, no overwrite.
         staging.rename(output)

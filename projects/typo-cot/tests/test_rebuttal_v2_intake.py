@@ -289,6 +289,44 @@ def test_same_acquisition_cannot_silently_switch_source_kind(tmp_path: Path) -> 
         run_intake(index, PROTOCOL, tmp_path / "intake")
 
 
+@pytest.mark.parametrize(
+    ("historical_counts", "expected_csv"),
+    [(None, "NA"), ({}, "{}"), ({"correct": 0}, '{"correct":0}')],
+)
+def test_historical_counts_csv_distinguishes_unknown_empty_and_zero(
+    tmp_path: Path, historical_counts: dict | None, expected_csv: str
+) -> None:
+    index = _fixture(tmp_path, historical_counts=historical_counts)
+    output = tmp_path / "intake"
+    run_intake(index, PROTOCOL, output)
+    assert _comparison(output)[0]["historical_counts_json"] == expected_csv
+    cohort = _read(output / "source_audit.json")["cohorts"][0]
+    if historical_counts is None:
+        assert "historical_counts" not in cohort
+    else:
+        assert cohort["historical_counts"] == historical_counts
+
+
+def test_publication_revalidates_all_captured_inputs_with_streaming_hash(
+    tmp_path: Path, monkeypatch
+) -> None:
+    index = _fixture(tmp_path, expected=["p1"])
+    hashed = []
+    hash_file = source_module.sha256_file
+
+    def record_hash(path):
+        hashed.append(path)
+        return hash_file(path)
+
+    monkeypatch.setattr(source_module, "sha256_file", record_hash)
+    output = tmp_path / "intake"
+    run = run_intake(index, PROTOCOL, output)
+    assert {str(path) for path in hashed} == {ref["path"] for ref in run["input_refs"]}
+    assert index.resolve() in hashed
+    assert PROTOCOL.resolve() in hashed
+    assert (tmp_path / "pairs.jsonl").resolve() in hashed
+
+
 def test_unknown_revisions_and_exact_text_survive_intake(tmp_path: Path) -> None:
     text = "  Café\r\n同じ語 e\u0301\n"
     index = _fixture(tmp_path, pairs=[_pair(clean_text=text)], expected=["p1"])

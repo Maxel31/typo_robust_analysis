@@ -175,3 +175,10 @@ Membership evidence now always uses ArtifactRef, and unverified cohort claims
 with setting mismatches produce findings instead of aborting inventory. These
 are pre-merge artifact-contract clarifications, verified only on synthetic
 fixtures; no existing formal artifact or protocol revision is reinterpreted.
+Equivalent inline/reference text payloads also use a deterministic representative
+rule after hash equality is verified, so acquisition order cannot change the
+normalized manifest's payload representation or hash.
+Unknown historical count metadata is exported as NA rather than a known empty
+object; repeated references to the identical source row are not additional rows.
+Publication revalidation hashes inputs in chunks without changing the snapshot
+used for parsing, and redundant source-kind plural metadata was removed.
