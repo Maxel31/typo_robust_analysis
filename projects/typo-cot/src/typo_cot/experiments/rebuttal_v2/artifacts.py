@@ -804,7 +804,7 @@ def _pair(
     provenance = _array(row["source_identity_provenance"], "source_identity_provenance")
     if not provenance:
         raise IntakeError("source_identity_provenance must be nonempty")
-    claimed_refs = set()
+    claimed_refs: dict[str, str] = {}
     for claim in provenance:
         require_object(claim, "identity provenance")
         require_keys(
@@ -906,9 +906,13 @@ def _pair(
                 "record_id": claim_raw["source_record_id"],
             }
         )
-        if ref_key in claimed_refs:
-            raise IntakeError("duplicate source identity provenance reference")
-        claimed_refs.add(ref_key)
+        # PR01 retains each acquisition declaration, including an identical
+        # source file declared under more than one source_id. Those identical
+        # claims are provenance, not duplicate scientific pair records.
+        claim_key = canonical_json(claim)
+        if ref_key in claimed_refs and claimed_refs[ref_key] != claim_key:
+            raise IntakeError("conflicting source identity provenance for one reference")
+        claimed_refs[ref_key] = claim_key
     declared_refs = set()
     for ref in [
         row["source_ref"],
@@ -924,7 +928,7 @@ def _pair(
         if key in declared_refs:
             raise IntakeError("duplicate pair acquisition RecordRef")
         declared_refs.add(key)
-    if declared_refs != claimed_refs:
+    if declared_refs != set(claimed_refs):
         raise IntakeError("pair source refs differ from identity provenance")
     availability = require_object(row["availability"], "pair availability")
     require_keys(

@@ -562,3 +562,36 @@ def test_pr01_choice_gold_preserved_independently_of_parser_support(tmp_path: Pa
     manifest = _fixture(tmp_path, pair_changes={"task": "mmlu-pro", "canonical_gold": "AA"})
     bundle = artifacts.load_manifest(manifest)
     assert bundle.pairs[0]["canonical_gold"] == "AA"
+
+
+def _repeated_source_declarations(tmp_path: Path) -> Path:
+    _fixture(tmp_path)
+    index_path = tmp_path / "index.json"
+    index = json.loads(index_path.read_text())
+    index["sources"].append({**index["sources"][0], "source_id": "same-file-second-declaration"})
+    _write(index_path, index)
+    output = tmp_path / "repeated-source-intake"
+    source.run_intake(index_path, PROTOCOL, output)
+    return output / "pair_manifest.jsonl"
+
+
+def test_repeated_identical_acquisition_claims_remain_valid_provenance(tmp_path: Path) -> None:
+    manifest = _repeated_source_declarations(tmp_path)
+    bundle = artifacts.load_manifest(manifest)
+    pair = bundle.pairs[0]
+    assert len(bundle.pairs) == 1
+    assert len(pair["source_identity_provenance"]) == 2
+    assert pair["source_identity_provenance"][0] == pair["source_identity_provenance"][1]
+    assert pair["additional_source_refs"] == []
+    assert len(bundle.slots) == 2
+
+
+def test_repeated_source_reference_does_not_allow_contradictory_claim(tmp_path: Path) -> None:
+    manifest = _repeated_source_declarations(tmp_path)
+
+    def update(pair):
+        pair["source_identity_provenance"][1]["source_pair_key_kind_explicit"] = True
+
+    _replace_pair(manifest, update)
+    with pytest.raises(IntakeError, match="provenance key-kind mismatch"):
+        artifacts.load_manifest(manifest)

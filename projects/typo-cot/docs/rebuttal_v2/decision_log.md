@@ -210,3 +210,10 @@ Those ID lists do not replace later fresh baseline sensitivity cohorts.
 Synthetic CPU fixtures demonstrate behavior, not recovery of the original
 172/97-item archives. Human judgments, real-model smoke, and formal results
 remain not run; parser-independent semantic claims remain inconclusive.
+
+A compatibility probe consumed every successful output of the existing PR-01
+intake/source fixtures. It identified repeated declarations of one source file:
+PR-01 preserves identical acquisition claims while deduplicating scientific
+records. The consumer now accepts those identical claims and continues to reject
+contradictions. All 128 successful fixture outputs passed the repeated probe;
+this is artifact compatibility evidence, not additional scientific observations.
