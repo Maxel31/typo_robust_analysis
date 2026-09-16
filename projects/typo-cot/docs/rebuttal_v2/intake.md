@@ -45,6 +45,10 @@ schemas.md, including explicit nulls for unknown source/model/tokenizer revision
 Source kinds remain `submitted-archive`, `public-regeneration`, or `fresh-audit`;
 the adapter never converts one kind into another. Other source roles can be
 inventoried without pretending that they are pair or generation records.
+For pair-level model/tokenizer/prompt-template revisions and `archived_runtime`,
+an omitted key inherits the archived source entry's value when available. An
+explicit null instead means that the row's value is unknown and must not be
+filled from the source entry. No contemporary runtime supplies archived values.
 
 ### Pair rows
 
@@ -96,6 +100,9 @@ with an optional `source_generation_key`. Missing slots remain missing. If the
 archive did not enumerate its generation grid, intake does not infer a complete
 historical grid from the current six-arm fresh protocol or aggregate counts.
 Omission/null means an unknown grid; an explicit empty array means known empty.
+An explicit `source_generation_key` identifies exactly one pair/arm/window slot
+across the complete intake, including missing expected outputs. It cannot be
+reused for a different slot or conflict with an observed generation identity.
 
 ### Generation rows
 
@@ -123,6 +130,9 @@ For this adapter, `stopping_metadata.eos_observed=true` establishes EOS, includi
 EOS at the cap. A length-cap observation requires `eos_observed=false` and
 `length_cap_reached=true`. Other saved stop metadata remains raw evidence and
 does not establish either stopping reason automatically.
+An unsupported raw `termination` label is retained as `archived_termination`;
+it does not override valid observed EOS/cap flags. Contradictory recognized stop
+labels and observed flags are rejected rather than choosing one silently.
 
 Optional `archived_scoring` preserves the old parser's recorded judgments as
 source-attributed metadata, not newly computed truth. It cannot alter pair
@@ -152,6 +162,10 @@ count equals 172 or 97. This command never selects new examples to fill a quota.
 Known R3/R4 membership also requires the pair's task/model to match the frozen
 setting. Other historical setting IDs remain explicitly unvalidated rather than
 being silently interpreted as one of these experiments.
+For R3/R4, `historical_n_reference` itself must equal the protocol's 172/97; this
+checks the reference metadata, not the number of recovered or successful rows.
+An extra pair outside the frozen list stays excluded and reported even if it
+has a different task/model; it does not abort recovery of the actual members.
 
 The output set is `source_audit.json`, `archive_inventory.jsonl`,
 `pair_manifest.jsonl`, `pair_manifest.meta.json`,
@@ -164,6 +178,11 @@ An exact `protocol.json` snapshot is copied into the output set. The run records
 the canonical protocol hash/revision and the implementing modules' content hashes,
 plus the Git commit and dirty state when Git identity is available. Outside a Git
 checkout those Git fields are null with an explicit reason, not invented values.
+CSV is a display/export view: formula-like string cells are prefixed with an
+apostrophe to keep them text when opened in spreadsheet software. Exact unescaped
+IDs and text remain in JSON/JSONL, the authoritative inputs for machine joins.
+The output directory is private (mode 0700) by default because raw text and
+provenance may be sensitive; sharing its permissions is an explicit owner action.
 
 The original submitted data has not been recovered by implementing this command.
 CPU fixtures are synthetic and are not formal R0 results. Real-model smoke and

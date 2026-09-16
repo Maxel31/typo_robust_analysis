@@ -12,6 +12,7 @@ from typo_cot.experiments.rebuttal_v2.identity import (
     identity_hash,
     load_identity_aliases,
     original_problem_group_id_for,
+    parse_identity_aliases,
     pair_id_for,
 )
 from typo_cot.experiments.rebuttal_v2.schemas import (
@@ -272,6 +273,28 @@ def test_alias_chains_preserve_original_identity_and_verified_evidence(tmp_path:
     unknown = aliases.resolve_group("reissued", "test", None)
     assert unknown.canonical == unknown.original
     assert unknown.evidence_refs == ()
+
+
+def test_alias_parser_uses_captured_payload_when_disk_alias_has_changed(tmp_path: Path) -> None:
+    path = _alias_artifact(tmp_path, [("old", "captured-canonical")])
+    snapshot = json.loads(path.read_text(encoding="utf-8"))
+    _alias_artifact(tmp_path, [("old", "replacement-canonical")])
+
+    aliases = parse_identity_aliases(snapshot, source_path=path)
+
+    assert aliases.resolve_pair("archive", "old").canonical["source_pair_key"] == "captured-canonical"
+    assert load_identity_aliases(path).resolve_pair("archive", "old").canonical["source_pair_key"] == "replacement-canonical"
+    assert aliases.resolve_pair("archive", "old").evidence_refs[0]["path"] == str(tmp_path / "equivalence.txt")
+
+
+def test_alias_parser_validates_snapshot_even_when_disk_artifact_is_valid(tmp_path: Path) -> None:
+    path = _alias_artifact(tmp_path, [("old", "canonical")])
+    with pytest.raises(IntakeError, match="JSON object"):
+        parse_identity_aliases([], source_path=path)
+    snapshot = json.loads(path.read_text(encoding="utf-8"))
+    snapshot["pair_aliases"][0]["canonical"]["source_pair_key"] = "old"
+    with pytest.raises(IntakeError, match="alias cycle"):
+        parse_identity_aliases(snapshot, source_path=path)
 
 
 @pytest.mark.parametrize("edges", [[("x", "x")], [("x", "y"), ("y", "x")], [("unused-x", "unused-y"), ("unused-y", "unused-x")]])

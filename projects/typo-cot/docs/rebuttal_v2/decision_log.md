@@ -156,3 +156,12 @@ Implementation and CPU fixtures are available for R0 only. Real-model smoke and
 formal model results remain not run; R1 onward are not implemented by this PR.
 The optional model-dependent test suite requires torch, which is not installed
 in the CPU-only validation environment. No GPU test is claimed as passed.
+
+PR-01 review corrections bind every expected and observed generation identity to
+one slot, validate the frozen historical reference metadata without enforcing
+observed counts, and retain excluded extras without treating them as members.
+Alias identity is derived from the same captured bytes whose hash is recorded.
+Observed stopping flags take precedence over unsupported raw labels, and explicit
+null archived metadata remains unknown rather than being inherited. CSV text
+escaping changes only the export view; canonical JSON/JSONL identities are intact.
+These corrections do not use new model outcomes or change the scientific protocol.

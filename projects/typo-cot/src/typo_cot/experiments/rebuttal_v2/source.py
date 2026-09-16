@@ -24,6 +24,7 @@ from .identity import (
     identity_hash,
     load_identity_aliases,
     original_problem_group_id_for,
+    parse_identity_aliases,
     pair_id_for,
 )
 from .schemas import (
@@ -286,11 +287,11 @@ def read_archive_index(path: str | Path) -> ArchiveIndex:
         require_int(cohort["historical_n_reference"], "historical_n_reference", minimum=0)
         if "historical_counts" in cohort:
             require_object(cohort["historical_counts"], "historical_counts")
-    aliases_path = None
+    aliases = load_identity_aliases(None)
     if data["identity_aliases_ref"] is not None:
-        aliases_path, _ = _read_ref(data["identity_aliases_ref"], index_path, snapshots)
+        aliases_path, alias_bytes = _read_ref(data["identity_aliases_ref"], index_path, snapshots)
         alias_data = require_object(
-            strict_loads(_decode(_snapshot(aliases_path, snapshots), aliases_path)),
+            strict_loads(_decode(alias_bytes, aliases_path)),
             "identity aliases",
         )
         for rows in (alias_data.get("pair_aliases", []), alias_data.get("group_aliases", [])):
@@ -299,7 +300,7 @@ def read_archive_index(path: str | Path) -> ArchiveIndex:
             for row in rows:
                 if isinstance(row, dict) and "evidence_ref" in row:
                     _read_ref(row["evidence_ref"], aliases_path, snapshots)
-    aliases = load_identity_aliases(aliases_path)
+        aliases = parse_identity_aliases(alias_data, source_path=aliases_path)
     return ArchiveIndex(index_path, data, snapshots, aliases)
 
 
@@ -672,7 +673,7 @@ def normalize_record(record: dict[str, Any], source_identity: dict[str, Any]) ->
     result.update(canonical_group)
     for name in ("model_revision", "tokenizer_revision", "prompt_template_revision"):
         result[name] = record.get(name, source_identity.get(name))
-    if result["archived_runtime"] is None:
+    if "archived_runtime" not in record:
         result["archived_runtime"] = source_identity.get("generation_config")
     for name in ("clean_text", "typo_text", "clean_prompt", "typo_prompt"):
         text, ref, digest = _text_payload(record, name, source_identity)
@@ -789,10 +790,8 @@ def _normalize_generation(
         termination = "length-cap"
     else:
         termination = "unknown"
-    if supplied_termination not in {"eos", "length-cap", "unknown"}:
-        termination = "unknown"
-    elif (
-        supplied_termination != "unknown"
+    if (
+        supplied_termination in {"eos", "length-cap"}
         and termination != "unknown"
         and supplied_termination != termination
     ):
@@ -802,6 +801,8 @@ def _normalize_generation(
         "source_generation_key": record["source_generation_key"],
     }
     reasons = []
+    if supplied_termination not in {"eos", "length-cap", "unknown"}:
+        reasons.append("archived_termination_unsupported")
     if text_hash is None:
         reasons.append("raw_generation_missing")
     if termination == "unknown":
@@ -855,8 +856,13 @@ def _join_records(audit: SourceAudit) -> tuple[list[dict[str, Any]], list[dict[s
             for name in ("clean_text", "typo_text", "clean_prompt", "typo_prompt"):
                 provenance_only.update({name, f"{name}_ref"})
             consistency = set(old) | set(pair)
-            if any(old.get(key) != pair.get(key) for key in consistency - provenance_only):
-                raise IntakeError(f"Conflicting exact texts or identity metadata for pair_id {pid}")
+            conflicts = sorted(
+                key for key in consistency - provenance_only if old.get(key) != pair.get(key)
+            )
+            if conflicts:
+                raise IntakeError(
+                    f"Conflicting exact texts or identity metadata for pair_id {pid}; fields: {', '.join(conflicts)}"
+                )
             # The manifest has unique IDs, but repeated acquisition records retain
             # all source provenance and are explicitly reported as duplicates.
             old.setdefault("additional_source_refs", []).append(pair["source_ref"])
@@ -927,6 +933,14 @@ def _cohort_coverage(
             raise IntakeError(f"Pair references undeclared cohorts: {sorted(unknown)}")
         pair["cohort_membership"] = []
     for cohort in audit.cohorts:
+        setting = settings.get(cohort["setting"])
+        if (
+            setting is not None
+            and cohort["historical_n_reference"] != setting["historical_n_reference"]
+        ):
+            raise IntakeError(
+                f"historical_n_reference does not match frozen setting {cohort['setting']}"
+            )
         expected = cohort["expected_source_pair_keys"]
         expected_ids: dict[str, str] | None = None
         if expected is not None:
@@ -954,9 +968,10 @@ def _cohort_coverage(
         for pair in pairs:
             if pair["pair_id"] not in recovered | extras:
                 continue
-            setting = settings.get(cohort["setting"])
-            if setting is not None and (
-                pair["task"] != setting["task"] or pair["model_id"] != setting["model"]
+            if (
+                pair["pair_id"] in recovered
+                and setting is not None
+                and (pair["task"] != setting["task"] or pair["model_id"] != setting["model"])
             ):
                 raise IntakeError(
                     f"Pair task/model does not match frozen setting {cohort['setting']}"
@@ -1134,8 +1149,55 @@ def _csv_bytes(rows: list[dict[str, Any]], fields: list[str]) -> bytes:
     writer = csv.DictWriter(buffer, fieldnames=fields)
     writer.writeheader()
     for row in rows:
-        writer.writerow({name: "NA" if row.get(name) is None else row[name] for name in fields})
+        cells = {}
+        for name in fields:
+            value = "NA" if row.get(name) is None else row[name]
+            # Escaping is confined to presentation CSV, never scientific JSON or
+            # typed numeric cells. Quoting alone does not neutralize formulas.
+            if isinstance(value, str) and re.match(r"^[\s\x00-\x20]*[=+@-]", value):
+                value = "'" + value
+            cells[name] = value
+        writer.writerow(cells)
     return buffer.getvalue().encode("utf-8")
+
+
+def _validate_generation_bindings(
+    records: list[dict[str, Any]],
+    generations: list[dict[str, Any]],
+    source_namespace: str,
+) -> None:
+    """Bind each known generation identity to exactly one scientific source slot.
+
+    Expected-but-missing outputs participate: absence does not make reuse of the
+    same source generation key across jobs an acceptable identity ambiguity.
+    """
+    bindings: dict[str, str] = {}
+
+    def bind(generation_id: str, pair_id: str, arm: str, window: list[int] | None) -> None:
+        slot = canonical_json({"pair_id": pair_id, "arm": arm, "window": window})
+        if generation_id in bindings and bindings[generation_id] != slot:
+            raise IntakeError(
+                f"Conflicting generation identity {generation_id}: reused across pair/arm/window slots"
+            )
+        bindings[generation_id] = slot
+
+    for generation in generations:
+        bind(
+            generation["generation_id"],
+            generation["pair_id"],
+            generation["arm"],
+            generation["window"],
+        )
+    for pair in records:
+        for expected in pair["expected_generations"] or []:
+            key = expected.get("source_generation_key")
+            if key is None:
+                continue
+            generation_id = identity_hash(
+                "rebuttal-generation/v2",
+                {"source_namespace": source_namespace, "source_generation_key": key},
+            )
+            bind(generation_id, pair["pair_id"], expected["arm"], expected["window"])
 
 
 def write_manifest(
@@ -1161,6 +1223,7 @@ def write_manifest(
         raise IntakeError("Protocol bytes changed between validation and publication")
     protocol_ref = _bytes_ref("protocol.json", protocol_bytes)
     protocol_hash = canonical_sha256(protocol)
+    _validate_generation_bindings(records, generations, audit.index.data["source_namespace"])
     files: dict[str, bytes] = {"protocol.json": protocol_bytes}
     files["archive_generation_records.jsonl"] = _jsonl_bytes(generations)
     generation_ref = _bytes_ref(

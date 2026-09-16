@@ -182,16 +182,26 @@ def _load_links(
     return result
 
 
+def parse_identity_aliases(payload: object, source_path: Path) -> IdentityAliases:
+    """Validate captured alias content without reopening the source artifact.
+
+    Evidence references are still resolved and verified relative to source_path.
+    Callers binding an input hash must pass the object decoded from those bytes.
+    """
+
+    obj = require_object(payload, str(source_path))
+    require_keys(obj, ("schema_version", "pair_aliases", "group_aliases"), context=str(source_path))
+    if obj["schema_version"] != ALIASES_SCHEMA_VERSION:
+        raise IntakeError(f"unsupported identity aliases schema_version at {source_path}")
+    return IdentityAliases(
+        _load_links(obj["pair_aliases"], PAIR_IDENTITY_FIELDS, source_path, "pair_aliases"),
+        _load_links(obj["group_aliases"], GROUP_IDENTITY_FIELDS, source_path, "group_aliases"),
+    )
+
+
 def load_identity_aliases(path: Path | None) -> IdentityAliases:
     """Verify every alias/evidence entry, including aliases unused by this intake."""
 
     if path is None:
         return IdentityAliases()
-    payload = load_json_object(path)
-    require_keys(payload, ("schema_version", "pair_aliases", "group_aliases"), context=str(path))
-    if payload["schema_version"] != ALIASES_SCHEMA_VERSION:
-        raise IntakeError(f"unsupported identity aliases schema_version at {path}")
-    return IdentityAliases(
-        _load_links(payload["pair_aliases"], PAIR_IDENTITY_FIELDS, path, "pair_aliases"),
-        _load_links(payload["group_aliases"], GROUP_IDENTITY_FIELDS, path, "group_aliases"),
-    )
+    return parse_identity_aliases(load_json_object(path), source_path=path)
