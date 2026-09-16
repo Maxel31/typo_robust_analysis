@@ -94,7 +94,7 @@ Status dimensions are separate fields, not interchangeable labels:
 | `coverage_status` | `complete`, `partial`, `unknown` | Recovery of an explicitly enumerated source cohort; count agreement alone is insufficient |
 | `eligibility` | `valid`, `invalid`, `unknown`, `not_available` | Passed prespecified post-hoc protocol conditions; evaluated and failed; necessary evidence unresolved; optional input not provided |
 | `runtime_status` | `pending`, `running`, `complete`, `failed` | Execution status for a planned valid job; model answer correctness is unrelated |
-| `termination` | `eos`, `length-cap`, `unknown` | Observed generation stopping reason, with supporting metadata; unsupported archive reasons remain raw metadata plus unknown |
+| `termination` | `eos`, `length-cap`, `unknown` | Observed generation stopping reason, with supporting metadata; unsupported archive labels remain raw metadata and imply unknown only if no supported stopping observation is available |
 | `extraction_status` | `extracted`, `unextractable`, `ambiguous` | Gold-independent parser result on present output; reasons retain quoted/negated/unsupported syntax |
 | `score_status` | `scored`, `not_scored` | Gold comparison available, or an executed extraction cannot be scored because gold is missing |
 | `run_status` | `complete`, `partial`, `failed` | Command execution/artifact completeness; low answer success never fails a run |
@@ -456,8 +456,10 @@ and supporting stop metadata, runtime status, scientific config hash, worker
 telemetry reference, source/write positions, hook counts by layer/phase, and
 integrity diagnostics. Decode only the generated suffix, not the prompt. EOS on
 token 512 is `eos`; length 512 without stopping evidence is not sufficient to
-infer `length-cap` for an archive. Unsupported archive stop reasons are preserved
-as raw metadata with `termination=unknown`. Fresh canonical generation records
+infer `length-cap` for an archive. Unsupported archive stop labels are preserved
+as raw metadata; without supported observed stop metadata, `termination=unknown`.
+They do not erase a stopping reason established by supported observation flags.
+Fresh canonical generation records
 have `runtime_status=complete`; there is at most one row per `generation_id`,
 referencing its successful attempt. Failure history is never appended as duplicate
 generation rows or decoded/scored as a complete model answer.
