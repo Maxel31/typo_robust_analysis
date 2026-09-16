@@ -277,6 +277,7 @@ PUBLIC_CONFIG_FILES = {
     Path("configs/rebuttal/subword-position-patching.yaml"),
     Path("configs/rebuttal/six-setting-patch-controls.yaml"),
     Path("configs/rebuttal/source-write-coordinate-grid.yaml"),
+    Path("configs/rebuttal_v2/protocol.json"),
 }
 
 

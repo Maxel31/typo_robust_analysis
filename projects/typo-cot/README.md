@@ -19,6 +19,13 @@ See
 operation matrix, denominators, target directory layout, and one-command-per-
 experiment interface.
 
+The existing v1 rebuttal commands validate archived reproduction artifacts against
+the paper's historical protocol. The [Rebuttal v2 protocol](docs/rebuttal_v2/README.md)
+defines a separate audit and fresh-control workflow that accepts observations
+without requiring historical success counts. PR-00 provides documentation,
+schemas, and configuration only; the proposed `typo-cot rebuttal-v2` commands are
+not implemented, and no v2 model results or real-model smoke checks are available.
+
 ## Setup
 
 From the repository root:

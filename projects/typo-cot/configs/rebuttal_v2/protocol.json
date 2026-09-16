@@ -1,0 +1,108 @@
+{
+  "schema_version": "rebuttal-protocol/v2",
+  "protocol_revision": "2.0.0",
+  "analysis_kind": "reviewer-requested-post-hoc-audit",
+  "seed": 42,
+  "cohort_policy": "exact-archived-ids-no-outcome-count-acceptance",
+  "primary_experiments": [
+    "R0",
+    "R1",
+    "R2",
+    "R3"
+  ],
+  "optional_experiments": [
+    "R4"
+  ],
+  "settings": [
+    {
+      "id": "R3",
+      "model": "google/gemma-3-4b-it",
+      "task": "gsm8k",
+      "historical_n_reference": 172,
+      "windows": [
+        [
+          0,
+          6
+        ]
+      ],
+      "shots": 8
+    },
+    {
+      "id": "R4",
+      "model": "Qwen/Qwen2.5-3B-Instruct",
+      "task": "mmlu-pro",
+      "historical_n_reference": 97,
+      "windows": [
+        [
+          0,
+          6
+        ],
+        [
+          6,
+          12
+        ]
+      ],
+      "shots": 5
+    }
+  ],
+  "generation": {
+    "dtype": "bfloat16",
+    "quantization": false,
+    "do_sample": false,
+    "num_beams": 1,
+    "max_new_tokens": 512,
+    "padding_side": "left",
+    "batch_size": 1
+  },
+  "arms": [
+    "clean",
+    "typo",
+    "self",
+    "correct",
+    "offset",
+    "cross"
+  ],
+  "patch": {
+    "site": "complete-decoder-block-output",
+    "phase": "prefill-only",
+    "coordinates": "actual-edited-word-final",
+    "offset_tokens": 2,
+    "offset_policy": "all-valid-all-edited-spans-excluded",
+    "donor_policy": "disjoint-original-problem-fixed-bank",
+    "donor_assignment": "hash-ordered-one-to-one-without-replacement",
+    "donor_bank_group_disjoint": true
+  },
+  "parser": {
+    "primary": "explicit_answer_v2",
+    "sensitivity": "archive_or_labeled_public_proxy",
+    "conflicting_explicit_answers": "ambiguous"
+  },
+  "estimands": {
+    "primary_offset": "C_offset-all-eligible",
+    "primary_cross": "C_cross-all-eligible",
+    "three_arm_table": "C_three",
+    "secondary_recovery": "primary-parser-fixed-fresh-failure-ids",
+    "missing_donor_bank": "cross-not-available-offset-retained"
+  },
+  "statistics": {
+    "cluster": "original_problem_group_id",
+    "bootstrap_replicates": 10000,
+    "seed": 42,
+    "confidence_level": 0.95,
+    "primary_test_family": "R3-correct-vs-offset-and-cross",
+    "setting_resampling": false,
+    "bootstrap_interval": "percentile",
+    "bootstrap_quantile_method": "linear",
+    "primary_test_family_size": 2,
+    "missing_primary_p": 1
+  },
+  "runtime_lock_required": [
+    "model_revision",
+    "tokenizer_revision",
+    "prompt_sha256",
+    "library_versions",
+    "attention_backend",
+    "device_identity",
+    "effective_eos_ids"
+  ]
+}
