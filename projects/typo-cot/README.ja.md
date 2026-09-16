@@ -16,6 +16,12 @@ uv run --project projects/typo-cot typo-cot experiments source
 実験の対応表、分母、出力ディレクトリ構成、1実験1コマンドの契約は
 [`docs/paper-experiments.md`](docs/paper-experiments.md) にあります。
 
+既存のv1 rebuttalコマンドは、論文の歴史的protocolに照らして保存された再現artifactを
+検証します。[Rebuttal v2の仕様](docs/rebuttal_v2/README.md) は監査とfresh対照実験の
+ための別の手順で、過去の成功数との一致を新観測の受入条件にしません。
+PR-00の内容は文書・schema・設定のみです。予定CLI `typo-cot rebuttal-v2` は未実装で、
+v2のモデル実験結果や実モデルsmokeの検証結果はまだありません。
+
 ## セットアップ
 
 リポジトリのルートで実行します。
