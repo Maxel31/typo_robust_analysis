@@ -20,7 +20,10 @@ uv run --project projects/typo-cot typo-cot experiments source
 検証します。[Rebuttal v2の仕様](docs/rebuttal_v2/README.md) は監査とfresh対照実験の
 ための別の手順で、過去の成功数との一致を新観測の受入条件にしません。
 CPU専用の [`typo-cot rebuttal-v2 intake`](docs/rebuttal_v2/intake.md) は、出典を検証し、
-欠落を明示した固定manifestを出力します。後続の監査・生成コマンドは未実装で、
+欠落を明示した固定manifestを出力します。
+[`typo-cot rebuttal-v2 answer-audit`](docs/rebuttal_v2/answer_audit.md) は保存生成を対象に、
+明示回答の採点と変更していないpublic v1 parserの採点を比較します。
+後続の入力監査・生成コマンドは未実装で、
 v2のモデル実験結果や実モデルsmokeの検証結果はまだありません。
 
 ## セットアップ

@@ -182,3 +182,38 @@ Unknown historical count metadata is exported as NA rather than a known empty
 object; repeated references to the identical source row are not additional rows.
 Publication revalidation hashes inputs in chunks without changing the snapshot
 used for parsing, and redundant source-kind plural metadata was removed.
+
+## PR-02 implementation (2026-09-16)
+
+PR-01 was merged in `002c180859c3c719e919d7c6b402857617f827d6` before PR-02
+started from main. PR-02 adds only CPU saved-generation answer extraction,
+rescoring, parser sensitivity tables, and blinded answer-review exports.
+The scientific protocol remains revision `2.0.0`, with its existing hash.
+
+The frozen explicit-answer grammar is implemented independently of the public
+v1 extractor. Exact rational canonical scoring is separate from extraction.
+The unchanged public extractor/fallback runs as `public_v1_proxy`, never as
+unidentified archive code. Its main score preserves legacy raw-gold comparison;
+an explicitly auxiliary canonical score isolates extraction differences.
+Missing raw gold is not inferred from canonical gold. The concrete contracts
+and artifact names are documented in [answer_audit.md](answer_audit.md).
+
+Before human judgments, the blind selection policy is fixed to seed 42,
+hash ordering, 32 cases per extraction-disagreement/doubt stratum and 8 agreement
+controls. It uses neither gold nor correctness. Operational parser resource
+limits are explicit availability failures, not model failures. Neither choice
+was informed by recovered paper outputs or fresh model results.
+
+R1 verifies the immutable intake/reference chain, retains original membership
+and missing IDs, and saves parser-specific archived baseline transitions.
+Those ID lists do not replace later fresh baseline sensitivity cohorts.
+Synthetic CPU fixtures demonstrate behavior, not recovery of the original
+172/97-item archives. Human judgments, real-model smoke, and formal results
+remain not run; parser-independent semantic claims remain inconclusive.
+
+A compatibility probe consumed every successful output of the existing PR-01
+intake/source fixtures. It identified repeated declarations of one source file:
+PR-01 preserves identical acquisition claims while deduplicating scientific
+records. The consumer now accepts those identical claims and continues to reject
+contradictions. All 128 successful fixture outputs passed the repeated probe;
+this is artifact compatibility evidence, not additional scientific observations.
