@@ -25,8 +25,10 @@ CPU専用の [`typo-cot rebuttal-v2 intake`](docs/rebuttal_v2/intake.md) は、�
 明示回答の採点と変更していないpublic v1 parserの採点を比較します。
 [`input-audit`・`annotation-export`・`annotation-import`](docs/rebuttal_v2/input_audit.md)
 は独立した編集span・token座標監査と、Stage Aを固定してから原文を開示する二段階注釈を提供します。
-後続の計画・生成・集計コマンドは未実装で、
-v2のモデル実験結果や実モデルsmokeの検証結果はまだありません。
+CPU専用の [`plan`](docs/rebuttal_v2/planning.md) は、これらの完全な参照chain、宣言済み
+runtime lock、任意の独立donor bankを検証し、model weightをloadせずglobal arm gridを
+固定します。生成・集計コマンドは未実装です。実行済みなのはsynthetic CPU受入fixtureだけで、
+原172/97件archiveの回収、人手label、v2のmodel結果、実model smokeの結果はまだありません。
 
 ## セットアップ
 

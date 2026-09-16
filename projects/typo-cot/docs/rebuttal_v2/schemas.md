@@ -1,8 +1,9 @@
 # Rebuttal v2 artifact and CLI contracts
 
 Status: protocol revision `2.0.0`. PR-01 implements R0 intake, PR-02 implements
-R1 answer audit, and PR-03 implements R2 input audit and two-stage annotations.
-Planning, generation and reduction contracts remain specifications.
+R1 answer audit, PR-03 implements R2 input audit and two-stage annotations, and
+PR-04 implements CPU-only global planning. Generation and reduction contracts
+remain specifications.
 No real-model smoke or formal results are available. Scientific definitions, parser grammar, cohorts,
 and acceptance cases are in [README.md](README.md). Machine settings are in
 [protocol.json](../../configs/rebuttal_v2/protocol.json).
@@ -421,6 +422,34 @@ The protocol's `runtime_lock_required` list applies to every selected setting
 entry. Historical revision unknowns stay in the manifest. Resolve this lock
 before GPU forward; observed runtime must match the selected setting's entry.
 
+The top-level field set is exactly `schema_version`, `settings`, and optional
+`provenance`. Only `provenance` is non-scientific. Each selected setting entry has
+exactly `model_id`, `model_revision`, `model_files`, `tokenizer_id`,
+`tokenizer_revision`, `tokenizer_policy`, `generation`, `attention_backend`,
+`cache_behavior`, `effective_eos_ids`, `library_versions`, `code_commit`,
+`code_tree_sha256`, `device_identity`, `compute_settings`, `prompt_sha256`,
+`prompt_token_ids_sha256`, `donor_prompt_sha256`, and
+`donor_prompt_token_ids_sha256`. `model_files` is a nonempty map from safe relative
+model filenames to declared SHA-256 digests. Planning does not read model weight
+bytes, so PR-05 must verify every actually loaded weight/config byte against these
+declarations before GPU execution; a CPU-valid plan is not proof of the actual
+model runtime. `tokenizer_policy` has exactly `tokenizer_files`, `library`,
+`special_token_ids`, `chat_template`, `add_special_tokens`, `normalization`,
+`padding_side`, and `offset_convention`. Its tokenizer ArtifactRefs are resolved
+relative to the runtime-lock file and their bytes are verified.
+
+`generation` contains every frozen protocol generation key with typed-equal
+values and may add explicit resolved JSON controls needed by the runtime.
+`cache_behavior` includes typed boolean `use_cache`; `effective_eos_ids` is a
+nonempty unique integer array. `library_versions` includes `tokenizers`,
+`transformers`, and `torch`. `device_identity` is exactly `type`, `model`, and
+`compute_capability`; `compute_settings` includes `cuda_version`, `driver_version`,
+`deterministic_algorithms`, and `allow_tf32` plus any other explicitly resolved
+precision/determinism settings. CUDA versions and capability are required for a
+CUDA declaration. Physical GPU index/UUID/serial, host, PID, shard values,
+timestamps, and descriptive provenance do not belong in scientific setting
+entries.
+
 Formal planning requires equality between the input-audit tokenizer policy/entry
 and the relevant fresh runtime tokenizer policy, and verifies every exact prompt
 token-ID hash before accepting endpoints. Donors must pass the same equality and
@@ -428,6 +457,15 @@ prompt-token checks. A mismatch stops formal planning for the affected setting;
 it is not cured by matching token counts or by trusting archived coordinates.
 Missing lock entries stop formal planning, while CPU audit reports may retain
 unknown token alignment. Historical tokenizer agreement remains a separate field.
+The runtime tokenizer policy must be typed-equal to the PR-03 audit descriptor
+after removing only ArtifactRef locations; equal token counts are not enough.
+For every selected prompt whose exact text is known, the declared full-prompt text
+and complete token-ID hashes are verified even if word alignment is invalid, so
+alignment-invalid pairs can still retain independently eligible baselines. A known
+empty token-ID array is hashed and then makes the corresponding arm invalid. An
+absent full prompt remains unknown for that arm. Missing or mismatching runtime
+hashes/policies are global preflight blockers. This check does not assert that a
+fresh lock matches an unknown historical tokenizer revision.
 
 The scientific hash projection is `{protocol_sha256, settings}` with only selected
 settings, sorted by setting ID. Each setting includes model/tokenizer IDs and
@@ -456,6 +494,27 @@ Compare full hexadecimal digests lexicographically, then `pair_id` for ties.
 Zip the ordered recipient and donor lists in each exact stratum. Endpoint/state
 order within a pair follows ascending actual edited-word position in its prompt.
 
+Each donor row has exactly `schema_version`, `pair_id`,
+`original_problem_group_id`, `task`, `model_id`, `target_rule`,
+`clean_prompt_ref`, `clean_prompt_sha256`, `aligned_word_count`,
+`clean_endpoints`, `tokenizer_lock_ref`, `input_audit_ref`, and `provenance`.
+The prompt and tokenizer-lock fields are ArtifactRefs. `input_audit_ref` is a
+RecordRef whose record ID is the verified `input_audit_id`; `provenance` has
+exactly `manifest_ref` and `source_ref`, both RecordRefs copied by identity/hash
+from the verified audit/manifest chain. `aligned_word_count` is at least one and
+equals the strictly ordered `clean_endpoints` length and the independent audit's
+aligned-edit count. All prompt bytes, endpoints, group/target/model/task identity,
+tokenizer descriptor, and reference hashes are revalidated through the complete
+PR-03 chain. Donors may be independently acquired extra pairs and need not be
+members of a recipient historical cohort. Distinct donor pair IDs may share one
+donor original-problem group; the rule forbids overlap with every selected
+recipient group, not mutual disjointness inside the bank. Duplicate donor pair IDs
+are invalid.
+Provenance RecordRefs may use a different existing location only when artifact
+bytes/hash and record ID equal the verified reference. The authoritative pair
+still comes from the valid audit/manifest chain; a content alias does not permit
+partial relocation of a broken reference graph.
+
 `plan.jsonl` (`rebuttal-plan/v2`) contains one row for every intended
 `(pair_id,window,arm)` including ineligible arms. Fields are `plan_id`, `pair_id`,
 `original_problem_group_id`, `setting`, `window`, `arm`, `source_pair_id`,
@@ -467,6 +526,22 @@ The scientific planning payload for `plan_id` includes these fields except the
 ID itself and semantic labels, plus verified input-audit/manifest/protocol hashes.
 Reference payloads contribute content hashes and record IDs, not filesystem paths.
 Shard allocation and mutable execution state are not part of the payload.
+
+The exact row field set is the preceding list plus `schema_version`,
+`protocol_sha256`, `manifest_sha256`, `input_audit_sha256`, `semantic_label`,
+`semantic_status`, and `semantic_reason_codes`. Eligibility is one of `valid`,
+`invalid`, `unknown`, or `not_available`; evidence missingness remains distinct
+from a known-invalid operation. A prompt reference, when present, is exactly
+`{artifact:{path,sha256},record_id,field}` where `field` is `clean_prompt` or
+`typo_prompt`. It points to the verified manifest record even when the original
+prompt representation was inline, preserving the source representation without
+copying prompt text into a plan row.
+
+`plan_id` uses domain `rebuttal-plan-row/v2`. Its payload contains every row field
+except `plan_id` and the three `semantic_*` fields; ArtifactRef paths are removed
+while their SHA-256 values remain. `generation_config_sha256` hashes exactly
+`{generation: runtime_entry.generation, effective_eos_ids: ...}`. Semantic labels
+are analysis metadata and never alter plan identity or job eligibility.
 
 All listed fields are present even on ineligible rows. `donor_bank_sha256` is
 nullable: with no supplied bank it is JSON `null` on every row and in metadata,
@@ -499,10 +574,27 @@ Self/correct require alignment; offset requires all corresponding source and
 write endpoints shifted by +2 to be legal; cross additionally requires the fixed
 donor. If any offset violates a prompt boundary, any edited-word token span, or
 write uniqueness, the entire offset arm is invalid. No endpoint is dropped to
-salvage a partially legal arm. Patch rows have the fixed window, complete block
+salvage a partially legal arm. Both source and write endpoints move by +2; the
+first and last prompt tokens are forbidden, and shifted endpoints may not land on
+any token belonging to any edited word. Invalid offset rows retain the complete
+candidate coordinate arrays. Patch rows have the fixed window, complete block
 output sites, `application_phase="prefill-only"`, one expected application per
 selected layer and zero at decode. Semantic labels define analysis subsets and
 never remove otherwise eligible baseline/patch generation jobs.
+
+Selection admits only verified `member` records of declared selected cohorts;
+`extra` and `unknown` records are excluded and reported. R3 may plan the recovered
+verified subset when declared original IDs are missing, but coverage must not call
+that the complete original 172. An available R3 full prompt and complete audited
+token IDs can keep its baseline eligible when separate exact query text is absent;
+alignment and analysis missingness remain explicit. R4 requires all declared
+frozen original IDs and nonnull, nonblank clean/typo query texts and full prompts;
+it never fills a
+shortfall or uses a historical success/count quota. A null group on any selected
+pair, donor overlap, tokenizer/runtime mismatch, or other global blocker prevents
+every runnable plan row. Missing donor bank is not a global blocker: cross is
+`not_available` and other arms continue. A present but empty valid bank makes
+matching cross rows invalid for shortage.
 
 `plan.meta.json` (`rebuttal-plan-metadata/v2`) is a required sibling of
 `plan.jsonl`. It stores plan file hash, protocol/manifest/input-audit/semantic-label
@@ -512,6 +604,34 @@ unavailable IDs/reasons, and freeze timestamp. All dependencies are transitively
 hashed. No reference cycle is allowed: the metadata references the plan, while
 plan rows bind upstream inputs rather than their own metadata hash.
 
+Its exact fields are `schema_version`, `freeze_timestamp`, `plan_ref`,
+`protocol_ref`, `protocol_sha256`, `manifest_ref`, `manifest_metadata_ref`,
+`input_audit_ref`, `input_audit_metadata_ref`, `semantic_labels_ref`,
+`semantic_labels_run_ref`, `runtime_lock_ref`, `donor_bank_ref`,
+`donor_bank_sha256`, `experiments`, `scientific_config_sha256`,
+`intended_row_count`, `row_counts`, `expected_generation_ids`,
+`ineligible_plan_rows`, `preflight_ref`, `coverage_ref`,
+`donor_assignment_ref`, `expected_generations_ref`, and `shard_assignment_ref`.
+`row_counts` is sorted by setting/arm/eligibility and carries `count`;
+`ineligible_plan_rows` retains `plan_id`, eligibility (including unknown and
+not-available), and reasons. Own output ArtifactRefs are relative; verified
+upstream references remain absolute. With no bank, `donor_bank_ref` and
+`donor_bank_sha256` are literal null everywhere rather than a digest of an absent
+file.
+
+`expected_generations.jsonl` has schema
+`rebuttal-expected-generation/v2` and exactly `schema_version`, `generation_id`,
+`plan_id`, `pair_id`, `setting`, `arm`, `window`, and
+`scientific_config_sha256`, for valid rows only. `generation_id` uses the existing
+`rebuttal-generation/v2` domain over
+`{plan_id,scientific_config_sha256}`. `preflight.json` records schema, status,
+sorted blockers, blocking pair IDs and experiments. `planning_coverage.json`
+retains selected IDs, per-pair and source-cohort coverage, and counts. A logical
+global preflight failure publishes only `preflight.json`,
+`planning_coverage.json`, `protocol.json`, and `run.json`, returns status 1, and
+does not publish a plan/grid/shard assignment. Structurally malformed or
+hash-invalid inputs raise before publication.
+
 Formal plans require resolved original-problem group identity before sharding.
 `shard_assignment.json` is separately generated for `num_shards` in 1..6. Map
 each group by the integer value of SHA-256 over
@@ -519,6 +639,22 @@ each group by the integer value of SHA-256 over
 all variants/arms/windows together. Changing shard count changes only this
 allocation, not scientific plan rows, donor assignment or cohorts. Donor input
 may reside outside the recipient shard. Shard workers never replan.
+
+The passing output set is `plan.jsonl`, `plan.meta.json`, `preflight.json`,
+`planning_coverage.json`, `donor_assignment.json`,
+`expected_generations.jsonl`, `shard_assignment.json`, `protocol.json`, and
+`run.json`. Publication is atomic into an absent or empty output directory and
+does not replace existing artifacts. `load_plan` treats `plan.meta.json` as the
+scientific root and revalidates every metadata-bound scientific output and
+immutable upstream reference by reconstructing the expected global plan; the
+operational planning `run.json` is not part of that read-back root. Historical
+producer code-identity references are validated as recorded provenance and are
+not compared with upgraded current code. `load_plan` is never a shard-local
+replanner. The planning run uses
+`command="plan"`, `mode="cpu-planning"`, `experiment_id=null`, selected
+`experiment_ids`, `experiment_status="not_run"`, and
+`planning_status="complete"|"blocked"`. Its expected/completed IDs mean frozen
+plan rows, not executed model jobs; `model_execution_performed` is false.
 
 ## 8. Fresh generations, scores, checkpoints, and run metadata
 

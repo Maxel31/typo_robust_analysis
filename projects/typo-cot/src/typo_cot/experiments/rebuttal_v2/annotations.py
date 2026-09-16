@@ -794,18 +794,12 @@ def _tables(bundle, semantic_rows):
     )
 
 
-def import_adjudicated_labels(
-    audit_path: str | Path,
-    labels: str | Path,
+def validate_semantic_judgments(
+    bundle: Any,
     annotation_batch: str | Path,
-    output_dir: str | Path,
-) -> dict[str, Any]:
-    """Import independent B judgments and explicit adjudication, never outcomes."""
-    from .artifact_io import json_bytes, jsonl_bytes
-    from .input_audit import load_input_audit
-
-    started_at = _now()
-    bundle = load_input_audit(audit_path)
+    labels: str | Path,
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any], ArtifactSnapshots]:
+    """Revalidate annotation inputs and reconstruct their semantic projection."""
     snapshots = _snapshot(bundle)
     batch_path, labels_path = Path(annotation_batch).resolve(), Path(labels).resolve()
     batch, mapping, a_ratings = _read_stage_b(batch_path, bundle, snapshots)
@@ -879,6 +873,25 @@ def import_adjudicated_labels(
         if row["pair_id"] in imported_ids:
             row["annotation_status"] = "completed"
             row["semantic_status"] = "human_labeled"
+    return semantic, agreement, coverage, snapshots
+
+
+def import_adjudicated_labels(
+    audit_path: str | Path,
+    labels: str | Path,
+    annotation_batch: str | Path,
+    output_dir: str | Path,
+) -> dict[str, Any]:
+    """Import independent B judgments and explicit adjudication, never outcomes."""
+    from .artifact_io import json_bytes, jsonl_bytes
+    from .input_audit import load_input_audit
+
+    started_at = _now()
+    bundle = load_input_audit(audit_path)
+    batch_path, labels_path = Path(annotation_batch).resolve(), Path(labels).resolve()
+    semantic, agreement, coverage, snapshots = validate_semantic_judgments(
+        bundle, batch_path, labels_path
+    )
     flow, strata = _tables(bundle, semantic)
     files = {
         "semantic_labels.jsonl": jsonl_bytes(semantic),
@@ -898,8 +911,8 @@ def import_adjudicated_labels(
             "annotation_batch": str(batch_path),
             "labels": str(labels_path),
             "annotation_batch_ref": _ref(batch_path, snapshots),
-            "returned_labels_ref": labels_ref,
+            "returned_labels_ref": _ref(labels_path, snapshots),
             "completed_count": len(semantic),
-            "adjudicated_count": len(adjudications),
+            "adjudicated_count": agreement["adjudicated_count"],
         },
     )

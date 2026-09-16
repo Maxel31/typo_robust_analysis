@@ -290,3 +290,46 @@ existing empty destination is preserved and only owned staging is removed;
 concurrently created nonempty output is never deleted. Four new regressions join
 the 18-test artifact-I/O suite for absent/pre-existing output, injected rename
 failure, concurrent publication, and staging-name confinement.
+
+## PR-04 implementation (2026-09-16)
+
+PR-03 was reviewed, all threads resolved, and merged as PR #183 in
+`48f620fec63d7b68130eb18feaf1531228775d47` before PR-04 started from main on
+`ARR2026_August_Rebuttal/04-global-plan`. The scientific protocol remains revision
+`2.0.0` with unchanged canonical hash. This change implements CPU-only global
+planning; it does not implement generation or reduction and does not change the
+frozen R3/R4 cohorts, windows, arms, or historical-count policy.
+
+PR-04 makes the previously abstract planning contract executable. It validates
+the complete imported-human-label chain read-only, exact PR-03 coordinates,
+closed runtime declarations, full prompt hashes, fixed +2 offset coordinates,
+independent donor-bank provenance, deterministic one-to-one donor assignment,
+and group-preserving shard allocation. Missing donor bank disables cross only.
+A supplied short or empty bank produces invalid cross rows without donor reuse.
+All selected recipient groups are excluded from the bank, including variants in
+other model/target strata; distinct donor pairs may share a donor group. No gold,
+saved correctness, patch outcome, input permutation, or shard count enters donor
+selection.
+
+Only verified selected-cohort members are planned. R3 can retain a recovered
+verified subset while reporting the original-ID shortfall; it cannot call that
+the complete original 172. R4 requires all declared frozen IDs and its exact
+texts/prompts and does not refill missing records. Unknown evidence, known-invalid
+coordinates, and optional-bank absence remain separate statuses. A null group or
+global runtime/reference mismatch blocks publication of runnable rows rather than
+silently dropping a selected pair.
+
+The runtime-lock reader verifies tokenizer ArtifactRef bytes and exact policy/
+prompt declarations without importing model frameworks. `model_files` are
+CPU-pinned digest declarations, not verified loaded weights. PR-05 must verify
+all weight and configuration bytes actually loaded by the GPU process before any
+forward pass. A successful PR-04 CPU plan therefore does not prove real-model
+runtime, cache, hook, or self-copy behavior.
+
+Synthetic CPU fixtures cover pure coordinate/donor invariance, strict donor and
+semantic readers, runtime projection, cohort/preflight behavior, complete arm
+grids, publication and read-back integrity. The exact final regression count is
+recorded in the PR validation after integration. These fixtures contain no formal
+paper data or model outcomes. The original 172/97-item archives have not been
+recovered here; actual human semantic labels, real-model smoke, GPU generation,
+reduction, and formal results remain not run.
