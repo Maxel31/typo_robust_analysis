@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import csv
 import io
+import itertools
 import json
 from pathlib import Path
 
@@ -676,3 +677,285 @@ def test_dangerous_missing_source_id_remains_exact_in_json_only_csv_is_escaped(
     assert audit["cohorts"][0]["missing_source_pair_keys"] == ["=1+1"]
     rows = list(csv.DictReader(io.StringIO((tmp_path / "out/missing_inputs.csv").read_text())))
     assert any(row["component"] == "'=1+1" for row in rows)
+
+
+def _separate_pair_sources(tmp_path: Path, pairs: list[dict]) -> Path:
+    index = _fixture(tmp_path, pairs=[])
+    payload = json.loads(index.read_text())
+    template = payload["sources"][0]
+    payload["sources"] = []
+    for number, pair in enumerate(pairs):
+        path = tmp_path / f"pair-source-{number}.jsonl"
+        path.write_text(json.dumps(pair) + "\n")
+        payload["sources"].append(
+            {
+                **template,
+                "source_id": f"pairs-{number}",
+                "path": path.name,
+                "expected_sha256": _hash(path),
+            }
+        )
+    index.write_text(json.dumps(payload))
+    return index
+
+
+def test_duplicate_historical_unknown_and_known_merge_without_source_order_dependence(
+    tmp_path: Path,
+) -> None:
+    _fixture(tmp_path)
+    (pair,) = _rows(tmp_path / "pairs.jsonl")
+    index = _separate_pair_sources(
+        tmp_path,
+        [pair, {**pair, "source_record_id": "known", "historical_pair_id": "historical-p"}],
+    )
+    source.run_intake(index, PROTOCOL, tmp_path / "forward")
+    payload = json.loads(index.read_text())
+    payload["sources"].reverse()
+    index.write_text(json.dumps(payload))
+    source.run_intake(index, PROTOCOL, tmp_path / "reverse")
+    (first,) = _rows(tmp_path / "forward/pair_manifest.jsonl")
+    (second,) = _rows(tmp_path / "reverse/pair_manifest.jsonl")
+    assert first == second
+    assert first["historical_pair_id"] == "historical-p"
+    assert first["source_pair_key_kind"] == "historical-id"
+    assert "historical_pair_id_unknown" not in first["reason_codes"]
+    assert {item["historical_pair_id"] for item in first["source_identity_provenance"]} == {
+        None,
+        "historical-p",
+    }
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        ({"historical_pair_id": "first"}, {"historical_pair_id": "second"}),
+        ({"source_pair_key_kind": "historical-id"}, {"source_pair_key_kind": "producer-id"}),
+    ],
+)
+def test_same_original_pair_rejects_conflicting_known_identity_metadata(
+    tmp_path: Path, reverse: bool, metadata: tuple[dict, dict]
+) -> None:
+    _fixture(tmp_path)
+    (pair,) = _rows(tmp_path / "pairs.jsonl")
+    rows = [{**pair, **metadata[0]}, {**pair, "source_record_id": "other", **metadata[1]}]
+    index = _separate_pair_sources(tmp_path, list(reversed(rows)) if reverse else rows)
+    with pytest.raises(
+        source.IntakeError,
+        match="Conflicting.*historical_pair_id|Conflicting.*source_pair_key_kind",
+    ):
+        source.run_intake(index, PROTOCOL, tmp_path / "out")
+
+
+def test_explicit_producer_kind_is_preserved_when_only_inferred_default_changes(
+    tmp_path: Path,
+) -> None:
+    _fixture(tmp_path)
+    (pair,) = _rows(tmp_path / "pairs.jsonl")
+    index = _separate_pair_sources(
+        tmp_path,
+        [
+            {**pair, "source_pair_key_kind": "producer-id"},
+            {**pair, "source_record_id": "other", "historical_pair_id": "paper-id"},
+        ],
+    )
+    source.run_intake(index, PROTOCOL, tmp_path / "out")
+    (row,) = _rows(tmp_path / "out/pair_manifest.jsonl")
+    assert row["historical_pair_id"] == "paper-id"
+    assert row["source_pair_key_kind"] == "producer-id"
+
+
+def _three_alias_sources(tmp_path: Path) -> Path:
+    _fixture(tmp_path)
+    (base,) = _rows(tmp_path / "pairs.jsonl")
+    pairs = [
+        {
+            **base,
+            "source_pair_key": key,
+            "source_record_id": key,
+            "historical_pair_id": f"history-{key}",
+            "source_pair_key_kind": "producer-id" if key == "p" else "historical-id",
+            "dataset_id": "dataset",
+            "split": "test",
+            "original_problem_id": key,
+        }
+        for key in ("p", "q", "canonical")
+    ]
+    index = _separate_pair_sources(tmp_path, pairs)
+    evidence = tmp_path / "aliases-evidence.txt"
+    evidence.write_text("Owner-confirmed equivalent identities")
+    ref = {"path": evidence.name, "sha256": _hash(evidence)}
+    aliases = {
+        "schema_version": "rebuttal-identity-aliases/v2",
+        "pair_aliases": [
+            {
+                "alias": {"source_namespace": "archive", "source_pair_key": key},
+                "canonical": {"source_namespace": "archive", "source_pair_key": "canonical"},
+                "evidence_ref": ref,
+            }
+            for key in ("p", "q")
+        ],
+        "group_aliases": [
+            {
+                "alias": {"dataset_id": "dataset", "split": "test", "original_problem_id": key},
+                "canonical": {
+                    "dataset_id": "dataset",
+                    "split": "test",
+                    "original_problem_id": "canonical",
+                },
+                "evidence_ref": ref,
+            }
+            for key in ("p", "q")
+        ],
+    }
+    path = tmp_path / "aliases.json"
+    path.write_text(json.dumps(aliases))
+    payload = json.loads(index.read_text())
+    payload["identity_aliases_ref"] = {"path": path.name, "sha256": _hash(path)}
+    index.write_text(json.dumps(payload))
+    return index
+
+
+def test_three_explicit_alias_acquisitions_preserve_all_provenance_in_any_order(
+    tmp_path: Path,
+) -> None:
+    index = _three_alias_sources(tmp_path)
+    payload = json.loads(index.read_text())
+    sources = payload["sources"]
+    expected = None
+    for number, permutation in enumerate(itertools.permutations(sources)):
+        payload["sources"] = list(permutation)
+        index.write_text(json.dumps(payload))
+        output = tmp_path / f"order-{number}"
+        source.run_intake(index, PROTOCOL, output)
+        (row,) = _rows(output / "pair_manifest.jsonl")
+        if expected is None:
+            expected = row
+        assert row == expected
+    assert expected["historical_pair_id"] == "history-canonical"
+    assert expected["source_pair_key_kind"] == "historical-id"
+    provenance = expected["source_identity_provenance"]
+    assert len(provenance) == 3
+    assert {item["historical_pair_id"] for item in provenance} == {
+        "history-p",
+        "history-q",
+        "history-canonical",
+    }
+    assert sum(len(item["pair_identity"]["alias_evidence_refs"]) for item in provenance) == 2
+    assert sum(len(item["group_identity"]["alias_evidence_refs"]) for item in provenance) == 2
+
+
+def test_same_original_conflict_is_not_excused_by_an_alias_mapping(tmp_path: Path) -> None:
+    index = _three_alias_sources(tmp_path)
+    payload = json.loads(index.read_text())
+    source_entry = payload["sources"][0]
+    path = tmp_path / source_entry["path"]
+    (pair,) = _rows(path)
+    path.write_text(
+        json.dumps(pair)
+        + "\n"
+        + json.dumps(
+            {**pair, "source_record_id": "conflict", "historical_pair_id": "different-p-history"}
+        )
+        + "\n"
+    )
+    source_entry["expected_sha256"] = _hash(path)
+    index.write_text(json.dumps(payload))
+    with pytest.raises(source.IntakeError, match="Conflicting historical_pair_id"):
+        source.run_intake(index, PROTOCOL, tmp_path / "out")
+
+
+def test_alias_representative_without_canonical_acquisition_is_lexically_stable(
+    tmp_path: Path,
+) -> None:
+    index = _three_alias_sources(tmp_path)
+    payload = json.loads(index.read_text())
+    payload["sources"] = payload["sources"][:2]
+    rows = []
+    for number in range(2):
+        payload["sources"].reverse()
+        index.write_text(json.dumps(payload))
+        output = tmp_path / f"without-canonical-{number}"
+        source.run_intake(index, PROTOCOL, output)
+        rows.extend(_rows(output / "pair_manifest.jsonl"))
+    assert rows[0] == rows[1]
+    assert rows[0]["historical_pair_id"] == "history-p"
+    assert rows[0]["source_pair_key_kind"] == "producer-id"
+
+
+def test_single_and_duplicate_manifest_rows_share_provenance_keys(tmp_path: Path) -> None:
+    _fixture(tmp_path)
+    (base,) = _rows(tmp_path / "pairs.jsonl")
+    index = _separate_pair_sources(
+        tmp_path,
+        [
+            base,
+            {**base, "source_record_id": "same-pair"},
+            {**base, "source_pair_key": "solo", "source_record_id": "solo"},
+        ],
+    )
+    source.run_intake(index, PROTOCOL, tmp_path / "out")
+    rows = _rows(tmp_path / "out/pair_manifest.jsonl")
+    assert set(rows[0]) == set(rows[1])
+    solo = next(row for row in rows if row["source_pair_key"] == "solo")
+    assert solo["additional_source_refs"] == []
+    assert len(solo["source_identity_provenance"]) == 1
+
+
+@pytest.mark.parametrize("reference_mode", ["claimant", "expected_ids", "membership_provenance"])
+def test_cohort_reference_tracks_actual_claimant_not_selected_pair_representative(
+    tmp_path: Path, reference_mode: str
+) -> None:
+    _fixture(tmp_path)
+    (base,) = _rows(tmp_path / "pairs.jsonl")
+    base["model_id"] = "google/gemma-3-4b-it"
+    known = {**base, "historical_pair_id": "known-history", "cohort_ids": []}
+    claimant = {**base, "source_record_id": "claimant", "cohort_ids": ["R3"]}
+    index = _separate_pair_sources(tmp_path, [known, claimant])
+    payload = json.loads(index.read_text())
+    cohort = {
+        "cohort_id": "R3",
+        "setting": "R3",
+        "historical_n_reference": 172,
+        "expected_ids_ref": None,
+        "id_namespace": "archive",
+        "membership_provenance_ref": None,
+    }
+    authoritative_ref = None
+    if reference_mode != "claimant":
+        evidence = tmp_path / "membership.json"
+        evidence.write_text(
+            json.dumps(
+                {
+                    "schema_version": "rebuttal-cohort-ids/v2",
+                    "cohort_id": "R3",
+                    "source_namespace": "archive",
+                    "source_pair_keys": ["p"],
+                }
+            )
+        )
+        authoritative_ref = {"path": str(evidence), "sha256": _hash(evidence)}
+        cohort[
+            "expected_ids_ref" if reference_mode == "expected_ids" else "membership_provenance_ref"
+        ] = authoritative_ref
+    payload["cohorts"] = [cohort]
+    rows = []
+    for number in range(2):
+        payload["sources"].reverse()
+        index.write_text(json.dumps(payload))
+        output = tmp_path / f"claimant-order-{number}"
+        source.run_intake(index, PROTOCOL, output)
+        rows.extend(_rows(output / "pair_manifest.jsonl"))
+    assert rows[0] == rows[1]
+    row = rows[0]
+    assert row["source_ref"]["artifact"]["path"] == str(tmp_path / "pair-source-0.jsonl")
+    membership_ref = row["cohort_membership"][0]["source_ref"]
+    assert set(membership_ref) == {"path", "sha256"}
+    if authoritative_ref is not None:
+        assert membership_ref == authoritative_ref
+    else:
+        claimant_path = tmp_path / "pair-source-1.jsonl"
+        assert membership_ref == {"path": str(claimant_path), "sha256": _hash(claimant_path)}
+    claimants = [item for item in row["source_identity_provenance"] if item["cohort_ids"] == ["R3"]]
+    assert len(claimants) == 1
+    assert claimants[0]["source_ref"]["record_id"] == "claimant"

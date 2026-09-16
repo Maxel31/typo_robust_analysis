@@ -172,6 +172,7 @@ Each `pair_manifest.jsonl` row (`rebuttal-pair-manifest/v2`) has:
 | `historical_pair_id`, `original_problem_group_id`, `dataset_revision` | Nullable provenance/group fields under §1 rules |
 | `dataset_id`, `split`, `original_problem_id`, `cohort_membership` | Namespace components (nullable when unknown); membership contains cohort ID, known/unknown membership, and source reference |
 | `source_kind`, `source_ref`, `source_sha256`, `source_record_id` | Original source provenance; source hash agrees with the referenced source |
+| `pair_identity`, `group_identity`, `source_identity_provenance`, `additional_source_refs` | Original/canonical identity payloads and alias evidence, all acquisition identity claims, and additional source `RecordRef`s; both arrays are always present |
 | `task`, `model_id`, `target_rule`, `perturbation_id` | Task/model required for normalized usable pair records; unknown target/perturbation allowed with reasons |
 | `model_revision`, `tokenizer_revision`, `archived_runtime` | Nullable archived values only; not overwritten by a fresh runtime lock |
 | `clean_text`, `typo_text`, `clean_text_sha256`, `typo_text_sha256` | Exact inline strings and hashes; each side may be null when genuinely missing, with availability/reasons |
@@ -189,6 +190,38 @@ few-shot prompt. Consumers verify prompt hash and explicit query-span contents;
 repeated substrings do not justify choosing the first occurrence. Prompt
 regeneration creates separately labeled fresh provenance and requires a declared
 protocol change if it changes the exact archived prompt contract.
+
+Each `cohort_membership` entry is `{cohort_id, membership, source_ref}`;
+`membership` is `member`, `extra`, or `unknown`. Its `source_ref` is always an
+`ArtifactRef`, selecting the expected-ID artifact, the explicit membership
+evidence artifact, or an acquisition artifact actually claiming that cohort in
+that priority order. Multiple claimants are ordered by canonical JSON of their
+artifact references; the representative pair source need not be a claimant. The
+pair-level `source_ref` remains a `RecordRef` identifying its exact source row;
+do not interchange the two reference types.
+
+`source_identity_provenance` is a nonempty array of acquisition claims. Each entry
+contains `source_ref` (`RecordRef`), `pair_identity`, `group_identity`,
+`cohort_ids` (sorted unique original membership claims),
+`historical_pair_id` (nullable), `source_pair_key_kind`, and
+`source_pair_key_kind_explicit` (boolean). Each identity object retains its
+`domain`, canonical `payload`, `original_payload`, and `alias_evidence_refs`.
+All acquisition claims and alias evidence survive deduplication, ordered by their
+canonical JSON. Within one original acquisition identity, contradictory known
+historical IDs or explicit key kinds are errors; null historical ID plus a known
+ID resolves to that known ID while both original claims remain in provenance.
+Other scientific unknown/known metadata is not merged. An inferred key kind is
+recomputed from the resolved historical ID unless an explicit kind is available.
+
+Different original pair identities can coalesce only with verified aliases.
+The top-level identity/provenance fields summarize the original identity matching
+the canonical pair identity if present, otherwise the lexicographically first
+canonical-JSON original identity. Within it, prefer an acquisition carrying the
+known historical ID, then a canonical original group identity, then canonical-JSON
+order. The other source rows remain in `additional_source_refs` (empty for a
+single acquisition). This representative is not selected by source input order.
+Different `source_kind` values remain incompatible for one normalized pair; use
+separately namespaced intake runs for archived and regenerated acquisition events.
 
 `archived_generations` entries contain `generation_id`, `arm`, `window`,
 `availability`, `record_ref`, and `reason_codes`. Available records point into

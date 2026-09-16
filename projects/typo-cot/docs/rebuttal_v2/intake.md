@@ -154,11 +154,33 @@ link acquisition identities. Text similarity is not identity evidence.
 Consistent duplicate acquisitions retain their additional source references and
 are explicitly reported. Contradictory scientific metadata is rejected; source
 order cannot select the preferred gold, revision or archived editing evidence.
+Every pair has `source_identity_provenance` and `additional_source_refs` arrays,
+including singleton acquisitions. All original identity claims and pair/group
+alias evidence remain in provenance. Within the same original acquisition ID,
+two different known historical IDs or explicit key kinds conflict; null plus a
+known historical ID resolves without dropping the original null claim. Derived
+missingness reasons are updated for that resolution, not used as independent
+scientific conflict evidence. Other scientific null/known differences still
+conflict. Verified aliases can link different original IDs without erasing their
+distinct historical IDs. A canonical-identity-first deterministic representative,
+defined in schemas.md, supplies the top-level provenance; source order does not.
+`source_kind` remains a consistency requirement for one acquisition identity:
+submitted archives and public/fresh regenerations cannot share a namespace/key
+and be silently collapsed into whichever source kind was read first. Compare
+these acquisition events in separately namespaced intake runs; this adapter does
+not coalesce different source kinds even through pair aliases. Generation counts
+retain each generation's own source kind independently of pair acquisition.
 
 An `expected_ids_ref` points to the explicitly enumerated archived ID artifact
 defined in schemas.md. Known missing IDs and extra records are reported without
 substitution. Without an ID list, coverage is unknown even when the recovered
 count equals 172 or 97. This command never selects new examples to fill a quota.
+Membership `source_ref` always has the artifact shape `{path, sha256}`: the
+expected-ID list, explicit membership evidence, or an acquisition artifact that
+actually claims the cohort, selected deterministically. Per-acquisition
+`cohort_ids` remain in `source_identity_provenance`; the representative source
+does not substitute for an actual claimant. The pair-level `source_ref` separately
+retains its exact source record identity.
 Known R3/R4 membership also requires the pair's task/model to match the frozen
 setting. Other historical setting IDs remain explicitly unvalidated rather than
 being silently interpreted as one of these experiments.
@@ -166,6 +188,9 @@ For R3/R4, `historical_n_reference` itself must equal the protocol's 172/97; thi
 checks the reference metadata, not the number of recovered or successful rows.
 An extra pair outside the frozen list stays excluded and reported even if it
 has a different task/model; it does not abort recovery of the actual members.
+Without a frozen ID list, task/model mismatches in membership claims remain
+`membership=unknown` and produce `claimed_cohort_setting_mismatch` findings;
+they cannot establish membership but do not prevent inventory publication.
 
 The output set is `source_audit.json`, `archive_inventory.jsonl`,
 `pair_manifest.jsonl`, `pair_manifest.meta.json`,
@@ -174,15 +199,26 @@ The output set is `source_audit.json`, `archive_inventory.jsonl`,
 remain separately labeled. No source aggregates are expanded into per-item rows.
 The manifest metadata binds protocol and source coverage even with zero rows.
 Run metadata references the outputs, never the reverse, to avoid reference cycles.
+Intake `expected_ids` and `missing_ids` are source pair keys grouped by cohort;
+the cohort's `id_namespace` is in the referenced source audit. `completed_ids`
+are canonical pair IDs, including retained extras. Join through the manifest and
+source audit; do not directly subtract arrays from these different ID spaces.
+Coverage is conservatively `partial` for either missing IDs or extra claims,
+with separate `missing_count` and `extra_count` so those causes remain distinct.
 An exact `protocol.json` snapshot is copied into the output set. The run records
 the canonical protocol hash/revision and the implementing modules' content hashes,
 plus the Git commit and dirty state when Git identity is available. Outside a Git
 checkout those Git fields are null with an explicit reason, not invented values.
+If only the Git status operation times out, an already resolved commit is kept
+and dirty state stays unknown; untracked files are not hidden from provenance.
 CSV is a display/export view: formula-like string cells are prefixed with an
 apostrophe to keep them text when opened in spreadsheet software. Exact unescaped
 IDs and text remain in JSON/JSONL, the authoritative inputs for machine joins.
 The output directory is private (mode 0700) by default because raw text and
 provenance may be sensitive; sharing its permissions is an explicit owner action.
+Inputs are owner-provided local artifacts and may use absolute or relative paths.
+This command is not a sandbox for untrusted bundles: review an index and its
+references before allowing it to read and retain their data.
 
 The original submitted data has not been recovered by implementing this command.
 CPU fixtures are synthetic and are not formal R0 results. Real-model smoke and

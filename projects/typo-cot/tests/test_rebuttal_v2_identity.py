@@ -46,7 +46,10 @@ PROTOCOL_PATH = Path(__file__).resolve().parents[1] / "configs/rebuttal_v2/proto
 def test_canonical_bytes_and_hash_match_fixed_utf8_vector() -> None:
     value = {"z": [-0.0, 0, "é\n"], "a": 1}
     assert canonical_json(value) == '{"a":1,"z":[0.0,0,"é\\n"]}'
-    assert canonical_sha256(value) == "00d871b2d43e3cda9a387eaf76e73fba89a31abef669b5e76382880dd5c9bb87"
+    assert (
+        canonical_sha256(value)
+        == "00d871b2d43e3cda9a387eaf76e73fba89a31abef669b5e76382880dd5c9bb87"
+    )
     assert canonical_json({"nested": {"zero": -0.0}, "integer": 0}) == (
         '{"integer":0,"nested":{"zero":0.0}}'
     )
@@ -54,7 +57,10 @@ def test_canonical_bytes_and_hash_match_fixed_utf8_vector() -> None:
     assert canonical_sha256("é") != canonical_sha256("e\u0301")
 
 
-@pytest.mark.parametrize("value", [float("nan"), float("inf"), {"x": [float("-inf")]}, (1, 2), {1: "x"}, {True: "x"}, "\ud800"])
+@pytest.mark.parametrize(
+    "value",
+    [float("nan"), float("inf"), {"x": [float("-inf")]}, (1, 2), {1: "x"}, {True: "x"}, "\ud800"],
+)
 def test_canonical_rejects_non_json_or_nonfinite_values(value: object) -> None:
     with pytest.raises(IntakeError):
         canonical_json(value)
@@ -116,12 +122,11 @@ def test_pair_and_original_group_match_independent_fixed_identity_vectors() -> N
         {"model": "gemma", "target_rule": "random", "dataset_revision": None},
         {"model": "qwen", "target_rule": "attribution", "dataset_revision": "new-snapshot"},
     ]
-    assert {
-        original_problem_group_id_for("gsm8k", "test", "7")
-        for _record in records
-    } == {group}
+    assert {original_problem_group_id_for("gsm8k", "test", "7") for _record in records} == {group}
     assert original_problem_group_id_for("gsm8k", "train", "7") != group
-    assert identity_hash("different-domain/v2", {"source_namespace": "submitted-2026", "source_pair_key": "pair-7"}) != pair_id_for("submitted-2026", "pair-7")
+    assert identity_hash(
+        "different-domain/v2", {"source_namespace": "submitted-2026", "source_pair_key": "pair-7"}
+    ) != pair_id_for("submitted-2026", "pair-7")
 
 
 @pytest.mark.parametrize("value", [True, False, 0, 7, 1.0, "", [], {}])
@@ -154,7 +159,9 @@ def test_text_and_file_hashes_preserve_exact_bytes(tmp_path: Path) -> None:
     assert sha256_text(content.replace("\r\n", "\n")) != expected
 
 
-def test_artifact_refs_are_relative_to_containing_file_and_detect_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_artifact_refs_are_relative_to_containing_file_and_detect_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     data = tmp_path / "data.bin"
     data.write_bytes(b"archived generation\r\n")
     manifest = tmp_path / "out" / "manifest.jsonl"
@@ -166,7 +173,8 @@ def test_artifact_refs_are_relative_to_containing_file_and_detect_changes(tmp_pa
     monkeypatch.chdir(tmp_path.parent)
     assert verify_ref(ref, relative_to_file=manifest) == data
     assert validate_record_ref({"artifact": ref, "record_id": "historical-7"}) == {
-        "artifact": ref, "record_id": "historical-7"
+        "artifact": ref,
+        "record_id": "historical-7",
     }
     data.write_bytes(b"modified")
     with pytest.raises(IntakeError, match="SHA-256 mismatch"):
@@ -197,7 +205,14 @@ def test_missing_artifact_and_invalid_record_reference_fail(tmp_path: Path) -> N
 def test_frozen_protocol_matches_independent_digest_and_relocated_format(tmp_path: Path) -> None:
     actual = json.loads(PROTOCOL_PATH.read_text(encoding="utf-8"))
     expected_sha = "d13794e9d29f1c1750c66f996475ba05f7932e239768963ef1014b562868e70b"
-    assert hashlib.sha256(json.dumps(actual, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest() == expected_sha
+    assert (
+        hashlib.sha256(
+            json.dumps(
+                actual, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+            ).encode("utf-8")
+        ).hexdigest()
+        == expected_sha
+    )
     assert canonical_sha256(actual) == expected_sha
     relocated = tmp_path / "arbitrary-name.json"
     relocated.write_text(json.dumps(actual, indent=4, sort_keys=True) + "\n", encoding="utf-8")
@@ -215,7 +230,9 @@ def test_frozen_protocol_matches_independent_digest_and_relocated_format(tmp_pat
         ("unrecognized", 1, "frozen revision"),
     ],
 )
-def test_protocol_rejects_changed_contracts_even_at_expected_filename(tmp_path: Path, key: str, value: object, error: str) -> None:
+def test_protocol_rejects_changed_contracts_even_at_expected_filename(
+    tmp_path: Path, key: str, value: object, error: str
+) -> None:
     payload = json.loads(PROTOCOL_PATH.read_text(encoding="utf-8"))
     payload[key] = value
     path = tmp_path / "protocol.json"
@@ -235,29 +252,51 @@ def test_protocol_rejects_duplicate_keys_and_nonfinite_values(tmp_path: Path) ->
         load_protocol(path)
 
 
-def _alias_artifact(tmp_path: Path, pair_edges: list[tuple[str, str]], group_edges: list[tuple[str, str]] | None = None) -> Path:
+def _alias_artifact(
+    tmp_path: Path,
+    pair_edges: list[tuple[str, str]],
+    group_edges: list[tuple[str, str]] | None = None,
+) -> Path:
     evidence = tmp_path / "equivalence.txt"
     evidence.write_bytes(b"archival identity crosswalk")
-    ref = {"path": "equivalence.txt", "sha256": hashlib.sha256(b"archival identity crosswalk").hexdigest()}
+    ref = {
+        "path": "equivalence.txt",
+        "sha256": hashlib.sha256(b"archival identity crosswalk").hexdigest(),
+    }
     pairs = [
-        {"alias": {"source_namespace": "archive", "source_pair_key": alias},
-         "canonical": {"source_namespace": "archive", "source_pair_key": target},
-         "evidence_ref": ref}
+        {
+            "alias": {"source_namespace": "archive", "source_pair_key": alias},
+            "canonical": {"source_namespace": "archive", "source_pair_key": target},
+            "evidence_ref": ref,
+        }
         for alias, target in pair_edges
     ]
     groups = [
-        {"alias": {"dataset_id": dataset, "split": "test", "original_problem_id": "7"},
-         "canonical": {"dataset_id": canonical, "split": "test", "original_problem_id": "7"},
-         "evidence_ref": ref}
+        {
+            "alias": {"dataset_id": dataset, "split": "test", "original_problem_id": "7"},
+            "canonical": {"dataset_id": canonical, "split": "test", "original_problem_id": "7"},
+            "evidence_ref": ref,
+        }
         for dataset, canonical in (group_edges or [])
     ]
     path = tmp_path / "aliases.json"
-    path.write_text(json.dumps({"schema_version": "rebuttal-identity-aliases/v2", "pair_aliases": pairs, "group_aliases": groups}), encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "rebuttal-identity-aliases/v2",
+                "pair_aliases": pairs,
+                "group_aliases": groups,
+            }
+        ),
+        encoding="utf-8",
+    )
     return path
 
 
 def test_alias_chains_preserve_original_identity_and_verified_evidence(tmp_path: Path) -> None:
-    path = _alias_artifact(tmp_path, [("old", "middle"), ("middle", "canonical")], [("reissued", "gsm8k")])
+    path = _alias_artifact(
+        tmp_path, [("old", "middle"), ("middle", "canonical")], [("reissued", "gsm8k")]
+    )
     aliases = load_identity_aliases(path)
     resolved = aliases.resolve_pair("archive", "old")
     assert resolved.original == {"source_namespace": "archive", "source_pair_key": "old"}
@@ -269,7 +308,9 @@ def test_alias_chains_preserve_original_identity_and_verified_evidence(tmp_path:
     group = aliases.resolve_group("reissued", "test", "7")
     assert group.original["dataset_id"] == "reissued"
     assert group.canonical == {"dataset_id": "gsm8k", "split": "test", "original_problem_id": "7"}
-    assert original_problem_group_id_for(**group.canonical) == original_problem_group_id_for("gsm8k", "test", "7")
+    assert original_problem_group_id_for(**group.canonical) == original_problem_group_id_for(
+        "gsm8k", "test", "7"
+    )
     unknown = aliases.resolve_group("reissued", "test", None)
     assert unknown.canonical == unknown.original
     assert unknown.evidence_refs == ()
@@ -282,9 +323,16 @@ def test_alias_parser_uses_captured_payload_when_disk_alias_has_changed(tmp_path
 
     aliases = parse_identity_aliases(snapshot, source_path=path)
 
-    assert aliases.resolve_pair("archive", "old").canonical["source_pair_key"] == "captured-canonical"
-    assert load_identity_aliases(path).resolve_pair("archive", "old").canonical["source_pair_key"] == "replacement-canonical"
-    assert aliases.resolve_pair("archive", "old").evidence_refs[0]["path"] == str(tmp_path / "equivalence.txt")
+    assert (
+        aliases.resolve_pair("archive", "old").canonical["source_pair_key"] == "captured-canonical"
+    )
+    assert (
+        load_identity_aliases(path).resolve_pair("archive", "old").canonical["source_pair_key"]
+        == "replacement-canonical"
+    )
+    assert aliases.resolve_pair("archive", "old").evidence_refs[0]["path"] == str(
+        tmp_path / "equivalence.txt"
+    )
 
 
 def test_alias_parser_validates_snapshot_even_when_disk_artifact_is_valid(tmp_path: Path) -> None:
@@ -297,14 +345,21 @@ def test_alias_parser_validates_snapshot_even_when_disk_artifact_is_valid(tmp_pa
         parse_identity_aliases(snapshot, source_path=path)
 
 
-@pytest.mark.parametrize("edges", [[("x", "x")], [("x", "y"), ("y", "x")], [("unused-x", "unused-y"), ("unused-y", "unused-x")]])
-def test_alias_cycles_are_rejected_even_before_resolution(tmp_path: Path, edges: list[tuple[str, str]]) -> None:
+@pytest.mark.parametrize(
+    "edges",
+    [[("x", "x")], [("x", "y"), ("y", "x")], [("unused-x", "unused-y"), ("unused-y", "unused-x")]],
+)
+def test_alias_cycles_are_rejected_even_before_resolution(
+    tmp_path: Path, edges: list[tuple[str, str]]
+) -> None:
     with pytest.raises(IntakeError, match="alias cycle"):
         load_identity_aliases(_alias_artifact(tmp_path, edges))
 
 
 @pytest.mark.parametrize("edges", [[("x", "y"), ("x", "y")], [("x", "y"), ("x", "z")]])
-def test_duplicate_alias_keys_are_not_deduplicated(tmp_path: Path, edges: list[tuple[str, str]]) -> None:
+def test_duplicate_alias_keys_are_not_deduplicated(
+    tmp_path: Path, edges: list[tuple[str, str]]
+) -> None:
     with pytest.raises(IntakeError, match="duplicate alias"):
         load_identity_aliases(_alias_artifact(tmp_path, edges))
 
@@ -342,7 +397,11 @@ def test_aliases_reject_unknown_schema_extra_fields_and_malformed_ids(tmp_path: 
 def test_absent_alias_file_does_not_invent_equivalence() -> None:
     aliases = load_identity_aliases(None)
     result = aliases.resolve_pair("archive", "7")
-    assert result.original == result.canonical == {"source_namespace": "archive", "source_pair_key": "7"}
+    assert (
+        result.original
+        == result.canonical
+        == {"source_namespace": "archive", "source_pair_key": "7"}
+    )
     assert result.evidence_refs == ()
 
 

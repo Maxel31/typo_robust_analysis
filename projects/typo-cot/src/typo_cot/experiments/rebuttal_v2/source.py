@@ -638,6 +638,7 @@ def normalize_record(record: dict[str, Any], source_identity: dict[str, Any]) ->
         ),
         "source_kind": source_identity.get("source_kind"),
         "source_ref": source_identity.get("source_ref"),
+        "additional_source_refs": [],
         "source_sha256": source_identity.get("source_sha256"),
         "source_record_id": record["source_record_id"],
         "task": record["task"],
@@ -725,6 +726,17 @@ def normalize_record(record: dict[str, Any], source_identity: dict[str, Any]) ->
             raise IntakeError("Duplicate expected arm/window")
         slots.add(slot)
     result["expected_generations"] = expected
+    result["source_identity_provenance"] = [
+        {
+            "source_ref": result["source_ref"],
+            "cohort_ids": sorted(result["cohort_ids"]),
+            "pair_identity": result["pair_identity"],
+            "group_identity": result["group_identity"],
+            "historical_pair_id": result["historical_pair_id"],
+            "source_pair_key_kind": result["source_pair_key_kind"],
+            "source_pair_key_kind_explicit": "source_pair_key_kind" in record,
+        }
+    ]
     return result
 
 
@@ -791,9 +803,13 @@ def _normalize_generation(
     else:
         termination = "unknown"
     if (
-        supplied_termination in {"eos", "length-cap"}
-        and termination != "unknown"
-        and supplied_termination != termination
+        (supplied_termination == "eos" and stopping.get("eos_observed") is False)
+        or (supplied_termination == "length-cap" and stopping.get("length_cap_reached") is False)
+        or (
+            supplied_termination in {"eos", "length-cap"}
+            and termination != "unknown"
+            and supplied_termination != termination
+        )
     ):
         raise IntakeError("Archived termination conflicts with observed stopping metadata")
     payload = {
@@ -833,6 +849,76 @@ def _normalize_generation(
     }
 
 
+def _merge_pair_identity_provenance(old: dict[str, Any], pair: dict[str, Any]) -> None:
+    """Merge only acquisition identity metadata, preserving every declared claim.
+
+    Scientific missingness is not repaired here. Distinct original identities
+    may share a normalized pair only through the already-verified alias map.
+    """
+    provenance = sorted(
+        old["source_identity_provenance"] + pair["source_identity_provenance"],
+        key=canonical_json,
+    )
+    by_original: dict[str, list[dict[str, Any]]] = {}
+    for item in provenance:
+        original = item["pair_identity"]["original_payload"]
+        canonical = item["pair_identity"]["payload"]
+        if canonical != old["pair_identity"]["payload"]:
+            raise IntakeError("Conflicting canonical pair identities in acquisition provenance")
+        if original != canonical and not item["pair_identity"]["alias_evidence_refs"]:
+            raise IntakeError("Distinct original pair identities require explicit alias evidence")
+        by_original.setdefault(canonical_json(original), []).append(item)
+    resolved: dict[str, tuple[str | None, str]] = {}
+    for original, items in by_original.items():
+        known_ids = {
+            item["historical_pair_id"] for item in items if item["historical_pair_id"] is not None
+        }
+        if len(known_ids) > 1:
+            raise IntakeError(
+                "Conflicting historical_pair_id values for one original pair identity"
+            )
+        historical_id = next(iter(known_ids), None)
+        explicit_kinds = {
+            item["source_pair_key_kind"] for item in items if item["source_pair_key_kind_explicit"]
+        }
+        if len(explicit_kinds) > 1:
+            raise IntakeError(
+                "Conflicting explicit source_pair_key_kind values for one original pair identity"
+            )
+        kind = next(
+            iter(explicit_kinds), "historical-id" if historical_id is not None else "producer-id"
+        )
+        resolved[original] = historical_id, kind
+
+    canonical_original = canonical_json(old["pair_identity"]["payload"])
+    selected_original = min(by_original, key=lambda key: (key != canonical_original, key))
+    # Prefer an acquisition actually carrying the known historical value, then
+    # canonical group identity, with deterministic provenance-only tie breaks.
+    representative = min(
+        by_original[selected_original],
+        key=lambda item: (
+            item["historical_pair_id"] is None,
+            item["group_identity"]["original_payload"] != item["group_identity"]["payload"],
+            canonical_json(item),
+        ),
+    )
+    old["historical_pair_id"], old["source_pair_key_kind"] = resolved[selected_original]
+    old["source_identity_provenance"] = provenance
+    old["pair_identity"] = representative["pair_identity"]
+    old["group_identity"] = representative["group_identity"]
+    old["source_ref"] = representative["source_ref"]
+    old["source_sha256"] = representative["source_ref"]["artifact"]["sha256"]
+    old["source_record_id"] = representative["source_ref"]["record_id"]
+    old["additional_source_refs"] = [
+        item["source_ref"] for item in provenance if item is not representative
+    ]
+    reasons = set(old["reason_codes"]) | set(pair["reason_codes"])
+    reasons.discard("historical_pair_id_unknown")
+    if old["historical_pair_id"] is None:
+        reasons.add("historical_pair_id_unknown")
+    old["reason_codes"] = sorted(reasons)
+
+
 def _join_records(audit: SourceAudit) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     pairs: dict[str, dict[str, Any]] = {}
     for entry, raw in audit.source_records:
@@ -852,6 +938,9 @@ def _join_records(audit: SourceAudit) -> tuple[list[dict[str, Any]], list[dict[s
                 "source_pair_key_kind",
                 "historical_pair_id",
                 "additional_source_refs",
+                "source_identity_provenance",
+                "reason_codes",
+                "availability",
             }
             for name in ("clean_text", "typo_text", "clean_prompt", "typo_prompt"):
                 provenance_only.update({name, f"{name}_ref"})
@@ -865,7 +954,7 @@ def _join_records(audit: SourceAudit) -> tuple[list[dict[str, Any]], list[dict[s
                 )
             # The manifest has unique IDs, but repeated acquisition records retain
             # all source provenance and are explicitly reported as duplicates.
-            old.setdefault("additional_source_refs", []).append(pair["source_ref"])
+            _merge_pair_identity_provenance(old, pair)
             old["cohort_ids"] = sorted(set(old["cohort_ids"]) | set(pair["cohort_ids"]))
             if old["expected_generations"] != pair["expected_generations"]:
                 raise IntakeError(f"Conflicting expected generation slots for pair_id {pid}")
@@ -965,6 +1054,7 @@ def _cohort_coverage(
             if expected_ids is None
             else ("complete" if not missing and not extras else "partial")
         )
+        claim_setting_mismatch = False
         for pair in pairs:
             if pair["pair_id"] not in recovered | extras:
                 continue
@@ -973,21 +1063,45 @@ def _cohort_coverage(
                 and setting is not None
                 and (pair["task"] != setting["task"] or pair["model_id"] != setting["model"])
             ):
-                raise IntakeError(
-                    f"Pair task/model does not match frozen setting {cohort['setting']}"
+                if expected_ids is not None:
+                    raise IntakeError(
+                        f"Pair task/model does not match frozen setting {cohort['setting']}"
+                    )
+                claim_setting_mismatch = True
+                reason = "claimed_cohort_setting_mismatch"
+                if reason not in pair["reason_codes"]:
+                    pair["reason_codes"].append(reason)
+                audit.findings.append(
+                    _finding(
+                        None,
+                        pair["pair_id"],
+                        reason,
+                        f"Unverified membership claim for cohort {cohort['cohort_id']} has a task/model inconsistent with setting {cohort['setting']}; no frozen ID list establishes membership.",
+                        ["exact-cohort-recovery", "formal-setting-inference"],
+                    )
                 )
             membership = (
                 "unknown"
                 if expected_ids is None
                 else ("member" if pair["pair_id"] in recovered else "extra")
             )
+            membership_source = cohort["expected_ids_ref"] or cohort["membership_provenance_ref"]
+            if membership_source is None:
+                claimant_refs = [
+                    item["source_ref"]["artifact"]
+                    for item in pair["source_identity_provenance"]
+                    if cohort["cohort_id"] in item["cohort_ids"]
+                ]
+                if not claimant_refs:
+                    raise IntakeError(
+                        "Cohort membership claim has no supporting source acquisition"
+                    )
+                membership_source = min(claimant_refs, key=canonical_json)
             pair["cohort_membership"].append(
                 {
                     "cohort_id": cohort["cohort_id"],
                     "membership": membership,
-                    "source_ref": cohort["expected_ids_ref"]
-                    or cohort["membership_provenance_ref"]
-                    or pair["source_ref"],
+                    "source_ref": membership_source,
                 }
             )
         result = {
@@ -1003,7 +1117,7 @@ def _cohort_coverage(
             "extra_pair_ids": sorted(extras),
             "recovered_pair_ids": sorted(recovered),
             "historical_count_shortfall": max(0, cohort["historical_n_reference"] - len(recovered)),
-            "reason_codes": [],
+            "reason_codes": ["claimed_cohort_setting_mismatch"] if claim_setting_mismatch else [],
         }
         if coverage == "unknown":
             result["reason_codes"].append("expected_ids_unknown")

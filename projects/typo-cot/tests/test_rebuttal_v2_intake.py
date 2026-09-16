@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from typo_cot.experiments.rebuttal_v2.source import run_intake
+from typo_cot.experiments.rebuttal_v2 import source as source_module
 
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -176,6 +177,116 @@ def test_missing_original_pair_is_reported_not_replaced(tmp_path: Path) -> None:
     assert int(comparison["missing_count"]) == 1
     assert "missing-original" in (output / "missing_inputs.csv").read_text()
     assert _rows(output / "archive_generation_records.jsonl") == []
+
+
+def test_cohort_membership_refs_have_one_shape_for_all_evidence_sources(tmp_path: Path) -> None:
+    index = _fixture(
+        tmp_path,
+        pairs=[_pair(cohort_ids=["R3", "documented", "claimed"])],
+        expected=["p1"],
+    )
+    evidence = _json(tmp_path / "membership-evidence.json", {"note": "saved cohort description"})
+    payload = _read(index)
+    for cohort_id in ("documented", "claimed"):
+        payload["cohorts"].append(
+            {
+                "cohort_id": cohort_id,
+                "setting": "historical-other",
+                "historical_n_reference": 1,
+                "expected_ids_ref": None,
+                "id_namespace": NAMESPACE,
+                "membership_provenance_ref": {
+                    "path": evidence.name,
+                    "sha256": _sha(evidence),
+                }
+                if cohort_id == "documented"
+                else None,
+            }
+        )
+    _json(index, payload)
+    output = tmp_path / "intake"
+    run_intake(index, PROTOCOL, output)
+    (pair,) = _rows(output / "pair_manifest.jsonl")
+    memberships = {row["cohort_id"]: row for row in pair["cohort_membership"]}
+    assert set(memberships) == {"R3", "documented", "claimed"}
+    assert {tuple(sorted(row["source_ref"])) for row in memberships.values()} == {
+        ("path", "sha256")
+    }
+    assert memberships["R3"]["source_ref"]["sha256"] == _sha(tmp_path / "ids.json")
+    assert memberships["documented"]["source_ref"]["sha256"] == _sha(evidence)
+    assert memberships["claimed"]["source_ref"] == pair["source_ref"]["artifact"]
+    assert memberships["claimed"]["membership"] == "unknown"
+    assert pair["source_ref"]["record_id"] == "p1"
+    _validate_refs(pair, output / "pair_manifest.jsonl")
+
+
+def test_unknown_membership_setting_mismatch_is_reported_without_abort(tmp_path: Path) -> None:
+    index = _fixture(
+        tmp_path,
+        pairs=[_pair(), _pair("claimed", task="mmlu-pro", model_id="Qwen/Qwen2.5-3B-Instruct")],
+    )
+    output = tmp_path / "intake"
+    run = run_intake(index, PROTOCOL, output)
+    assert run["run_status"] == "complete"
+    assert run["coverage_status"] == {"R3": "unknown"}
+    pairs = {row["source_pair_key"]: row for row in _rows(output / "pair_manifest.jsonl")}
+    assert set(pairs) == {"p1", "claimed"}
+    assert pairs["claimed"]["cohort_membership"][0]["membership"] == "unknown"
+    assert "claimed_cohort_setting_mismatch" in pairs["claimed"]["reason_codes"]
+    assert "claimed_cohort_setting_mismatch" not in pairs["p1"]["reason_codes"]
+    audit = _read(output / "source_audit.json")
+    assert "claimed_cohort_setting_mismatch" in audit["cohorts"][0]["reason_codes"]
+    assert any(
+        finding["component"] == pairs["claimed"]["pair_id"]
+        and "claimed_cohort_setting_mismatch" in finding["reason_codes"]
+        for finding in audit["findings"]
+    )
+
+
+def test_git_status_timeout_preserves_resolved_commit(monkeypatch) -> None:
+    commit = "a" * 40
+
+    def git_response(args, **kwargs):
+        if "rev-parse" in args:
+            return subprocess.CompletedProcess(args, 0, stdout=commit + "\n", stderr="")
+        assert "status" in args
+        assert "--untracked-files=normal" in args
+        raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+    monkeypatch.setattr(source_module.subprocess, "run", git_response)
+    identity = source_module._code_identity()
+    assert identity["git_commit"] == commit
+    assert identity["git_dirty"] is None
+    assert identity["reason_codes"] == ["code_git_identity_unavailable"]
+
+
+@pytest.mark.parametrize(
+    ("termination", "flags"),
+    [
+        ("eos", {"eos_observed": False}),
+        ("length-cap", {"length_cap_reached": False}),
+    ],
+)
+def test_recognized_stop_label_cannot_override_an_explicit_negative_flag(
+    tmp_path: Path, termination: str, flags: dict
+) -> None:
+    index = _fixture(
+        tmp_path, generations=[_generation(termination=termination, stopping_metadata=flags)]
+    )
+    with pytest.raises(ValueError, match="(?i)conflict|contradict"):
+        run_intake(index, PROTOCOL, tmp_path / "intake")
+    assert not (tmp_path / "intake").exists()
+
+
+def test_same_acquisition_cannot_silently_switch_source_kind(tmp_path: Path) -> None:
+    index = _fixture(tmp_path)
+    payload = _read(index)
+    payload["sources"].append(
+        {**payload["sources"][0], "source_id": "public-copy", "source_kind": "public-regeneration"}
+    )
+    _json(index, payload)
+    with pytest.raises(ValueError, match="source_kind"):
+        run_intake(index, PROTOCOL, tmp_path / "intake")
 
 
 def test_unknown_revisions_and_exact_text_survive_intake(tmp_path: Path) -> None:

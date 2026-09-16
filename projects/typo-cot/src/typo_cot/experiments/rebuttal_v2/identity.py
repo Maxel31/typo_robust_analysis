@@ -117,7 +117,9 @@ class IdentityAliases:
         payload = {
             "dataset_id": require_nullable_string(dataset_id, "dataset_id"),
             "split": require_nullable_string(split, "split"),
-            "original_problem_id": require_nullable_string(original_problem_id, "original_problem_id"),
+            "original_problem_id": require_nullable_string(
+                original_problem_id, "original_problem_id"
+            ),
         }
         return self._resolve(payload, GROUP_IDENTITY_FIELDS, self._groups)
 
@@ -164,7 +166,9 @@ def _load_links(
         alias = _identity_tuple(obj["alias"], fields, f"{location}.alias")
         canonical = _identity_tuple(obj["canonical"], fields, f"{location}.canonical")
         if alias in result:
-            raise IntakeError(f"{location} has a duplicate alias key or conflicting canonical target")
+            raise IntakeError(
+                f"{location} has a duplicate alias key or conflicting canonical target"
+            )
         evidence = validate_artifact_ref(obj["evidence_ref"], f"{location}.evidence_ref")
         evidence_path = verify_ref(evidence, relative_to_file=path)
         result[alias] = _AliasLink(

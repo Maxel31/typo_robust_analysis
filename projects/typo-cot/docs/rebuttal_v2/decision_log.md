@@ -165,3 +165,13 @@ Observed stopping flags take precedence over unsupported raw labels, and explici
 null archived metadata remains unknown rather than being inherited. CSV text
 escaping changes only the export view; canonical JSON/JSONL identities are intact.
 These corrections do not use new model outcomes or change the scientific protocol.
+
+A second PR-01 review tightened acquisition deduplication: original identity
+claims and every alias evidence reference survive in explicit provenance arrays;
+same-identity conflicts are rejected, historical-ID missingness can be resolved
+from a consistent acquisition, and representative provenance is deterministic.
+Other scientific unknowns and cross-source-kind conflicts remain strict.
+Membership evidence now always uses ArtifactRef, and unverified cohort claims
+with setting mismatches produce findings instead of aborting inventory. These
+are pre-merge artifact-contract clarifications, verified only on synthetic
+fixtures; no existing formal artifact or protocol revision is reinterpreted.

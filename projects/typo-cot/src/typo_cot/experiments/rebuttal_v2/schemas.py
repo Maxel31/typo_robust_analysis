@@ -162,7 +162,9 @@ def canonical_json(payload: object) -> str:
 
 
 def sha256_text(text: str) -> str:
-    return hashlib.sha256(require_string(text, "text", allow_empty=True).encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        require_string(text, "text", allow_empty=True).encode("utf-8")
+    ).hexdigest()
 
 
 def sha256_file(path: Path) -> str:
@@ -261,7 +263,9 @@ def verify_ref(ref: object, relative_to_file: Path) -> Path:
         raise IntakeError(f"cannot resolve artifact reference: {exc}") from exc
     observed = sha256_file(path)
     if observed != parsed["sha256"]:
-        raise IntakeError(f"artifact SHA-256 mismatch at {path}: expected {parsed['sha256']}, got {observed}")
+        raise IntakeError(
+            f"artifact SHA-256 mismatch at {path}: expected {parsed['sha256']}, got {observed}"
+        )
     return path
 
 
@@ -285,5 +289,7 @@ def load_protocol(path: Path) -> dict[str, object]:
     if payload.get("protocol_revision") != PROTOCOL_REVISION:
         raise IntakeError(f"unsupported protocol_revision at {path}")
     if canonical_sha256(payload) != PROTOCOL_SHA256:
-        raise IntakeError(f"protocol content does not match frozen revision {PROTOCOL_REVISION}: {path}")
+        raise IntakeError(
+            f"protocol content does not match frozen revision {PROTOCOL_REVISION}: {path}"
+        )
     return payload
