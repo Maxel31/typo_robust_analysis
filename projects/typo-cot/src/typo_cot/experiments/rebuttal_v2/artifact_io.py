@@ -149,8 +149,6 @@ def publish_artifacts(
         for name, raw in files.items():
             (staging / name).write_bytes(raw)
         revalidate_snapshots(snapshots)
-        if output.exists():
-            output.rmdir()
         staging.rename(output)
     except BaseException:
         shutil.rmtree(staging)

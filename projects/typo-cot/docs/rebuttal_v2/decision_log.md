@@ -273,3 +273,20 @@ package: returned Stage A and upstream evidence remain immutable, hash-bound
 references that must stay available at their recorded locations unless the whole
 reference tree is relocated consistently. These pre-merge clarifications use
 only synthetic fixtures, not archive outcomes.
+
+A later integration review found that a legitimate one-to-many word
+correspondence (for example, `cat` to `Xcat-Y`) could reach the strict tokenizer
+with duplicate side spans and abort the whole manifest. Endpoint tokenization now
+receives word spans only for `alignment_status="aligned"`. Unsupported
+correspondence still records complete prompt token IDs/hashes with no word
+endpoints and retains its invalid/unknown status; it is neither deduplicated nor
+salvaged into an alignment. This is a failure-isolation correction, not a cohort,
+intervention, or semantic-label change.
+
+Artifact publication no longer removes a caller-created empty output directory
+before publication. It writes an owned sibling staging directory and directly
+renames that directory onto an absent or empty destination. If rename fails, an
+existing empty destination is preserved and only owned staging is removed;
+concurrently created nonempty output is never deleted. Four new regressions join
+the 18-test artifact-I/O suite for absent/pre-existing output, injected rename
+failure, concurrent publication, and staging-name confinement.

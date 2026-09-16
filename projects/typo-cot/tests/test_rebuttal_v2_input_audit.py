@@ -173,6 +173,24 @@ def _fixture(root: Path, *, missing_lock=False, pair_changes=None, reference_tex
     return root / "intake/pair_manifest.jsonl", lock
 
 
+def _text_pair_changes(clean: str, typo: str) -> dict:
+    prefix = "Example: red cats eat 12 fish.\nQuestion: "
+    return {
+        "clean_text": clean,
+        "typo_text": typo,
+        "clean_prompt": prefix + clean,
+        "typo_prompt": prefix + typo,
+        "clean_query_span": [len(prefix), len(prefix) + len(clean)],
+        "typo_query_span": [len(prefix), len(prefix) + len(typo)],
+        "intended_edits": [],
+        "archived_token_positions": [],
+        "prompt_regions": {
+            "clean": [{"kind": "stem", "start": len(prefix), "end": len(prefix) + len(clean)}],
+            "typo": [{"kind": "stem", "start": len(prefix), "end": len(prefix) + len(typo)}],
+        },
+    }
+
+
 def test_exact_second_query_endpoint_is_independent_of_target_and_archive(tmp_path):
     manifest, lock = _fixture(tmp_path)
     before = {path: _sha(path) for path in tmp_path.rglob("*") if path.is_file()}
@@ -204,6 +222,44 @@ def test_exact_second_query_endpoint_is_independent_of_target_and_archive(tmp_pa
         assert _sha(output / name) == ref["sha256"]
     with pytest.raises(ValueError, match="absent or empty"):
         run_input_audit(manifest, lock, output)
+
+
+@pytest.mark.parametrize(
+    "clean,typo,alignment_status",
+    [
+        ("cat", "Xcat-Y", "unsupported"),
+        ("Xcat-Y", "cat", "unsupported"),
+        ("xa'by", "Xa'-bY", "unsupported"),
+        ("Xa'-bY", "xa'by", "unsupported"),
+        ("a", "aa-b", "ambiguous"),
+        ("aa-b", "a", "ambiguous"),
+    ],
+)
+def test_public_non_one_to_one_diffs_remain_diagnostic_without_token_endpoints(
+    tmp_path, clean, typo, alignment_status
+):
+    manifest, lock = _fixture(
+        tmp_path,
+        pair_changes=_text_pair_changes(clean, typo),
+    )
+    output = tmp_path / "audit"
+    run_input_audit(manifest, lock, output)
+    bundle = load_input_audit(output / "input_audit_records.jsonl")
+    row = bundle.rows[0]
+
+    assert row["span_audit"]["alignment_status"] == alignment_status
+    assert row["span_audit"]["aligned_words"]
+    assert "edited_word_pair_not_one_to_one" in row["span_audit"]["reasons"]
+    assert row["alignment"]["eligibility"] == "invalid"
+    assert row["alignment"]["aligned_edits"] == []
+    for side in ("clean", "typo"):
+        tokenization = row["alignment"][side]
+        assert tokenization["eligibility"] == "unknown"
+        assert tokenization["reason_codes"] == ["changed_word_spans_unavailable"]
+        assert tokenization["prompt_token_ids"]
+        assert tokenization["prompt_token_ids_sha256"]
+        assert tokenization["word_alignments"] == []
+        assert tokenization["word_endpoints"] == []
 
 
 def test_unknown_tokenizer_keeps_independent_text_audit(tmp_path):

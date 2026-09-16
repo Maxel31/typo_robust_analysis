@@ -36,6 +36,11 @@ overlapping each changed word are retained; the write endpoint is their last
 token, not the first subtoken or the first matching word elsewhere in the prompt.
 Special tokens remain in the full token-ID sequence. Complete prompt token IDs
 and canonical JSON hashes are saved independently for clean and typo prompts.
+Only an audit with `alignment_status="aligned"` supplies word spans to endpoint
+tokenization. One-to-many or otherwise unsupported
+correspondence still tokenizes the complete prompt with no word spans, preserving
+its token IDs and hash but producing no word endpoints; it is never deduplicated
+or salvaged, and its invalid/unknown state is retained in the input-audit records.
 Unknown alignment remains separate from archived-tokenizer agreement.
 `archived_revision_match` compares revisions alone;
 `matches_archived_tokenizer` is true only when archived tokenizer ID, revision,
@@ -148,9 +153,14 @@ unchanged and coverage records `clean_query_unavailable`. Stage B allows only
 judgment. Missing rows still fail: unassessability is never silently generated,
 and absent clean evidence cannot establish semantic preservation or task change.
 
-The import reports rater count, pre-adjudication agreement, adjudications,
-unassessable judgments, and source/annotation coverage. Semantic eligibility is
-derived only from the finalized labels, never from answer success or patch effects.
+The import retains finalized labels, including `unassessable`, in
+`semantic_labels.jsonl`. Their counts are reported in
+`semantic_strata_table.csv` under dimension `semantic_label` and stratum
+`unassessable`. `annotation_agreement.json` reports rater count,
+pre-adjudication agreement, and adjudications; it does not duplicate semantic
+stratum counts. Source/annotation coverage remains in `annotation_coverage.json`.
+Semantic eligibility is derived only from the finalized labels, never from answer
+success or patch effects.
 
 ## Commands and artifacts
 

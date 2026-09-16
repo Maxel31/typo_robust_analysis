@@ -56,13 +56,61 @@ def test_checked_bytes_are_the_exact_bytes_returned_for_parsing(tmp_path, monkey
         io.revalidate_snapshots(snapshots)
 
 
-def test_private_atomic_output_never_overwrites_completed_audit(tmp_path):
+@pytest.mark.parametrize("precreate_output", [False, True])
+def test_private_atomic_output_never_overwrites_completed_audit(tmp_path, precreate_output):
     output = tmp_path / "output"
+    if precreate_output:
+        output.mkdir()
     io.publish_artifacts(output, {"run.json": b"{}"}, {})
     assert output.stat().st_mode & 0o777 == 0o700
     with pytest.raises(ValueError, match="absent or empty"):
         io.publish_artifacts(output, {"run.json": b"changed"}, {})
     assert (output / "run.json").read_bytes() == b"{}"
+
+
+@pytest.mark.parametrize("precreate_output", [False, True])
+def test_rename_failure_preserves_output_state_and_removes_owned_staging(
+    tmp_path, monkeypatch, precreate_output
+):
+    output = tmp_path / "output"
+    original_inode = None
+    if precreate_output:
+        output.mkdir()
+        original_inode = output.stat().st_ino
+    staging_paths = []
+
+    def fail_rename(self, target):
+        staging_paths.append(self)
+        assert target == output
+        raise OSError("injected rename failure")
+
+    monkeypatch.setattr(Path, "rename", fail_rename)
+    with pytest.raises(OSError, match="injected rename failure"):
+        io.publish_artifacts(output, {"run.json": b"{}"}, {})
+
+    assert output.exists() is precreate_output
+    if precreate_output:
+        assert output.is_dir()
+        assert output.stat().st_ino == original_inode
+        assert list(output.iterdir()) == []
+    assert len(staging_paths) == 1
+    assert not staging_paths[0].exists()
+    assert list(tmp_path.glob(".output.audit-*")) == []
+
+
+def test_concurrent_nonempty_output_is_preserved(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+
+    def create_concurrent_output(_snapshots):
+        output.mkdir()
+        (output / "concurrent.txt").write_text("keep\n", encoding="utf-8")
+
+    monkeypatch.setattr(io, "revalidate_snapshots", create_concurrent_output)
+    with pytest.raises(OSError):
+        io.publish_artifacts(output, {"run.json": b"{}"}, {})
+
+    assert (output / "concurrent.txt").read_text(encoding="utf-8") == "keep\n"
+    assert list(tmp_path.glob(".output.audit-*")) == []
 
 
 @pytest.mark.parametrize("name", ["../escape.json", "/absolute.json", "nested/file.json", "..", ""])

@@ -200,11 +200,16 @@ def _audit_pair(pair: dict, manifest: ManifestBundle, lock: TokenizerLock) -> di
     entry = lock.entries.get(pair["model_id"])
     archived_runtime = pair["archived_runtime"] or {}
     for side in ("clean", "typo"):
+        changed_word_spans = (
+            [word[f"{side}_span"] for word in span["aligned_words"]]
+            if span["alignment_status"] == "aligned"
+            else []
+        )
         alignment[side] = asdict(
             reconstruct_token_alignment(
                 pair[f"{side}_prompt"],
                 entry,
-                [word[f"{side}_span"] for word in span["aligned_words"]],
+                changed_word_spans,
                 query_text=pair[f"{side}_text"],
                 query_span=pair[f"{side}_query_span"],
                 archived_tokenizer_revision=pair["tokenizer_revision"],
