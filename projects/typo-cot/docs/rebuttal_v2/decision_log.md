@@ -132,3 +132,53 @@ human scoring, parser-independent semantic claims are inconclusive.
 
 These are pre-implementation review corrections without new model observations.
 The review and corrective commits remain part of the initial PR-00 freeze history.
+
+## PR-01 implementation (2026-09-16)
+
+PR-00 was merged in `b63d4251c93f5ff11cd60841bfe739f20028724c` before PR-01
+started from main. PR-01 implements only the CPU archive intake and its CLI.
+The scientific protocol remains revision `2.0.0` with canonical SHA-256
+`d13794e9d29f1c1750c66f996475ba05f7932e239768963ef1014b562868e70b`.
+
+The initial versioned source adapters are documented in [intake.md](intake.md).
+They explicitly serialize the PR-00 source contract; unknown layouts are reported
+without guessing or converting legacy artifacts in place. Saved scoring metadata
+is retained and summarized as archived judgments, never rerun or used as an
+acceptance quota. Missing evidence and structural non-applicability stay distinct.
+
+Independent CPU fixtures cover identity/hash integrity, exact missing IDs,
+source-kind separation, aliases, absent raw generation, zero-row metadata, and
+128 recorded successes against a historical reference of 129. They are synthetic
+fixtures, not evidence that the original 172/97-item archives were recovered.
+Existing v1 entry points, extractors and acceptance rules are unchanged.
+
+Implementation and CPU fixtures are available for R0 only. Real-model smoke and
+formal model results remain not run; R1 onward are not implemented by this PR.
+The optional model-dependent test suite requires torch, which is not installed
+in the CPU-only validation environment. No GPU test is claimed as passed.
+
+PR-01 review corrections bind every expected and observed generation identity to
+one slot, validate the frozen historical reference metadata without enforcing
+observed counts, and retain excluded extras without treating them as members.
+Alias identity is derived from the same captured bytes whose hash is recorded.
+Observed stopping flags take precedence over unsupported raw labels, and explicit
+null archived metadata remains unknown rather than being inherited. CSV text
+escaping changes only the export view; canonical JSON/JSONL identities are intact.
+These corrections do not use new model outcomes or change the scientific protocol.
+
+A second PR-01 review tightened acquisition deduplication: original identity
+claims and every alias evidence reference survive in explicit provenance arrays;
+same-identity conflicts are rejected, historical-ID missingness can be resolved
+from a consistent acquisition, and representative provenance is deterministic.
+Other scientific unknowns and cross-source-kind conflicts remain strict.
+Membership evidence now always uses ArtifactRef, and unverified cohort claims
+with setting mismatches produce findings instead of aborting inventory. These
+are pre-merge artifact-contract clarifications, verified only on synthetic
+fixtures; no existing formal artifact or protocol revision is reinterpreted.
+Equivalent inline/reference text payloads also use a deterministic representative
+rule after hash equality is verified, so acquisition order cannot change the
+normalized manifest's payload representation or hash.
+Unknown historical count metadata is exported as NA rather than a known empty
+object; repeated references to the identical source row are not additional rows.
+Publication revalidation hashes inputs in chunks without changing the snapshot
+used for parsing, and redundant source-kind plural metadata was removed.

@@ -1,0 +1,233 @@
+# R0 archive intake (PR-01)
+
+`typo-cot rebuttal-v2 intake` is CPU-only. It verifies archived inputs and produces
+a new v2 manifest without requiring any historical success count. It does not
+generate answers, reconstruct historical prompts, tokenize inputs, rescore
+answers, or claim that the archived cohort was recovered merely because counts
+agree. Other `rebuttal-v2` commands are not yet implemented.
+
+## Run
+
+From the repository root:
+
+```bash
+uv run --project projects/typo-cot typo-cot rebuttal-v2 intake \
+  --archive-index /path/to/archive_index.json \
+  --protocol projects/typo-cot/configs/rebuttal_v2/protocol.json \
+  --output-dir /path/to/new-intake
+```
+
+Use a new or empty output directory. Existing results are never overwritten.
+The index follows [schemas.md §3](schemas.md#3-archive-index-normalized-sources-and-intake).
+Its source paths and artifact references resolve relative to the file containing
+them. Input SHA-256 mismatches, conflicting identities, malformed JSON and
+unsupported protocol revisions are errors. Missing sources and unsupported
+source layouts are reported as missing/unsupported coverage, not fabricated data.
+
+A successfully completed inventory can have `run_status=complete` while a cohort
+has `coverage_status=partial` or `unknown`. Command success does not mean that the
+archive, subsequent audits, or model experiments are complete.
+
+## Explicit adapters
+
+The initial adapters use UTF-8 JSONL. Every nonempty line is an object with a
+unique `source_record_id`. Duplicate keys and nonfinite JSON numbers are rejected.
+The original file is retained as an immutable, hash-verified source reference.
+Unknown adapter names are not guessed from filenames or field similarity.
+
+| Source role | `format` | `adapter_version` and row `schema_version` |
+|---|---|---|
+| `pairs` | `jsonl` | `rebuttal-source-pair/v2` |
+| `generations` | `jsonl` | `rebuttal-source-generation/v2` |
+
+Source entries still require the provenance, availability and reason fields in
+schemas.md, including explicit nulls for unknown source/model/tokenizer revisions.
+Source kinds remain `submitted-archive`, `public-regeneration`, or `fresh-audit`;
+the adapter never converts one kind into another. Other source roles can be
+inventoried without pretending that they are pair or generation records.
+For pair-level model/tokenizer/prompt-template revisions and `archived_runtime`,
+an omitted key inherits the archived source entry's value when available. An
+explicit null instead means that the row's value is unknown and must not be
+filled from the source entry. No contemporary runtime supplies archived values.
+
+### Pair rows
+
+Required fields are `schema_version`, `source_record_id`, `source_pair_key`,
+`task`, and `model_id`. Example (illustrative data, not an original paper item):
+
+```json
+{
+  "schema_version": "rebuttal-source-pair/v2",
+  "source_record_id": "record-001",
+  "source_pair_key": "archived-pair-001",
+  "historical_pair_id": "archived-pair-001",
+  "cohort_ids": ["R3"],
+  "dataset_id": "gsm8k",
+  "split": "test",
+  "original_problem_id": "original-001",
+  "task": "gsm8k",
+  "model_id": "google/gemma-3-4b-it",
+  "target_rule": "max-logit",
+  "perturbation_id": "edit-001",
+  "clean_text": "How many apples?",
+  "typo_text": "How many aplpes?"
+}
+```
+
+Optional archived fields correspond to the manifest contract: dataset/model/
+tokenizer revisions, exact text and prompts, query spans and prompt regions,
+gold and its canonicalization provenance, valid choice labels, saved edits and
+token positions, and archived runtime metadata. Omitted archived evidence becomes
+null with availability reasons, not a reconstructed historical value. Query text
+does not automatically become a full prompt. Text whitespace, Unicode, and line
+endings are preserved exactly.
+
+Supplied `canonical_gold` is checked without inferring an answer. For GSM8K it
+uses `{numerator, denominator}` with integer strings in reduced form and a
+positive denominator. For choice tasks it is a label string, checked against
+`valid_labels` when that set is known; the initial choice validator supports
+MMLU-Pro. Other tasks may retain raw gold but cannot declare an unsupported
+canonical gold representation. A supplied canonical value also requires
+its `gold_canonicalization_version`; missing gold stays missing.
+
+Text/prompt payloads may use an inline string or a corresponding `*_ref` with
+`{path, sha256}`, not both. A supplied `*_sha256` must agree with the exact UTF-8
+text. An explicit query span must match the query at that position in the full
+prompt; intake does not choose the first repeated occurrence.
+
+`expected_generations` can enumerate archived slots as `{arm, window}` objects
+with an optional `source_generation_key`. Missing slots remain missing. If the
+archive did not enumerate its generation grid, intake does not infer a complete
+historical grid from the current six-arm fresh protocol or aggregate counts.
+Omission/null means an unknown grid; an explicit empty array means known empty.
+An explicit `source_generation_key` identifies exactly one pair/arm/window slot
+across the complete intake, including missing expected outputs. It cannot be
+reused for a different slot or conflict with an observed generation identity.
+
+### Generation rows
+
+Required identity fields are `schema_version`, `source_record_id`,
+`source_generation_key`, `source_pair_key`, `arm`, and `window` (null for baseline
+outputs, a two-integer half-open interval for patch outputs). Example:
+
+```json
+{
+  "schema_version": "rebuttal-source-generation/v2",
+  "source_record_id": "generation-record-001",
+  "source_generation_key": "archived-generation-001",
+  "source_pair_key": "archived-pair-001",
+  "arm": "correct",
+  "window": [0, 6],
+  "raw_text": "The answer is 42."
+}
+```
+
+Use `raw_text` or `raw_text_ref` for actual saved output. Missing output is not
+expanded from a count or converted into an empty answer. Saved token IDs and stop
+metadata are optional. Unsupported/unknown stopping reasons remain unknown;
+output length alone does not establish a historical token-cap termination.
+For this adapter, `stopping_metadata.eos_observed=true` establishes EOS, including
+EOS at the cap. A length-cap observation requires `eos_observed=false` and
+`length_cap_reached=true`. Other saved stop metadata remains raw evidence and
+does not establish either stopping reason automatically.
+An unsupported raw `termination` label is retained as `archived_termination`;
+it does not override valid observed EOS/cap flags. Contradictory recognized stop
+labels and observed flags are rejected rather than choosing one silently.
+
+Optional `archived_scoring` preserves the old parser's recorded judgments as
+source-attributed metadata, not newly computed truth. It cannot alter pair
+membership, eligibility, or the identities of raw generations. Cohort
+`historical_counts` are likewise reference metadata, never acceptance quotas.
+Generation scoring metadata allows `parser_id`, `parser_version` (strings or
+null), and `gold_match` (boolean or null). It is summarized only for present raw
+outputs, separately by source kind, arm, window and declared parser. These are
+descriptive counts of saved judgments, not R1 re-extraction results. Pair-level
+`archived_scoring` remains opaque metadata and is not used to manufacture counts.
+
+## Identity, membership, and outputs
+
+Pair identity uses acquisition namespace and source pair key, independently of
+filename, answer correctness and text hash. The same identity with contradictory
+texts is rejected. Original-problem grouping ignores target rule and model; an
+unknown original ID stays null. Hash-verified explicit aliases are required to
+link acquisition identities. Text similarity is not identity evidence.
+Consistent duplicate acquisitions retain their additional source references and
+are explicitly reported. Contradictory scientific metadata is rejected; source
+order cannot select the preferred gold, revision or archived editing evidence.
+Every pair has `source_identity_provenance` and `additional_source_refs` arrays,
+including singleton acquisitions. All original identity claims and pair/group
+alias evidence remain in provenance. Within the same original acquisition ID,
+two different known historical IDs or explicit key kinds conflict; null plus a
+known historical ID resolves without dropping the original null claim. Derived
+missingness reasons are updated for that resolution, not used as independent
+scientific conflict evidence. Other scientific null/known differences still
+conflict. Verified aliases can link different original IDs without erasing their
+distinct historical IDs. A canonical-identity-first deterministic representative,
+defined in schemas.md, supplies the top-level provenance; source order does not.
+Equivalent inline/reference text payloads are selected independently by a fixed
+rule (inline first, otherwise canonical-JSON reference order), after verifying
+equal exact-text hashes. Input ordering does not choose their storage form.
+`source_kind` remains a consistency requirement for one acquisition identity:
+submitted archives and public/fresh regenerations cannot share a namespace/key
+and be silently collapsed into whichever source kind was read first. Compare
+these acquisition events in separately namespaced intake runs; this adapter does
+not coalesce different source kinds even through pair aliases. Generation counts
+are grouped by recorded `source_kind`, which must match the normalized pair's
+acquisition kind. A redundant plural `source_kinds` field is not emitted.
+
+An `expected_ids_ref` points to the explicitly enumerated archived ID artifact
+defined in schemas.md. Known missing IDs and extra records are reported without
+substitution. Without an ID list, coverage is unknown even when the recovered
+count equals 172 or 97. This command never selects new examples to fill a quota.
+Membership `source_ref` always has the artifact shape `{path, sha256}`: the
+expected-ID list, explicit membership evidence, or an acquisition artifact that
+actually claims the cohort, selected deterministically. Per-acquisition
+`cohort_ids` remain in `source_identity_provenance`; the representative source
+does not substitute for an actual claimant. The pair-level `source_ref` separately
+retains its exact source record identity.
+Known R3/R4 membership also requires the pair's task/model to match the frozen
+setting. Other historical setting IDs remain explicitly unvalidated rather than
+being silently interpreted as one of these experiments.
+For R3/R4, `historical_n_reference` itself must equal the protocol's 172/97; this
+checks the reference metadata, not the number of recovered or successful rows.
+An extra pair outside the frozen list stays excluded and reported even if it
+has a different task/model; it does not abort recovery of the actual members.
+Without a frozen ID list, task/model mismatches in membership claims remain
+`membership=unknown` and produce `claimed_cohort_setting_mismatch` findings;
+they cannot establish membership but do not prevent inventory publication.
+
+The output set is `source_audit.json`, `archive_inventory.jsonl`,
+`pair_manifest.jsonl`, `pair_manifest.meta.json`,
+`archive_generation_records.jsonl`, `historical_count_comparison.csv`,
+`missing_inputs.csv`, and `run.json`. Historical counts and observed source counts
+remain separately labeled. No source aggregates are expanded into per-item rows.
+Omitted historical counts are displayed as `NA`, distinct from an explicitly
+recorded empty object `{}` or a known zero count.
+The manifest metadata binds protocol and source coverage even with zero rows.
+Run metadata references the outputs, never the reverse, to avoid reference cycles.
+Intake `expected_ids` and `missing_ids` are source pair keys grouped by cohort;
+the cohort's `id_namespace` is in the referenced source audit. `completed_ids`
+are canonical pair IDs, including retained extras. Join through the manifest and
+source audit; do not directly subtract arrays from these different ID spaces.
+Coverage is conservatively `partial` for either missing IDs or extra claims,
+with separate `missing_count` and `extra_count` so those causes remain distinct.
+An exact `protocol.json` snapshot is copied into the output set. The run records
+the canonical protocol hash/revision and the implementing modules' content hashes,
+plus the Git commit and dirty state when Git identity is available. Outside a Git
+checkout those Git fields are null with an explicit reason, not invented values.
+If only the Git status operation times out, an already resolved commit is kept
+and dirty state stays unknown; untracked files are not hidden from provenance.
+Before publication, every captured input is hash-checked again using streaming
+reads. Parsing still uses the originally captured, verified snapshot bytes.
+CSV is a display/export view: formula-like string cells are prefixed with an
+apostrophe to keep them text when opened in spreadsheet software. Exact unescaped
+IDs and text remain in JSON/JSONL, the authoritative inputs for machine joins.
+The output directory is private (mode 0700) by default because raw text and
+provenance may be sensitive; sharing its permissions is an explicit owner action.
+Inputs are owner-provided local artifacts and may use absolute or relative paths.
+This command is not a sandbox for untrusted bundles: review an index and its
+references before allowing it to read and retain their data.
+
+The original submitted data has not been recovered by implementing this command.
+CPU fixtures are synthetic and are not formal R0 results. Real-model smoke and
+formal R3/R4 results remain not run.

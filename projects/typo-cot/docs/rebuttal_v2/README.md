@@ -1,8 +1,8 @@
 # Rebuttal v2：監査・限定対照実験
 
-Status: PR-00 protocol contract (revision 2.0.0); CLI implementation not started; CPU acceptance fixtures not yet implemented; real-model smoke not run; formal experiments not run.
+Status: protocol revision 2.0.0; PR-01 CPU intake implemented with acceptance fixtures; later commands not implemented; real-model smoke not run; formal experiments not run.
 
-本書はPR-00で固定する科学的契約である。フィールド・入出力参照・状態遷移は [schemas.md](schemas.md)、既知の結果と判断記録は [decision_log.md](decision_log.md)、機械可読設定は [protocol.json](../../configs/rebuttal_v2/protocol.json) を参照する。ここに示す `rebuttal-v2` CLIは未実装であり、現時点で実行できるコマンドではない。実装はPR-01以降で機能ごとに追加する。
+本書はPR-00で固定した科学的契約である。フィールド・入出力参照・状態遷移は [schemas.md](schemas.md)、既知の結果と判断記録は [decision_log.md](decision_log.md)、機械可読設定は [protocol.json](../../configs/rebuttal_v2/protocol.json) を参照する。PR-01で [intake](intake.md) のみ実装した。ここに示す後続CLIは未実装であり、機能ごとのPRで追加する。
 
 ## 1. 目的と範囲
 
@@ -322,7 +322,7 @@ GPU間で一致すべき `scientific_config_sha256`（model/tokenizer/dtype/back
 
 既存の `typo-cot experiments` 等を改名せず、argparseに `rebuttal-v2` namespaceを追加する。CPU commandを読むだけでGPUモデルをimportしない。
 
-以下はrepo rootからの予定コマンド。`SOURCE_ROOT` と `REBUTTAL_V2_ROOT` はユーザーの実データ位置へ設定する変数。現在は未実装なので、開発者はこのCLIを受入仕様として実装する。
+以下はrepo rootからのコマンド契約。`SOURCE_ROOT` と `REBUTTAL_V2_ROOT` はユーザーの実データ位置へ設定する変数。`intake` のみ実装済みであり、それ以外はまだ実行できない受入仕様である。
 
 ```bash
 uv run --project projects/typo-cot typo-cot rebuttal-v2 intake \

@@ -1,8 +1,8 @@
 # Rebuttal v2 artifact and CLI contracts
 
-Status: PR-00 specification, protocol revision `2.0.0`. These are contracts for
-later implementation PRs; no v2 validator, CLI, generation run, or result is
-implemented by this document. Scientific definitions, parser grammar, cohorts,
+Status: protocol revision `2.0.0`. PR-01 implements the R0 intake contracts;
+later audit, planning, generation and reporting contracts remain specifications.
+No real-model smoke or formal results are available. Scientific definitions, parser grammar, cohorts,
 and acceptance cases are in [README.md](README.md). Machine settings are in
 [protocol.json](../../configs/rebuttal_v2/protocol.json).
 
@@ -94,7 +94,7 @@ Status dimensions are separate fields, not interchangeable labels:
 | `coverage_status` | `complete`, `partial`, `unknown` | Recovery of an explicitly enumerated source cohort; count agreement alone is insufficient |
 | `eligibility` | `valid`, `invalid`, `unknown`, `not_available` | Passed prespecified post-hoc protocol conditions; evaluated and failed; necessary evidence unresolved; optional input not provided |
 | `runtime_status` | `pending`, `running`, `complete`, `failed` | Execution status for a planned valid job; model answer correctness is unrelated |
-| `termination` | `eos`, `length-cap`, `unknown` | Observed generation stopping reason, with supporting metadata; unsupported archive reasons remain raw metadata plus unknown |
+| `termination` | `eos`, `length-cap`, `unknown` | Observed generation stopping reason, with supporting metadata; unsupported archive labels remain raw metadata and imply unknown only if no supported stopping observation is available |
 | `extraction_status` | `extracted`, `unextractable`, `ambiguous` | Gold-independent parser result on present output; reasons retain quoted/negated/unsupported syntax |
 | `score_status` | `scored`, `not_scored` | Gold comparison available, or an executed extraction cannot be scored because gold is missing |
 | `run_status` | `complete`, `partial`, `failed` | Command execution/artifact completeness; low answer success never fails a run |
@@ -149,6 +149,10 @@ only when unknown), exact texts/prompts, gold, saved edits/coordinates, and raw
 generation references. Unsupported source layouts are reported; aggregate counts
 are never expanded into invented per-item generations.
 
+PR-01's concrete source adapter versions and input serialization are defined in
+[intake.md](intake.md). They make the source-side normalization contract explicit;
+they do not reinterpret v1 manifests as v2 or add a new scientific protocol.
+
 Intake writes `source_audit.json`, `archive_inventory.jsonl`,
 `pair_manifest.jsonl`, `pair_manifest.meta.json`, `archive_generation_records.jsonl`,
 `historical_count_comparison.csv`, `missing_inputs.csv`, and `run.json`.
@@ -168,6 +172,7 @@ Each `pair_manifest.jsonl` row (`rebuttal-pair-manifest/v2`) has:
 | `historical_pair_id`, `original_problem_group_id`, `dataset_revision` | Nullable provenance/group fields under §1 rules |
 | `dataset_id`, `split`, `original_problem_id`, `cohort_membership` | Namespace components (nullable when unknown); membership contains cohort ID, known/unknown membership, and source reference |
 | `source_kind`, `source_ref`, `source_sha256`, `source_record_id` | Original source provenance; source hash agrees with the referenced source |
+| `pair_identity`, `group_identity`, `source_identity_provenance`, `additional_source_refs` | Original/canonical identity payloads and alias evidence, all acquisition identity claims, and additional source `RecordRef`s; both arrays are always present |
 | `task`, `model_id`, `target_rule`, `perturbation_id` | Task/model required for normalized usable pair records; unknown target/perturbation allowed with reasons |
 | `model_revision`, `tokenizer_revision`, `archived_runtime` | Nullable archived values only; not overwritten by a fresh runtime lock |
 | `clean_text`, `typo_text`, `clean_text_sha256`, `typo_text_sha256` | Exact inline strings and hashes; each side may be null when genuinely missing, with availability/reasons |
@@ -185,6 +190,48 @@ few-shot prompt. Consumers verify prompt hash and explicit query-span contents;
 repeated substrings do not justify choosing the first occurrence. Prompt
 regeneration creates separately labeled fresh provenance and requires a declared
 protocol change if it changes the exact archived prompt contract.
+
+Each `cohort_membership` entry is `{cohort_id, membership, source_ref}`;
+`membership` is `member`, `extra`, or `unknown`. Its `source_ref` is always an
+`ArtifactRef`, selecting the expected-ID artifact, the explicit membership
+evidence artifact, or an acquisition artifact actually claiming that cohort in
+that priority order. Multiple claimants are ordered by canonical JSON of their
+artifact references; the representative pair source need not be a claimant. The
+pair-level `source_ref` remains a `RecordRef` identifying its exact source row;
+do not interchange the two reference types.
+
+`source_identity_provenance` is a nonempty array of acquisition claims. Each entry
+contains `source_ref` (`RecordRef`), `pair_identity`, `group_identity`,
+`cohort_ids` (sorted unique original membership claims),
+`historical_pair_id` (nullable), `source_pair_key_kind`, and
+`source_pair_key_kind_explicit` (boolean). Each identity object retains its
+`domain`, canonical `payload`, `original_payload`, and `alias_evidence_refs`.
+All acquisition claims and alias evidence survive deduplication, ordered by their
+canonical JSON. Within one original acquisition identity, contradictory known
+historical IDs or explicit key kinds are errors; null historical ID plus a known
+ID resolves to that known ID while both original claims remain in provenance.
+Other scientific unknown/known metadata is not merged. An inferred key kind is
+recomputed from the resolved historical ID unless an explicit kind is available.
+
+Different original pair identities can coalesce only with verified aliases.
+The top-level identity/provenance fields summarize the original identity matching
+the canonical pair identity if present, otherwise the lexicographically first
+canonical-JSON original identity. Within it, prefer an acquisition carrying the
+known historical ID, then a canonical original group identity, then canonical-JSON
+order. The other source rows remain as unique RecordRefs in
+`additional_source_refs`, excluding the representative reference (empty for a
+single source row). All acquisition declarations still remain in provenance and
+inventory. This representative is not selected by source input order.
+Exact-text equality is checked by each component's hash before deduplication.
+For each text/prompt component, its inline/reference representation is selected
+independently and deterministically: prefer an available inline string, otherwise
+the artifact reference first in canonical-JSON order. Keep inline and reference
+mutually exclusive. All original acquisition references remain available even
+if this representation comes from a different acquisition than the identity
+representative. Equivalent payload storage choices cannot make source order
+change the normalized manifest bytes.
+Different `source_kind` values remain incompatible for one normalized pair; use
+separately namespaced intake runs for archived and regenerated acquisition events.
 
 `archived_generations` entries contain `generation_id`, `arm`, `window`,
 `availability`, `record_ref`, and `reason_codes`. Available records point into
@@ -452,8 +499,10 @@ and supporting stop metadata, runtime status, scientific config hash, worker
 telemetry reference, source/write positions, hook counts by layer/phase, and
 integrity diagnostics. Decode only the generated suffix, not the prompt. EOS on
 token 512 is `eos`; length 512 without stopping evidence is not sufficient to
-infer `length-cap` for an archive. Unsupported archive stop reasons are preserved
-as raw metadata with `termination=unknown`. Fresh canonical generation records
+infer `length-cap` for an archive. Unsupported archive stop labels are preserved
+as raw metadata; without supported observed stop metadata, `termination=unknown`.
+They do not erase a stopping reason established by supported observation flags.
+Fresh canonical generation records
 have `runtime_status=complete`; there is at most one row per `generation_id`,
 referencing its successful attempt. Failure history is never appended as duplicate
 generation rows or decoded/scored as a complete model answer.
