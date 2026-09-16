@@ -33,12 +33,14 @@ uses Python-compatible JSON with `sort_keys=True`, `ensure_ascii=False`,
 `separators=(",", ":")`, `allow_nan=False`, encoded as UTF-8 without a trailing
 newline. Schema-typed integers remain integers; identity payloads contain only
 strings, integers, booleans, lists, objects, and null. Other finite numbers use
-JSON's round-trip representation, with `-0.0` normalized to `0.0`. Every computed
-identity hashes `domain + "\n" + canonical_json(payload)`; the domain and payload
+JSON's round-trip representation, with `-0.0` normalized to `0.0`. Every record
+identity listed below hashes `domain + "\n" + canonical_json(payload)`; the domain and payload
 are retained with the artifact. Hashing does not establish scientific validity.
 Configuration hashes (`protocol_sha256`, `generation_config_sha256`, and
 `scientific_config_sha256`) hash the canonical JSON of their specified object
 without a domain prefix; they differ from hashes of pretty-printed file bytes.
+Configuration hashes are typed content fingerprints, compared only within their
+named field and supported schema, never interchangeable untyped record IDs.
 
 `ArtifactRef = {path, sha256}` identifies an existing immutable local file.
 Relative paths resolve against the JSON/JSONL file containing the reference;
@@ -53,6 +55,7 @@ not by a fabricated hash. All consumers revalidate referenced bytes before use.
 | `original_problem_group_id` | `rebuttal-original-problem/v2`; `{dataset_id, split, original_problem_id}` | Independent of model, target rule, perturbation, source kind, and outcome |
 | `pair_id` | `rebuttal-pair/v2`; `{source_namespace, source_pair_key}` | Same acquisition identity across cohorts and all generated arms |
 | `generation_id` | `rebuttal-generation/v2`; `{source_namespace, source_generation_key}` for archive; `{plan_id, scientific_config_sha256}` for fresh | Parser/scoring changes do not change generation identity |
+| `attempt_id` | `rebuttal-generation-attempt/v2`; `{generation_id, attempt_number}` | Fresh execution attempts are distinct from the canonical job output; attempt numbers start at 1 and never repeat for a generation ID |
 | `plan_id` | `rebuttal-plan-row/v2`; scientific planning payload specified in §7 | Independent of worker, shard count, and execution outcome |
 
 `dataset_id` names a stable dataset namespace with stable original ID semantics;
@@ -92,8 +95,8 @@ Status dimensions are separate fields, not interchangeable labels:
 | `eligibility` | `valid`, `invalid`, `unknown`, `not_available` | Passed prespecified post-hoc protocol conditions; evaluated and failed; necessary evidence unresolved; optional input not provided |
 | `runtime_status` | `pending`, `running`, `complete`, `failed` | Execution status for a planned valid job; model answer correctness is unrelated |
 | `termination` | `eos`, `length-cap`, `unknown` | Observed generation stopping reason, with supporting metadata; unsupported archive reasons remain raw metadata plus unknown |
-| `extraction_status` | `extracted`, `unextractable`, `ambiguous` | Gold-independent parser result; reasons retain quoted/negated/unsupported syntax |
-| `score_status` | `scored`, `not_scored` | Gold comparison available, or absent gold/generation/parser support |
+| `extraction_status` | `extracted`, `unextractable`, `ambiguous` | Gold-independent parser result on present output; reasons retain quoted/negated/unsupported syntax |
+| `score_status` | `scored`, `not_scored` | Gold comparison available, or an executed extraction cannot be scored because gold is missing |
 | `run_status` | `complete`, `partial`, `failed` | Command execution/artifact completeness; low answer success never fails a run |
 | `experiment_status` | `not_run`, `partial`, `complete`, `invalid` | Scientific execution coverage, including runtime-integrity rejection |
 | Claims `status` | `supported`, `not_supported`, `inconclusive`, `not_run` | Evidence for the precisely scoped claim |
@@ -226,6 +229,13 @@ candidate spans, reason codes, termination, score status, gold reference and
 denominator strings; decimal/exponent spellings compare without binary floats.
 Extractors receive text/task/labels/termination only. Gold comparison is a
 separate operation, so rescoring cannot change a saved generation.
+Audit/score rows require present complete raw output and an executed parser.
+Absent archive text, failed or unfinished fresh execution, and an unavailable
+selected parser produce no audit/score row; they are tracked in
+`scoring_coverage.jsonl` as specified in §8. For present output with an executed
+parser, unavailable gold gives `score_status=not_scored`, `gold_match=null` while
+preserving the nonnull extraction status/result. Do not invent an `unextractable`
+model output when extraction could not run.
 
 The old parser is `archive_parser` only when its historical code/version is
 identified; otherwise identify `public_v1_proxy` with its actual code hash. Run
@@ -381,8 +391,33 @@ ID itself and semantic labels, plus verified input-audit/manifest/protocol hashe
 Reference payloads contribute content hashes and record IDs, not filesystem paths.
 Shard allocation and mutable execution state are not part of the payload.
 
-Baseline clean/typo have `window=null`, empty positions and no patch source/site;
-they are each planned once for every text/runtime-eligible archived pair.
+All listed fields are present even on ineligible rows. `donor_bank_sha256` is
+nullable: with no supplied bank it is JSON `null` on every row and in metadata,
+including retained cross `not_available` rows. The canonical planning payload
+contains that literal null, not an omitted key, empty string or invented digest
+of a nonexistent bank. With a supplied bank, use its verified file hash.
+Baseline `source_pair_id`, `source_prompt_ref`, tensor sites,
+`application_phase` and `expected_applications` are null, and its source/write
+positions are known-empty arrays. Valid patch rows require nonnull source and
+recipient prompt refs, source pair ID, full coordinate arrays, sites, phase and
+application counts. For ineligible patch rows, unresolved source identity,
+prompt refs or coordinate arrays may be null with per-field reason codes; retain
+known values even when a different prerequisite fails. Fixed window/sites/phase
+and expected applications remain populated when known from the protocol, but
+may be null if the corresponding operation cannot be specified. An unavailable
+recipient prompt is null, never a fabricated reference. Such rows never become
+generation jobs. Generation/scientific config hashes and original group IDs must
+still be resolved for a formal frozen plan; unresolved global preflight failures
+are reported before producing a runnable plan.
+A null original-problem group ID on any selected pair, including a clean/typo
+baseline, fails global preflight: report all blocking pair IDs and produce no
+runnable plan, expected generation grid, or shard assignment. These records
+remain available to CPU source/answer audits; do not silently drop them to pass
+preflight.
+
+After global preflight passes, baseline clean/typo have `window=null`, empty
+positions and no patch source/site; they are each planned once for every
+text/runtime-eligible archived pair.
 Self/correct require alignment; offset requires all corresponding source and
 write endpoints shifted by +2 to be legal; cross additionally requires the fixed
 donor. If any offset violates a prompt boundary, any edited-word token span, or
@@ -411,22 +446,55 @@ may reside outside the recipient shard. Shard workers never replan.
 ## 8. Fresh generations, scores, checkpoints, and run metadata
 
 `generation_records.jsonl` (`rebuttal-generation-record/v2`) contains
-`generation_id`, `plan_id`, `pair_id`, arm/window, generated token IDs, exact decoded
+`generation_id`, `completed_attempt_id`, `plan_id`, `pair_id`, arm/window, generated token IDs, exact decoded
 generated suffix and text hash, effective EOS IDs, generated length, termination
 and supporting stop metadata, runtime status, scientific config hash, worker
 telemetry reference, source/write positions, hook counts by layer/phase, and
 integrity diagnostics. Decode only the generated suffix, not the prompt. EOS on
 token 512 is `eos`; length 512 without stopping evidence is not sufficient to
 infer `length-cap` for an archive. Unsupported archive stop reasons are preserved
-as raw metadata with `termination=unknown`. Failed attempts have failure records with reason,
-exception metadata and nullable partial output, and are not successful generations.
+as raw metadata with `termination=unknown`. Fresh canonical generation records
+have `runtime_status=complete`; there is at most one row per `generation_id`,
+referencing its successful attempt. Failure history is never appended as duplicate
+generation rows or decoded/scored as a complete model answer.
+
+`attempt_records.jsonl` (`rebuttal-generation-attempt/v2`) has one row per unique
+`attempt_id`, with `generation_id`, `attempt_number`, plan/pair identity, runtime
+status, start/end times, worker telemetry, reason/exception metadata, and nullable
+partial-output diagnostics. The pair checkpoint has a single writer and reserves
+the next monotonic attempt number durably before execution; it never reuses a
+number after interruption or resume. Running attempts transition atomically to
+terminal complete/failed records under the same attempt ID, rather than appending
+duplicate IDs. Resume records an interrupted attempt as failed with that reason
+before reserving a new attempt; it must not retry a still-live writer's attempt.
+Failed attempts remain in this history. A completed attempt and the canonical
+generation record are published through the same atomic pair-checkpoint update;
+recovery finishes an interrupted publication without generating a second output.
+Once canonical output exists, resume reuses it and cannot replace it with another
+attempt based on the extracted answer.
 
 Scoring lives in separate `score_records.jsonl`, using the §5 answer-audit shape
 and generation references, one row per generation/parser version. Gold match and
 archive/audit parses are views joined to generation records, not mutable fields
 inside immutable raw output. Complete output with unextractable/ambiguous answer
-is scored with `gold_match=false`; missing gold or generation uses
-`score_status=not_scored`, `gold_match=null` and explicit reasons.
+and available gold is scored with `gold_match=false`. Missing gold after an
+executed parser uses `score_status=not_scored`, `gold_match=null` and explicit
+reasons while preserving the actual extraction result. Missing/failed outputs
+and unavailable selected parsers have no audit/score row.
+
+`scoring_coverage.jsonl` (`rebuttal-scoring-coverage/v2`) has one entry per expected
+source slot or planned valid job and parser. It contains `coverage_id`, nullable
+`plan_id`, nullable `source_slot` (`{pair_id, arm, window}` for archive), verified
+plan/manifest reference, requested parser ID and nullable resolved parser version,
+nullable known `generation_id`,
+nullable generation/score references, and coverage reasons. `coverage_id` hashes
+domain `rebuttal-scoring-coverage/v2` with
+`{plan_id, source_slot, parser_id, parser_version}`; exactly one of plan ID and
+source slot is nonnull. `scoring_status` is `scored`, `not_scored`, `output_missing`,
+`execution_pending`, `execution_failed`, or `parser_unavailable`. Absent/failed
+output references and unavailable score references stay null, and no extraction
+fields are invented. This artifact accounts for the full
+expected grid without treating runtime failures as parser failures or model errors.
 
 `scientific_config_sha256` hashes the explicit projection in §7, including device
 model and code. `worker_telemetry` records host, PID, physical GPU index,
@@ -437,7 +505,8 @@ the selected setting's lock requires a separate run and cannot be pooled as one
 locked experiment.
 
 A pair checkpoint contains the frozen complete expected set of that pair's valid
-arms/windows, successful outputs and failed attempts, and input/protocol/plan/code/
+arms/windows, canonical successful outputs, attempt history and durable counters,
+and input/protocol/plan/code/
 scientific-runtime hashes. Write atomically; incomplete pairs remain incomplete.
 Resume checks every hash and keeps already completed arms and failure history;
 it may finish missing/retry failed execution jobs without selecting by answer

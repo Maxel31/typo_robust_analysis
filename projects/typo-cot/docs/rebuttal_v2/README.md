@@ -117,6 +117,8 @@ v2の機械採点は保守的に、最終非空行にある明示markerと回答
 
 PR-00に固定する追加fixture: `Answer: 4 or 5`はambiguous、`Answer: 4/5`は4/5、`Answer: 1e3`は1000、`Answer: 4 followed by more reasoning`はunextractable、引用された`"Answer: 4"`はunextractable。`Answer: 4 dollars`はこのv2では未対応としてunextractable。表には「固定抽出規則下の回答成功」と表示し、parser未対応をモデルの明確な誤答と同一視しない。人手監査による回答判定を別列で示す。
 
+coverageが低くてもprimary parserや分母を差し替えず、人手判定を結果後にprimary列へ昇格しない。各比較の同じ固定集合上でarm別の抽出成功・unextractable・ambiguous件数を必ず併記する。paired比較だけでcoverage差が相殺されるとは仮定しない。完全な独立人手採点がない場合、parserに依存しない意味的正答率・介入効果は `inconclusive` とし、機械表の主張を固定抽出規則下の回答成功に限定する。人手標本の結果はその標本の補助解析であり、未監査例を補完しない。構文を広げる場合は新revisionとし、元規則の結果も保持する。
+
 ### 評価
 
 固定した元cohort上で、parserごとの抽出回答、正否、回復数、差、unextractable/ambiguous率、EOS/cap/unknown率を報告する。clean/typo判定の変更によるcohort遷移も別表にする。
@@ -209,7 +211,7 @@ fresh結果ではclean/typo/correct/controlを同じruntime、同じ生成設定
 
 同じmodel/task、target rule、aligned edited word数の固定donor bankを用い、recipientの元問題とは分離する。clean stateの配列順とrecipientの対応順は各prompt内の編集語順で固定。gold labelやpatch成否をdonor選択に使わない。
 
-donor bankと各割当を全run前に保存し、可能なら1対1割当。再使用する場合は固定bank条件付きの推論であることを明記し、独立donorへの一般化はしない。bank不足・word数不一致はinvalidとして残す。旧循環donorをそのまま使う記述的な歴史比較は可能だが、iid pairを前提とする強い有意性の根拠に追加しない。
+donor bankと各割当を全run前に保存する。revision 2.0.0は一対一・非復元割当とし、donorを再使用しない。bank不足・word数不一致はcross invalidとして残す。推論は固定bank条件付きであり、独立donorへの一般化はしない。再使用を許す変更には新protocol revisionが必要。旧循環donorをそのまま使う記述的な歴史比較は可能だが、iid pairを前提とする強い有意性の根拠に追加しない。
 
 `--donor-bank`はoptional。未提供時はcrossをnot_availableとして計画に残し、C_cross/C_threeの表をNAにする。correct−offsetとself-copyは継続できるが、matching donor特異性を新しく確認したとは書かない。
 
@@ -238,6 +240,8 @@ self-copy不一致を科学的harmと数えない。原因を調べ、該当runt
 評価はwindowごとのcorrect−offset、correct−cross、および同一pairのcorrect([0,6))−correct([6,12))。後者でearlyが良くなくても、前者の座標特異性は成立し得る。どちらも早期層の唯一性や残り計算量の交絡解消を示さない。原800/1,241の全6設定へ対照を追加したとは書かない。
 
 ## 10. R5：RQ2の形式・生成予算対照（optional）
+
+本節は後続PR-07の設計要件であり、revision 2.0.0の選択可能な実験ではない。必須成果後に専用optional protocol revisionでmodel/runtime、cap別generation設定、全arm、選択IDとhash規則を固定するまで、`plan --experiments R5` は拒否する。
 
 まずCPUで、削除した行が実際に回答行か、prefixが空になったか、原生成capが16/256等のどれかを監査する。既存docsの歴史的差を、raw記録未確認で実測済みとはしない。
 
@@ -284,27 +288,29 @@ donorは固定bank条件付き。共通適格例が少ないときはCIが広い
 
 新規packageの配置先：`src/typo_cot/experiments/rebuttal_v2/`。既存v1の意味を黙って変えない。旧parser・旧結果はread-onlyで保持する。
 
+以下はartifactの役割の要約であり、完全なfield一覧ではない。field・null許可・identity・参照・状態の正規定義は [schemas.md](schemas.md) のみとし、実装・検証はその定義を使う。
+
 ### pair_manifest.jsonl
 
-必須identity：`schema_version`, `protocol_sha256`, `pair_id`, `historical_pair_id`, `original_problem_group_id`, `source_kind`, `source_sha256`, `task`, `model_id`, `model_revision`, `tokenizer_revision`, `target_rule`, `perturbation_id`, `clean_text_sha256`, `typo_text_sha256`。
+出典、pairと元問題groupのidentity、protocolとexact textのhashを保持する。完全なfield定義はschemas.md §4を参照。
 
-内容：exact clean/typo text、full promptまたはその参照とhash、goldとcanonicalization版、intended edit、actual edit、保存token位置、監査token位置、historical membership、eligibilityの各statusと理由。
+内容：exact clean/typo text、full promptまたはその参照とhash、goldとcanonicalization版、保存されたintended/actual editとtoken位置、historical membership、入力availabilityの各statusと理由。独立に再構成した編集span・token位置・監査適格性は後段の `input_audit_records.jsonl` にmanifest参照とともに保存し、intake manifestへ書き戻さない。
 
 nullはunknownとして許可する項目をschemaで列挙し、GPUに必要なunknownが残ればplan preflightで拒否する。`pair_id`だけで内容を同一とみなさずtext hashも検証する。
 
 ### annotation
 
-`blind_id`, `pair_id`との非公開mapping、stage、rater_id、timestamp、interpretation、label、rationale、adjudication。Stage A exportにclean、gold、model、answer、patch outcomeが混入しない検査を置く。原問題に実際に含まれる選択肢は隠さず、gold labelだけ隠す。
+配布用blind IDと非公開mappingを分離し、stage、判定者、解釈、label、根拠と裁定を記録する（schemas.md §6）。Stage A exportにclean、gold、model、answer、patch outcomeが混入しない検査を置く。原問題に実際に含まれる選択肢は隠さず、gold labelだけ隠す。
 
 ### plan.jsonl
 
-`plan_id`, `pair_id`, `setting`, `window`, `arm`, `source_pair_id`, `source_positions`, `write_positions`, `source_tensor_site`, `write_tensor_site`, `application_phase`, `expected_applications`, `generation_config_sha256`, `donor_bank_sha256`, `eligibility`, `reason_codes`。
+各armの出典・座標・window・計算設定と適格性を生成前に固定する（schemas.md §7）。
 
-実行適格性はarm単位。clean/typoはtextとruntimeが利用可能な原cohort全例へwindow=nullで一回ずつ計画する。self/correctはalignment適格、offset/crossはさらに各規則適格な例へwindowごとに計画する。意味保存は解析ラベルとして保持し、意味監査不適格例をbaseline計画から消さない。invalid armはeligibility行として残して生成jobには含めず、reducerのexpected generation gridもvalid armだけから構成する。R4のbaselineは二windowで共有するため最大10生成となる。
+正式GPU planは対象の元問題group identityを解決した後に作る。未解決なら不足一覧を出してpreflightで停止し、shard未割当のvalid jobを作らない。CPU監査にはそのrecordを残す。preflight通過後の実行適格性はarm単位で、clean/typoはtextとruntimeが利用可能な原cohort全例へwindow=nullで一回ずつ計画する。self/correctはalignment適格、offset/crossはさらに各規則適格な例へwindowごとに計画する。意味保存は解析ラベルとして保持し、意味監査不適格例をbaseline計画から消さない。invalid armはeligibility行として残して生成jobには含めず、reducerのexpected generation gridもvalid armだけから構成する。R4のbaselineは二windowで共有するため最大10生成となる。
 
 ### generation_records.jsonl
 
-`generation_id`, `plan_id`, `pair_id`, `arm`, `window`, `generated_token_ids`, `raw_text`, `effective_eos_ids`, `termination`, `generated_length`, `runtime_status`, `scientific_config_sha256`, `hook_counts`, `source_positions`, `write_positions`。答え抽出は別の `score_records.jsonl` にgeneration参照・parser版・抽出status・`gold_match`を保存する。`archive_parse` / `audit_parse` はその結合viewであり、raw generationを上書きせず再採点する。
+各jobの一つの成功生成と生の出力・停止情報・runtime integrityを保持し、再試行履歴は `attempt_records.jsonl` に分離する（schemas.md §8）。答え抽出は別の `score_records.jsonl` にgeneration参照・parser版・抽出status・`gold_match`を保存する。`archive_parse` / `audit_parse` はその結合viewであり、raw generationを上書きせず再採点する。出力やparserが欠ける場合は採点行を作らず `scoring_coverage.jsonl` に記録する。
 
 ### run.json
 
@@ -397,8 +403,7 @@ CPU監査だけを報告する場合、`reduce` は `--intake-run` と利用可�
     "R3"
   ],
   "optional_experiments": [
-    "R4",
-    "R5"
+    "R4"
   ],
   "settings": [
     {

@@ -98,3 +98,37 @@ was checked on 2026-09-16. It allows limited additional experiments directly
 answering reviewer questions and requires text-only responses without external
 links. These repository documents are development artifacts. The cycle-specific
 instructions must still be checked before submitting the response.
+
+## PR-00 review clarifications (2026-09-16)
+
+The first external review of PR #180 identified five schema/documentation
+inconsistencies before any v2 runtime implementation or observation:
+
+- Make section 8's donor rule agree with the already-fixed no-replacement policy.
+- Separate uniquely identified execution attempts from a job's one canonical
+  successful generation so retry history does not create duplicate output IDs.
+- Represent missing generation/parser inputs in scoring coverage rather than
+  inventing an extraction result.
+- Store independently audited positions only in downstream input-audit records;
+  never mutate the intake manifest to insert later audit results.
+- Explicitly allow an absent donor-bank hash in plan rows, using canonical null
+  rather than a placeholder digest.
+
+The subsequent Claude review identified that R5 was listed as selectable without
+its cap-specific settings. Remove R5 from v2.0.0's selectable optional experiments
+and embedded JSON; its design remains in README §10 for a dedicated optional
+protocol revision in PR-07 after the required work. R3/R4 settings are unchanged.
+This correction changes the canonical protocol hash; the earlier draft hash
+remains in the PR review history, and no runs/artifacts were produced under it.
+
+Additional review clarifications make unknown group IDs an explicit global
+planning preflight failure (CPU audits remain available), distinguish typed
+configuration fingerprints from domain-separated record IDs without changing
+the hash algorithm, and make schemas.md the sole normative field definition.
+Parser coverage never triggers an outcome-dependent switch of the primary
+parser, denominator or human-scoring column. Report coverage by arm on fixed
+cohorts and restrict claims to fixed-parser success; without complete independent
+human scoring, parser-independent semantic claims are inconclusive.
+
+These are pre-implementation review corrections without new model observations.
+The review and corrective commits remain part of the initial PR-00 freeze history.
