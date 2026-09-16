@@ -252,6 +252,151 @@ def test_unknown_regions_do_not_export_fewshot_prompt(audit, tmp_path):
     assert "FEW-SHOT" not in json.dumps(rows)
 
 
+@pytest.mark.parametrize("missing_sides", [("clean",), ("typo",), ("clean", "typo")])
+def test_missing_full_prompts_preserve_queries_and_complete_annotation_pipeline(
+    audit, tmp_path, missing_sides
+):
+    for pair in audit.manifest.pairs:
+        for side in missing_sides:
+            pair[f"{side}_prompt"] = None
+    stage_a, _, stage_b = _b_export(audit, tmp_path)
+    forms = _rows(stage_a / "annotation_stage_a.jsonl")
+    assert len(forms) == 2
+    assert all(form["typo_query"] == "How many applse? A. 4 B. 5" for form in forms)
+    if "typo" in missing_sides:
+        assert all(
+            form["typo_context"] == form["task_instructions"] == form["presented_options"] == []
+            for form in forms
+        )
+    forms_b = _rows(stage_b / "annotation_stage_b.jsonl")
+    assert all(form["clean_query"] == "How many apples? A. 4 B. 5" for form in forms_b)
+    if "clean" in missing_sides:
+        assert all(
+            form["clean_context"]
+            == form["clean_task_instructions"]
+            == form["clean_presented_options"]
+            == []
+            for form in forms_b
+        )
+    coverage = _read(stage_a / "annotation_coverage.json")["pair_coverage"]
+    for side in missing_sides:
+        assert all(
+            f"{side}_prompt_unavailable_for_declared_regions" in row["reason_codes"]
+            for row in coverage
+        )
+    labels = _b_labels(stage_b, tmp_path)
+    out = tmp_path / "imported"
+    annotation.import_adjudicated_labels(audit.path, labels, stage_b / "annotation_batch.json", out)
+    assert len(_rows(out / "semantic_labels.jsonl")) == 2
+
+
+def test_reference_only_prompts_still_supply_verified_ancillary_regions(audit, tmp_path):
+    for side in ("clean", "typo"):
+        path = tmp_path / f"private-{side}-prompt.txt"
+        path.write_text(audit.manifest.pairs[0][f"{side}_prompt"], encoding="utf-8")
+        audit.manifest.pairs[0][f"{side}_prompt"] = None
+        audit.manifest.pairs[0][f"{side}_prompt_ref"] = _ref(path)
+    stage_a, _, stage_b = _b_export(audit, tmp_path)
+    assert all(
+        row["typo_context"] == ["Count fruit."]
+        for row in _rows(stage_a / "annotation_stage_a.jsonl")
+    )
+    assert all(
+        row["clean_context"] == ["Count fruit."]
+        for row in _rows(stage_b / "annotation_stage_b.jsonl")
+    )
+    assert all(
+        not any("prompt_unavailable" in reason for reason in row["reason_codes"])
+        for row in _read(stage_a / "annotation_coverage.json")["pair_coverage"]
+    )
+
+
+def test_reference_only_clean_query_allows_assessable_labels(audit, tmp_path):
+    text = tmp_path / "private-clean-query.txt"
+    text.write_text("Reference-only clean question", encoding="utf-8")
+    for pair in audit.manifest.pairs:
+        pair["clean_text"] = None
+        pair["clean_text_ref"] = _ref(text)
+    stage_a, _, stage_b = _b_export(audit, tmp_path)
+    forms = _rows(stage_b / "annotation_stage_b.jsonl")
+    assert all(
+        row["clean_query"] == "Reference-only clean question"
+        and row["allowed_labels"] == sorted(annotation.LABELS)
+        for row in forms
+    )
+    assert all(
+        "clean_query_unavailable" not in row["reason_codes"]
+        for row in _read(stage_a / "annotation_coverage.json")["pair_coverage"]
+    )
+    labels = _b_labels(stage_b, tmp_path)
+    out = tmp_path / "imported"
+    annotation.import_adjudicated_labels(audit.path, labels, stage_b / "annotation_batch.json", out)
+    assert all(row["label"] == "unique_preserved" for row in _rows(out / "semantic_labels.jsonl"))
+
+
+@pytest.mark.parametrize("clean_query", [None, " \t\n"])
+@pytest.mark.parametrize("label", ["unique_preserved", "ambiguous", "task_changed"])
+def test_unavailable_clean_query_preserves_stage_a_but_rejects_assessable_b_labels(
+    audit, tmp_path, clean_query, label
+):
+    for pair in audit.manifest.pairs:
+        pair["clean_text"] = clean_query
+    stage_a, _, stage_b = _b_export(audit, tmp_path)
+    assert len(_rows(stage_a / "annotation_stage_a.jsonl")) == 2
+    forms_b = _rows(stage_b / "annotation_stage_b.jsonl")
+    assert all(
+        row["clean_query"] == clean_query and row["allowed_labels"] == ["unassessable"]
+        for row in forms_b
+    )
+    assert all(
+        "clean_query_unavailable" in row["reason_codes"]
+        for row in _read(stage_a / "annotation_coverage.json")["pair_coverage"]
+    )
+    labels = _b_labels(stage_b, tmp_path)
+    rows = _rows(labels)
+    for row in rows:
+        row["label"] = "unassessable"
+    rows[0]["label"] = label
+    _write(labels, rows, rows=True)
+    with pytest.raises(
+        IntakeError, match="clean query unavailable; explicit unassessable rating required"
+    ):
+        annotation.import_adjudicated_labels(
+            audit.path, labels, stage_b / "annotation_batch.json", tmp_path / "imported"
+        )
+    assert not (tmp_path / "imported").exists()
+
+
+@pytest.mark.parametrize("clean_query", [None, " \t\n"])
+def test_unavailable_clean_query_requires_actual_unassessable_ratings_not_missing_rows(
+    audit, tmp_path, clean_query
+):
+    for pair in audit.manifest.pairs:
+        pair["clean_text"] = clean_query
+    _, _, stage_b = _b_export(audit, tmp_path)
+    labels = _b_labels(stage_b, tmp_path)
+    rows = _rows(labels)
+    for row in rows:
+        row["label"] = "unassessable"
+    _write(labels, rows[:-1], rows=True)
+    out = tmp_path / "imported"
+    with pytest.raises(IntakeError, match="missing Stage B ratings"):
+        annotation.import_adjudicated_labels(
+            audit.path, labels, stage_b / "annotation_batch.json", out
+        )
+    assert not out.exists()
+    _write(labels, rows, rows=True)
+    annotation.import_adjudicated_labels(audit.path, labels, stage_b / "annotation_batch.json", out)
+    semantic = _rows(out / "semantic_labels.jsonl")
+    assert len(semantic) == 2
+    assert all(row["label"] == "unassessable" for row in semantic)
+    flow = {
+        row["set"]: row
+        for row in csv.DictReader((out / "cohort_flow.csv").read_text().splitlines())
+    }
+    assert flow["C_semantic"]["n"] == "0"
+
+
 def test_reference_only_query_is_resolved_without_exposing_path(audit, tmp_path):
     text = tmp_path / "private-query.txt"
     text.write_text("Reference-only typo queestion", encoding="utf-8")

@@ -262,10 +262,13 @@ field affecting rendered tokenization is fixed. A multi-model manifest uses its
 matching entry; an absent model entry makes that pair's token audit `unknown`
 while retaining independent text audit results. The lock describes the tokenizer
 used for independent audit; `matches_archived_tokenizer` is true/false/unknown
-separately. Unknown
-archived revision permits a new pinned-tokenizer audit but prevents claiming it
-verified the unknown historical tokenizer. No floating `main` revision qualifies
-as an immutable lock.
+separately. For each archived tokenizer ID, revision, and file-hash value, a
+non-string or blank value contributes unknown identity evidence. Any known
+nonempty unequal string makes the aggregate result false; otherwise incomplete
+evidence makes it null. Known values are compared exactly as stored without
+stripping, coercion, or normalization. Unknown archived revision permits a new
+pinned-tokenizer audit but prevents claiming it verified the unknown historical
+tokenizer. No floating `main` revision qualifies as an immutable lock.
 
 ## 5. Answer audit and input audit
 
@@ -376,6 +379,9 @@ disagreement reason, and final label. Import verifies selected IDs, complete
 required ratings, lock hashes, unique keys, legal labels and mapping integrity.
 Adjudication requires disagreement among the required independent raters;
 unanimous and single-rater items reject adjudication rows.
+Missing/blank clean queries do not change Stage A selection. They restrict Stage
+B `allowed_labels` and every imported rating to explicit `unassessable`, with a
+private coverage reason; import never fabricates that judgment for a missing row.
 Missing annotation records are reported as missing, never silently labeled
 `unassessable`. `semantic_labels.jsonl` holds pair ID, final label, rating mode,
 source/judgment references and adjudication status; no patch results are inputs.
@@ -389,6 +395,12 @@ Stage B validates the complete returned A ID/rater inventory against the supplie
 Stage A batch, hashes that labels file, and writes an immutable A lock plus a
 new Stage B `annotation_batch.json`. The new batch references the prior batch,
 private mapping, returned A judgments, A lock and B export by verified hashes.
+Only the mapping and coverage are copied into the Stage B directory; the returned
+Stage A file and other upstream evidence remain external hash-bound references,
+often with absolute paths. The Stage B directory is therefore not a self-contained
+export. Original referenced files must remain immutable and available through
+import and later consumers; relocation is valid only when the full reference tree
+is updated consistently without breaking any recorded hash binding.
 Import takes this Stage B batch plus returned independent B/adjudication records,
 validates their IDs/rater inventory and referenced A lock, and retains all A/B
 judgments and adjudication with hashes in its output metadata. Raters return

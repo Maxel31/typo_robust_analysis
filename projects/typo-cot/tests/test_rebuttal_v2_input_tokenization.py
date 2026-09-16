@@ -228,6 +228,74 @@ def test_full_archived_tokenizer_agreement_requires_all_identity_evidence(
     assert audit.matches_archived_tokenizer is expected
 
 
+@pytest.mark.parametrize("field", ["revision", "id", "sha256"])
+@pytest.mark.parametrize(
+    "unavailable",
+    [
+        pytest.param(None, id="absent"),
+        pytest.param({}, id="dict"),
+        pytest.param([], id="list"),
+        pytest.param(1, id="int"),
+        pytest.param(True, id="bool"),
+        pytest.param("", id="empty"),
+        pytest.param(" \t\n", id="whitespace"),
+    ],
+)
+def test_invalid_or_blank_archived_identity_is_unknown(tmp_path, field, unavailable):
+    path = _write_lock(tmp_path)
+    values = {
+        "revision": REVISION,
+        "id": "fixture/local-tokenizer",
+        "sha256": hashlib.sha256((tmp_path / "tokenizer.json").read_bytes()).hexdigest(),
+    }
+    values[field] = unavailable
+    audit = _align(
+        path,
+        **{f"archived_tokenizer_{name}": value for name, value in values.items()},
+    )
+    assert audit.eligibility == "valid"
+    assert audit.matches_archived_tokenizer is None
+    assert audit.archived_revision_match is (None if field == "revision" else True)
+
+
+@pytest.mark.parametrize(
+    "unknown_field,mismatch_field",
+    [("revision", "id"), ("id", "sha256"), ("sha256", "revision")],
+)
+def test_known_archived_mismatch_dominates_unknown_identity(
+    tmp_path, unknown_field, mismatch_field
+):
+    path = _write_lock(tmp_path)
+    values = {
+        "revision": REVISION,
+        "id": "fixture/local-tokenizer",
+        "sha256": hashlib.sha256((tmp_path / "tokenizer.json").read_bytes()).hexdigest(),
+    }
+    values[unknown_field] = {}
+    values[mismatch_field] = "known-mismatch"
+    audit = _align(
+        path,
+        **{f"archived_tokenizer_{name}": value for name, value in values.items()},
+    )
+    assert audit.matches_archived_tokenizer is False
+    expected_revision_match = None if unknown_field == "revision" else mismatch_field != "revision"
+    assert audit.archived_revision_match is expected_revision_match
+
+
+def test_nonblank_archived_identity_is_compared_without_normalization(tmp_path):
+    path = _write_lock(tmp_path)
+    audit = _align(
+        path,
+        archived_tokenizer_revision=REVISION,
+        archived_tokenizer_id=" fixture/local-tokenizer ",
+        archived_tokenizer_sha256=hashlib.sha256(
+            (tmp_path / "tokenizer.json").read_bytes()
+        ).hexdigest(),
+    )
+    assert audit.matches_archived_tokenizer is False
+    assert audit.archived_revision_match is True
+
+
 def test_missing_model_entry_keeps_unknown_not_whole_audit_error(tmp_path):
     path = _write_lock(tmp_path)
     lock = load_tokenizer_lock(path)

@@ -10,7 +10,7 @@ from typing import Any
 from . import artifact_io
 from .artifacts import ManifestBundle, load_manifest
 from .identity import identity_hash
-from .input_spans import classify_edit_regions, diff_actual_spans
+from .input_spans import RISK_NAMES, classify_edit_regions, diff_actual_spans
 from .input_tokenization import TokenizerLock, load_tokenizer_lock, reconstruct_token_alignment
 from .schemas import IntakeError, canonical_json, canonical_sha256, require_keys
 
@@ -188,34 +188,8 @@ def _audit_pair(pair: dict, manifest: ManifestBundle, lock: TokenizerLock) -> di
             "algorithm_versions": {},
         }
         risk = {
-            "flags": {
-                name: None
-                for name in (
-                    "stem",
-                    "option_content",
-                    "option_label",
-                    "gold_option",
-                    "number",
-                    "quantity",
-                    "unit",
-                    "negation",
-                    "entity",
-                )
-            },
-            "reasons": {
-                name: ["exact_query_text_unavailable"]
-                for name in (
-                    "stem",
-                    "option_content",
-                    "option_label",
-                    "gold_option",
-                    "number",
-                    "quantity",
-                    "unit",
-                    "negation",
-                    "entity",
-                )
-            },
+            "flags": dict.fromkeys(RISK_NAMES),
+            "reasons": {name: ["exact_query_text_unavailable"] for name in RISK_NAMES},
             "algorithm_versions": {},
         }
     else:
@@ -395,17 +369,7 @@ def run_input_audit(
                     for row in rows
                 )
             )
-            for name in (
-                "stem",
-                "option_content",
-                "option_label",
-                "gold_option",
-                "number",
-                "quantity",
-                "unit",
-                "negation",
-                "entity",
-            )
+            for name in RISK_NAMES
         },
         "cohort_flow": flow,
         "semantic_status": "not_run",

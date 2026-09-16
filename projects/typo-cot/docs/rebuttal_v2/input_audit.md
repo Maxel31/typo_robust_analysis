@@ -40,9 +40,12 @@ Unknown alignment remains separate from archived-tokenizer agreement.
 `archived_revision_match` compares revisions alone;
 `matches_archived_tokenizer` is true only when archived tokenizer ID, revision,
 and tokenizer-file hash are all present and agree. Known mismatch is false;
-insufficient evidence is null. The latter uses explicit archived runtime keys
-`tokenizer_id` and `tokenizer_sha256` in addition to the saved tokenizer revision;
-it does not certify historical wrapper or special-token insertion policy.
+insufficient evidence is null. An archived identity value that is not a nonblank
+string is insufficient evidence, not a mismatch. Known nonblank strings compare
+exactly as archived, without stripping, coercion, or normalization; any unequal
+known value makes the result false. The comparison uses explicit archived runtime
+keys `tokenizer_id` and `tokenizer_sha256` in addition to the saved tokenizer
+revision; it does not certify historical wrapper or special-token insertion policy.
 
 ## Pinned local tokenizer lock
 
@@ -80,6 +83,10 @@ Missing or unsupported layouts produce unknown classification; they are never
 inferred by searching for the first repeated query. Context exported to raters
 comes only from explicitly annotated current-question regions, never the entire
 few-shot prompt.
+If declared regions remain but their exact full prompt is unavailable, ancillary
+arrays stay empty and private coverage records a side-specific unavailable reason;
+the available typo query remains selected instead of aborting the entire batch.
+Malformed region coordinates in an available prompt are still integrity errors.
 
 Risk flags separately describe stem, option content, option label, gold-option
 membership, numbers, quantities, units, negations, and explicit entity regions.
@@ -135,6 +142,11 @@ the exact missing keys; no semantic label is fabricated for an unreviewed pair.
 Adjudication is accepted only for disagreements among the required independent
 raters. Unanimous and single-rater items reject even a redundant adjudication;
 their independent label cannot be overridden by an unnecessary adjudication.
+If the verified clean query is missing or whitespace-only, Stage A selection is
+unchanged and coverage records `clean_query_unavailable`. Stage B allows only
+`unassessable` for that item, and import requires each rater's explicit matching
+judgment. Missing rows still fail: unassessability is never silently generated,
+and absent clean evidence cannot establish semantic preservation or task change.
 
 The import reports rater count, pre-adjudication agreement, adjudications,
 unassessable judgments, and source/annotation coverage. Semantic eligibility is
@@ -173,6 +185,13 @@ Stage B takes the frozen rater list from the batch, not new CLI settings.
 | Stage A | Reviewer `annotation_stage_a.jsonl`; private `annotation_mapping.jsonl`, `annotation_batch.json`, `annotation_coverage.json` |
 | Stage B | Reviewer `annotation_stage_b.jsonl`; immutable `stage_a_lock.json` and a new private `annotation_batch.json` |
 | Import | `semantic_labels.jsonl`, `annotation_agreement.json`, `annotation_coverage.json`, `cohort_flow.csv`, `semantic_strata_table.csv` |
+
+Stage B copies the private mapping and coverage artifacts, but it does not copy
+the returned Stage A ratings file or every upstream evidence artifact. Its batch
+and lock retain hash-bound references, often absolute paths, to those originals.
+Keep every referenced file immutable and available through import and later
+consumers. This is not a self-contained export: relocating files without updating
+the complete reference tree and preserving its hash bindings invalidates it.
 
 Every stage writes `run.json` and `protocol.json`, verifies transitive input hashes
 before atomic publication, and requires an absent or empty output directory.

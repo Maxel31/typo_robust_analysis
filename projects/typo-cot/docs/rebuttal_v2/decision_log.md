@@ -258,3 +258,18 @@ items and require every declared special-token ID to be an actual special
 token in the verified tokenizer. These integrity checks are covered by nine
 additional synthetic regressions; no human judgment or model outcome informed
 the corrections, and the scientific protocol is unchanged.
+
+Further review exposed legitimate incomplete archive inputs: declared regions
+may survive without their exact prompt. Such ancillary material now remains
+unavailable with side-specific coverage instead of aborting a whole batch.
+Missing/blank clean queries do not alter the frozen typo-based Stage A selection;
+Stage B and import require explicit human `unassessable` judgments for those
+items. No judgment is synthesized and no unsupported semantic-preserved item is
+added. Shared region/risk constants eliminate duplicate contract declarations.
+Archived tokenizer identity now treats non-string or blank values as unknown
+evidence, while known nonempty values are compared exactly and mismatches remain
+false. Stage B's copied mapping and coverage do not make it a self-contained
+package: returned Stage A and upstream evidence remain immutable, hash-bound
+references that must stay available at their recorded locations unless the whole
+reference tree is relocated consistently. These pre-merge clarifications use
+only synthetic fixtures, not archive outcomes.

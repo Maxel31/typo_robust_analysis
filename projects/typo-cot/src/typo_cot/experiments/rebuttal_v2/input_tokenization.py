@@ -241,9 +241,9 @@ def reconstruct_token_alignment(
     *,
     query_text: str | None,
     query_span: list[int] | None,
-    archived_tokenizer_revision: str | None = None,
-    archived_tokenizer_id: str | None = None,
-    archived_tokenizer_sha256: str | None = None,
+    archived_tokenizer_revision: object = None,
+    archived_tokenizer_id: object = None,
+    archived_tokenizer_sha256: object = None,
 ) -> AlignmentAudit:
     """Map all changed-word subtokens in one exact full prompt.
 
@@ -265,7 +265,11 @@ def reconstruct_token_alignment(
             (archived_tokenizer_id, entry.descriptor["tokenizer_id"]),
             (archived_tokenizer_sha256, entry.reference["sha256"]),
         ):
-            comparisons.append(None if observed is None else observed == expected)
+            comparisons.append(
+                None
+                if not isinstance(observed, str) or not observed.strip()
+                else observed == expected
+            )
         revision_match = comparisons[0]
         if False in comparisons:
             matches = False

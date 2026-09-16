@@ -7,12 +7,13 @@ returned batches fail closed; missing judgments are not human unassessability.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 import uuid
 
+from .artifact_io import utc_now as _now
 from .artifacts import ArtifactSnapshots
+from .input_spans import REGION_KINDS
 from .schemas import (
     PROTOCOL_SHA256,
     IntakeError,
@@ -82,16 +83,6 @@ _ADJ_FIELDS = {
     "disagreement_reason",
     "final_label",
 }
-_REGION_KINDS = frozenset(
-    {
-        "stem",
-        "option-content",
-        "option-label",
-        "instructions",
-        "context",
-        "entity",
-    }
-)
 
 
 def _region_layout_known(pair: dict[str, Any]) -> bool:
@@ -103,17 +94,13 @@ def _region_layout_known(pair: dict[str, Any]) -> bool:
         and all(
             isinstance(region, dict)
             and isinstance(region.get("kind"), str)
-            and region["kind"] in _REGION_KINDS
+            and region["kind"] in REGION_KINDS
             and {"kind", "start", "end"} <= set(region)
             and set(region) <= {"kind", "start", "end", "option_label"}
             for side in ("clean", "typo")
             for region in layout[side]
         )
     )
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _nonblank(value: object, context: str) -> str:
@@ -158,6 +145,11 @@ def _text(pair: dict[str, Any], name: str, bundle: Any, snapshots: ArtifactSnaps
     return raw.decode("utf-8")
 
 
+def _clean_query_available(pair, bundle, snapshots) -> bool:
+    query = _text(pair, "clean_text", bundle, snapshots)
+    return query is not None and bool(query.strip())
+
+
 def _selection(bundle: Any, snapshots: ArtifactSnapshots):
     """Freeze original members without consulting alignment, labels or outcomes."""
     cohort_ids = {
@@ -175,8 +167,17 @@ def _selection(bundle: Any, snapshots: ArtifactSnapshots):
         typo = _text(pair, "typo_text", bundle, snapshots)
         if typo is None or not typo.strip():
             reasons.append("typo_query_unavailable")
+        if not _clean_query_available(pair, bundle, snapshots):
+            reasons.append("clean_query_unavailable")
         if not _region_layout_known(pair):
             reasons.append("ancillary_prompt_regions_unknown")
+        else:
+            for side in ("clean", "typo"):
+                if (
+                    pair["prompt_regions"][side]
+                    and _text(pair, f"{side}_prompt", bundle, snapshots) is None
+                ):
+                    reasons.append(f"{side}_prompt_unavailable_for_declared_regions")
         exported = bool(original) and typo is not None and bool(typo.strip())
         coverage.append(
             {
@@ -216,24 +217,11 @@ def _regions(pair: dict[str, Any], side: str, bundle: Any, snapshots: ArtifactSn
         raise IntakeError("prompt regions must be arrays")
     prompt = _text(pair, f"{side}_prompt", bundle, snapshots)
     if prompt is None:
-        if entries:
-            raise IntakeError("prompt regions require the corresponding exact prompt")
         return result
     for region in entries:
         require_object(region, "prompt region")
         require_keys(region, {"kind", "start", "end"}, {"option_label"}, context="prompt region")
-        kind = require_enum(
-            region["kind"],
-            {
-                "stem",
-                "option-content",
-                "option-label",
-                "instructions",
-                "context",
-                "entity",
-            },
-            "prompt region kind",
-        )
+        kind = require_enum(region["kind"], REGION_KINDS, "prompt region kind")
         start = require_int(region["start"], "region start", minimum=0)
         end = require_int(region["end"], "region end", minimum=0)
         if start >= end or end > len(prompt):
@@ -558,7 +546,9 @@ def _stage_b_rows(bundle, snapshots, mapping, ratings, lock_hash, raters):
                     "clean_task_instructions": regions["instructions"],
                     "clean_presented_options": regions["options"],
                     "gold": pair["canonical_gold"],
-                    "allowed_labels": sorted(LABELS),
+                    "allowed_labels": sorted(LABELS)
+                    if _clean_query_available(pair, bundle, snapshots)
+                    else ["unassessable"],
                 }
             )
     return rows
@@ -682,7 +672,7 @@ def _read_stage_b(path, bundle, snapshots):
     return batch, mapping, ratings
 
 
-def _stage_b_ratings(path, batch, snapshots):
+def _stage_b_ratings(path, batch, snapshots, unassessable_only):
     ratings, adjudications = {}, {}
     expected = _keys(batch)
     for row in snapshots.jsonl(path):
@@ -693,6 +683,10 @@ def _stage_b_ratings(path, batch, snapshots):
             if key not in expected or key in ratings:
                 raise IntakeError(f"unknown or duplicate Stage B rating key: {key}")
             require_enum(row["label"], LABELS, "semantic label")
+            if key[0] in unassessable_only and row["label"] != "unassessable":
+                raise IntakeError(
+                    f"clean query unavailable; explicit unassessable rating required: {key}"
+                )
             _nonblank(row["rationale"], "Stage B rationale")
             ratings[key] = row
         elif schema == ADJ_SCHEMA:
@@ -815,7 +809,13 @@ def import_adjudicated_labels(
     snapshots = _snapshot(bundle)
     batch_path, labels_path = Path(annotation_batch).resolve(), Path(labels).resolve()
     batch, mapping, a_ratings = _read_stage_b(batch_path, bundle, snapshots)
-    b_ratings, adjudications = _stage_b_ratings(labels_path, batch, snapshots)
+    pairs = {pair["pair_id"]: pair for pair in bundle.manifest.pairs}
+    unassessable_only = {
+        item["blind_id"]
+        for item in mapping
+        if not _clean_query_available(pairs[item["pair_id"]], bundle, snapshots)
+    }
+    b_ratings, adjudications = _stage_b_ratings(labels_path, batch, snapshots, unassessable_only)
     labels_ref = _ref(labels_path, snapshots)
     independent_count = len(batch["required_raters"])
     agreement_count = 0
