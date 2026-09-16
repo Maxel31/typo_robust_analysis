@@ -29,8 +29,12 @@ and writes an immutable manifest with explicit missingness.
 explicit-answer scoring with the unchanged public v1 parser on saved generations.
 [`input-audit`, `annotation-export`, and `annotation-import`](docs/rebuttal_v2/input_audit.md)
 add independent edit/token coordinates and a locked two-stage human-review workflow.
-Planning, generation, and reduction commands are not implemented, and no v2
-model results or real-model smoke checks are available.
+The CPU-only [`plan`](docs/rebuttal_v2/planning.md) command validates those complete
+reference chains, a declared runtime lock, and an optional independent donor bank,
+then freezes the global arm grid without loading model weights. Generation and
+reduction remain unimplemented. Only synthetic CPU acceptance fixtures have been
+run: no original 172/97-item archive recovery, human labels, v2 model results, or
+real-model smoke checks are available.
 
 ## Setup
 

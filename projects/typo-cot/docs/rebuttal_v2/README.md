@@ -1,8 +1,8 @@
 # Rebuttal v2：監査・限定対照実験
 
-Status: protocol revision 2.0.0; PR-01 intake, PR-02 answer audit, and PR-03 input audit / two-stage annotation implemented with CPU acceptance fixtures; planning/generation/reduction not implemented; real-model smoke not run; formal experiments not run.
+Status: protocol revision 2.0.0; PR-01 intake, PR-02 answer audit, PR-03 input audit / two-stage annotation, and PR-04 global planning implemented with synthetic CPU acceptance fixtures; generation/reduction not implemented; real-model smoke not run; formal experiments not run.
 
-本書はPR-00で固定した科学的契約である。フィールド・入出力参照・状態遷移は [schemas.md](schemas.md)、既知の結果と判断記録は [decision_log.md](decision_log.md)、機械可読設定は [protocol.json](../../configs/rebuttal_v2/protocol.json) を参照する。PR-01の [intake](intake.md)、PR-02の [answer-audit](answer_audit.md)、PR-03の [input-audit・二段階注釈](input_audit.md) を実装した。ここに示す計画・生成・集計CLIは未実装であり、機能ごとのPRで追加する。
+本書はPR-00で固定した科学的契約である。フィールド・入出力参照・状態遷移は [schemas.md](schemas.md)、既知の結果と判断記録は [decision_log.md](decision_log.md)、機械可読設定は [protocol.json](../../configs/rebuttal_v2/protocol.json) を参照する。PR-01の [intake](intake.md)、PR-02の [answer-audit](answer_audit.md)、PR-03の [input-audit・二段階注釈](input_audit.md)、PR-04の [global planning](planning.md) を実装した。生成・集計CLIは未実装であり、後続PRで追加する。
 
 ## 1. 目的と範囲
 
@@ -322,7 +322,7 @@ GPU間で一致すべき `scientific_config_sha256`（model/tokenizer/dtype/back
 
 既存の `typo-cot experiments` 等を改名せず、argparseに `rebuttal-v2` namespaceを追加する。CPU commandを読むだけでGPUモデルをimportしない。
 
-以下はrepo rootからのコマンド契約。`SOURCE_ROOT` と `REBUTTAL_V2_ROOT` はユーザーの実データ位置へ設定する変数。`intake`、`answer-audit`、`input-audit`、`annotation-export`、`annotation-import` は実装済みであり、`plan`・`run`・`reduce` はまだ実行できない受入仕様である。
+以下はrepo rootからのコマンド契約。`SOURCE_ROOT` と `REBUTTAL_V2_ROOT` はユーザーの実データ位置へ設定する変数。`intake`、`answer-audit`、`input-audit`、`annotation-export`、`annotation-import`、`plan` は実装済みであり、`run`・`reduce` はまだ実行できない受入仕様である。`plan` の入力作成、schema、preflight、出力の詳細は [planning.md](planning.md) を参照する。
 
 ```bash
 uv run --project projects/typo-cot typo-cot rebuttal-v2 intake \
@@ -362,7 +362,8 @@ uv run --project projects/typo-cot typo-cot rebuttal-v2 plan \
   --donor-bank "${SOURCE_ROOT}/donor_bank.jsonl" \
   --protocol projects/typo-cot/configs/rebuttal_v2/protocol.json \
   --runtime-lock "${SOURCE_ROOT}/runtime_lock.json" \
-  --experiments R3 --output-dir "${REBUTTAL_V2_ROOT}/plan"
+  --experiments R3 --num-shards 1 \
+  --output-dir "${REBUTTAL_V2_ROOT}/plan"
 
 CUDA_VISIBLE_DEVICES=0 uv run --project projects/typo-cot --extra lrp \
   typo-cot rebuttal-v2 run \
@@ -381,7 +382,7 @@ uv run --project projects/typo-cot typo-cot rebuttal-v2 reduce \
 
 CPU監査だけを報告する場合、`reduce` は `--intake-run` と利用可能な監査runを受け取り、`--plan` と `--shard-root` を省略する。T0〜T3の作成可能な表を出し、未実施の実験は `not_run`、途中まで実行された実験は `partial` とする。入力がないだけで未実施とは断定せず、実施状況不明はcoverageのunknownとして残す。GPU集計では `--plan` と `--shard-root` を両方指定する。run参照とplan metadataの入力hashが異なる場合は混合を拒否する。出力artifactの探索・参照解決は [schemas.md](schemas.md) に従う。
 
-`--runtime-lock` は新実行のimmutable model/tokenizer revisionと計算設定を固定する入力であり、archiveの不明なrevisionを書き換えない。`--donor-bank` は省略できる。annotation-exportは配布用JSONLと非公開mappingを別artifactへ出力し、後者を注釈者へ配布しない。
+`--runtime-lock` は新実行のimmutable model/tokenizer revisionと計算設定を宣言してCPU計画を固定する入力であり、archiveの不明なrevisionを書き換えない。`model_files` はCPUで検証済みのweightそのものではなくdigest宣言であるため、PR-05のGPU実行前に、実際にloadする全weight/config bytesとの一致を検証する。`--donor-bank` は省略でき、省略時もcross以外を計画する。`--num-shards` は1〜6（default 1）で、shard数はplan row、donor割当、expected generation IDを変えない。annotation-exportは配布用JSONLと非公開mappingを別artifactへ出力し、後者を注釈者へ配布しない。
 
 `run --smoke` は独立smoke planを使い、正式集計へ混ぜない。`--resume` はpairの全armとinput/config/code hash一致を確認し、成功したarmだけ残して不都合なarmを再抽選しない。
 

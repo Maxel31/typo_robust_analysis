@@ -54,6 +54,17 @@ def register_rebuttal_v2_commands(
     annotation_import.add_argument("--annotation-batch", type=Path, required=True)
     annotation_import.add_argument("--output-dir", type=Path, required=True)
     annotation_import.set_defaults(_rebuttal_v2_handler=_run_annotation_import)
+    plan = operations.add_parser("plan", help="Freeze the globally verified R3/R4 generation plan.")
+    plan.add_argument("--manifest", type=Path, required=True)
+    plan.add_argument("--input-audit", type=Path, required=True)
+    plan.add_argument("--labels", type=Path, required=True)
+    plan.add_argument("--runtime-lock", type=Path, required=True)
+    plan.add_argument("--protocol", type=Path, required=True)
+    plan.add_argument("--experiments", nargs="+", choices=("R3", "R4"), required=True)
+    plan.add_argument("--donor-bank", type=Path)
+    plan.add_argument("--num-shards", type=int, default=1)
+    plan.add_argument("--output-dir", type=Path, required=True)
+    plan.set_defaults(_rebuttal_v2_handler=_run_plan)
 
 
 def _run_intake(args: argparse.Namespace) -> int:
@@ -135,3 +146,25 @@ def _run_annotation_import(args: argparse.Namespace) -> int:
         return 1
     print(json.dumps(result, ensure_ascii=False, sort_keys=True, allow_nan=False))
     return 0
+
+
+def _run_plan(args: argparse.Namespace) -> int:
+    from .plan_artifacts import run_plan
+
+    try:
+        result = run_plan(
+            args.manifest,
+            args.input_audit,
+            args.labels,
+            args.runtime_lock,
+            args.protocol,
+            args.output_dir,
+            experiments=args.experiments,
+            donor_bank_path=args.donor_bank,
+            num_shards=args.num_shards,
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"rebuttal-v2 plan: error: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True, allow_nan=False))
+    return 1 if result["status"] == "blocked" else 0
