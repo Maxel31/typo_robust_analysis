@@ -717,6 +717,8 @@ def _stage_b_ratings(path, batch, snapshots):
         labels = {ratings[(blind, rater)]["label"] for rater in batch["required_raters"]}
         if len(labels) > 1 and blind not in adjudications:
             raise IntakeError(f"unresolved annotation disagreement: {blind}")
+        if len(labels) == 1 and blind in adjudications:
+            raise IntakeError(f"adjudication requires independent rater disagreement: {blind}")
     return ratings, adjudications
 
 

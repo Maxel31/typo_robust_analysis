@@ -374,6 +374,8 @@ set is `unique_preserved`, `ambiguous`, `task_changed`, `unassessable`.
 Adjudication retains all independent A/B judgments, adjudicator ID/timestamp,
 disagreement reason, and final label. Import verifies selected IDs, complete
 required ratings, lock hashes, unique keys, legal labels and mapping integrity.
+Adjudication requires disagreement among the required independent raters;
+unanimous and single-rater items reject adjudication rows.
 Missing annotation records are reported as missing, never silently labeled
 `unassessable`. `semantic_labels.jsonl` holds pair ID, final label, rating mode,
 source/judgment references and adjudication status; no patch results are inputs.

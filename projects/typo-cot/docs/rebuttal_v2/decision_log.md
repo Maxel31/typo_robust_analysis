@@ -252,3 +252,9 @@ experiment. Fixtures use synthetic tokenizers/questions/judgments; actual human
 annotations, archived semantic-restricted result tables, real-model smoke and
 formal experiments remain incomplete or not run. PR-04 planning is not implemented
 by this change.
+
+PR-03 review corrections reject adjudication for unanimous or single-rater
+items and require every declared special-token ID to be an actual special
+token in the verified tokenizer. These integrity checks are covered by nine
+additional synthetic regressions; no human judgment or model outcome informed
+the corrections, and the scientific protocol is unchanged.

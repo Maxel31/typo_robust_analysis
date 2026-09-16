@@ -62,7 +62,10 @@ download model weights. The lock uses schema `rebuttal-tokenizer-lock/v2`, with
 - `offset_convention: "unicode-codepoint-half-open"`.
 
 The tokenizer bytes and descriptors are verified before encoding. The complete
-prompt is already rendered: a chat template is recorded but never applied again.
+set of non-null declared special-token IDs must equal the tokenizer's actual
+special-token IDs; named roles may share an ID but cannot designate ordinary
+vocabulary entries as special. The complete prompt is already rendered: a chat
+template is recorded but never applied again.
 Padding/truncation must not shorten or alter the saved complete prompt sequence.
 A missing model entry gives unknown token alignment while independent text audit
 can still run. A broken declared hash or contradictory lock is an integrity error.
@@ -129,6 +132,9 @@ the Stage A lock hash. Legal labels are `unique_preserved`, `ambiguous`,
 retained with references. Disagreements require an identified, timestamped
 adjudication and reason. Incomplete returned A/B inventories are rejected with
 the exact missing keys; no semantic label is fabricated for an unreviewed pair.
+Adjudication is accepted only for disagreements among the required independent
+raters. Unanimous and single-rater items reject even a redundant adjudication;
+their independent label cannot be overridden by an unnecessary adjudication.
 
 The import reports rater count, pre-adjudication agreement, adjudications,
 unassessable judgments, and source/annotation coverage. Semantic eligibility is

@@ -161,6 +161,10 @@ def _load_entry(
         raise IntakeError("tokenizer.json model must contain a vocabulary")
     if not declared_ids.issubset(vocabulary_ids | added_ids):
         raise IntakeError(f"{context}.special_token_ids contains IDs absent from vocabulary")
+    if not declared_ids.issubset(actual_special_ids):
+        raise IntakeError(
+            f"{context}.special_token_ids contains IDs not marked special in tokenizer.json"
+        )
     backend = None
     unavailable = None
     try:

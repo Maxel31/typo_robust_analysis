@@ -299,6 +299,47 @@ def test_inconsistent_lock_is_fatal(tmp_path, field, value, message):
         load_tokenizer_lock(path)
 
 
+def test_named_special_roles_can_share_a_special_id_or_be_null(tmp_path):
+    path = _write_lock(tmp_path)
+    _edit_lock(
+        path,
+        lambda entry: entry.update(
+            special_token_ids={"bos": 1, "cls": 1, "eos": 2, "sep": 2, "pad": None}
+        ),
+    )
+    lock = load_tokenizer_lock(path)
+    assert lock.entries[MODEL_ID].descriptor["special_token_ids"] == {
+        "bos": 1,
+        "cls": 1,
+        "eos": 2,
+        "sep": 2,
+        "pad": None,
+    }
+    assert _align(path).eligibility == "valid"
+
+
+@pytest.mark.parametrize("ordinary_added_token", [False, True])
+@pytest.mark.parametrize("library_version", ["0.22.2", "not-installed"])
+def test_special_roles_cannot_declare_an_ordinary_vocabulary_id(
+    tmp_path, ordinary_added_token, library_version
+):
+    tokenizer = _tokenizer()
+    if ordinary_added_token:
+        tokenizer.add_tokens([AddedToken("<ordinary>", special=False)])
+        ordinary_id = tokenizer.token_to_id("<ordinary>")
+    else:
+        ordinary_id = tokenizer.token_to_id("long")
+    path = _write_lock(tmp_path, tokenizer)
+
+    def declare_ordinary_special(entry):
+        entry["special_token_ids"]["pad"] = ordinary_id
+        entry["library"]["version"] = library_version
+
+    _edit_lock(path, declare_ordinary_special)
+    with pytest.raises(IntakeError, match="not marked special"):
+        load_tokenizer_lock(path)
+
+
 @pytest.mark.parametrize("mode", ["padding", "truncation"])
 def test_complete_prompt_lock_cannot_enable_padding_or_truncation(tmp_path, mode):
     tokenizer = _tokenizer()

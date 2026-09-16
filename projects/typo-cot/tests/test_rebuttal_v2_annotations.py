@@ -403,6 +403,31 @@ def test_single_rater_mode_never_claims_agreement(audit, tmp_path):
     assert all(row["rating_mode"] == "single" for row in _rows(out / "semantic_labels.jsonl"))
 
 
+@pytest.mark.parametrize("single_rater", [False, True])
+@pytest.mark.parametrize("final_label", ["ambiguous", "unique_preserved"])
+def test_adjudication_cannot_override_or_recount_non_disagreements(
+    audit, tmp_path, single_rater, final_label
+):
+    options = (
+        {"raters": ["only-reader"], "single_rater_reason": "Second reader unavailable."}
+        if single_rater
+        else {}
+    )
+    _, _, stage_b = _b_export(audit, tmp_path, **options)
+    labels = _b_labels(stage_b, tmp_path, adjudicate=True)
+    rows = _rows(labels)
+    for row in rows:
+        if row["schema_version"] == annotation.ADJ_SCHEMA:
+            row["final_label"] = final_label
+    _write(labels, rows, rows=True)
+    out = tmp_path / "imported"
+    with pytest.raises(IntakeError, match="adjudication requires independent rater disagreement"):
+        annotation.import_adjudicated_labels(
+            audit.path, labels, stage_b / "annotation_batch.json", out
+        )
+    assert not out.exists()
+
+
 @pytest.mark.parametrize(
     "mutation,match",
     [

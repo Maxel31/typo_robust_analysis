@@ -1792,6 +1792,7 @@ source = { editable = "../typo-cot" }
 dependencies = [
     { name = "datasets" },
     { name = "numpy" },
+    { name = "tokenizers" },
     { name = "tqdm" },
 ]
 
@@ -1805,6 +1806,7 @@ requires-dist = [
     { name = "protobuf", marker = "extra == 'lrp'", specifier = ">=4" },
     { name = "pyspellchecker", marker = "extra == 'lrp'", specifier = "==0.9.0" },
     { name = "sentencepiece", marker = "extra == 'lrp'", specifier = ">=0.2.1" },
+    { name = "tokenizers", specifier = "==0.22.2" },
     { name = "torch", marker = "extra == 'lrp'", specifier = "==2.10.0" },
     { name = "tqdm", specifier = ">=4.65" },
     { name = "transformers", marker = "extra == 'lrp'", specifier = "==4.57.6" },
