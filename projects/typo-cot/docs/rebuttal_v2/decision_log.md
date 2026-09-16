@@ -217,3 +217,38 @@ PR-01 preserves identical acquisition claims while deduplicating scientific
 records. The consumer now accepts those identical claims and continues to reject
 contradictions. All 128 successful fixture outputs passed the repeated probe;
 this is artifact compatibility evidence, not additional scientific observations.
+
+## PR-03 implementation (2026-09-16)
+
+PR-02 was reviewed, all threads resolved, and merged in
+`ddac4c202b2cb45dbea9fa5cc2b6f57ba03d1f06` before PR-03 started from main.
+The protocol remains revision `2.0.0` with unchanged canonical hash.
+
+Before inspecting real outputs or human judgments, PR-03 fixes the independent
+Unicode Levenshtein difference and word-segmentation rules, ambiguity policy,
+resource bounds, exact full-prompt tokenization lock, and conservative region/
+archived-coordinate adapters in [input_audit.md](input_audit.md). Multiple edits
+and repeated words remain distinct; archived coordinates never rescue an
+unreconstructable independent alignment. Intended-token hit uses the actual edit
+span, not merely membership in the edited word. Tokenizer identity agreement
+requires explicit ID/revision/file-hash evidence; revision-only agreement has a
+separate field.
+
+`tokenizers==0.22.2` becomes a direct CPU dependency, using the same version
+already in the dependency lock. No model weights or torch dependency are added
+to CPU auditing. The tokenizer is loaded only from verified local bytes.
+
+Annotation selection uses verified original R3/R4 membership and available
+questions, never alignment, answer correctness, or patch outcome. Random opaque
+IDs and a strict reviewer allowlist isolate private metadata. Stage A must be
+complete and hash-locked before any Stage B clean material is exported; the
+shared B export does not disclose another rater's A responses. Missing ratings
+fail with exact keys; they do not become unassessable labels. Two raters are the
+default, with an explicit single-rater exception and no inter-rater agreement
+claim in that mode. All independent judgments and adjudications are retained.
+
+CPU command-stage completion is separate from completion of the entire R2
+experiment. Fixtures use synthetic tokenizers/questions/judgments; actual human
+annotations, archived semantic-restricted result tables, real-model smoke and
+formal experiments remain incomplete or not run. PR-04 planning is not implemented
+by this change.

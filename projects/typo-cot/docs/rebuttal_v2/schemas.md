@@ -1,8 +1,8 @@
 # Rebuttal v2 artifact and CLI contracts
 
-Status: protocol revision `2.0.0`. PR-01 implements R0 intake and PR-02 implements
-R1 saved-generation answer audit;
-later audit, planning, generation and reporting contracts remain specifications.
+Status: protocol revision `2.0.0`. PR-01 implements R0 intake, PR-02 implements
+R1 answer audit, and PR-03 implements R2 input audit and two-stage annotations.
+Planning, generation and reduction contracts remain specifications.
 No real-model smoke or formal results are available. Scientific definitions, parser grammar, cohorts,
 and acceptance cases are in [README.md](README.md). Machine settings are in
 [protocol.json](../../configs/rebuttal_v2/protocol.json).
@@ -331,6 +331,14 @@ label, gold-option membership, number, quantity, unit, negation and entity edits
 unknown classification is not false. They do not set semantic labels.
 
 ## 6. Blinded annotations and semantic labels
+
+PR-03 concretizes the versioned difference/word-segmentation algorithms, local
+tokenizer lock, archived-coordinate adapters, annotation forms and outputs in
+[input_audit.md](input_audit.md). Input audit requires sibling
+`input_audit_records.meta.json` (`rebuttal-input-audit-metadata/v2`) binding its
+record file, manifest and manifest metadata, tokenizer lock, protocol and algorithm
+version. Annotation commands verify this chain, including an empty audit.
+Command-stage completion does not claim completion of the whole R2 experiment.
 
 Annotation metadata carries batch ID, schema version, frozen selection manifest
 hash and stage. Private `annotation_mapping.jsonl` maps a random opaque `blind_id`
